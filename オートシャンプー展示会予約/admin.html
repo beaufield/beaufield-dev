@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>管理画面 | オートシャンプー展示会</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:'Hiragino Kaku Gothic ProN','Meiryo',sans-serif;background:#f0f4f8;color:#2d3748;min-height:100vh}
+
+    .header{background:#1a365d;color:#fff;padding:16px 20px;display:flex;align-items:center;justify-content:space-between}
+    .header h1{font-size:17px;font-weight:700}
+    .header p{font-size:12px;opacity:.7;margin-top:2px}
+    .back-link{font-size:12px;color:#90cdf4;text-decoration:none}
+    .back-link:hover{color:#fff}
+
+    .container{max-width:900px;margin:0 auto;padding:20px 16px}
+
+    /* ログイン */
+    .login-card{background:#fff;border-radius:12px;padding:40px;box-shadow:0 1px 4px rgba(0,0,0,.1);max-width:360px;margin:60px auto;text-align:center}
+    .login-card h2{font-size:18px;color:#1a365d;margin-bottom:6px}
+    .login-card p{font-size:13px;color:#718096;margin-bottom:24px}
+    .login-card input{width:100%;padding:11px 14px;border:2px solid #e2e8f0;border-radius:8px;font-size:15px;font-family:inherit;text-align:center;letter-spacing:.1em}
+    .login-card input:focus{outline:none;border-color:#4299e1}
+    .btn{display:block;width:100%;padding:12px;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;margin-top:12px}
+    .btn-p{background:#2b6cb0;color:#fff}
+    .btn-p:hover{background:#2c5282}
+    .err{color:#c53030;font-size:13px;margin-top:10px}
+
+    /* サマリー */
+    .summary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
+    .sum-card{background:#fff;border-radius:10px;padding:16px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+    .sum-num{font-size:28px;font-weight:700;color:#2b6cb0}
+    .sum-label{font-size:12px;color:#718096;margin-top:2px}
+
+    /* タブ */
+    .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+    .tab{padding:8px 14px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;background:#e2e8f0;color:#4a5568;border:2px solid transparent;transition:all .15s}
+    .tab:hover{background:#bee3f8;color:#2b6cb0}
+    .tab.active{background:#2b6cb0;color:#fff;border-color:#2b6cb0}
+    .tab .badge{display:inline-block;background:rgba(255,255,255,.3);border-radius:10px;padding:1px 6px;font-size:11px;margin-left:4px}
+    .tab:not(.active) .badge{background:#2b6cb0;color:#fff}
+
+    /* 時間グリッド */
+    .grid-wrap{background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 4px rgba(0,0,0,.1)}
+    .grid-wrap h3{font-size:15px;font-weight:700;color:#1a365d;margin-bottom:14px}
+    .time-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+    .slot{border-radius:10px;padding:12px 8px;text-align:center;cursor:pointer;transition:all .15s;border:2px solid transparent}
+    .slot-time{font-size:14px;font-weight:700}
+    .slot-info{font-size:11px;margin-top:3px;line-height:1.3}
+    .slot.free{background:#f7fafc;border-color:#e2e8f0;cursor:default}
+    .slot.free .slot-time{color:#a0aec0}
+    .slot.free .slot-info{color:#cbd5e0}
+    .slot.booked{background:#ebf8ff;border-color:#90cdf4}
+    .slot.booked:hover{background:#bee3f8;border-color:#4299e1}
+    .slot.booked .slot-time{color:#2b6cb0}
+    .slot.booked .slot-info{color:#4a5568}
+
+    /* モーダル */
+    .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px}
+    .modal{background:#fff;border-radius:14px;padding:24px;max-width:440px;width:100%;max-height:90vh;overflow-y:auto}
+    .modal h3{font-size:16px;font-weight:700;color:#1a365d;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid #e2e8f0}
+    .mrow{display:flex;padding:8px 0;border-bottom:1px solid #f7fafc;font-size:14px}
+    .mlabel{color:#718096;width:80px;flex-shrink:0;font-size:13px}
+    .mval{color:#2d3748;font-weight:500;word-break:break-word}
+    .mid{display:inline-block;background:#ebf8ff;color:#2b6cb0;padding:3px 10px;border-radius:6px;font-size:13px;font-weight:700;margin-bottom:12px}
+    .chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px}
+    .chip{background:#ebf8ff;color:#2b6cb0;border-radius:6px;padding:3px 9px;font-size:12px;font-weight:600}
+    .close-btn{display:block;width:100%;padding:11px;margin-top:16px;border:2px solid #e2e8f0;border-radius:8px;background:#fff;font-size:14px;font-weight:600;color:#4a5568;cursor:pointer;font-family:inherit}
+    .close-btn:hover{background:#f7fafc}
+
+    /* ローディング */
+    .loading{text-align:center;padding:50px;color:#718096}
+    .spin{width:40px;height:40px;border:4px solid #e2e8f0;border-top-color:#2b6cb0;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 12px}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    .hidden{display:none!important}
+
+    @media(max-width:500px){
+      .time-grid{grid-template-columns:repeat(3,1fr)}
+      .summary{grid-template-columns:repeat(3,1fr)}
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>管理画面 | オートシャンプー展示会</h1>
+    <p>4月1日（水）〜 4月7日（火）</p>
+  </div>
+  <a class="back-link" href="?page=index">← 予約ページへ</a>
+</div>
+
+<!-- ログイン画面 -->
+<div id="loginView">
+  <div class="login-card">
+    <h2>管理画面ログイン</h2>
+    <p>パスワードを入力してください</p>
+    <input type="password" id="pwInput" placeholder="パスワード" onkeydown="if(event.key==='Enter')login()">
+    <button class="btn btn-p" onclick="login()">ログイン</button>
+    <p class="err hidden" id="loginErr">パスワードが正しくありません</p>
+  </div>
+</div>
+
+<!-- メイン画面 -->
+<div id="mainView" class="hidden">
+  <div class="container">
+
+    <div id="loadingView" class="loading"><div class="spin"></div><p>データを読み込み中...</p></div>
+
+    <div id="dataView" class="hidden">
+
+      <!-- サマリー -->
+      <div class="summary">
+        <div class="sum-card"><div class="sum-num" id="totalBookings">0</div><div class="sum-label">総予約件数</div></div>
+        <div class="sum-card"><div class="sum-num" id="totalSlots">0</div><div class="sum-label">総予約枠数</div></div>
+        <div class="sum-card"><div class="sum-num" id="totalPeople">0</div><div class="sum-label">総来場予定人数</div></div>
+      </div>
+
+      <!-- 日付タブ -->
+      <div class="tabs" id="dateTabs"></div>
+
+      <!-- 時間グリッド -->
+      <div class="grid-wrap">
+        <h3 id="gridTitle"></h3>
+        <div class="time-grid" id="timeGrid"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- 詳細モーダル -->
+<div class="modal-bg hidden" id="modalBg" onclick="closeModal(event)">
+  <div class="modal" id="modal">
+    <h3>予約詳細</h3>
+    <div id="modalContent"></div>
+    <button class="close-btn" onclick="closeModal()">閉じる</button>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// 定数
+// ============================================================
+const DATES = [
+  {date:'2026-04-01',label:'4/1（水）'},
+  {date:'2026-04-02',label:'4/2（木）'},
+  {date:'2026-04-03',label:'4/3（金）'},
+  {date:'2026-04-04',label:'4/4（土）'},
+  {date:'2026-04-05',label:'4/5（日）'},
+  {date:'2026-04-06',label:'4/6（月）'},
+  {date:'2026-04-07',label:'4/7（火）'},
+];
+const TIMES = [
+  '09:00','09:30','10:00','10:30',
+  '11:00','11:30','12:00','12:30',
+  '13:00','13:30','14:00','14:30',
+  '15:00','15:30','16:00','16:30',
+];
+
+let allBookings = [];
+let currentDate = DATES[0].date;
+let pw = '';
+
+// ============================================================
+// ログイン
+// ============================================================
+function login() {
+  pw = document.getElementById('pwInput').value;
+  document.getElementById('loginView').classList.add('hidden');
+  document.getElementById('mainView').classList.remove('hidden');
+
+  google.script.run
+    .withSuccessHandler(function(r){
+      document.getElementById('loadingView').classList.add('hidden');
+      if(!r.success){
+        document.getElementById('loginView').classList.remove('hidden');
+        document.getElementById('mainView').classList.add('hidden');
+        document.getElementById('loginErr').classList.remove('hidden');
+        return;
+      }
+      allBookings = r.bookings || [];
+      document.getElementById('dataView').classList.remove('hidden');
+      renderAll();
+    })
+    .withFailureHandler(function(){
+      document.getElementById('loadingView').innerHTML='<p style="color:#c53030">通信エラーが発生しました。再読み込みしてください。</p>';
+    })
+    .getAllBookings(pw);
+}
+
+// ============================================================
+// 全体描画
+// ============================================================
+function renderAll() {
+  renderSummary();
+  renderTabs();
+  renderGrid(currentDate);
+}
+
+// サマリー
+function renderSummary() {
+  const ids    = new Set(allBookings.map(b=>b.id));
+  const slots  = allBookings.length;
+  const people = allBookings.reduce((s,b)=>s+(parseInt(b.count)||0), 0) / (allBookings.length ? groupByBookingId().length : 1);
+  // 人数は予約IDごとにユニーク
+  const byId = {};
+  allBookings.forEach(b=>{ if(!byId[b.id]) byId[b.id]=b.count; });
+  const totalPeople = Object.values(byId).reduce((s,c)=>s+(parseInt(c)||0),0);
+
+  document.getElementById('totalBookings').textContent = ids.size;
+  document.getElementById('totalSlots').textContent    = slots;
+  document.getElementById('totalPeople').textContent   = totalPeople;
+}
+
+function groupByBookingId() {
+  const map = {};
+  allBookings.forEach(b=>{
+    if(!map[b.id]) map[b.id]={...b, slots:[]};
+    map[b.id].slots.push({date:b.date, time:b.time});
+  });
+  return Object.values(map);
+}
+
+// タブ
+function renderTabs() {
+  const tabs = document.getElementById('dateTabs');
+  tabs.innerHTML = '';
+  DATES.forEach(d => {
+    const count = allBookings.filter(b=>b.date===d.date).length;
+    const el = document.createElement('div');
+    el.className = 'tab' + (d.date===currentDate?' active':'');
+    el.innerHTML = d.label + (count>0?`<span class="badge">${count}</span>`:'');
+    el.onclick = () => { currentDate=d.date; renderTabs(); renderGrid(d.date); };
+    tabs.appendChild(el);
+  });
+}
+
+// グリッド
+function renderGrid(date) {
+  const info = DATES.find(d=>d.date===date);
+  document.getElementById('gridTitle').textContent = info ? info.label + ' の予約状況' : '';
+
+  const grid = document.getElementById('timeGrid');
+  grid.innerHTML = '';
+
+  // その日の予約をtime→bookingにマップ
+  const byTime = {};
+  allBookings.filter(b=>b.date===date).forEach(b=>{ byTime[b.time]=b; });
+
+  TIMES.forEach(t => {
+    const b = byTime[t];
+    const el = document.createElement('div');
+    el.className = 'slot ' + (b ? 'booked' : 'free');
+    el.innerHTML = `<div class="slot-time">${t}</div><div class="slot-info">${b ? b.salon.substring(0,8) : '空き'}</div>`;
+    if(b) el.onclick = () => showDetail(b.id);
+    grid.appendChild(el);
+  });
+}
+
+// ============================================================
+// 詳細モーダル
+// ============================================================
+function showDetail(bookingId) {
+  // 同一IDの全枠を集める
+  const rows = allBookings.filter(b=>b.id===bookingId);
+  if(!rows.length) return;
+  const b = rows[0];
+  const slotChips = rows.map(r=>`<div class="chip">${r.date} ${r.time}〜</div>`).join('');
+
+  document.getElementById('modalContent').innerHTML = `
+    <div class="mid">${b.id}</div>
+    <div class="chips">${slotChips}</div>
+    ${[
+      ['氏名',b.name],['サロン名',b.salon],['担当者',b.staff],
+      ['人数',b.count+'名'],['目的',b.purpose],['備考',b.notes||'なし'],
+      ['予約日時',b.bookedAt]
+    ].map(([l,v])=>`<div class="mrow"><span class="mlabel">${l}</span><span class="mval">${v}</span></div>`).join('')}
+  `;
+  document.getElementById('modalBg').classList.remove('hidden');
+}
+
+function closeModal(e) {
+  if(!e || e.target===document.getElementById('modalBg')) {
+    document.getElementById('modalBg').classList.add('hidden');
+  }
+}
+</script>
+</body>
+</html>

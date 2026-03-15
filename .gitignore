@@ -1,0 +1,16 @@
+# システムファイル
+.DS_Store
+Thumbs.db
+
+# エディタ設定
+.vscode/
+*.suo
+*.user
+
+# 機密情報（絶対にGitHubに上げない）
+secrets.json
+.env
+*.env
+
+# ログ
+*.log
