@@ -184,7 +184,11 @@ function _toDateStr(val) {
 
 function _toTimeStr(val) {
   if (val instanceof Date) return Utilities.formatDate(val, 'Asia/Tokyo', 'HH:mm');
-  return String(val);
+  // "9:00" → "09:00" のように先頭ゼロを補完して統一する
+  const s = String(val);
+  const parts = s.split(':');
+  if (parts.length === 2) return parts[0].padStart(2, '0') + ':' + parts[1];
+  return s;
 }
 
 // ============================================================
