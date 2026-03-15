@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ご予約フォーム | オートシャンプー展示会</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:'Hiragino Kaku Gothic ProN','Meiryo',sans-serif;background:#f0f4f8;color:#2d3748;min-height:100vh}
+
+    /* ヘッダー */
+    .header{background:#1a365d;color:#fff;text-align:center;padding:20px 16px}
+    .header h1{font-size:20px;font-weight:700;letter-spacing:.05em}
+    .header p{font-size:13px;opacity:.8;margin-top:5px}
+
+    /* コンテナ */
+    .container{max-width:600px;margin:0 auto;padding:20px 16px}
+
+    /* プログレスバー */
+    .progress{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;position:relative}
+    .progress::before{content:'';position:absolute;top:15px;left:20px;right:20px;height:2px;background:#e2e8f0;z-index:0}
+    .step-item{display:flex;flex-direction:column;align-items:center;gap:5px;z-index:1}
+    .step-circle{width:30px;height:30px;border-radius:50%;background:#e2e8f0;color:#a0aec0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;transition:all .3s}
+    .step-label{font-size:10px;color:#a0aec0;white-space:nowrap}
+    .step-item.active .step-circle{background:#2b6cb0;color:#fff}
+    .step-item.active .step-label{color:#2b6cb0;font-weight:700}
+    .step-item.done .step-circle{background:#48bb78;color:#fff}
+
+    /* カード */
+    .card{background:#fff;border-radius:12px;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,.1);margin-bottom:16px}
+    .card h2{font-size:17px;font-weight:700;color:#1a365d;margin-bottom:5px}
+    .card .sub{font-size:13px;color:#718096;margin-bottom:20px}
+
+    /* 日付グリッド */
+    .date-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+    .date-btn{background:#edf2f7;border:2px solid transparent;border-radius:10px;padding:12px 6px;text-align:center;cursor:pointer;transition:all .2s}
+    .date-btn:hover{border-color:#90cdf4}
+    .date-btn.selected{background:#ebf8ff;border-color:#2b6cb0}
+    .date-m{font-size:11px;color:#718096}
+    .date-d{font-size:22px;font-weight:700;color:#2d3748;line-height:1.2}
+    .date-w{font-size:11px;color:#718096}
+    .date-btn.selected .date-m,.date-btn.selected .date-d,.date-btn.selected .date-w{color:#2b6cb0}
+
+    /* 時間グリッド */
+    .legend{display:flex;gap:14px;margin-bottom:12px;flex-wrap:wrap}
+    .legend-item{display:flex;align-items:center;gap:5px;font-size:12px;color:#4a5568}
+    .ldot{width:14px;height:14px;border-radius:3px}
+    .ldot.av{background:#edf2f7;border:2px solid #e2e8f0}
+    .ldot.sel{background:#ebf8ff;border:2px solid #2b6cb0}
+    .ldot.bk{background:#fff5f5;border:2px solid #fed7d7}
+
+    .time-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+    .time-btn{background:#edf2f7;border:2px solid #e2e8f0;border-radius:8px;padding:11px 4px;text-align:center;cursor:pointer;font-size:14px;font-weight:600;color:#2d3748;transition:all .15s;line-height:1.3}
+    .time-btn:hover:not(.bk){border-color:#90cdf4}
+    .time-btn.sel{background:#ebf8ff;border-color:#2b6cb0;color:#2b6cb0}
+    .time-btn.bk{background:#fff5f5;border-color:#fed7d7;color:#fc8181;cursor:not-allowed;font-size:12px}
+
+    .info-box{background:#ebf8ff;border:1px solid #bee3f8;border-radius:8px;padding:10px 14px;font-size:13px;color:#2b6cb0;margin-top:14px}
+
+    /* フォーム */
+    .fgroup{margin-bottom:16px}
+    .fgroup label{display:block;font-size:13px;font-weight:700;color:#4a5568;margin-bottom:6px}
+    .req::after{content:' *';color:#e53e3e}
+    .fgroup input,.fgroup select,.fgroup textarea{width:100%;padding:10px 12px;border:2px solid #e2e8f0;border-radius:8px;font-size:15px;color:#2d3748;font-family:inherit;transition:border-color .2s;background:#fff}
+    .fgroup input:focus,.fgroup select:focus,.fgroup textarea:focus{outline:none;border-color:#4299e1}
+    .fgroup textarea{resize:vertical;min-height:80px}
+    .frow{display:grid;grid-template-columns:1fr 50px;gap:8px;align-items:end}
+    .frow span{padding-bottom:12px;color:#718096;font-size:15px}
+
+    /* 確認画面 */
+    .csec{margin-bottom:16px}
+    .csec h3{font-size:12px;font-weight:700;color:#718096;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #e2e8f0}
+    .crow{display:flex;padding:7px 0;border-bottom:1px solid #f7fafc;font-size:14px}
+    .clabel{color:#718096;width:76px;flex-shrink:0}
+    .cval{color:#2d3748;font-weight:500;word-break:break-word}
+    .chips{display:flex;flex-wrap:wrap;gap:6px}
+    .chip{background:#ebf8ff;color:#2b6cb0;border-radius:6px;padding:4px 10px;font-size:13px;font-weight:600}
+
+    /* ボタン */
+    .btn{display:block;width:100%;padding:14px;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;transition:all .2s;font-family:inherit}
+    .btn-p{background:#2b6cb0;color:#fff}
+    .btn-p:hover{background:#2c5282}
+    .btn-p:disabled{background:#a0aec0;cursor:not-allowed}
+    .btn-s{background:#edf2f7;color:#4a5568;margin-top:8px}
+    .btn-s:hover{background:#e2e8f0}
+
+    /* 完了画面 */
+    .complete{text-align:center}
+    .ok-icon{width:72px;height:72px;background:#f0fff4;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:36px}
+    .bid{display:inline-block;background:#ebf8ff;color:#2b6cb0;padding:8px 24px;border-radius:8px;font-size:22px;font-weight:700;margin:12px 0;letter-spacing:.12em}
+    .note{font-size:14px;color:#4a5568;margin-top:14px;line-height:1.8}
+
+    /* ローディング・エラー */
+    .loading{text-align:center;padding:30px;color:#718096}
+    .spin{width:40px;height:40px;border:4px solid #e2e8f0;border-top-color:#2b6cb0;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 12px}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .err{background:#fff5f5;border:1px solid #fed7d7;border-radius:8px;padding:12px;color:#c53030;font-size:14px;margin-bottom:12px}
+
+    .hidden{display:none!important}
+
+    @media(max-width:400px){
+      .date-grid{grid-template-columns:repeat(3,1fr)}
+      .time-grid{grid-template-columns:repeat(3,1fr)}
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h1>オートシャンプー展示会</h1>
+  <p>ご予約フォーム ｜ 4月1日（水）〜 4月7日（火）</p>
+</div>
+
+<div class="container">
+
+  <!-- プログレスバー -->
+  <div class="progress">
+    <div class="step-item active" id="sp1"><div class="step-circle">1</div><div class="step-label">日付</div></div>
+    <div class="step-item" id="sp2"><div class="step-circle">2</div><div class="step-label">時間帯</div></div>
+    <div class="step-item" id="sp3"><div class="step-circle">3</div><div class="step-label">お客様情報</div></div>
+    <div class="step-item" id="sp4"><div class="step-circle">4</div><div class="step-label">確認</div></div>
+    <div class="step-item" id="sp5"><div class="step-circle">✓</div><div class="step-label">完了</div></div>
+  </div>
+
+  <!-- STEP 1: 日付選択 -->
+  <div id="step1" class="card">
+    <h2>日付を選択してください</h2>
+    <p class="sub">ご希望の体験日をお選びください</p>
+    <div class="date-grid" id="dateGrid"></div>
+  </div>
+
+  <!-- STEP 2: 時間帯選択 -->
+  <div id="step2" class="card hidden">
+    <h2>時間帯を選択してください</h2>
+    <p class="sub" id="step2Sub">複数の枠を選択できます</p>
+    <div class="legend">
+      <div class="legend-item"><div class="ldot av"></div>空き</div>
+      <div class="legend-item"><div class="ldot sel"></div>選択中</div>
+      <div class="legend-item"><div class="ldot bk"></div>予約済み</div>
+    </div>
+    <div id="timeLoading" class="loading"><div class="spin"></div><p>空き状況を確認中...</p></div>
+    <div id="timeGrid" class="time-grid hidden"></div>
+    <div class="info-box" id="selCount">時間帯を選択してください（複数選択可）</div>
+    <button class="btn btn-p" id="toStep3Btn" onclick="goToStep3()" disabled style="margin-top:14px">次へ（情報入力）</button>
+    <button class="btn btn-s" onclick="goToStep1()">← 日付を選び直す</button>
+  </div>
+
+  <!-- STEP 3: お客様情報 -->
+  <div id="step3" class="card hidden">
+    <h2>お客様情報を入力してください</h2>
+    <p class="sub">※は必須項目です</p>
+    <div class="fgroup"><label class="req">氏名</label><input type="text" id="f-name" placeholder="例：山田 太郎"></div>
+    <div class="fgroup"><label class="req">サロン名</label><input type="text" id="f-salon" placeholder="例：Hair Salon ○○"></div>
+    <div class="fgroup"><label class="req">担当者</label><input type="text" id="f-staff" placeholder="例：鈴木 花子"></div>
+    <div class="fgroup">
+      <label class="req">人数</label>
+      <div class="frow">
+        <input type="number" id="f-count" min="1" max="30" placeholder="1">
+        <span>名</span>
+      </div>
+    </div>
+    <div class="fgroup">
+      <label class="req">目的</label>
+      <select id="f-purpose">
+        <option value="">選択してください</option>
+        <option>商品の体験・デモ確認</option>
+        <option>導入検討</option>
+        <option>比較・情報収集</option>
+        <option>その他</option>
+      </select>
+    </div>
+    <div class="fgroup"><label>備考</label><textarea id="f-notes" placeholder="ご要望・ご質問等があればご記入ください"></textarea></div>
+    <div id="err3" class="err hidden"></div>
+    <button class="btn btn-p" onclick="goToStep4()">次へ（確認）</button>
+    <button class="btn btn-s" onclick="goToStep2()">← 時間帯を選び直す</button>
+  </div>
+
+  <!-- STEP 4: 確認 -->
+  <div id="step4" class="card hidden">
+    <h2>予約内容をご確認ください</h2>
+    <p class="sub">内容を確認の上、「予約を確定する」を押してください</p>
+    <div class="csec"><h3>予約枠</h3><div class="chips" id="confSlots"></div></div>
+    <div class="csec" style="margin-top:14px"><h3>お客様情報</h3><div id="confInfo"></div></div>
+    <div id="err4" class="err hidden"></div>
+    <button class="btn btn-p" id="submitBtn" onclick="submitBooking()">予約を確定する</button>
+    <button class="btn btn-s" onclick="goToStep3()">← 情報を修正する</button>
+  </div>
+
+  <!-- STEP 5: 完了 -->
+  <div id="step5" class="card hidden complete">
+    <div class="ok-icon">✓</div>
+    <h2>予約が完了しました</h2>
+    <p class="sub">ご予約ありがとうございます</p>
+    <p style="font-size:13px;color:#718096;margin-bottom:4px">予約ID</p>
+    <div class="bid" id="bookingId"></div>
+    <p class="note">担当者よりご連絡させていただく場合がございます。<br>当日は展示会場へお越しください。</p>
+    <button class="btn btn-s" style="margin-top:22px" onclick="resetAll()">別の予約をする</button>
+  </div>
+
+</div><!-- /container -->
+
+<script>
+// ============================================================
+// 定数
+// ============================================================
+const DATES = [
+  {date:'2026-04-01',d:'1',w:'水'},
+  {date:'2026-04-02',d:'2',w:'木'},
+  {date:'2026-04-03',d:'3',w:'金'},
+  {date:'2026-04-04',d:'4',w:'土'},
+  {date:'2026-04-05',d:'5',w:'日'},
+  {date:'2026-04-06',d:'6',w:'月'},
+  {date:'2026-04-07',d:'7',w:'火'},
+];
+const TIMES = [
+  '09:00','09:30','10:00','10:30',
+  '11:00','11:30','12:00','12:30',
+  '13:00','13:30','14:00','14:30',
+  '15:00','15:30','16:00','16:30',
+];
+
+// ============================================================
+// 状態
+// ============================================================
+let sel = {date:null,info:null,slots:[],booked:[],form:{}};
+
+// ============================================================
+// 初期化
+// ============================================================
+(function(){
+  const grid = document.getElementById('dateGrid');
+  DATES.forEach(d => {
+    const el = document.createElement('div');
+    el.className = 'date-btn';
+    el.innerHTML = `<div class="date-m">4月</div><div class="date-d">${d.d}</div><div class="date-w">${d.w}曜</div>`;
+    el.onclick = () => pickDate(d, el);
+    grid.appendChild(el);
+  });
+})();
+
+// ============================================================
+// STEP 1: 日付選択
+// ============================================================
+function pickDate(info, el) {
+  document.querySelectorAll('.date-btn').forEach(b=>b.classList.remove('selected'));
+  el.classList.add('selected');
+  sel.date = info.date;
+  sel.info = info;
+  setTimeout(goToStep2, 200);
+}
+function goToStep1() { showStep(1); }
+
+// ============================================================
+// STEP 2: 時間帯選択
+// ============================================================
+function goToStep2() {
+  showStep(2);
+  document.getElementById('step2Sub').textContent =
+    '4月' + sel.info.d + '日（' + sel.info.w + '曜日）｜複数選択可';
+  sel.slots = [];
+  updateCount();
+
+  document.getElementById('timeLoading').classList.remove('hidden');
+  document.getElementById('timeGrid').classList.add('hidden');
+
+  google.script.run
+    .withSuccessHandler(function(r){
+      if(!r.success){ document.getElementById('timeLoading').innerHTML='<p style="color:#c53030">空き状況の取得に失敗しました。再読み込みしてください。</p>'; return; }
+      sel.booked = r.slots || [];
+      renderTimeGrid();
+    })
+    .withFailureHandler(function(){
+      document.getElementById('timeLoading').innerHTML='<p style="color:#c53030">通信エラー。再読み込みしてください。</p>';
+    })
+    .getBookedSlots();
+}
+
+function renderTimeGrid() {
+  document.getElementById('timeLoading').classList.add('hidden');
+  const grid = document.getElementById('timeGrid');
+  grid.classList.remove('hidden');
+  grid.innerHTML = '';
+
+  TIMES.forEach(t => {
+    const booked = sel.booked.some(s => s.date === sel.date && s.time === t);
+    const el = document.createElement('div');
+    el.className = 'time-btn' + (booked ? ' bk' : '');
+    el.textContent = t;
+    if(booked){ el.title='予約済み'; } else { el.onclick=()=>toggleSlot(t,el); }
+    grid.appendChild(el);
+  });
+}
+
+function toggleSlot(t, el) {
+  const idx = sel.slots.indexOf(t);
+  if(idx>=0){ sel.slots.splice(idx,1); el.classList.remove('sel'); }
+  else       { sel.slots.push(t);      el.classList.add('sel'); }
+  updateCount();
+}
+
+function updateCount() {
+  const n = sel.slots.length;
+  document.getElementById('selCount').textContent = n===0 ? '時間帯を選択してください（複数選択可）' : n+'枠選択中';
+  document.getElementById('toStep3Btn').disabled = n===0;
+}
+
+// ============================================================
+// STEP 3: 情報入力
+// ============================================================
+function goToStep3() { showStep(3); }
+
+function goToStep4() {
+  const name    = document.getElementById('f-name').value.trim();
+  const salon   = document.getElementById('f-salon').value.trim();
+  const staff   = document.getElementById('f-staff').value.trim();
+  const count   = document.getElementById('f-count').value;
+  const purpose = document.getElementById('f-purpose').value;
+  const errEl   = document.getElementById('err3');
+
+  if(!name||!salon||!staff||!count||!purpose){
+    errEl.textContent='必須項目（※）をすべて入力してください。';
+    errEl.classList.remove('hidden'); return;
+  }
+  if(parseInt(count)<1){
+    errEl.textContent='人数は1名以上で入力してください。';
+    errEl.classList.remove('hidden'); return;
+  }
+  errEl.classList.add('hidden');
+
+  sel.form = { name, salon, staff, count:parseInt(count), purpose,
+               notes:document.getElementById('f-notes').value.trim() };
+  renderConfirm();
+  showStep(4);
+}
+
+// ============================================================
+// STEP 4: 確認
+// ============================================================
+function renderConfirm() {
+  // 枠
+  const sorted = [...sel.slots].sort();
+  document.getElementById('confSlots').innerHTML =
+    sorted.map(t=>`<div class="chip">4/${sel.info.d}（${sel.info.w}） ${t}〜</div>`).join('');
+
+  // 情報
+  const d = sel.form;
+  document.getElementById('confInfo').innerHTML = [
+    ['氏名',d.name],['サロン名',d.salon],['担当者',d.staff],
+    ['人数',d.count+'名'],['目的',d.purpose],['備考',d.notes||'なし']
+  ].map(([l,v])=>`<div class="crow"><span class="clabel">${l}</span><span class="cval">${v}</span></div>`).join('');
+}
+
+function submitBooking() {
+  const btn   = document.getElementById('submitBtn');
+  const errEl = document.getElementById('err4');
+  btn.disabled = true;
+  btn.textContent = '送信中...';
+  errEl.classList.add('hidden');
+
+  const payload = {
+    ...sel.form,
+    slots: [...sel.slots].sort().map(t=>({date:sel.date, time:t}))
+  };
+
+  google.script.run
+    .withSuccessHandler(function(r){
+      if(r.success){
+        document.getElementById('bookingId').textContent = r.bookingId;
+        showStep(5);
+      } else {
+        errEl.textContent = r.error || '予約に失敗しました。もう一度お試しください。';
+        errEl.classList.remove('hidden');
+        btn.disabled=false; btn.textContent='予約を確定する';
+      }
+    })
+    .withFailureHandler(function(){
+      errEl.textContent='通信エラーが発生しました。もう一度お試しください。';
+      errEl.classList.remove('hidden');
+      btn.disabled=false; btn.textContent='予約を確定する';
+    })
+    .saveBooking(payload);
+}
+
+// ============================================================
+// ユーティリティ
+// ============================================================
+function showStep(n) {
+  [1,2,3,4,5].forEach(i=>{
+    document.getElementById('step'+i).classList.toggle('hidden', i!==n);
+    const p = document.getElementById('sp'+i);
+    if(!p) return;
+    p.classList.remove('active','done');
+    if(i<n) p.classList.add('done');
+    else if(i===n) p.classList.add('active');
+  });
+  window.scrollTo(0,0);
+}
+
+function resetAll() {
+  sel = {date:null,info:null,slots:[],booked:[],form:{}};
+  ['f-name','f-salon','f-staff','f-count','f-notes'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('f-purpose').value='';
+  document.querySelectorAll('.date-btn').forEach(b=>b.classList.remove('selected'));
+  showStep(1);
+}
+</script>
+</body>
+</html>
