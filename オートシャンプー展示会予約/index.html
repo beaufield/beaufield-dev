@@ -362,8 +362,16 @@ function submitBooking() {
     slots: [...sel.slots].sort().map(t=>({date:sel.date, time:t}))
   };
 
+  // タイムアウト対策：30秒後に自動解除
+  const timeout = setTimeout(function(){
+    errEl.textContent='タイムアウトしました。もう一度お試しください。';
+    errEl.classList.remove('hidden');
+    btn.disabled=false; btn.textContent='予約を確定する';
+  }, 30000);
+
   google.script.run
     .withSuccessHandler(function(r){
+      clearTimeout(timeout);
       if(r.success){
         document.getElementById('bookingId').textContent = r.bookingId;
         showStep(5);
@@ -373,7 +381,8 @@ function submitBooking() {
         btn.disabled=false; btn.textContent='予約を確定する';
       }
     })
-    .withFailureHandler(function(){
+    .withFailureHandler(function(e){
+      clearTimeout(timeout);
       errEl.textContent='通信エラーが発生しました。もう一度お試しください。';
       errEl.classList.remove('hidden');
       btn.disabled=false; btn.textContent='予約を確定する';
