@@ -97,9 +97,11 @@ function saveBooking(bookingData) {
       ]);
     });
 
-    // LINE WORKS 通知（失敗しても予約は成功扱い）
-    try { _sendNotification(bookingData, bookingId); } catch (ne) {
-      console.error('LINE WORKS通知エラー:', ne);
+    // LINE WORKS 通知（URLが設定済みの場合のみ送信）
+    if (LINEWORKS_WEBHOOK && LINEWORKS_WEBHOOK !== 'YOUR_LINEWORKS_WEBHOOK_URL_HERE') {
+      try { _sendNotification(bookingData, bookingId); } catch (ne) {
+        console.error('LINE WORKS通知エラー:', ne);
+      }
     }
 
     return { success: true, bookingId: bookingId };
