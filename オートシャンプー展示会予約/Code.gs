@@ -4,7 +4,7 @@
 // ⚠️ デプロイ前に下記3つを必ず設定してください
 // ============================================================
 
-const SPREADSHEET_ID      = 'YOUR_SPREADSHEET_ID_HERE';       // スプレッドシートのID
+const SPREADSHEET_ID      = '1BkJXtpYQKHxGKSanr0lXc2dSJ8s9wOi8BgIYVdp4ngw'; // スプレッドシートのID
 const LINEWORKS_WEBHOOK   = 'YOUR_LINEWORKS_WEBHOOK_URL_HERE'; // LINE WORKS Webhook URL
 const ADMIN_PASSWORD      = 'beaufield2026';                   // 管理画面パスワード（変更推奨）
 const SHEET_NAME          = '予約データ';
