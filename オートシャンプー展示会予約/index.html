@@ -102,11 +102,62 @@
       .date-grid{grid-template-columns:repeat(3,1fr)}
       .time-grid{grid-template-columns:repeat(3,1fr)}
     }
+
+    /* --- 管理パネル --- */
+    .adm-btn{position:absolute;right:14px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);color:#fff;padding:5px 11px;border-radius:6px;font-size:12px;cursor:pointer;text-decoration:none;white-space:nowrap}
+    .adm-btn:hover{background:rgba(255,255,255,.3)}
+    .adm-panel{position:fixed;inset:0;background:#f0f4f8;z-index:200;overflow-y:auto;display:none}
+    .adm-panel.open{display:block}
+    .adm-hd{background:#1a365d;color:#fff;padding:14px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10}
+    .adm-hd h2{font-size:16px;font-weight:700}
+    .adm-hd p{font-size:12px;opacity:.7;margin-top:2px}
+    .adm-close{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);color:#fff;padding:6px 14px;border-radius:6px;font-size:13px;cursor:pointer;font-family:inherit}
+    .adm-close:hover{background:rgba(255,255,255,.3)}
+    .adm-wrap{max-width:900px;margin:0 auto;padding:20px 16px}
+    .adm-login-card{background:#fff;border-radius:12px;padding:40px;box-shadow:0 1px 4px rgba(0,0,0,.1);max-width:360px;margin:30px auto;text-align:center}
+    .adm-login-card h3{font-size:18px;color:#1a365d;margin-bottom:6px;font-weight:700}
+    .adm-login-card p{font-size:13px;color:#718096;margin-bottom:24px}
+    .adm-login-card input{width:100%;padding:11px 14px;border:2px solid #e2e8f0;border-radius:8px;font-size:15px;font-family:inherit;text-align:center;letter-spacing:.1em}
+    .adm-login-card input:focus{outline:none;border-color:#4299e1}
+    .a-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
+    .a-sum-card{background:#fff;border-radius:10px;padding:16px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+    .a-sum-num{font-size:28px;font-weight:700;color:#2b6cb0}
+    .a-sum-label{font-size:12px;color:#718096;margin-top:2px}
+    .a-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+    .a-tab{padding:8px 14px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;background:#e2e8f0;color:#4a5568;border:2px solid transparent;transition:all .15s}
+    .a-tab:hover{background:#bee3f8;color:#2b6cb0}
+    .a-tab.active{background:#2b6cb0;color:#fff}
+    .a-tab .badge{display:inline-block;background:#2b6cb0;color:#fff;border-radius:10px;padding:1px 6px;font-size:11px;margin-left:4px}
+    .a-tab.active .badge{background:rgba(255,255,255,.3)}
+    .a-grid-wrap{background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 4px rgba(0,0,0,.1)}
+    .a-grid-wrap h3{font-size:15px;font-weight:700;color:#1a365d;margin-bottom:14px}
+    .a-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+    .a-slot{border-radius:10px;padding:12px 8px;text-align:center;border:2px solid transparent}
+    .a-slot-t{font-size:14px;font-weight:700}
+    .a-slot-i{font-size:11px;margin-top:3px;line-height:1.3}
+    .a-slot.free{background:#f7fafc;border-color:#e2e8f0}
+    .a-slot.free .a-slot-t{color:#a0aec0}
+    .a-slot.free .a-slot-i{color:#cbd5e0}
+    .a-slot.booked{background:#ebf8ff;border-color:#90cdf4;cursor:pointer}
+    .a-slot.booked:hover{background:#bee3f8;border-color:#4299e1}
+    .a-slot.booked .a-slot-t{color:#2b6cb0}
+    .a-slot.booked .a-slot-i{color:#4a5568}
+    .a-modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:300;padding:16px}
+    .a-modal-box{background:#fff;border-radius:14px;padding:24px;max-width:440px;width:100%;max-height:90vh;overflow-y:auto}
+    .a-modal-box h3{font-size:16px;font-weight:700;color:#1a365d;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid #e2e8f0}
+    .a-mrow{display:flex;padding:8px 0;border-bottom:1px solid #f7fafc;font-size:14px}
+    .a-mlabel{color:#718096;width:80px;flex-shrink:0;font-size:13px}
+    .a-mval{color:#2d3748;font-weight:500;word-break:break-word}
+    .a-mid{display:inline-block;background:#ebf8ff;color:#2b6cb0;padding:3px 10px;border-radius:6px;font-size:13px;font-weight:700;margin-bottom:12px}
+    .a-chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px}
+    .a-chip{background:#ebf8ff;color:#2b6cb0;border-radius:6px;padding:3px 9px;font-size:12px;font-weight:600}
+    @media(max-width:500px){.a-grid{grid-template-columns:repeat(3,1fr)}.a-summary{grid-template-columns:repeat(3,1fr)}}
   </style>
 </head>
 <body>
 
-<div class="header">
+<div class="header" style="position:relative">
+  <a href="#" class="adm-btn" onclick="openAdm();return false;">📋 管理</a>
   <h1>オートシャンプー展示会</h1>
   <p>ご予約フォーム ｜ 4月1日（水）〜 4月7日（火）</p>
 </div>
@@ -198,6 +249,50 @@
   </div>
 
 </div><!-- /container -->
+
+<!-- 管理パネル -->
+<div id="admPanel" class="adm-panel">
+  <div class="adm-hd">
+    <div><h2>予約管理</h2><p>4月1日（水）〜 4月7日（火）</p></div>
+    <button class="adm-close" onclick="closeAdm()">✕ 閉じる</button>
+  </div>
+
+  <!-- ログイン -->
+  <div id="admLoginView" class="adm-login-card">
+    <h3>管理パネル</h3>
+    <p>パスワードを入力してください</p>
+    <input type="password" id="admPwInput" placeholder="パスワード" onkeydown="if(event.key==='Enter')admDoLogin()">
+    <button class="btn btn-p" onclick="admDoLogin()" style="margin-top:12px">ログイン</button>
+    <p id="admLoginErr" class="err hidden" style="margin-top:10px">パスワードが正しくありません</p>
+  </div>
+
+  <!-- データビュー -->
+  <div id="admDataView" class="adm-wrap hidden">
+    <div id="admLoading" class="loading"><div class="spin"></div><p>データを読み込み中...</p></div>
+    <div id="admNoData" class="hidden" style="text-align:center;padding:40px;color:#718096;font-size:15px">現在、予約はありません。</div>
+    <div id="admContent" class="hidden">
+      <div class="a-summary">
+        <div class="a-sum-card"><div class="a-sum-num" id="aTotal">0</div><div class="a-sum-label">総予約件数</div></div>
+        <div class="a-sum-card"><div class="a-sum-num" id="aSlots">0</div><div class="a-sum-label">総予約枠数</div></div>
+        <div class="a-sum-card"><div class="a-sum-num" id="aPeople">0</div><div class="a-sum-label">総来場予定人数</div></div>
+      </div>
+      <div class="a-tabs" id="aTabs"></div>
+      <div class="a-grid-wrap">
+        <h3 id="aGridTitle"></h3>
+        <div class="a-grid" id="aGrid"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 管理詳細モーダル -->
+<div id="admModal" class="a-modal hidden" onclick="closeAdmModal(event)">
+  <div class="a-modal-box">
+    <h3>予約詳細</h3>
+    <div id="admModalContent"></div>
+    <button class="btn btn-s" onclick="closeAdmModal()" style="margin-top:16px">閉じる</button>
+  </div>
+</div>
 
 <script>
 // ============================================================
@@ -405,6 +500,122 @@ function showStep(n) {
     else if(i===n) p.classList.add('active');
   });
   window.scrollTo(0,0);
+}
+
+// ============================================================
+// 管理パネル
+// ============================================================
+const ADM_DATES = [
+  {date:'2026-04-01',label:'4/1（水）'},{date:'2026-04-02',label:'4/2（木）'},
+  {date:'2026-04-03',label:'4/3（金）'},{date:'2026-04-04',label:'4/4（土）'},
+  {date:'2026-04-05',label:'4/5（日）'},{date:'2026-04-06',label:'4/6（月）'},
+  {date:'2026-04-07',label:'4/7（火）'},
+];
+const ADM_TIMES = [
+  '09:00','09:30','10:00','10:30','11:00','11:30','12:00','12:30',
+  '13:00','13:30','14:00','14:30','15:00','15:30','16:00','16:30',
+];
+let admBookings = [];
+let admDate = ADM_DATES[0].date;
+
+function openAdm() {
+  document.getElementById('admPanel').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeAdm() {
+  document.getElementById('admPanel').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+function admDoLogin() {
+  const pw = document.getElementById('admPwInput').value;
+  document.getElementById('admLoginView').classList.add('hidden');
+  document.getElementById('admDataView').classList.remove('hidden');
+
+  const t = setTimeout(function(){
+    document.getElementById('admLoading').innerHTML='<p style="color:#c53030">タイムアウトしました。再度お試しください。</p>';
+  }, 15000);
+
+  google.script.run
+    .withSuccessHandler(function(r){
+      clearTimeout(t);
+      document.getElementById('admLoading').classList.add('hidden');
+      if(!r.success){
+        document.getElementById('admLoginView').classList.remove('hidden');
+        document.getElementById('admDataView').classList.add('hidden');
+        document.getElementById('admLoginErr').classList.remove('hidden');
+        return;
+      }
+      admBookings = r.bookings || [];
+      if(admBookings.length === 0){
+        document.getElementById('admNoData').classList.remove('hidden');
+      } else {
+        document.getElementById('admContent').classList.remove('hidden');
+        admRenderAll();
+      }
+    })
+    .withFailureHandler(function(){
+      clearTimeout(t);
+      document.getElementById('admLoading').innerHTML='<p style="color:#c53030">通信エラーが発生しました。</p>';
+    })
+    .getAllBookings(pw);
+}
+
+function admRenderAll() {
+  const ids = new Set(admBookings.map(b=>b.id));
+  const byId = {};
+  admBookings.forEach(b=>{ if(!byId[b.id]) byId[b.id]=b.count; });
+  const totalPeople = Object.values(byId).reduce((s,c)=>s+(parseInt(c)||0),0);
+  document.getElementById('aTotal').textContent = ids.size;
+  document.getElementById('aSlots').textContent = admBookings.length;
+  document.getElementById('aPeople').textContent = totalPeople;
+
+  const tabs = document.getElementById('aTabs');
+  tabs.innerHTML = '';
+  ADM_DATES.forEach(d => {
+    const count = admBookings.filter(b=>b.date===d.date).length;
+    const el = document.createElement('div');
+    el.className = 'a-tab' + (d.date===admDate?' active':'');
+    el.innerHTML = d.label + (count>0?`<span class="badge">${count}</span>`:'');
+    el.onclick = () => { admDate=d.date; admRenderAll(); };
+    tabs.appendChild(el);
+  });
+
+  const info = ADM_DATES.find(d=>d.date===admDate);
+  document.getElementById('aGridTitle').textContent = info ? info.label + ' の予約状況' : '';
+  const grid = document.getElementById('aGrid');
+  grid.innerHTML = '';
+  const byTime = {};
+  admBookings.filter(b=>b.date===admDate).forEach(b=>{ byTime[b.time]=b; });
+  ADM_TIMES.forEach(t => {
+    const b = byTime[t];
+    const el = document.createElement('div');
+    el.className = 'a-slot ' + (b ? 'booked' : 'free');
+    el.innerHTML = `<div class="a-slot-t">${t}</div><div class="a-slot-i">${b ? b.salon.substring(0,8) : '空き'}</div>`;
+    if(b) el.onclick = () => admShowDetail(b.id);
+    grid.appendChild(el);
+  });
+}
+
+function admShowDetail(id) {
+  const rows = admBookings.filter(b=>b.id===id);
+  if(!rows.length) return;
+  const b = rows[0];
+  const chips = rows.map(r=>`<div class="a-chip">${r.date} ${r.time}〜</div>`).join('');
+  document.getElementById('admModalContent').innerHTML = `
+    <div class="a-mid">${b.id}</div>
+    <div class="a-chips">${chips}</div>
+    ${[['氏名',b.name],['サロン名',b.salon],['担当者',b.staff],
+      ['人数',b.count+'名'],['目的',b.purpose],['備考',b.notes||'なし'],['予約日時',b.bookedAt]
+    ].map(([l,v])=>`<div class="a-mrow"><span class="a-mlabel">${l}</span><span class="a-mval">${v}</span></div>`).join('')}
+  `;
+  document.getElementById('admModal').classList.remove('hidden');
+}
+
+function closeAdmModal(e) {
+  if(!e || e.target===document.getElementById('admModal')) {
+    document.getElementById('admModal').classList.add('hidden');
+  }
 }
 
 function resetAll() {
