@@ -93,7 +93,7 @@
 </div>
 
 <!-- ログイン画面 -->
-<div id="loginView">
+<div id="loginView" style="padding:40px 16px">
   <div class="login-card">
     <h2>管理画面ログイン</h2>
     <p>パスワードを入力してください</p>
@@ -172,8 +172,14 @@ function login() {
   document.getElementById('loginView').classList.add('hidden');
   document.getElementById('mainView').classList.remove('hidden');
 
+  // 15秒でタイムアウト
+  const adminTimeout = setTimeout(function(){
+    document.getElementById('loadingView').innerHTML='<p style="color:#c53030">読み込みがタイムアウトしました。ページを再読み込みしてください。</p>';
+  }, 15000);
+
   google.script.run
     .withSuccessHandler(function(r){
+      clearTimeout(adminTimeout);
       document.getElementById('loadingView').classList.add('hidden');
       if(!r.success){
         document.getElementById('loginView').classList.remove('hidden');
@@ -186,6 +192,7 @@ function login() {
       renderAll();
     })
     .withFailureHandler(function(){
+      clearTimeout(adminTimeout);
       document.getElementById('loadingView').innerHTML='<p style="color:#c53030">通信エラーが発生しました。再読み込みしてください。</p>';
     })
     .getAllBookings(pw);

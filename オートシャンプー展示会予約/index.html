@@ -378,6 +378,7 @@ function submitBooking() {
       } else {
         errEl.textContent = r.error || '予約に失敗しました。もう一度お試しください。';
         errEl.classList.remove('hidden');
+        errEl.scrollIntoView({behavior:'smooth', block:'center'});
         btn.disabled=false; btn.textContent='予約を確定する';
       }
     })
@@ -385,6 +386,7 @@ function submitBooking() {
       clearTimeout(timeout);
       errEl.textContent='通信エラーが発生しました。もう一度お試しください。';
       errEl.classList.remove('hidden');
+      errEl.scrollIntoView({behavior:'smooth', block:'center'});
       btn.disabled=false; btn.textContent='予約を確定する';
     })
     .saveBooking(payload);
