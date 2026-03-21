@@ -14,3 +14,11 @@ secrets.json
 
 # ログ
 *.log
+
+# 別リポジトリで管理しているプロジェクト（beaufield/kiki-kanri）
+kiki-kanri/
+
+# Claude Code の一時ファイル
+.claude/
+**/.claude/
+*.tmp
