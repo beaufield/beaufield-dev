@@ -310,9 +310,12 @@
     .item-name {
       font-size: 13px;
       font-weight: 600;
-      white-space: nowrap;
+      /* 2行まで表示して省略 */
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
       overflow: hidden;
-      text-overflow: ellipsis;
+      line-height: 1.4;
     }
     .item-memo-label {
       font-size: 11px;
@@ -328,8 +331,9 @@
       gap: 4px;
       flex-shrink: 0;
     }
-    .qty-input-inline {
-      width: 48px;
+    /* input[type="number"]のwidth:100%を上書きするため属性+クラスで特異性を上げる */
+    input[type="number"].qty-input-inline {
+      width: 52px;
       padding: 5px 2px;
       font-size: 15px;
       font-weight: 700;
@@ -991,7 +995,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION   = 'v1.2.0';
+const APP_VERSION   = 'v1.3.0';
 const GAS_URL       = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const LS_MASTER     = 'bf_pm';       // 商品マスターキャッシュ
 const LS_MASTER_DATE= 'bf_pm_date';  // 読込日（YYYY-MM-DD）
@@ -1164,32 +1168,41 @@ function parseProductCSV(text, fileName) {
     // ヘッダー行で列を特定（列番号ではなく名前で特定）
     const headers = splitCSVLine(lines[0]).map(h => h.trim().replace(/"/g, '').replace(/\r/g, ''));
     const colMap = {
-      code:       findColIdx(headers, 'コード'),
-      name:       findColIdx(headers, '商品名'),
-      kana:       findColIdx(headers, 'かな'),
-      unit:       findColIdx(headers, '単位名'),
-      supplierCD: findColIdx(headers, '仕入先CD'),
-      jan:        findColIdx(headers, 'JANCD')
+      code:          findColIdx(headers, 'コード'),
+      name:          findColIdx(headers, '商品名'),
+      kana:          findColIdx(headers, 'かな'),
+      unit:          findColIdx(headers, '単位名'),
+      supplierCD:    findColIdx(headers, '仕入先CD'),
+      jan:           findColIdx(headers, 'JANCD'),
+      purchasePrice: findColIdx(headers, '仕入単価')  // T列：仕入単価（任意）
     };
 
-    // 必須列チェック
-    const missing = Object.entries(colMap).filter(([, v]) => v === -1).map(([k]) => k);
+    // 必須列チェック（仕入単価は任意なのでチェック対象外）
+    const requiredCols = ['code','name','kana','unit','supplierCD','jan'];
+    const missing = requiredCols.filter(k => colMap[k] === -1);
     if (missing.length > 0) {
       showToast('必要な列が見つかりません: ' + missing.join(', '), 'error');
       return;
     }
+    // 仕入単価列の有無をログ
+    const hasPriceCol = colMap.purchasePrice !== -1;
+    if (!hasPriceCol) console.warn('仕入単価列が見つかりません。仕入金額合計は表示されません。');
 
     const products = [];
     for (let i = 1; i < lines.length; i++) {
       const cols = splitCSVLine(lines[i]);
       if (cols.length <= 1) continue;
       const p = {
-        code:       cleanCell(cols[colMap.code]),
-        name:       cleanCell(cols[colMap.name]),
-        kana:       cleanCell(cols[colMap.kana]),
-        unit:       cleanCell(cols[colMap.unit]),
-        supplierCD: cleanCell(cols[colMap.supplierCD]),
-        jan:        cleanCell(cols[colMap.jan])
+        code:          cleanCell(cols[colMap.code]),
+        name:          cleanCell(cols[colMap.name]),
+        kana:          cleanCell(cols[colMap.kana]),
+        unit:          cleanCell(cols[colMap.unit]),
+        supplierCD:    cleanCell(cols[colMap.supplierCD]),
+        jan:           cleanCell(cols[colMap.jan]),
+        // 仕入単価：カンマ区切り数値も考慮して数値化
+        purchasePrice: hasPriceCol
+          ? parseFloat(cleanCell(cols[colMap.purchasePrice]).replace(/,/g, '')) || 0
+          : 0
       };
       if (p.name) products.push(p);
     }
@@ -1580,14 +1593,15 @@ function confirmQty() {
   if (!pendingProduct)  return;
 
   const item = {
-    janCode:      pendingProduct.jan  || '',
-    code:         pendingProduct.code || '',
-    name:         pendingProduct.name || '',
+    janCode:       pendingProduct.jan           || '',
+    code:          pendingProduct.code          || '',
+    name:          pendingProduct.name          || '',
     qty,
-    unit:         pendingProduct.unit || '',
+    unit:          pendingProduct.unit          || '',
     memo,
     isHandwritten: pendingProduct.isHandwritten || false,
-    supplierCD:   pendingProduct.supplierCD || ''
+    supplierCD:    pendingProduct.supplierCD    || '',
+    purchasePrice: pendingProduct.purchasePrice || 0   // 仕入単価
   };
 
   cartItems.push(item);
@@ -1617,7 +1631,8 @@ function addHandwrite() {
     name:  '※ ' + name,
     qty, unit, memo,
     isHandwritten: true,
-    supplierCD: ''
+    supplierCD:    '',
+    purchasePrice: 0   // 手書き商品は単価なし
   });
   saveCart();
   renderItemList();
@@ -1694,34 +1709,55 @@ function renderConfirmPage() {
       </div>
     </div>`;
 
-  // 商品リスト
-  document.getElementById('confirm-list').innerHTML = cartItems.map(item => `
-    <div class="confirm-item">
+  // 仕入金額の合計（仕入単価のある商品のみ）
+  const hasPrices   = cartItems.some(i => !i.isHandwritten && i.purchasePrice > 0);
+  const totalAmount = cartItems.reduce((s, i) => s + i.qty * (i.purchasePrice || 0), 0);
+
+  // 商品リスト（仕入単価がある場合は @単価 = 小計 を表示）
+  document.getElementById('confirm-list').innerHTML = cartItems.map(item => {
+    const subtotal = item.purchasePrice > 0
+      ? `<span style="font-size:11px;color:var(--text-light);margin-left:4px">
+           @${item.purchasePrice.toLocaleString()}円 ＝ ${(item.qty * item.purchasePrice).toLocaleString()}円
+         </span>`
+      : '';
+    return `<div class="confirm-item">
       <div class="confirm-item-name">
-        ${item.isHandwritten ? '<span class="badge-hw">※</span> ' : ''}${item.name}
+        ${item.isHandwritten ? '<span class="badge-hw">※</span> ' : ''}${escHtml(item.name)}
         ${item.memo ? `<div style="font-size:12px;color:var(--text-light)">${escHtml(item.memo)}</div>` : ''}
       </div>
-      <div class="confirm-item-qty">${item.qty} ${item.unit}</div>
-    </div>
-  `).join('');
+      <div class="confirm-item-qty">${item.qty} ${escHtml(item.unit || '')}${subtotal}</div>
+    </div>`;
+  }).join('');
 
-  const csvCount  = cartItems.filter(i => !i.isHandwritten).length;
-  const hwCount   = cartItems.length - csvCount;
-  const totalQty  = cartItems.reduce((s, i) => s + i.qty, 0);
+  const csvCount = cartItems.filter(i => !i.isHandwritten).length;
+  const hwCount  = cartItems.length - csvCount;
+  const totalQty = cartItems.reduce((s, i) => s + i.qty, 0);
 
   document.getElementById('confirm-total').innerHTML = `
-    <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:10px;display:flex;flex-wrap:wrap;gap:12px;justify-content:flex-end;">
+    <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:10px;
+                display:flex;flex-wrap:wrap;gap:12px;justify-content:flex-end;">
       <div style="text-align:right;">
         <div style="font-size:11px;color:var(--text-light)">品目数</div>
-        <div style="font-size:20px;font-weight:700;color:var(--text)">${cartItems.length}<span style="font-size:12px;font-weight:400;margin-left:2px">種類</span></div>
+        <div style="font-size:20px;font-weight:700;color:var(--text)">${cartItems.length}
+          <span style="font-size:12px;font-weight:400;margin-left:2px">種類</span></div>
       </div>
       <div style="text-align:right;">
         <div style="font-size:11px;color:var(--text-light)">合計数量</div>
-        <div style="font-size:20px;font-weight:700;color:var(--primary)">${totalQty}<span style="font-size:12px;font-weight:400;margin-left:2px">点</span></div>
+        <div style="font-size:20px;font-weight:700;color:var(--primary)">${totalQty}
+          <span style="font-size:12px;font-weight:400;margin-left:2px">点</span></div>
       </div>
+      ${hasPrices ? `
+      <div style="text-align:right;">
+        <div style="font-size:11px;color:var(--text-light)">仕入金額合計</div>
+        <div style="font-size:20px;font-weight:700;color:var(--header-bg)">
+          ¥${totalAmount.toLocaleString()}
+          <span style="font-size:12px;font-weight:400;margin-left:2px">円（税抜）</span>
+        </div>
+      </div>` : ''}
     </div>
     <div style="text-align:right;font-size:11px;color:var(--text-light);margin-top:4px">
-      CSV対象: ${csvCount}件　手書き（CSV除外）: ${hwCount}件
+      CSV対象: ${csvCount}件　手書き除外: ${hwCount}件
+      ${!hasPrices ? '　※仕入金額はCSV再読込後に反映されます' : ''}
     </div>`;
 
   // 出力ボタン・バナーをリセット
