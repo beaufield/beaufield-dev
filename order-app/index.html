@@ -296,32 +296,42 @@
     }
 
     /* ==============================
-       追加済み商品リスト
+       追加済み商品リスト（コンパクト）
     ============================== */
     .item-row {
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       gap: 8px;
-      padding: 10px 0;
+      padding: 7px 0;
       border-bottom: 1px solid var(--border);
     }
     .item-row:last-child { border-bottom: none; }
     .item-info { flex: 1; min-width: 0; }
     .item-name {
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 600;
-      word-break: break-all;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
-    .item-edit-row {
+    .item-memo-label {
+      font-size: 11px;
+      color: var(--text-light);
+      margin-top: 1px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .item-qty-area {
       display: flex;
-      gap: 6px;
-      margin-top: 4px;
       align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
     }
     .qty-input-inline {
-      width: 64px;
-      padding: 4px 6px;
-      font-size: 16px;
+      width: 48px;
+      padding: 5px 2px;
+      font-size: 15px;
       font-weight: 700;
       text-align: center;
       border: 1.5px solid var(--border);
@@ -329,24 +339,16 @@
       color: var(--primary);
       background: #FAFAFA;
     }
-    .unit-label { font-size: 13px; color: var(--text-light); }
-    .memo-input-inline {
-      flex: 1;
-      padding: 4px 8px;
-      font-size: 13px;
-      border: 1.5px solid var(--border);
-      border-radius: 6px;
-      background: #FAFAFA;
-    }
+    .unit-label { font-size: 12px; color: var(--text-light); min-width: 20px; }
     .del-btn {
       background: none;
       border: none;
       color: var(--danger);
-      font-size: 20px;
+      font-size: 16px;
       cursor: pointer;
       padding: 4px;
-      min-width: 36px;
-      min-height: 36px;
+      min-width: 30px;
+      min-height: 30px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -989,7 +991,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION   = 'v1.1.0';
+const APP_VERSION   = 'v1.2.0';
 const GAS_URL       = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const LS_MASTER     = 'bf_pm';       // 商品マスターキャッシュ
 const LS_MASTER_DATE= 'bf_pm_date';  // 読込日（YYYY-MM-DD）
@@ -1348,6 +1350,24 @@ function goToSelect() {
 
 function goToConfirm() {
   if (cartItems.length === 0) { showToast('商品が追加されていません', 'error'); return; }
+
+  // 仕入先CDチェック（手書き商品・仕入先CDなし商品は除外）
+  const mismatches = cartItems.filter(item =>
+    !item.isHandwritten &&
+    item.supplierCD &&
+    item.supplierCD !== currentOrder.supplierCode
+  );
+  if (mismatches.length > 0) {
+    const names = mismatches.map(i => `・${i.name}`).join('\n');
+    const proceed = confirm(
+      `⚠️ 他のメーカーの商品が含まれています（${mismatches.length}件）\n\n` +
+      `${names}\n\n` +
+      `発注先: ${currentOrder.supplierName}（CD: ${currentOrder.supplierCode}）\n\n` +
+      `このまま続けますか？`
+    );
+    if (!proceed) return;
+  }
+
   renderConfirmPage();
   showStep('step-confirm');
   document.getElementById('header-sub').textContent = '確認・出力 | ' + currentOrder.supplierName;
@@ -1648,13 +1668,12 @@ function renderItemList() {
         <div class="item-name">
           ${item.isHandwritten ? '<span class="badge-hw">※</span> ' : ''}${item.name}
         </div>
-        <div class="item-edit-row">
-          <input class="qty-input-inline" type="number" value="${item.qty}" min="1"
-            onchange="updateItemQty(${i}, this.value)">
-          <span class="unit-label">${item.unit || ''}</span>
-          <input class="memo-input-inline" type="text" value="${escHtml(item.memo)}"
-            placeholder="備考" oninput="updateItemMemo(${i}, this.value)">
-        </div>
+        ${item.memo ? `<div class="item-memo-label">📝 ${escHtml(item.memo)}</div>` : ''}
+      </div>
+      <div class="item-qty-area">
+        <input class="qty-input-inline" type="number" value="${item.qty}" min="1"
+          onchange="updateItemQty(${i}, this.value)">
+        <span class="unit-label">${escHtml(item.unit || '')}</span>
       </div>
       <button class="del-btn" onclick="removeItem(${i})">✕</button>
     </div>
@@ -1686,9 +1705,24 @@ function renderConfirmPage() {
     </div>
   `).join('');
 
-  const csvCount = cartItems.filter(i => !i.isHandwritten).length;
-  document.getElementById('confirm-total').textContent =
-    `合計: ${cartItems.length}件（CSV対象: ${csvCount}件 / 手書き: ${cartItems.length - csvCount}件）`;
+  const csvCount  = cartItems.filter(i => !i.isHandwritten).length;
+  const hwCount   = cartItems.length - csvCount;
+  const totalQty  = cartItems.reduce((s, i) => s + i.qty, 0);
+
+  document.getElementById('confirm-total').innerHTML = `
+    <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:10px;display:flex;flex-wrap:wrap;gap:12px;justify-content:flex-end;">
+      <div style="text-align:right;">
+        <div style="font-size:11px;color:var(--text-light)">品目数</div>
+        <div style="font-size:20px;font-weight:700;color:var(--text)">${cartItems.length}<span style="font-size:12px;font-weight:400;margin-left:2px">種類</span></div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:11px;color:var(--text-light)">合計数量</div>
+        <div style="font-size:20px;font-weight:700;color:var(--primary)">${totalQty}<span style="font-size:12px;font-weight:400;margin-left:2px">点</span></div>
+      </div>
+    </div>
+    <div style="text-align:right;font-size:11px;color:var(--text-light);margin-top:4px">
+      CSV対象: ${csvCount}件　手書き（CSV除外）: ${hwCount}件
+    </div>`;
 
   // 出力ボタン・バナーをリセット
   document.getElementById('complete-banner').style.display = 'none';
