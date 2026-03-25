@@ -880,7 +880,7 @@
 </nav>
 
 <!-- バージョン -->
-<div class="version-label" id="version-label">v1.6.0</div>
+<div class="version-label" id="version-label">v1.6.1</div>
 
 <!-- ==============================
      モーダル: 数量入力
@@ -914,7 +914,7 @@
 
     <div class="form-group">
       <label>備考（任意）</label>
-      <input type="text" id="qty-memo" placeholder="備考">
+      <input type="text" id="qty-memo" placeholder="備考" list="memo-history">
     </div>
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="closeModal('modal-qty')">キャンセル</button>
@@ -1009,7 +1009,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION   = 'v1.6.0';
+const APP_VERSION   = 'v1.6.1';
 const GAS_URL       = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const LS_MASTER     = 'bf_pm';       // 商品マスターキャッシュ
 const LS_MASTER_DATE= 'bf_pm_date';  // 読込日（YYYY-MM-DD）
@@ -1402,6 +1402,9 @@ function goToConfirm() {
     if (!proceed) return;
   }
 
+  // 備考を確定：カート内の備考を一括で履歴に保存
+  cartItems.forEach(item => { if (item.memo) addToMemoHistory(item.memo); });
+
   renderConfirmPage();
   showStep('step-confirm');
   document.getElementById('header-sub').textContent = '確認・出力 | ' + currentOrder.supplierName;
@@ -1632,7 +1635,6 @@ function confirmQty() {
   }
   const memo = document.getElementById('qty-memo').value.trim();
   if (!pendingProduct)  return;
-  if (memo) addToMemoHistory(memo);
 
   const item = {
     janCode:       pendingProduct.jan           || '',
@@ -1734,8 +1736,7 @@ function renderItemList() {
       </div>
       <input type="text" class="memo-input-row" list="memo-history"
         value="${escAttr(item.memo || '')}" placeholder="📝 備考（任意）"
-        oninput="updateItemMemo(${i}, this.value)"
-        onblur="if(this.value.trim())addToMemoHistory(this.value.trim())">
+        oninput="updateItemMemo(${i}, this.value)">
     </div>`;
   }).join('');
 }
