@@ -432,6 +432,14 @@
     .history-no       { font-size: 12px; color: var(--text-light); }
     .history-supplier { font-size: 16px; font-weight: 600; margin: 2px 0; }
     .history-meta     { font-size: 12px; color: var(--text-light); }
+    /* 履歴フィルター */
+    .hist-filter-wrap {
+      margin-bottom: 10px;
+    }
+    .hist-filter-wrap select {
+      padding: 9px 12px;
+      font-size: 14px;
+    }
 
     /* ==============================
        設定リスト
@@ -605,8 +613,8 @@
       margin-bottom: 12px;
     }
     .qty-btn {
-      padding: 14px 4px;
-      font-size: 20px;
+      padding: 12px 4px;
+      font-size: 18px;
       font-weight: 700;
       border: 2px solid var(--border);
       border-radius: 10px;
@@ -614,7 +622,7 @@
       cursor: pointer;
       color: var(--text);
       transition: all 0.15s;
-      min-height: 56px;
+      min-height: 50px;
       -webkit-tap-highlight-color: transparent;
     }
     .qty-btn:active { transform: scale(0.95); }
@@ -820,6 +828,12 @@
       <span>発注履歴（直近30件）</span>
       <button class="btn btn-outline btn-sm" onclick="loadHistory(true)">🔄 更新</button>
     </div>
+    <!-- メーカー名フィルタ -->
+    <div class="hist-filter-wrap">
+      <select id="hist-filter-supplier" onchange="applyHistoryFilter()">
+        <option value="">-- メーカー: 全て --</option>
+      </select>
+    </div>
     <div id="history-list">
       <div class="empty-state">
         <div class="spinner"></div>
@@ -902,7 +916,7 @@
     <div class="modal-title" id="qty-title">数量を選択</div>
     <div class="modal-sub" id="qty-sub"></div>
 
-    <!-- クイック選択ボタン -->
+    <!-- クイック選択ボタン（昇順: 1〜30 + その他） -->
     <div class="qty-grid">
       <button class="qty-btn selected" onclick="selectQty(this,1)">1</button>
       <button class="qty-btn" onclick="selectQty(this,2)">2</button>
@@ -910,9 +924,15 @@
       <button class="qty-btn" onclick="selectQty(this,4)">4</button>
       <button class="qty-btn" onclick="selectQty(this,5)">5</button>
       <button class="qty-btn" onclick="selectQty(this,6)">6</button>
+      <button class="qty-btn" onclick="selectQty(this,7)">7</button>
+      <button class="qty-btn" onclick="selectQty(this,8)">8</button>
       <button class="qty-btn" onclick="selectQty(this,9)">9</button>
+      <button class="qty-btn" onclick="selectQty(this,10)">10</button>
       <button class="qty-btn" onclick="selectQty(this,12)">12</button>
+      <button class="qty-btn" onclick="selectQty(this,20)">20</button>
       <button class="qty-btn" onclick="selectQty(this,24)">24</button>
+      <button class="qty-btn" onclick="selectQty(this,25)">25</button>
+      <button class="qty-btn" onclick="selectQty(this,30)">30</button>
       <button class="qty-btn qty-btn-other" id="btn-other-qty" onclick="selectOtherQty(this)">その他</button>
     </div>
 
@@ -1021,7 +1041,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION   = 'v1.6.1';
+const APP_VERSION   = 'v1.7.0';
 const GAS_URL       = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const LS_MASTER     = 'bf_pm';       // 商品マスターキャッシュ
 const LS_MASTER_DATE= 'bf_pm_date';  // 読込日（YYYY-MM-DD）
@@ -1034,6 +1054,7 @@ const LS_MEMO_HIST  = 'bf_memo_h';   // 備考入力履歴（最大20件）
 let masters      = { suppliers: [], staff: [] }; // 発注先・担当者マスター
 let productMaster= [];   // 商品マスター（localStorageから読み込み）
 let cartItems    = [];   // 発注カート
+let allHistoryOrders = []; // 履歴全件（フィルタ前）
 
 let currentOrder = {     // 現在の発注情報
   supplierCode: '',
@@ -1125,7 +1146,6 @@ async function loadMasters() {
   try {
     const res = await gasGet({ action: 'getMasters' });
     if (res.success) {
-      // GASのキーが staff / staffs どちらでも対応
       masters.suppliers = res.suppliers || [];
       masters.staff     = res.staff || res.staffs || [];
       renderSupplierDropdown();
@@ -1197,6 +1217,7 @@ function parseProductCSV(text, fileName) {
 
     // ヘッダー行で列を特定（列番号ではなく名前で特定）
     const headers = splitCSVLine(lines[0]).map(h => h.trim().replace(/"/g, '').replace(/\r/g, ''));
+
     const colMap = {
       code:          findColIdx(headers, 'コード'),
       name:          findColIdx(headers, '商品名'),
@@ -1542,10 +1563,9 @@ function doSearch(kw) {
     return;
   }
 
-  // スペースで分割してAND検索 + ひらがな↔カタカナ正規化
-  // 例:「とろ wb」→ カタカナ化「トロ wb」→ 両方含む商品を抽出
+  // スペースで分割してAND検索 + ひらがな↔カタカナ・半角カナ正規化
   const tokens = kw.trim().toLowerCase().split(/\s+/).filter(Boolean)
-    .map(t => normalizeKana(t));  // トークンをカタカナ統一
+    .map(t => normalizeKana(t));
 
   const results = productMaster.filter(p => {
     // ① 廃番除外
@@ -1572,7 +1592,7 @@ function doSearch(kw) {
   resultsEl.innerHTML = results.map(p => {
     const idx = productMaster.indexOf(p);
     return `<div class="search-item" onclick="selectProduct(${idx})">
-      <div class="search-item-name">${p.name}</div>
+      <div class="search-item-name">${escHtml(p.name)}</div>
       <div class="search-item-sub">${p.code || '-'} | JAN: ${p.jan || '-'} | ${p.unit}</div>
     </div>`;
   }).join('');
@@ -1592,8 +1612,14 @@ function selectProduct(idx) {
 function openQtyModal(product, isHandwritten) {
   pendingProduct = { ...product, isHandwritten };
   document.getElementById('qty-title').textContent = isHandwritten ? '手書き商品を追加' : product.name;
-  document.getElementById('qty-sub').textContent   = isHandwritten ? '' :
-    `コード: ${product.code || '-'} | JAN: ${product.jan || '-'} | 単位: ${product.unit || '-'}`;
+
+  // ② 仕入単価も表示
+  const priceStr = (!isHandwritten && product.purchasePrice > 0)
+    ? ` | 仕入単価: ${product.purchasePrice.toLocaleString()}円`
+    : '';
+  document.getElementById('qty-sub').textContent = isHandwritten ? '' :
+    `コード: ${product.code || '-'} | JAN: ${product.jan || '-'} | 単位: ${product.unit || '-'}${priceStr}`;
+
   document.getElementById('qty-memo').value = '';
 
   // クイック選択を「1」にリセット
@@ -1657,7 +1683,7 @@ function confirmQty() {
     memo,
     isHandwritten: pendingProduct.isHandwritten || false,
     supplierCD:    pendingProduct.supplierCD    || '',
-    purchasePrice: pendingProduct.purchasePrice || 0   // 仕入単価
+    purchasePrice: pendingProduct.purchasePrice || 0
   };
 
   cartItems.push(item);
@@ -1688,7 +1714,7 @@ function addHandwrite() {
     qty, unit, memo,
     isHandwritten: true,
     supplierCD:    '',
-    purchasePrice: 0   // 手書き商品は単価なし
+    purchasePrice: 0
   });
   saveCart();
   renderItemList();
@@ -1734,11 +1760,11 @@ function renderItemList() {
   }
 
   container.innerHTML = cartItems.map((item, i) => {
-    const badge = item.isHandwritten ? '<span class="badge-hw">※</span> ' : '';
+    const hw = item.isHandwritten ? '<span class="badge-hw">※</span> ' : '';
     return `
     <div class="item-row">
       <div class="item-top">
-        <div class="item-name">${badge}${escHtml(item.name)}</div>
+        <div class="item-name">${hw}${escHtml(item.name)}</div>
         <div class="item-qty-area">
           <input type="number" class="qty-input-inline" value="${item.qty}" min="1"
             onchange="updateItemQty(${i}, this.value)">
@@ -1760,7 +1786,7 @@ function renderConfirmPage() {
   // 発注先情報
   document.getElementById('confirm-header').innerHTML = `
     <div class="confirm-header-box">
-      <div class="confirm-supplier">${currentOrder.supplierName}</div>
+      <div class="confirm-supplier">${escHtml(currentOrder.supplierName)}</div>
       <div class="confirm-meta">
         発注日: ${currentOrder.date} / 担当: ${currentOrder.staff}
         ${currentOrder.fax ? ' / FAX: ' + currentOrder.fax : ''}
@@ -1771,7 +1797,7 @@ function renderConfirmPage() {
   const hasPrices   = cartItems.some(i => !i.isHandwritten && i.purchasePrice > 0);
   const totalAmount = cartItems.reduce((s, i) => s + i.qty * (i.purchasePrice || 0), 0);
 
-  // 商品リスト（仕入単価がある場合は @単価 = 小計 を表示）
+  // 商品リスト
   document.getElementById('confirm-list').innerHTML = cartItems.map(item => {
     const subtotal = item.purchasePrice > 0
       ? `<span style="font-size:11px;color:var(--text-light);margin-left:4px">
@@ -1870,7 +1896,6 @@ async function outputCSV() {
     const dateStr = currentOrder.date.replace(/-/g, '');
     downloadBlob(blob, `${currentOrder.supplierName}_${dateStr}.csv`);
 
-    // sessionStorageのカートをクリア
     sessionStorage.removeItem(SS_CART);
     showCompleteState();
     showToast('CSV出力が完了しました', 'success');
@@ -1905,7 +1930,6 @@ async function outputPDF() {
       const pageItems = cartItems.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
       renderPDFPage(pdfPage, pageItems, orderNo, page + 1, pageCount);
 
-      // 描画を待つ
       await new Promise(r => setTimeout(r, 80));
 
       const canvas = await html2canvas(pdfPage, { scale: 2, useCORS: true, logging: false });
@@ -2030,26 +2054,38 @@ function renderPDFPage(container, items, orderNo, pageNum, totalPages) {
 const SS_HIST_CACHE = 'bf_hist_sess'; // sessionStorageキー
 
 // 日時文字列を「YYYY/MM/DD HH:MM」形式に整形
+// GMT・ISO・GAS Date.toString など複数フォーマットに対応
 function formatHistoryDate(str) {
   if (!str) return '';
-  // "2026-03-25 12:34:56" 形式
-  const m = str.match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})[\sT](\d{1,2}):(\d{1,2})/);
-  if (m) {
-    return `${m[1]}/${m[2].padStart(2,'0')}/${m[3].padStart(2,'0')} ${m[4]}:${m[5].padStart(2,'0')}`;
+
+  // パターン1: "2026-03-25 12:34" / "2026/03/25 12:34" / "2026-03-25T12:34:56Z"
+  const m1 = str.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})[T\s](\d{1,2}):(\d{2})/);
+  if (m1) {
+    return `${m1[1]}/${m1[2].padStart(2,'0')}/${m1[3].padStart(2,'0')} ${m1[4].padStart(2,'0')}:${m1[5]}`;
   }
-  // Dateオブジェクトからシリアライズされた長い文字列（GMTなど）の場合
+
+  // パターン2: "Wed Mar 25 2026 21:34:56 GMT+0900 ..." (GAS Date.toString形式)
+  const MONTHS = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',
+                  Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
+  const m2 = str.match(/\w+\s+(\w+)\s+(\d+)\s+(\d{4})\s+(\d{2}):(\d{2})/);
+  if (m2 && MONTHS[m2[1]]) {
+    return `${m2[3]}/${MONTHS[m2[1]]}/${m2[2].padStart(2,'0')} ${m2[4]}:${m2[5]}`;
+  }
+
+  // パターン3: Dateオブジェクトで最終試行（ローカルタイムで取得）
   try {
     const d = new Date(str);
     if (!isNaN(d.getTime())) {
-      const Y = d.getFullYear();
-      const M = String(d.getMonth() + 1).padStart(2, '0');
-      const D = String(d.getDate()).padStart(2, '0');
-      const h = String(d.getHours()).padStart(2, '0');
+      const Y  = d.getFullYear();
+      const M  = String(d.getMonth() + 1).padStart(2, '0');
+      const D  = String(d.getDate()).padStart(2, '0');
+      const h  = String(d.getHours()).padStart(2, '0');
       const mi = String(d.getMinutes()).padStart(2, '0');
       return `${Y}/${M}/${D} ${h}:${mi}`;
     }
   } catch(e) {}
-  return str;
+
+  return str; // すべて失敗した場合はそのまま返す
 }
 
 async function loadHistory(forceRefresh) {
@@ -2060,7 +2096,9 @@ async function loadHistory(forceRefresh) {
     const cached = sessionStorage.getItem(SS_HIST_CACHE);
     if (cached) {
       try {
-        renderHistoryList(container, JSON.parse(cached));
+        allHistoryOrders = JSON.parse(cached);
+        updateHistoryFilterOptions();
+        applyHistoryFilter();
         return;
       } catch(e) {}
     }
@@ -2071,15 +2109,42 @@ async function loadHistory(forceRefresh) {
   try {
     const res = await gasGet({ action: 'getOrders' });
     if (res.success) {
-      const orders = res.orders || [];
-      sessionStorage.setItem(SS_HIST_CACHE, JSON.stringify(orders));
-      renderHistoryList(container, orders);
+      allHistoryOrders = res.orders || [];
+      sessionStorage.setItem(SS_HIST_CACHE, JSON.stringify(allHistoryOrders));
+      updateHistoryFilterOptions();
+      applyHistoryFilter();
     } else {
+      allHistoryOrders = [];
       container.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><div>履歴がありません</div></div>`;
     }
   } catch(e) {
     container.innerHTML = `<div class="empty-state"><div>読み込みエラー</div></div>`;
   }
+}
+
+// フィルタ用 select の選択肢を更新
+function updateHistoryFilterOptions() {
+  const sel = document.getElementById('hist-filter-supplier');
+  const current = sel.value; // 現在の選択を保持
+  const suppliers = [...new Set(allHistoryOrders.map(o => o.supplierName).filter(Boolean))].sort();
+  sel.innerHTML = '<option value="">-- メーカー: 全て --</option>';
+  suppliers.forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  });
+  // 更新後も同じメーカーを選択したまま維持（存在する場合）
+  if (suppliers.includes(current)) sel.value = current;
+}
+
+// フィルタを適用して再描画
+function applyHistoryFilter() {
+  const filterVal = document.getElementById('hist-filter-supplier').value;
+  const filtered  = filterVal
+    ? allHistoryOrders.filter(o => o.supplierName === filterVal)
+    : allHistoryOrders;
+  renderHistoryList(document.getElementById('history-list'), filtered);
 }
 
 function renderHistoryList(container, orders) {
@@ -2152,7 +2217,7 @@ function renderSettingsSuppliers() {
   container.innerHTML = masters.suppliers.map(s => `
     <div class="setting-row">
       <div>
-        <div class="setting-row-info">${s.name}</div>
+        <div class="setting-row-info">${escHtml(s.name)}</div>
         <div class="setting-row-sub">CD: ${s.code} | FAX: ${s.fax || '未登録'}</div>
       </div>
       <button class="btn btn-danger btn-sm" onclick="deleteSupplier('${escAttr(s.code)}','${escAttr(s.name)}')">削除</button>
@@ -2167,7 +2232,7 @@ function renderSettingsStaff() {
   }
   container.innerHTML = masters.staff.map(s => `
     <div class="setting-row">
-      <div class="setting-row-info">${s.name}</div>
+      <div class="setting-row-info">${escHtml(s.name)}</div>
       <button class="btn btn-danger btn-sm" onclick="deleteStaff('${escAttr(s.name)}')">削除</button>
     </div>`).join('');
 }
@@ -2270,13 +2335,13 @@ function checkSupplierCodes() {
         ${rows.map(r => `
           <tr>
             <td>${r.cd}</td>
-            <td>${r.name}</td>
+            <td>${escHtml(r.name)}</td>
             <td class="${r.matched ? 'ok-mark' : 'ng-mark'}">${r.matched ? '✅ 一致' : '❌ 未登録'}</td>
           </tr>`).join('')}
         ${extras.map(cd => `
           <tr>
             <td>${cd}</td>
-            <td>${(masters.suppliers.find(s => s.code === cd) || {}).name || ''}</td>
+            <td>${escHtml((masters.suppliers.find(s => s.code === cd) || {}).name || '')}</td>
             <td class="warn-mark">⚠️ CSVに不存在</td>
           </tr>`).join('')}
       </tbody>
@@ -2344,8 +2409,8 @@ function escAttr(str) {
 }
 
 /* ===================================================
-   ひらがな↔カタカナ 正規化
-   → 検索時に両方まとめてカタカナに統一して比較
+   ひらがな↔カタカナ・半角カナ 正規化
+   → 検索時にすべてカタカナに統一して比較
 =================================================== */
 function normalizeKana(str) {
   if (!str) return '';
