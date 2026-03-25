@@ -995,7 +995,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION   = 'v1.4.0';
+const APP_VERSION   = 'v1.5.0';
 const GAS_URL       = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const LS_MASTER     = 'bf_pm';       // 商品マスターキャッシュ
 const LS_MASTER_DATE= 'bf_pm_date';  // 読込日（YYYY-MM-DD）
@@ -1509,17 +1509,20 @@ function doSearch(kw) {
     return;
   }
 
-  const kwLower = kw.toLowerCase();
+  // スペースで分割してAND検索（例:「トイロク wb」→ 両方含む商品を抽出）
+  const tokens = kw.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const results = productMaster.filter(p => {
     // ① 廃番除外
     if (p.discontinued === '廃番') return false;
     // ② 選択中の発注先（仕入先CD）に絞込
     if (currentOrder.supplierCode && p.supplierCD !== currentOrder.supplierCode) return false;
-    // ③ キーワード部分一致（商品名・かな・コード・JANコード）
-    return p.name.toLowerCase().includes(kwLower) ||
-      (p.kana && p.kana.toLowerCase().includes(kwLower)) ||
-      (p.code && p.code.toLowerCase().includes(kwLower)) ||
-      (p.jan  && p.jan.includes(kw));
+    // ③ 全トークンがいずれかの列に含まれること（AND検索・部分一致）
+    return tokens.every(token =>
+      p.name.toLowerCase().includes(token) ||
+      (p.kana && p.kana.toLowerCase().includes(token)) ||
+      (p.code && p.code.toLowerCase().includes(token)) ||
+      (p.jan  && p.jan.includes(token))
+    );
   }).slice(0, 20);
 
   if (results.length === 0) {
@@ -1901,78 +1904,80 @@ function renderPDFPage(container, items, orderNo, pageNum, totalPages) {
   const dateFormatted = currentOrder.date.replace(/-/g, '/');
   const emptyRows     = Math.max(0, 14 - items.length);
 
+  // FAX用・白黒レイアウト（カラーなし）
   container.innerHTML = `
   <div style="width:794px;height:1123px;padding:36px 44px;box-sizing:border-box;background:#fff;
-              font-family:'Hiragino Kaku Gothic Pro','Meiryo','MS Gothic',sans-serif;font-size:14px;overflow:hidden;">
+              font-family:'Hiragino Kaku Gothic Pro','Meiryo','MS Gothic',sans-serif;
+              font-size:14px;color:#000;overflow:hidden;">
 
     <!-- ヘッダー -->
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;">
       <div>
         <div style="font-size:26px;font-weight:bold;letter-spacing:1px;margin-bottom:6px;">FAX注文書</div>
-        <div style="font-size:13px;color:#444;line-height:1.8;">
+        <div style="font-size:13px;line-height:1.8;">
           毎度お世話になっております。<br>
           下記の通り注文致しますので、宜しくご手配の程お願い申し上げます。
         </div>
       </div>
-      <div style="text-align:right;font-size:12px;line-height:1.8;border:1px solid #aaa;
-                  padding:10px 14px;border-radius:4px;min-width:220px;">
-        <div style="font-weight:bold;font-size:14px;color:#C9A96E;margin-bottom:2px;">beaufield</div>
+      <div style="text-align:right;font-size:12px;line-height:1.8;border:1.5px solid #000;
+                  padding:10px 14px;min-width:220px;">
+        <div style="font-weight:bold;font-size:14px;margin-bottom:2px;">beaufield</div>
         <div style="font-weight:bold;">株式会社ビューフィールド</div>
         <div>〒889-1605</div>
         <div>宮崎市清武町加納甲2323-17</div>
         <div>TEL：0985-85-3031　FAX：0985-85-2814</div>
-        <div style="color:#777;font-size:11px;">（定休日：日曜日・月曜日・祝日）</div>
+        <div style="font-size:11px;">（定休日：日曜日・月曜日・祝日）</div>
       </div>
     </div>
 
     <!-- 発注先・発注日 -->
     <div style="display:flex;gap:16px;margin-bottom:18px;">
-      <div style="flex:1;border:2px solid #333;border-radius:6px;padding:12px 16px;">
-        <div style="font-size:11px;color:#777;margin-bottom:4px;">発注先</div>
-        <div style="font-size:20px;font-weight:bold;">${currentOrder.supplierName}　御中</div>
-        ${currentOrder.fax ? `<div style="font-size:12px;color:#555;margin-top:4px;">FAX: ${currentOrder.fax}</div>` : ''}
+      <div style="flex:1;border:2px solid #000;padding:12px 16px;">
+        <div style="font-size:11px;margin-bottom:4px;">発注先</div>
+        <div style="font-size:20px;font-weight:bold;">${escHtml(currentOrder.supplierName)}　御中</div>
+        ${currentOrder.fax ? `<div style="font-size:12px;margin-top:4px;">FAX: ${currentOrder.fax}</div>` : ''}
       </div>
-      <div style="width:190px;border:2px solid #333;border-radius:6px;padding:12px 16px;">
-        <div style="font-size:11px;color:#777;">発注日</div>
+      <div style="width:190px;border:2px solid #000;padding:12px 16px;">
+        <div style="font-size:11px;">発注日</div>
         <div style="font-size:16px;font-weight:bold;margin-bottom:8px;">${dateFormatted}</div>
-        <div style="font-size:11px;color:#777;">担当者</div>
-        <div style="font-size:16px;font-weight:bold;">${currentOrder.staff}</div>
+        <div style="font-size:11px;">担当者</div>
+        <div style="font-size:16px;font-weight:bold;">${escHtml(currentOrder.staff)}</div>
       </div>
     </div>
 
     <!-- 商品テーブル -->
     <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
       <thead>
-        <tr style="background:#1C1C1E;color:#fff;">
-          <th style="padding:9px 8px;text-align:left;border:1px solid #444;width:44%;">商品名</th>
-          <th style="padding:9px 8px;text-align:center;border:1px solid #444;width:14%;">数量</th>
-          <th style="padding:9px 8px;text-align:center;border:1px solid #444;width:14%;">単位</th>
-          <th style="padding:9px 8px;text-align:left;border:1px solid #444;width:28%;">備考</th>
+        <tr style="background:#000;color:#fff;">
+          <th style="padding:9px 8px;text-align:left;border:1px solid #000;width:44%;">商品名</th>
+          <th style="padding:9px 8px;text-align:center;border:1px solid #000;width:14%;">数量</th>
+          <th style="padding:9px 8px;text-align:center;border:1px solid #000;width:14%;">単位</th>
+          <th style="padding:9px 8px;text-align:left;border:1px solid #000;width:28%;">備考</th>
         </tr>
       </thead>
       <tbody>
         ${items.map((item, i) => `
-          <tr style="background:${i % 2 === 0 ? '#fff' : '#F9F9F9'};">
-            <td style="padding:8px 8px;border:1px solid #ccc;">${escHtml(item.name)}</td>
-            <td style="padding:8px 8px;border:1px solid #ccc;text-align:center;font-weight:bold;">${item.qty}</td>
-            <td style="padding:8px 8px;border:1px solid #ccc;text-align:center;">${item.unit || ''}</td>
-            <td style="padding:8px 8px;border:1px solid #ccc;font-size:12px;">${escHtml(item.memo || '')}</td>
+          <tr style="background:${i % 2 === 0 ? '#fff' : '#eeeeee'};">
+            <td style="padding:8px;border:1px solid #000;">${escHtml(item.name)}</td>
+            <td style="padding:8px;border:1px solid #000;text-align:center;font-weight:bold;">${item.qty}</td>
+            <td style="padding:8px;border:1px solid #000;text-align:center;">${escHtml(item.unit || '')}</td>
+            <td style="padding:8px;border:1px solid #000;font-size:12px;">${escHtml(item.memo || '')}</td>
           </tr>`).join('')}
         ${Array(emptyRows).fill(`
           <tr>
-            <td style="padding:8px 8px;border:1px solid #ccc;">&nbsp;</td>
-            <td style="border:1px solid #ccc;"></td>
-            <td style="border:1px solid #ccc;"></td>
-            <td style="border:1px solid #ccc;"></td>
+            <td style="padding:8px;border:1px solid #000;">&nbsp;</td>
+            <td style="border:1px solid #000;"></td>
+            <td style="border:1px solid #000;"></td>
+            <td style="border:1px solid #000;"></td>
           </tr>`).join('')}
       </tbody>
     </table>
 
     <!-- フッター -->
-    <div style="border-top:2px solid #333;padding-top:10px;display:flex;justify-content:space-between;
-                font-size:12px;color:#555;">
+    <div style="border-top:2px solid #000;padding-top:10px;display:flex;justify-content:space-between;
+                font-size:12px;">
       <div>
-        発注No: <strong style="color:#1C1C1E;font-size:14px;">${orderNo}</strong>
+        発注No: <strong style="font-size:14px;">${orderNo}</strong>
         ${totalPages > 1 ? ` ／ ${pageNum}/${totalPages}ページ` : ''}
       </div>
       <div>FAX送付先: ${currentOrder.fax || '（なし）'}</div>
