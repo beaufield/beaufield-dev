@@ -299,37 +299,48 @@
        追加済み商品リスト（コンパクト）
     ============================== */
     .item-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 7px 0;
+      padding: 8px 0;
       border-bottom: 1px solid var(--border);
     }
     .item-row:last-child { border-bottom: none; }
-    .item-info { flex: 1; min-width: 0; }
+    /* 上段：商品名 + 数量 + 削除 */
+    .item-top {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 5px;
+    }
     .item-name {
+      flex: 1;
+      min-width: 0;
       font-size: 13px;
       font-weight: 600;
-      /* 2行まで表示して省略 */
       display: -webkit-box;
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
       overflow: hidden;
       line-height: 1.4;
     }
-    .item-memo-label {
-      font-size: 11px;
-      color: var(--text-light);
-      margin-top: 1px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
     .item-qty-area {
       display: flex;
       align-items: center;
       gap: 4px;
       flex-shrink: 0;
+    }
+    /* 下段：備考入力（インライン・サジェスト付き） */
+    input[type="text"].memo-input-row {
+      width: 100%;
+      padding: 5px 8px;
+      font-size: 13px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #FAFAFA;
+      color: var(--text);
+    }
+    input[type="text"].memo-input-row:focus {
+      border-color: var(--primary);
+      background: #fff;
+      outline: none;
     }
     /* input[type="number"]のwidth:100%を上書きするため属性+クラスで特異性を上げる */
     input[type="number"].qty-input-inline {
@@ -869,7 +880,7 @@
 </nav>
 
 <!-- バージョン -->
-<div class="version-label" id="version-label">v1.0.0</div>
+<div class="version-label" id="version-label">v1.6.0</div>
 
 <!-- ==============================
      モーダル: 数量入力
@@ -988,6 +999,9 @@
   <div id="pdf-page"></div>
 </div>
 
+<!-- 備考入力サジェスト用 datalist（過去の備考履歴） -->
+<datalist id="memo-history"></datalist>
+
 <!-- ==============================
      JavaScript
 ============================== -->
@@ -995,11 +1009,12 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION   = 'v1.5.0';
+const APP_VERSION   = 'v1.6.0';
 const GAS_URL       = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const LS_MASTER     = 'bf_pm';       // 商品マスターキャッシュ
 const LS_MASTER_DATE= 'bf_pm_date';  // 読込日（YYYY-MM-DD）
 const SS_CART       = 'bf_cart';     // カート（sessionStorage）
+const LS_MEMO_HIST  = 'bf_memo_h';   // 備考入力履歴（最大20件）
 
 /* ===================================================
    状態変数
@@ -1046,6 +1061,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 商品マスター状態を表示
   loadProductMasterFromCache();
   updateMasterBadge();
+
+  // 備考サジェスト datalist を初期化
+  updateMemoDatalist();
 
   // CSVファイル選択イベント
   document.getElementById('csv-file').addEventListener('change', onCSVSelected);
@@ -1509,19 +1527,24 @@ function doSearch(kw) {
     return;
   }
 
-  // スペースで分割してAND検索（例:「トイロク wb」→ 両方含む商品を抽出）
-  const tokens = kw.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  // スペースで分割してAND検索 + ひらがな↔カタカナ正規化
+  // 例:「とろ wb」→ カタカナ化「トロ wb」→ 両方含む商品を抽出
+  const tokens = kw.trim().toLowerCase().split(/\s+/).filter(Boolean)
+    .map(t => normalizeKana(t));  // トークンをカタカナ統一
+
   const results = productMaster.filter(p => {
     // ① 廃番除外
     if (p.discontinued === '廃番') return false;
     // ② 選択中の発注先（仕入先CD）に絞込
     if (currentOrder.supplierCode && p.supplierCD !== currentOrder.supplierCode) return false;
-    // ③ 全トークンがいずれかの列に含まれること（AND検索・部分一致）
+    // ③ 全トークンがいずれかの列に含まれること（AND・部分一致・カナ正規化済み）
+    const nm   = normalizeKana(p.name.toLowerCase());
+    const kana = normalizeKana((p.kana || '').toLowerCase());
+    const code = (p.code || '').toLowerCase();
+    const jan  = p.jan || '';
     return tokens.every(token =>
-      p.name.toLowerCase().includes(token) ||
-      (p.kana && p.kana.toLowerCase().includes(token)) ||
-      (p.code && p.code.toLowerCase().includes(token)) ||
-      (p.jan  && p.jan.includes(token))
+      nm.includes(token) || kana.includes(token) ||
+      code.includes(token) || jan.includes(token)
     );
   }).slice(0, 20);
 
@@ -1609,6 +1632,7 @@ function confirmQty() {
   }
   const memo = document.getElementById('qty-memo').value.trim();
   if (!pendingProduct)  return;
+  if (memo) addToMemoHistory(memo);
 
   const item = {
     janCode:       pendingProduct.jan           || '',
@@ -1695,22 +1719,25 @@ function renderItemList() {
     return;
   }
 
-  container.innerHTML = cartItems.map((item, i) => `
+  container.innerHTML = cartItems.map((item, i) => {
+    const badge = item.isHandwritten ? '<span class="badge-hw">※</span> ' : '';
+    return `
     <div class="item-row">
-      <div class="item-info">
-        <div class="item-name">
-          ${item.isHandwritten ? '<span class="badge-hw">※</span> ' : ''}${item.name}
+      <div class="item-top">
+        <div class="item-name">${badge}${escHtml(item.name)}</div>
+        <div class="item-qty-area">
+          <input type="number" class="qty-input-inline" value="${item.qty}" min="1"
+            onchange="updateItemQty(${i}, this.value)">
+          <span class="unit-label">${escHtml(item.unit || '')}</span>
         </div>
-        ${item.memo ? `<div class="item-memo-label">📝 ${escHtml(item.memo)}</div>` : ''}
+        <button class="del-btn" onclick="removeItem(${i})">✕</button>
       </div>
-      <div class="item-qty-area">
-        <input class="qty-input-inline" type="number" value="${item.qty}" min="1"
-          onchange="updateItemQty(${i}, this.value)">
-        <span class="unit-label">${escHtml(item.unit || '')}</span>
-      </div>
-      <button class="del-btn" onclick="removeItem(${i})">✕</button>
-    </div>
-  `).join('');
+      <input type="text" class="memo-input-row" list="memo-history"
+        value="${escAttr(item.memo || '')}" placeholder="📝 備考（任意）"
+        oninput="updateItemMemo(${i}, this.value)"
+        onblur="if(this.value.trim())addToMemoHistory(this.value.trim())">
+    </div>`;
+  }).join('');
 }
 
 /* ===================================================
@@ -2217,6 +2244,42 @@ function escHtml(str) {
 function escAttr(str) {
   if (!str) return '';
   return String(str).replace(/'/g, "\\'");
+}
+
+/* ===================================================
+   ひらがな↔カタカナ 正規化
+   → 検索時に両方まとめてカタカナに統一して比較
+=================================================== */
+function normalizeKana(str) {
+  if (!str) return '';
+  // ひらがな(U+3041〜U+3096) → カタカナ(+0x60)
+  return str.replace(/[\u3041-\u3096]/g, ch =>
+    String.fromCharCode(ch.charCodeAt(0) + 0x60));
+}
+
+/* ===================================================
+   備考 入力履歴（localStorage管理・最大20件）
+=================================================== */
+function getMemoHistory() {
+  try { return JSON.parse(localStorage.getItem(LS_MEMO_HIST) || '[]'); }
+  catch(e) { return []; }
+}
+
+function addToMemoHistory(memo) {
+  const text = (memo || '').trim();
+  if (!text) return;
+  let hist = getMemoHistory();
+  // 重複を除いて先頭に追加・20件に制限
+  hist = [text, ...hist.filter(m => m !== text)].slice(0, 20);
+  localStorage.setItem(LS_MEMO_HIST, JSON.stringify(hist));
+  updateMemoDatalist();
+}
+
+function updateMemoDatalist() {
+  const dl = document.getElementById('memo-history');
+  if (!dl) return;
+  const hist = getMemoHistory();
+  dl.innerHTML = hist.map(m => `<option value="${escHtml(m)}">`).join('');
 }
 
 </script>
