@@ -8,7 +8,7 @@
 // ============================================================
 
 const SPREADSHEET_ID  = 'ここにスプレッドシートIDを貼り付けてください';
-const VERSION         = 'v1.0.0';
+const VERSION         = 'v1.1.0';
 
 // シート名定数
 const SHEET_HISTORY   = '発注履歴';
@@ -24,9 +24,10 @@ function doGet(e) {
 
   try {
     switch (action) {
-      case 'getMasters': return jsonResponse(getMasters());
-      case 'getOrders':  return jsonResponse(getOrders());
-      default:           return jsonResponse({ success: false, error: '不明なアクション: ' + action });
+      case 'getMasters':      return jsonResponse(getMasters());
+      case 'getOrders':       return jsonResponse(getOrders());
+      case 'getOrderDetail':  return jsonResponse(getOrderDetail(e.parameter.orderNo));
+      default:                return jsonResponse({ success: false, error: '不明なアクション: ' + action });
     }
   } catch(err) {
     return jsonResponse({ success: false, error: err.toString() });
@@ -128,6 +129,30 @@ function getOrders() {
     .slice(0, 30);
 
   return { success: true, orders };
+}
+
+// ============================================================
+// GET: 発注明細取得（orderNoに対応する明細行を返す）
+// レスポンス: { success: true, items: [...] }
+// ============================================================
+function getOrderDetail(orderNo) {
+  if (!orderNo) return { success: false, error: 'orderNoが未指定です' };
+  const sh   = getSheet(SHEET_ITEMS);
+  const data = sh.getDataRange().getValues();
+
+  const items = data.slice(1)
+    .filter(r => String(r[0]).trim() === String(orderNo).trim())
+    .map(r => ({
+      jan:           String(r[1] || ''),
+      code:          String(r[2] || ''),
+      name:          String(r[3] || ''),
+      qty:           r[4] || 0,
+      unit:          String(r[5] || ''),
+      memo:          String(r[6] || ''),
+      isHandwritten: r[7] === 'TRUE'
+    }));
+
+  return { success: true, items };
 }
 
 // ============================================================
