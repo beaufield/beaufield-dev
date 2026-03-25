@@ -425,6 +425,8 @@
     .history-item {
       padding: 12px 0;
       border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
     }
     .history-item:last-child { border-bottom: none; }
     .history-no       { font-size: 12px; color: var(--text-light); }
@@ -759,7 +761,7 @@
         </div>
         <div class="form-group">
           <label>備考（任意）</label>
-          <input type="text" id="hw-memo" placeholder="備考">
+          <input type="text" id="hw-memo" placeholder="備考" list="memo-history">
         </div>
         <button class="btn btn-primary" onclick="addHandwrite()">追加する</button>
       </div>
@@ -814,7 +816,10 @@
 ============================== -->
 <div class="screen" id="screen-history">
   <div class="card">
-    <div class="card-label">発注履歴（直近30件）</div>
+    <div class="card-label" style="display:flex;justify-content:space-between;align-items:center">
+      <span>発注履歴（直近30件）</span>
+      <button class="btn btn-outline btn-sm" onclick="loadHistory(true)">🔄 更新</button>
+    </div>
     <div id="history-list">
       <div class="empty-state">
         <div class="spinner"></div>
@@ -859,6 +864,13 @@
     <button class="btn btn-danger" onclick="clearMasterCache()">🗑️ キャッシュを削除</button>
   </div>
 
+  <!-- 備考履歴管理 -->
+  <div class="card">
+    <div class="card-label">備考履歴管理</div>
+    <p style="font-size:13px;color:var(--text-light);margin-bottom:8px">過去に入力した備考の候補をすべて削除します</p>
+    <button class="btn btn-danger" onclick="clearMemoHistory()">🗑️ 備考履歴を削除</button>
+  </div>
+
 </div><!-- end screen-settings -->
 
 <!-- ==============================
@@ -880,7 +892,7 @@
 </nav>
 
 <!-- バージョン -->
-<div class="version-label" id="version-label">v1.6.1</div>
+<div class="version-label" id="version-label">v1.7.0</div>
 
 <!-- ==============================
      モーダル: 数量入力
@@ -1949,7 +1961,6 @@ function renderPDFPage(container, items, orderNo, pageNum, totalPages) {
       </div>
       <div style="text-align:right;font-size:12px;line-height:1.8;border:1.5px solid #000;
                   padding:10px 14px;min-width:220px;">
-        <div style="font-weight:bold;font-size:14px;margin-bottom:2px;">beaufield</div>
         <div style="font-weight:bold;">株式会社ビューフィールド</div>
         <div>〒889-1605</div>
         <div>宮崎市清武町加納甲2323-17</div>
@@ -2016,26 +2027,111 @@ function renderPDFPage(container, items, orderNo, pageNum, totalPages) {
 /* ===================================================
    発注履歴
 =================================================== */
-async function loadHistory() {
+const SS_HIST_CACHE = 'bf_hist_sess'; // sessionStorageキー
+
+// 日時文字列を「YYYY/MM/DD HH:MM」形式に整形
+function formatHistoryDate(str) {
+  if (!str) return '';
+  // "2026-03-25 12:34:56" 形式
+  const m = str.match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})[\sT](\d{1,2}):(\d{1,2})/);
+  if (m) {
+    return `${m[1]}/${m[2].padStart(2,'0')}/${m[3].padStart(2,'0')} ${m[4]}:${m[5].padStart(2,'0')}`;
+  }
+  // Dateオブジェクトからシリアライズされた長い文字列（GMTなど）の場合
+  try {
+    const d = new Date(str);
+    if (!isNaN(d.getTime())) {
+      const Y = d.getFullYear();
+      const M = String(d.getMonth() + 1).padStart(2, '0');
+      const D = String(d.getDate()).padStart(2, '0');
+      const h = String(d.getHours()).padStart(2, '0');
+      const mi = String(d.getMinutes()).padStart(2, '0');
+      return `${Y}/${M}/${D} ${h}:${mi}`;
+    }
+  } catch(e) {}
+  return str;
+}
+
+async function loadHistory(forceRefresh) {
   const container = document.getElementById('history-list');
+
+  // キャッシュがあり強制更新でなければキャッシュを使う
+  if (!forceRefresh) {
+    const cached = sessionStorage.getItem(SS_HIST_CACHE);
+    if (cached) {
+      try {
+        renderHistoryList(container, JSON.parse(cached));
+        return;
+      } catch(e) {}
+    }
+  }
+
   container.innerHTML = `<div class="empty-state"><div class="spinner"></div><div style="margin-top:8px">読み込み中...</div></div>`;
 
   try {
     const res = await gasGet({ action: 'getOrders' });
-    if (res.success && res.orders && res.orders.length > 0) {
-      container.innerHTML = res.orders.slice(0, 30).map(o => `
-        <div class="history-item">
-          <div class="history-no">${o.orderNo || ''}</div>
-          <div class="history-supplier">${o.supplierName || '-'}</div>
-          <div class="history-meta">
-            ${o.date || ''} / ${o.staff || ''} / ${o.itemCount || 0}件 / ${o.outputType || '-'}
-          </div>
-        </div>`).join('');
+    if (res.success) {
+      const orders = res.orders || [];
+      sessionStorage.setItem(SS_HIST_CACHE, JSON.stringify(orders));
+      renderHistoryList(container, orders);
     } else {
       container.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><div>履歴がありません</div></div>`;
     }
   } catch(e) {
     container.innerHTML = `<div class="empty-state"><div>読み込みエラー</div></div>`;
+  }
+}
+
+function renderHistoryList(container, orders) {
+  if (!orders || orders.length === 0) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><div>履歴がありません</div></div>`;
+    return;
+  }
+  container.innerHTML = orders.slice(0, 30).map(o => `
+    <div class="history-item" onclick="toggleHistoryDetail(this,'${escAttr(o.orderNo)}')">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div>
+          <div class="history-supplier">${escHtml(o.supplierName || '-')}</div>
+          <div class="history-meta">
+            ${escHtml(o.date || '')} / ${escHtml(o.staff || '')} / ${o.itemCount || 0}件
+          </div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;margin-left:8px">
+          <div class="history-no">${escHtml(o.orderNo || '')}</div>
+          <div style="font-size:11px;color:var(--text-light)">${escHtml(formatHistoryDate(o.createdAt || ''))}</div>
+        </div>
+      </div>
+      <div class="history-detail" style="display:none;margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)">
+        <div class="spinner" style="font-size:12px"></div>
+      </div>
+    </div>`).join('');
+}
+
+async function toggleHistoryDetail(el, orderNo) {
+  const detailDiv = el.querySelector('.history-detail');
+  if (detailDiv.style.display !== 'none') {
+    detailDiv.style.display = 'none';
+    return;
+  }
+  detailDiv.style.display = 'block';
+  // すでに内容が取得済み（spinnerでなければスキップ）
+  if (!detailDiv.querySelector('.spinner')) return;
+
+  try {
+    const res = await gasGet({ action: 'getOrderDetail', orderNo });
+    if (res.success && res.items && res.items.length > 0) {
+      detailDiv.innerHTML = res.items.map(item => `
+        <div style="display:flex;gap:6px;padding:4px 0;border-bottom:1px solid var(--border);font-size:13px">
+          <span style="flex:1;min-width:0">${item.isHandwritten ? '<span class="badge-hw">※</span> ' : ''}${escHtml(item.name)}</span>
+          <span style="font-weight:700;white-space:nowrap">${item.qty}${escHtml(item.unit || '')}</span>
+        </div>
+        ${item.memo ? `<div style="font-size:12px;color:var(--text-light);padding:2px 0 4px 0">　📝 ${escHtml(item.memo)}</div>` : ''}`
+      ).join('');
+    } else {
+      detailDiv.innerHTML = '<div style="font-size:13px;color:var(--text-light)">明細データがありません</div>';
+    }
+  } catch(e) {
+    detailDiv.innerHTML = '<div style="font-size:13px;color:var(--danger)">読み込みエラー</div>';
   }
 }
 
@@ -2253,8 +2349,29 @@ function escAttr(str) {
 =================================================== */
 function normalizeKana(str) {
   if (!str) return '';
+  // 半角カタカナ → 全角カタカナ（濁点・半濁点を合成）
+  const HAN = 'ｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ･ｰ';
+  const ZEN = 'ヲァィゥェォャュョッーアイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワン・ー';
+  let s = str.replace(/[\uFF65-\uFF9F]/g, ch => {
+    const i = HAN.indexOf(ch);
+    return i >= 0 ? ZEN[i] : ch;
+  });
+  // 濁点合成（例: カ+゛→ガ）
+  s = s.replace(/([ウカキクケコサシスセソタチツテトハヒフヘホ])゛/g, (_, c) => {
+    const from = 'ウカキクケコサシスセソタチツテトハヒフヘホ';
+    const to   = 'ヴガギグゲゴザジズゼゾダヂヅデドバビブベボ';
+    const i = from.indexOf(c);
+    return i >= 0 ? to[i] : _;
+  });
+  // 半濁点合成（例: ハ+゜→パ）
+  s = s.replace(/([ハヒフヘホ])゜/g, (_, c) => {
+    const from = 'ハヒフヘホ';
+    const to   = 'パピプペポ';
+    const i = from.indexOf(c);
+    return i >= 0 ? to[i] : _;
+  });
   // ひらがな(U+3041〜U+3096) → カタカナ(+0x60)
-  return str.replace(/[\u3041-\u3096]/g, ch =>
+  return s.replace(/[\u3041-\u3096]/g, ch =>
     String.fromCharCode(ch.charCodeAt(0) + 0x60));
 }
 
@@ -2281,6 +2398,13 @@ function updateMemoDatalist() {
   if (!dl) return;
   const hist = getMemoHistory();
   dl.innerHTML = hist.map(m => `<option value="${escHtml(m)}">`).join('');
+}
+
+function clearMemoHistory() {
+  if (!confirm('備考の入力履歴をすべて削除しますか？')) return;
+  localStorage.removeItem(LS_MEMO_HIST);
+  updateMemoDatalist();
+  showToast('備考履歴を削除しました', 'success');
 }
 
 </script>
