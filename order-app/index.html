@@ -995,7 +995,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION   = 'v1.3.0';
+const APP_VERSION   = 'v1.4.0';
 const GAS_URL       = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const LS_MASTER     = 'bf_pm';       // 商品マスターキャッシュ
 const LS_MASTER_DATE= 'bf_pm_date';  // 読込日（YYYY-MM-DD）
@@ -1174,19 +1174,21 @@ function parseProductCSV(text, fileName) {
       unit:          findColIdx(headers, '単位名'),
       supplierCD:    findColIdx(headers, '仕入先CD'),
       jan:           findColIdx(headers, 'JANCD'),
-      purchasePrice: findColIdx(headers, '仕入単価')  // T列：仕入単価（任意）
+      purchasePrice: findColIdx(headers, '仕入単価'),  // T列：仕入単価（任意）
+      discontinued:  findColIdx(headers, '廃番')       // X列：廃番（任意）
     };
 
-    // 必須列チェック（仕入単価は任意なのでチェック対象外）
+    // 必須列チェック（仕入単価・廃番は任意なのでチェック対象外）
     const requiredCols = ['code','name','kana','unit','supplierCD','jan'];
     const missing = requiredCols.filter(k => colMap[k] === -1);
     if (missing.length > 0) {
       showToast('必要な列が見つかりません: ' + missing.join(', '), 'error');
       return;
     }
-    // 仕入単価列の有無をログ
     const hasPriceCol = colMap.purchasePrice !== -1;
-    if (!hasPriceCol) console.warn('仕入単価列が見つかりません。仕入金額合計は表示されません。');
+    const hasDisconCol = colMap.discontinued !== -1;
+    if (!hasPriceCol)  console.warn('仕入単価列が見つかりません。仕入金額合計は表示されません。');
+    if (!hasDisconCol) console.warn('廃番列が見つかりません。廃番商品は除外されません。');
 
     const products = [];
     for (let i = 1; i < lines.length; i++) {
@@ -1202,7 +1204,8 @@ function parseProductCSV(text, fileName) {
         // 仕入単価：カンマ区切り数値も考慮して数値化
         purchasePrice: hasPriceCol
           ? parseFloat(cleanCell(cols[colMap.purchasePrice]).replace(/,/g, '')) || 0
-          : 0
+          : 0,
+        discontinued: hasDisconCol ? cleanCell(cols[colMap.discontinued]) : ''
       };
       if (p.name) products.push(p);
     }
@@ -1465,6 +1468,13 @@ function processJanCode(jan) {
   // 商品マスターから検索
   const found = productMaster.find(p => p.jan === jan);
   if (found) {
+    // 廃番チェック
+    if (found.discontinued === '廃番') {
+      if (!confirm(`「${found.name}」は廃番商品です。\nそれでも追加しますか？`)) {
+        setTimeout(focusScanInput, 100);
+        return;
+      }
+    }
     openQtyModal(found, false);
   } else {
     // 未発見モーダルを表示
@@ -1500,12 +1510,17 @@ function doSearch(kw) {
   }
 
   const kwLower = kw.toLowerCase();
-  const results = productMaster.filter(p =>
-    p.name.toLowerCase().includes(kwLower) ||
-    (p.kana && p.kana.toLowerCase().includes(kwLower)) ||
-    (p.code && p.code.toLowerCase().includes(kwLower)) ||
-    (p.jan  && p.jan.includes(kw))
-  ).slice(0, 20);
+  const results = productMaster.filter(p => {
+    // ① 廃番除外
+    if (p.discontinued === '廃番') return false;
+    // ② 選択中の発注先（仕入先CD）に絞込
+    if (currentOrder.supplierCode && p.supplierCD !== currentOrder.supplierCode) return false;
+    // ③ キーワード部分一致（商品名・かな・コード・JANコード）
+    return p.name.toLowerCase().includes(kwLower) ||
+      (p.kana && p.kana.toLowerCase().includes(kwLower)) ||
+      (p.code && p.code.toLowerCase().includes(kwLower)) ||
+      (p.jan  && p.jan.includes(kw));
+  }).slice(0, 20);
 
   if (results.length === 0) {
     resultsEl.innerHTML = '<div style="padding:12px;text-align:center;color:var(--text-light);font-size:14px">該当なし</div>';
