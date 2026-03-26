@@ -1,6 +1,6 @@
 // ============================================================
 // Beaufield 発注アプリ - Google Apps Script バックエンド
-// Version: v1.1.2
+// Version: v1.1.3
 // ============================================================
 // [重要] SPREADSHEET_ID を必ず自分のスプレッドシートIDに変更してください
 //   → Googleスプレッドシートを開き、URLの /d/XXXXX/edit の
@@ -8,7 +8,7 @@
 // ============================================================
 
 const SPREADSHEET_ID  = 'ここにスプレッドシートIDを貼り付けてください';
-const VERSION         = 'v1.1.2';
+const VERSION         = 'v1.1.3';
 
 // シート名定数
 const SHEET_HISTORY   = '発注履歴';
@@ -114,14 +114,15 @@ function getMasters() {
 }
 
 // ============================================================
-// GET: 発注履歴取得（直近30件・新しい順）
-// レスポンス: { success: true, orders: [...] }
+// GET: 発注履歴取得（直近20件・新しい順）
+//      + 直近20件の明細から商品ごとの最新注文情報（productHistory）を返す
+// レスポンス: { success: true, orders: [...], productHistory: {...} }
 // ============================================================
 function getOrders() {
   const sh   = getSheet(SHEET_HISTORY);
   const data = sh.getDataRange().getValues();
 
-  if (data.length <= 1) return { success: true, orders: [] };
+  if (data.length <= 1) return { success: true, orders: [], productHistory: {} };
 
   const orders = data.slice(1)
     .filter(r => r[0] !== '' && r[0] !== null)
@@ -139,9 +140,37 @@ function getOrders() {
       createdAt:    cellToStr(r[8])
     }))
     .reverse()
-    .slice(0, 30);
+    .slice(0, 20);
 
-  return { success: true, orders };
+  // 直近20件の発注明細から商品ごとの最新注文情報を構築
+  // 追加のAPI通信なし（発注明細シートをここで一括読込）
+  const orderNos     = new Set(orders.map(o => o.orderNo));
+  const orderDateMap = {};
+  orders.forEach(o => { orderDateMap[o.orderNo] = o.date; });
+
+  const itemsSh   = getSheet(SHEET_ITEMS);
+  const itemsData = itemsSh.getDataRange().getValues();
+  const productHistory = {}; // キー: 商品コードまたはJANコード → { date, qty, unit }
+
+  itemsData.slice(1).forEach(r => {
+    const orderNo = String(r[0] || '').trim();
+    if (!orderNos.has(orderNo)) return; // 直近20件以外はスキップ
+
+    const jan  = String(r[1] || '').trim();
+    const code = String(r[2] || '').trim();
+    const qty  = r[4] || 0;
+    const unit = String(r[5] || '').trim();
+    const date = orderDateMap[orderNo] || '';
+
+    // 商品コードとJANコードの両方をキーとして登録（より新しい日付で上書き）
+    [code, jan].filter(Boolean).forEach(key => {
+      if (!productHistory[key] || date > productHistory[key].date) {
+        productHistory[key] = { date, qty, unit };
+      }
+    });
+  });
+
+  return { success: true, orders, productHistory };
 }
 
 // ============================================================
