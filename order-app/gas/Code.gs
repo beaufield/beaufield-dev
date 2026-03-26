@@ -1,14 +1,14 @@
 // ============================================================
 // Beaufield 発注アプリ - Google Apps Script バックエンド
-// Version: v1.0.0
+// Version: v1.1.1
 // ============================================================
-// [重要] デプロイ前に SPREADSHEET_ID を必ず設定してください
-//   → Googleスプレッドシートを新規作成 → URLの /d/XXXXX/edit の
+// [重要] SPREADSHEET_ID を必ず自分のスプレッドシートIDに変更してください
+//   → Googleスプレッドシートを開き、URLの /d/XXXXX/edit の
 //     XXXXX 部分をコピーして下記に貼り付けてください
 // ============================================================
 
 const SPREADSHEET_ID  = 'ここにスプレッドシートIDを貼り付けてください';
-const VERSION         = 'v1.1.0';
+const VERSION         = 'v1.1.1';
 
 // シート名定数
 const SHEET_HISTORY   = '発注履歴';
@@ -74,6 +74,18 @@ function getSheet(name) {
 }
 
 // ============================================================
+// ヘルパー: セル値を安全に文字列化
+// スプレッドシートが日付型として認識した値は Dateオブジェクトで返ってくる。
+// そのまま String() すると GMT形式になるため、Utilities.formatDate で変換する。
+// ============================================================
+function cellToStr(val) {
+  if (val instanceof Date) {
+    return Utilities.formatDate(val, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm');
+  }
+  return String(val || '');
+}
+
+// ============================================================
 // GET: マスターデータ一括取得
 // レスポンス: { success: true, suppliers: [...], staff: [...] }
 // ============================================================
@@ -123,7 +135,8 @@ function getOrders() {
       staff:        String(r[5] || ''),
       itemCount:    r[6] || 0,
       outputType:   String(r[7] || ''),
-      createdAt:    String(r[8] || '')
+      // r[8] はスプレッドシートが日付型として認識する場合があるため cellToStr で変換
+      createdAt:    cellToStr(r[8])
     }))
     .reverse()   // 登録順（下から）→ 新しい順
     .slice(0, 30);
@@ -247,10 +260,8 @@ function saveSupplier(p) {
   const now  = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
 
   if (mode === 'add') {
-    // 重複チェック
     const exists = data.slice(1).some(r => String(r[0]).trim() === code);
     if (exists) return { success: false, error: 'コード「' + code + '」はすでに登録されています' };
-
     sh.appendRow([code, name, fax, now]);
     return { success: true };
 
@@ -292,10 +303,8 @@ function saveStaff(p) {
   const now  = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
 
   if (mode === 'add') {
-    // 重複チェック
     const exists = data.slice(1).some(r => String(r[0]).trim() === name);
     if (exists) return { success: false, error: '「' + name + '」はすでに登録されています' };
-
     sh.appendRow([name, now]);
     return { success: true };
 
@@ -323,7 +332,6 @@ function saveStaff(p) {
 function initializeSheets() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
 
-  // シート作成ヘルパー（存在しない場合のみ作成・ヘッダー設定）
   function ensureSheet(name, headers) {
     let sh = ss.getSheetByName(name);
     if (!sh) {
@@ -337,19 +345,16 @@ function initializeSheets() {
     return sh;
   }
 
-  // シート①: 発注履歴
   ensureSheet(SHEET_HISTORY, [
     '発注No', '発注日', '発注先コード', '発注先名', 'FAX番号',
     '担当者', '品目数', '出力方法', '登録日時'
   ]);
 
-  // シート②: 発注明細
   ensureSheet(SHEET_ITEMS, [
     '発注No', 'JANコード', 'Beaufieldコード', '商品名',
     '数量', '単位', '備考', '手書きフラグ', '登録日時'
   ]);
 
-  // シート③: 発注先マスター（初期データあり）
   const suppSh = ensureSheet(SHEET_SUPPLIERS, ['コード', '名称', 'FAX', '更新日時']);
   if (suppSh.getLastRow() <= 1) {
     const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
@@ -368,7 +373,6 @@ function initializeSheets() {
     Logger.log('発注先マスターに初期データを登録しました');
   }
 
-  // シート④: 担当者マスター（初期データあり）
   const staffSh = ensureSheet(SHEET_STAFF, ['名前', '更新日時']);
   if (staffSh.getLastRow() <= 1) {
     const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
