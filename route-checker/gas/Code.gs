@@ -1,11 +1,12 @@
 // ============================================================
 // Beaufield ルート訪問チェッカー - Google Apps Script
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================================
-// ⚠️ デプロイ前に SPREADSHEET_ID を必ず設定してください
+// [重要] デプロイ前に SPREADSHEET_ID を必ず設定してください
 // ============================================================
 
-const SPREADSHEET_ID = 'YOUR_SPREADSHEET_ID_HERE'; // ← スプレッドシートIDを設定
+const SPREADSHEET_ID = '1yVd3yI9v8acjyKaM-fCs_VoBnOx44mnRDOBVGzBB288';
+const VERSION = '1.1.4';
 
 // シート名定数
 const SHEET_USERS      = 'users';
@@ -26,6 +27,7 @@ function doGet(e) {
   try {
     switch (action) {
       case 'login':           return _jsonResponse(login(data));
+      case 'getPublicUsers':  return _jsonResponse(getPublicUsers());
       case 'getMyRoute':      return _jsonResponse(getMyRoute(data));
       case 'getMySalons':     return _jsonResponse(getMySalons(data));
       case 'getTodayLogs':    return _jsonResponse(getTodayLogs(data));
@@ -61,6 +63,7 @@ function doPost(e) {
       case 'resetPin':         return _jsonResponse(resetPin(data));
       case 'changePin':        return _jsonResponse(changePin(data));
       case 'updateSalonAdmin': return _jsonResponse(updateSalonAdmin(data));
+      case 'updateUserOrder':  return _jsonResponse(updateUserOrder(data));
       default:                 return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
@@ -71,6 +74,27 @@ function doPost(e) {
 // ============================================================
 // GETアクション実装
 // ============================================================
+
+/**
+ * getPublicUsers: アクティブなユーザーの氏名・ID・チーム・ロールを返す（認証不要・ログイン/履歴フィルタ用）
+ * 入力: なし
+ * 出力: { users: [{ user_id, name, role, team, display_order }] }
+ * display_order 列があれば昇順ソート（なければ行順）
+ */
+function getPublicUsers() {
+  const rows  = _readSheet(SHEET_USERS);
+  const users = rows
+    .filter(r => r.active === true)
+    .sort((a, b) => (Number(a.display_order) || 9999) - (Number(b.display_order) || 9999))
+    .map(r => ({
+      user_id:       r.user_id,
+      name:          r.name,
+      role:          r.role,
+      team:          r.team,
+      display_order: Number(r.display_order) || 9999
+    }));
+  return _ok({ users: users });
+}
 
 /**
  * login: user_id + PIN で認証し、ユーザー情報を返す
@@ -84,9 +108,10 @@ function login(data) {
   }
 
   const rows = _readSheet(SHEET_USERS);
+  // Sheetsが'0000'を数値0として保存する場合があるため padStart で正規化して比較
   const user = rows.find(r =>
     r.user_id === user_id &&
-    String(r.pin) === String(pin) &&
+    String(r.pin).padStart(4, '0') === String(pin) &&
     r.active === true
   );
 
@@ -129,14 +154,15 @@ function getMySalons(data) {
   const { user_id } = data;
   if (!user_id) return _err('user_idは必須です');
 
-  const dayOrder = ['月', '火', '水', '木', '金', '土'];
+  const dayOrder = ['月', '火', '水', '木', '金', '土', '他'];
   const salons   = _readSheet(SHEET_SALONS);
 
   const mySalons = salons
     .filter(s => s.owner_user_id === user_id && s.active === true)
     .sort((a, b) => {
-      // 曜日順 → 表示順（sort_order）
-      const dayDiff = dayOrder.indexOf(a.visit_day) - dayOrder.indexOf(b.visit_day);
+      // 曜日順（他は末尾）→ 表示順（sort_order）
+      const ai = dayOrder.indexOf(a.visit_day); const bi = dayOrder.indexOf(b.visit_day);
+      const dayDiff = (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
       if (dayDiff !== 0) return dayDiff;
       return Number(a.sort_order) - Number(b.sort_order);
     });
@@ -213,48 +239,60 @@ function getVisitHistory(data) {
   allUsers.forEach(u => { userIndex[u.user_id] = u; });
 
   // 各サロンの行データを生成
-  const dayOrder = ['月', '火', '水', '木', '金', '土'];
+  const dayOrder = ['月', '火', '水', '木', '金', '土', '他'];
   const rows = targetSalons
     .sort((a, b) => {
-      // ユーザー順 → 曜日順 → sort_order順
+      // ユーザー順 → 曜日順（他は末尾）→ sort_order順
       const userDiff = user_ids.indexOf(a.owner_user_id) - user_ids.indexOf(b.owner_user_id);
       if (userDiff !== 0) return userDiff;
-      const dayDiff = dayOrder.indexOf(a.visit_day) - dayOrder.indexOf(b.visit_day);
+      const ai = dayOrder.indexOf(a.visit_day); const bi = dayOrder.indexOf(b.visit_day);
+      const dayDiff = (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
       if (dayDiff !== 0) return dayDiff;
       return Number(a.sort_order) - Number(b.sort_order);
     })
     .map(salon => {
       const user      = userIndex[salon.owner_user_id];
       const userName  = user ? user.name : '不明';
-      const labels    = weekLabels[salon.visit_day] || [];
       const visited   = logsBySalon[salon.salon_id] || new Set();
 
-      // 週ラベルとチェック有無のセルを生成
-      const cells = labels.map(wl => ({
-        week_label: wl.label,
-        date:       wl.date,
-        visited:    visited.has(wl.date)
-      }));
+      let cells, alert, visitCount;
 
-      // 4週連続未訪問アラート判定
-      const alert = _checkFourWeekAlert(salon, allLogs, today);
+      if (salon.visit_day === '他') {
+        // 曜日なし：週ラベルなし・訪問回数のみ集計・アラートなし
+        visitCount = [...visited].filter(d => d >= startStr && d <= endStr).length;
+        cells      = [];
+        alert      = false;
+      } else {
+        const labels = weekLabels[salon.visit_day] || [];
+        visitCount   = 0;
+        cells        = labels.map(wl => ({
+          week_label: wl.label,
+          date:       wl.date,
+          visited:    visited.has(wl.date)
+        }));
+        // 4週連続未訪問アラート判定
+        alert = _checkFourWeekAlert(salon, allLogs, today);
+      }
 
       return {
-        salon_id:   salon.salon_id,
-        salon_name: salon.salon_name,
-        user_id:    salon.owner_user_id,
-        user_name:  userName,
-        visit_day:  salon.visit_day,
-        sort_order: Number(salon.sort_order),
-        cells:      cells,
-        alert:      alert
+        salon_id:    salon.salon_id,
+        salon_name:  salon.salon_name,
+        code:        salon.code || '',
+        user_id:     salon.owner_user_id,
+        user_name:   userName,
+        visit_day:   salon.visit_day,
+        sort_order:  Number(salon.sort_order),
+        cells:       cells,
+        alert:       alert,
+        visit_count: visitCount  // 「他」サロン用：当月の実訪問数
       };
     });
 
-  // ヘッダー用の週ラベル一覧（表示対象曜日のみ）
+  // ヘッダー用の週ラベル一覧（「他」は除外、表示対象曜日のみ）
+  const fixedDayOrder = ['月', '火', '水', '木', '金', '土'];
   const targetDays = (day_of_week && day_of_week !== 'all')
-    ? [day_of_week]
-    : dayOrder;
+    ? (day_of_week === '他' ? [] : [day_of_week])
+    : fixedDayOrder;
 
   const weeks = [];
   targetDays.forEach(day => {
@@ -277,13 +315,16 @@ function getUsers(data) {
   if (!requestUser || requestUser.role !== 'admin') return _err('権限がありません');
 
   const rows  = _readSheet(SHEET_USERS);
-  const users = rows.map(r => ({
-    user_id: r.user_id,
-    name:    r.name,
-    role:    r.role,
-    team:    r.team,
-    active:  r.active
-  }));
+  const users = rows
+    .sort((a, b) => (Number(a.display_order) || 9999) - (Number(b.display_order) || 9999))
+    .map(r => ({
+      user_id:       r.user_id,
+      name:          r.name,
+      role:          r.role,
+      team:          r.team,
+      active:        r.active,
+      display_order: Number(r.display_order) || 9999
+    }));
 
   return _ok({ users: users });
 }
@@ -351,16 +392,17 @@ function checkVisit(data) {
 
 /**
  * addSalon: 新規サロン登録
- * 入力: { user_id, salon_name, visit_day }
+ * 入力: { user_id, salon_name, visit_day, code? }
  * 出力: { salon_id }
+ * salons シート列: salon_id(1), salon_name(2), owner_user_id(3), visit_day(4), sort_order(5), active(6), code(7)
  */
 function addSalon(data) {
-  const { user_id, salon_name, visit_day } = data;
+  const { user_id, salon_name, visit_day, code } = data;
   if (!user_id || !salon_name || !visit_day) {
     return _err('user_id、salon_name、visit_dayは必須です');
   }
-  if (!DAY_MAP.hasOwnProperty(visit_day)) {
-    return _err('visit_dayは月/火/水/木/金/土のいずれかを指定してください');
+  if (!DAY_MAP.hasOwnProperty(visit_day) && visit_day !== '他') {
+    return _err('visit_dayは月/火/水/木/金/土/他のいずれかを指定してください');
   }
 
   const sheet  = _getSheet(SHEET_SALONS);
@@ -373,18 +415,19 @@ function addSalon(data) {
   // タイムスタンプベースの salon_id（重複回避）
   const salonId = 'S' + Utilities.formatDate(new Date(), 'Asia/Tokyo', 'MMddHHmmssSSS');
 
-  sheet.appendRow([salonId, salon_name, user_id, visit_day, maxOrder + 1, true]);
+  sheet.appendRow([salonId, salon_name, user_id, visit_day, maxOrder + 1, true, code || '']);
 
   return _ok({ salon_id: salonId });
 }
 
 /**
- * updateSalon: サロン情報更新（名称・曜日・表示順）
- * 入力: { user_id, salon_id, salon_name?, visit_day?, sort_order? }
+ * updateSalon: サロン情報更新（名称・曜日・表示順・コード）
+ * 入力: { user_id, salon_id, salon_name?, visit_day?, sort_order?, code? }
  * 出力: { salon_id }
+ * salons シート列: salon_id(1), salon_name(2), owner_user_id(3), visit_day(4), sort_order(5), active(6), code(7)
  */
 function updateSalon(data) {
-  const { user_id, salon_id, salon_name, visit_day, sort_order } = data;
+  const { user_id, salon_id, salon_name, visit_day, sort_order, code } = data;
   if (!user_id || !salon_id) return _err('user_idとsalon_idは必須です');
 
   const requestUser = _findUser(user_id);
@@ -402,6 +445,7 @@ function updateSalon(data) {
       if (salon_name !== undefined) sheet.getRange(i + 1, 2).setValue(salon_name);
       if (visit_day  !== undefined) sheet.getRange(i + 1, 4).setValue(visit_day);
       if (sort_order !== undefined) sheet.getRange(i + 1, 5).setValue(Number(sort_order));
+      if (code       !== undefined) sheet.getRange(i + 1, 7).setValue(code);
       return _ok({ salon_id: salon_id });
     }
   }
@@ -562,7 +606,7 @@ function changePin(data) {
 
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][0] === user_id) {
-      if (String(rows[i][2]) !== String(current_pin)) {
+      if (String(rows[i][2]).padStart(4, '0') !== String(current_pin)) {
         return _err('現在のPINが正しくありません');
       }
       sheet.getRange(i + 1, 3).setValue(String(new_pin));
@@ -574,12 +618,103 @@ function changePin(data) {
 }
 
 /**
+ * updateUserOrder: ユーザー表示順の一括更新（admin のみ）
+ * 入力: { user_id, order_list: [{ user_id, display_order }, ...] }
+ * 出力: { updated: N }
+ */
+function updateUserOrder(data) {
+  const { user_id, order_list } = data;
+  if (!user_id || !order_list || !Array.isArray(order_list)) {
+    return _err('user_idとorder_list（配列）は必須です');
+  }
+
+  const requestUser = _findUser(user_id);
+  if (!requestUser || requestUser.role !== 'admin') return _err('権限がありません');
+
+  const sheet   = _getSheet(SHEET_USERS);
+  const rows    = sheet.getDataRange().getValues();
+  const headers = rows[0];
+
+  // display_order 列のインデックスを取得（なければエラー）
+  const colIdx = headers.indexOf('display_order');
+  if (colIdx === -1) return _err('display_order列が見つかりません。initDisplayOrder()を先に実行してください');
+
+  // user_id → 行番号のインデックス
+  const idToRowNum = {};
+  rows.forEach((row, i) => { if (i > 0) idToRowNum[row[0]] = i + 1; });
+
+  order_list.forEach(item => {
+    const rowNum = idToRowNum[item.user_id];
+    if (rowNum) sheet.getRange(rowNum, colIdx + 1).setValue(Number(item.display_order));
+  });
+
+  return _ok({ updated: order_list.length });
+}
+
+/**
+ * initSalonCode: salons シートに code 列（7列目）を追加する
+ * ※ 既存のシートに code 列がない場合に1回だけ手動実行する
+ */
+function initSalonCode() {
+  const sheet   = _getSheet(SHEET_SALONS);
+  const data    = sheet.getDataRange().getValues();
+  const headers = data[0];
+
+  const colIdx = headers.indexOf('code');
+  if (colIdx !== -1) {
+    Logger.log('✅ code列はすでに存在します（列' + (colIdx + 1) + '）');
+    return;
+  }
+
+  // 末尾に code 列を追加
+  const newColNum = headers.length + 1;
+  sheet.getRange(1, newColNum).setValue('code');
+  // 既存行には空文字を設定
+  if (data.length > 1) {
+    const emptyValues = Array(data.length - 1).fill(['']);
+    sheet.getRange(2, newColNum, data.length - 1, 1).setValues(emptyValues);
+  }
+  Logger.log('✅ code列をsalonsシートに追加しました（列' + newColNum + '）');
+}
+
+/**
+ * initDisplayOrder: users シートに display_order 列を追加して連番を設定する
+ * ※ 既存のシートに display_order 列がない場合に1回だけ手動実行する
+ */
+function initDisplayOrder() {
+  const sheet   = _getSheet(SHEET_USERS);
+  const data    = sheet.getDataRange().getValues();
+  const headers = data[0];
+
+  let colIdx = headers.indexOf('display_order');
+
+  if (colIdx === -1) {
+    // 列が存在しない → 末尾に追加
+    const newColNum = headers.length + 1;
+    sheet.getRange(1, newColNum).setValue('display_order');
+    for (let i = 1; i < data.length; i++) {
+      sheet.getRange(i + 1, newColNum).setValue(i);
+    }
+    Logger.log('✅ display_order列を追加しました（' + (data.length - 1) + '件）');
+  } else {
+    // 列が存在する → 空のセルだけ連番で補完
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][colIdx] === '' || data[i][colIdx] === null) {
+        sheet.getRange(i + 1, colIdx + 1).setValue(i);
+      }
+    }
+    Logger.log('✅ display_orderを補完しました');
+  }
+}
+
+/**
  * updateSalonAdmin: サロン更新（admin 専用・全件対象）
- * 入力: { user_id, salon_id, salon_name?, owner_user_id?, visit_day?, active? }
+ * 入力: { user_id, salon_id, salon_name?, owner_user_id?, visit_day?, active?, code? }
  * 出力: { salon_id }
+ * salons シート列: salon_id(1), salon_name(2), owner_user_id(3), visit_day(4), sort_order(5), active(6), code(7)
  */
 function updateSalonAdmin(data) {
-  const { user_id, salon_id, salon_name, owner_user_id, visit_day, active } = data;
+  const { user_id, salon_id, salon_name, owner_user_id, visit_day, active, code } = data;
   if (!user_id || !salon_id) return _err('user_idとsalon_idは必須です');
 
   const requestUser = _findUser(user_id);
@@ -594,6 +729,7 @@ function updateSalonAdmin(data) {
       if (owner_user_id !== undefined) sheet.getRange(i + 1, 3).setValue(owner_user_id);
       if (visit_day     !== undefined) sheet.getRange(i + 1, 4).setValue(visit_day);
       if (active        !== undefined) sheet.getRange(i + 1, 6).setValue(active === true || active === 'true');
+      if (code          !== undefined) sheet.getRange(i + 1, 7).setValue(code);
       return _ok({ salon_id: salon_id });
     }
   }
@@ -773,6 +909,8 @@ function setupSheets() {
       ['U007', '営業B1',           '0000', 'sales',    'B',   true],
       ['U008', '営業B2',           '0000', 'sales',    'B',   true],
     ];
+    // PIN列（C列）を書式なしテキストに設定してから書き込む（'0000'が数値0に変換されるのを防止）
+    usersSheet.getRange(2, 3, initUsers.length, 1).setNumberFormat('@STRING@');
     usersSheet.getRange(2, 1, initUsers.length, initUsers[0].length).setValues(initUsers);
   }
 
