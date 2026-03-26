@@ -1,0 +1,2097 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Beaufield ルート訪問チェッカー</title>
+  <style>
+    :root {
+      --primary: #2563eb;
+      --danger:  #dc2626;
+      --success: #16a34a;
+      --warning: #d97706;
+      --text:    #1f2937;
+      --border:  #e5e7eb;
+      --bg:      #f3f4f6;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    button, input, select { font-family: inherit; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Yu Gothic', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      max-width: 480px;
+      margin: 0 auto;
+      min-height: 100vh;
+    }
+
+    /* Loading */
+    #loading {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.45);
+      justify-content: center; align-items: center;
+      z-index: 2000;
+    }
+    .spinner {
+      width: 48px; height: 48px;
+      border: 5px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Toast */
+    #toast {
+      display: none; position: fixed;
+      bottom: 76px; left: 50%; transform: translateX(-50%);
+      padding: 11px 18px; border-radius: 8px;
+      font-size: 13px; font-weight: 600;
+      z-index: 1900; max-width: 340px; text-align: center;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    }
+    #toast.success { background: var(--success); color: #fff; }
+    #toast.error   { background: var(--danger);  color: #fff; }
+    #toast.warning { background: var(--warning); color: #fff; }
+
+    /* Header */
+    .header {
+      background: var(--primary); color: #fff;
+      padding: 14px 16px; display: flex; align-items: center; gap: 10px;
+      position: sticky; top: 0; z-index: 100; min-height: 52px;
+    }
+    .header h1 { flex: 1; font-size: 17px; font-weight: 700; }
+    .header-btn {
+      background: rgba(255,255,255,0.15); border: none; color: #fff;
+      font-size: 13px; font-weight: 600; cursor: pointer;
+      padding: 6px 10px; border-radius: 6px; min-height: 32px; white-space: nowrap;
+    }
+    .header-btn:active { background: rgba(255,255,255,0.3); }
+
+    /* Content */
+    .content { padding: 16px; padding-bottom: 76px; }
+
+    /* Section header */
+    .section-header {
+      font-size: 12px; font-weight: 700; color: #6b7280;
+      letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 8px;
+    }
+
+    /* Bottom nav */
+    .bottom-nav {
+      position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 100%; max-width: 480px; height: 60px;
+      background: #ffffff; border-top: 1px solid var(--border);
+      display: flex; z-index: 100;
+    }
+    .nav-item {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 2px;
+      font-size: 10px; color: #9ca3af;
+      cursor: pointer; border: none; background: none;
+      padding: 4px 0; min-height: 44px;
+    }
+    .nav-item.active { color: var(--primary); }
+    .nav-icon { font-size: 20px; line-height: 1; }
+
+    /* Login */
+    .login-hero { text-align: center; padding: 48px 16px 28px; }
+    .login-logo { font-size: 26px; font-weight: 900; color: var(--primary); }
+    .login-subtitle { font-size: 13px; color: #6b7280; margin-top: 4px; }
+    .user-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .user-btn {
+      background: #ffffff; border: 2px solid var(--border);
+      border-radius: 12px; padding: 18px 8px;
+      text-align: center; cursor: pointer;
+      font-size: 14px; font-weight: 700; color: var(--text);
+      min-height: 64px; line-height: 1.3;
+    }
+    .user-btn:active { border-color: var(--primary); background: #eff6ff; }
+
+    /* PIN Modal */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.5); z-index: 1000;
+      align-items: flex-end; justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal-sheet {
+      background: #ffffff; border-radius: 20px 20px 0 0;
+      padding: 24px 20px 36px; width: 100%; max-width: 480px;
+    }
+    .modal-sheet.scrollable { max-height: 72vh; overflow-y: auto; }
+    .modal-title {
+      text-align: center; font-size: 16px; font-weight: 700;
+      margin-bottom: 24px; color: var(--text);
+    }
+    .modal-header { display: flex; align-items: center; margin-bottom: 16px; }
+    .modal-header h3 { flex: 1; font-size: 16px; font-weight: 700; }
+    .modal-close {
+      background: none; border: none; font-size: 26px;
+      line-height: 1; cursor: pointer; color: #9ca3af; padding: 2px 4px;
+    }
+
+    /* PIN display */
+    .pin-display { display: flex; justify-content: center; gap: 18px; margin-bottom: 8px; }
+    .pin-dot {
+      width: 20px; height: 20px; border-radius: 50%;
+      border: 2.5px solid var(--border);
+      transition: background 0.12s, border-color 0.12s;
+    }
+    .pin-dot.filled { background: var(--primary); border-color: var(--primary); }
+    .pin-error {
+      text-align: center; color: var(--danger);
+      font-size: 13px; font-weight: 600;
+      min-height: 24px; margin-bottom: 12px;
+    }
+
+    /* PIN numpad */
+    .pin-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .pin-key {
+      height: 58px; border-radius: 12px; border: 1.5px solid var(--border);
+      background: #f9fafb; font-size: 24px; font-weight: 600;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      color: var(--text);
+    }
+    .pin-key:active { background: #e5e7eb; transform: scale(0.96); }
+    .pin-key.key-cancel { color: var(--danger); font-size: 18px; }
+    .pin-key.key-empty  { border: none; background: none; cursor: default; }
+
+    /* Check screen */
+    .day-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: var(--primary); color: #fff;
+      padding: 5px 14px; border-radius: 20px;
+      font-size: 13px; font-weight: 700; margin-bottom: 14px;
+    }
+    .salon-list { list-style: none; }
+    .salon-item {
+      background: #ffffff; border-radius: 12px;
+      padding: 14px; margin-bottom: 8px;
+      display: flex; align-items: center; gap: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+    }
+    .salon-item.checked { background: #f0fdf4; }
+    .salon-item.checked .salon-name { color: #6b7280; }
+    .salon-name { flex: 1; font-size: 15px; font-weight: 700; line-height: 1.3; }
+    .check-btn {
+      width: 46px; height: 46px; border-radius: 50%;
+      border: 2.5px solid var(--border);
+      background: #fff; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px; flex-shrink: 0; transition: all 0.15s;
+    }
+    .check-btn.checked { background: var(--success); border-color: var(--success); cursor: default; }
+    .check-btn:not(.checked):active { background: #eff6ff; border-color: var(--primary); }
+    .action-btn-group { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
+
+    /* Buttons */
+    .btn {
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      width: 100%; padding: 14px 16px; border: none;
+      border-radius: 12px; font-size: 15px; font-weight: 600;
+      cursor: pointer; min-height: 48px;
+    }
+    .btn:active { opacity: 0.85; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-outline { background: #fff; color: var(--primary); border: 2px solid var(--primary); }
+    .btn-ghost   { background: #f9fafb; color: var(--text); border: 1.5px solid var(--border); }
+
+    /* Form */
+    .input-label { display: block; font-size: 13px; font-weight: 600; color: #6b7280; margin-bottom: 6px; }
+    .text-input, .select-input {
+      width: 100%; padding: 12px 14px;
+      border: 1.5px solid var(--border); border-radius: 10px;
+      font-size: 15px; margin-bottom: 14px;
+      background: #fff; color: var(--text);
+    }
+    .text-input:focus, .select-input:focus { outline: none; border-color: var(--primary); }
+    .search-input {
+      width: 100%; padding: 12px 14px;
+      border: 1.5px solid var(--border); border-radius: 10px;
+      font-size: 15px; margin-bottom: 12px;
+      background: #fff; color: var(--text);
+    }
+    .search-input:focus { outline: none; border-color: var(--primary); }
+
+    /* Salon search list */
+    .salon-search-list {
+      background: #fff; border-radius: 10px;
+      overflow: hidden; border: 1.5px solid var(--border);
+    }
+    .salon-search-item {
+      padding: 13px 14px; border-bottom: 1px solid var(--border);
+      cursor: pointer; display: flex; align-items: center; justify-content: space-between;
+    }
+    .salon-search-item:last-child { border-bottom: none; }
+    .salon-search-item:active { background: #eff6ff; }
+    .salon-search-item-name { font-size: 14px; font-weight: 600; }
+    .salon-search-item-day  { font-size: 12px; color: #9ca3af; white-space: nowrap; }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center; padding: 36px 16px;
+      color: #9ca3af; font-size: 14px; line-height: 1.6;
+    }
+
+    /* Placeholder */
+    .placeholder-screen { text-align: center; padding: 64px 24px; }
+    .placeholder-icon  { font-size: 56px; margin-bottom: 16px; }
+    .placeholder-title { font-size: 18px; font-weight: 700; color: #6b7280; margin-bottom: 8px; }
+    .placeholder-msg   { font-size: 14px; color: #9ca3af; line-height: 1.6; }
+
+    /* Version */
+    .version-footer { text-align: center; color: #d1d5db; font-size: 11px; padding: 24px 0 8px; }
+
+    /* History filters */
+    .history-filters { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+    .filter-select {
+      flex: 1; min-width: 80px; padding: 8px 10px;
+      border: 1.5px solid var(--border); border-radius: 8px;
+      font-size: 13px; background: #fff; color: var(--text);
+    }
+    .filter-select:focus { outline: none; border-color: var(--primary); }
+
+    /* History matrix */
+    .matrix-wrap {
+      overflow-x: auto; border-radius: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+    }
+    .matrix-table { border-collapse: collapse; width: max-content; font-size: 12px; }
+    .matrix-table th {
+      background: var(--primary); color: #fff;
+      padding: 8px 10px; white-space: nowrap;
+      font-weight: 700; text-align: center;
+    }
+    .matrix-table th.salon-col {
+      background: #374151; text-align: left;
+      min-width: 130px; max-width: 180px;
+      position: sticky; left: 0; z-index: 2;
+    }
+    .matrix-table td {
+      padding: 7px 10px; border-bottom: 1px solid var(--border);
+      background: #fff; text-align: center; white-space: nowrap;
+    }
+    .matrix-table td.salon-col {
+      text-align: left; position: sticky; left: 0;
+      background: #fff; z-index: 1;
+      border-right: 1px solid var(--border);
+    }
+    .matrix-table tr:hover td         { background: #f9fafb; }
+    .matrix-table tr:hover td.salon-col { background: #f9fafb; }
+    .salon-col-name { font-weight: 700; font-size: 13px; display: block; }
+    .salon-col-user { font-size: 11px; color: #9ca3af; display: block; }
+    .cell-visited { color: var(--success); font-size: 15px; line-height: 1; }
+    .cell-na { background: #f3f4f6; }
+    .row-alert td            { background: #fee2e2 !important; }
+    .row-alert td.salon-col  { background: #fee2e2 !important; }
+    .alert-badge {
+      font-size: 10px; background: var(--danger); color: #fff;
+      border-radius: 4px; padding: 1px 4px;
+      display: inline-block; margin-top: 2px;
+    }
+    .history-summary {
+      font-size: 12px; color: #6b7280; margin-bottom: 10px;
+    }
+    .history-summary .alert-count { color: var(--danger); font-weight: 700; }
+
+    /* Salon management */
+    .salon-day-group { margin-bottom: 20px; }
+    .salon-day-label {
+      font-size: 12px; font-weight: 700; color: #6b7280;
+      letter-spacing: 0.06em; margin-bottom: 8px;
+      padding: 0 2px;
+    }
+    .salon-manage-item {
+      background: #fff; border-radius: 10px; padding: 12px 14px;
+      margin-bottom: 8px; display: flex; align-items: center; gap: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+    }
+    .salon-manage-info { flex: 1; min-width: 0; }
+    .salon-manage-name {
+      font-size: 15px; font-weight: 700;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .salon-manage-day { font-size: 12px; color: #9ca3af; margin-top: 2px; }
+    .salon-manage-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+    .sort-btn {
+      width: 36px; height: 36px; border-radius: 8px;
+      border: 1.5px solid var(--border); background: #f9fafb;
+      font-size: 14px; cursor: pointer; color: var(--text);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .sort-btn:disabled { opacity: 0.25; cursor: not-allowed; }
+    .sort-btn:not(:disabled):active { background: #e5e7eb; }
+    .edit-btn {
+      height: 36px; padding: 0 14px; border-radius: 8px;
+      border: 1.5px solid var(--primary); background: #fff; color: var(--primary);
+      font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap;
+    }
+    .edit-btn:active { background: #eff6ff; }
+    .danger-zone { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+    .danger-zone-title { font-size: 12px; color: #9ca3af; margin-bottom: 8px; }
+    .btn-danger { background: #fff; color: var(--danger); border: 1.5px solid var(--danger); }
+    .btn-danger:active { background: #fef2f2; }
+    .form-row { margin-bottom: 14px; }
+
+    /* Admin / Settings screen */
+    .settings-section { margin-bottom: 28px; }
+    .settings-section-title {
+      font-size: 12px; font-weight: 700; color: #6b7280;
+      letter-spacing: 0.06em; margin-bottom: 10px; padding: 0 2px;
+    }
+    .user-item {
+      background: #fff; border-radius: 10px; padding: 12px 14px;
+      margin-bottom: 8px; display: flex; align-items: center; gap: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+    }
+    .user-item.inactive { opacity: 0.45; }
+    .user-item-info { flex: 1; min-width: 0; }
+    .user-item-name { font-size: 15px; font-weight: 700; }
+    .user-item-sub  { font-size: 12px; color: #9ca3af; margin-top: 3px; }
+    .role-badge {
+      font-size: 11px; padding: 2px 7px; border-radius: 10px;
+      font-weight: 600; display: inline-block;
+    }
+    .role-admin    { background: #ede9fe; color: #7c3aed; }
+    .role-director { background: #dbeafe; color: #1d4ed8; }
+    .role-manager  { background: #dcfce7; color: #15803d; }
+    .role-sales    { background: #f3f4f6; color: #374151; }
+    .btn-settings {
+      width: 100%; padding: 14px 16px; border-radius: 12px;
+      background: #fff; border: 1.5px solid var(--border);
+      font-size: 15px; font-weight: 600; color: var(--text);
+      cursor: pointer; text-align: left; display: flex;
+      align-items: center; justify-content: space-between;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+    }
+    .btn-settings:active { background: #f9fafb; }
+    .btn-settings-arrow { color: #9ca3af; font-size: 18px; }
+
+    /* Change PIN modal */
+    .pin-step-label {
+      text-align: center; font-size: 14px; color: #6b7280;
+      margin-bottom: 16px; min-height: 20px;
+    }
+  </style>
+</head>
+<body>
+
+<script>
+/* GAS WebApp スマホ最適化（viewportが980px固定になる対策） */
+(function fixScale(){
+  var iw = window.innerWidth;
+  var sw = screen.width;
+  if (sw > 0 && sw < iw) {
+    var zoom = iw / sw;
+    document.body.style.zoom      = zoom;
+    document.body.style.width     = sw + 'px';
+    document.body.style.maxWidth  = sw + 'px';
+    document.body.style.overflowX = 'hidden';
+  }
+})();
+</script>
+
+<!-- Loading overlay -->
+<div id="loading"><div class="spinner"></div></div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<!-- App root -->
+<div id="app"></div>
+
+<!-- PIN入力モーダル -->
+<div id="pin-modal" class="modal-overlay">
+  <div class="modal-sheet">
+    <div id="pin-modal-title" class="modal-title">PINを入力してください</div>
+    <div class="pin-display">
+      <div class="pin-dot" id="pd0"></div>
+      <div class="pin-dot" id="pd1"></div>
+      <div class="pin-dot" id="pd2"></div>
+      <div class="pin-dot" id="pd3"></div>
+    </div>
+    <div id="pin-error" class="pin-error"></div>
+    <div class="pin-grid">
+      <button class="pin-key" onclick="pinInput('1')">1</button>
+      <button class="pin-key" onclick="pinInput('2')">2</button>
+      <button class="pin-key" onclick="pinInput('3')">3</button>
+      <button class="pin-key" onclick="pinInput('4')">4</button>
+      <button class="pin-key" onclick="pinInput('5')">5</button>
+      <button class="pin-key" onclick="pinInput('6')">6</button>
+      <button class="pin-key" onclick="pinInput('7')">7</button>
+      <button class="pin-key" onclick="pinInput('8')">8</button>
+      <button class="pin-key" onclick="pinInput('9')">9</button>
+      <button class="pin-key key-cancel" onclick="closePinModal()">取消</button>
+      <button class="pin-key" onclick="pinInput('0')">0</button>
+      <button class="pin-key" onclick="pinBackspace()">⌫</button>
+    </div>
+  </div>
+</div>
+
+<!-- 曜日外サロン追加モーダル -->
+<div id="irregular-modal" class="modal-overlay">
+  <div class="modal-sheet scrollable">
+    <div class="modal-header">
+      <h3>他のサロンを追加</h3>
+      <button class="modal-close" onclick="closeIrregularModal()">×</button>
+    </div>
+    <input type="text" class="search-input" id="irregular-search"
+           placeholder="サロン名で検索..."
+           oninput="filterIrregularSalons()">
+    <div id="irregular-salon-list" class="salon-search-list"></div>
+  </div>
+</div>
+
+<!-- 新規サロン登録モーダル -->
+<div id="new-salon-modal" class="modal-overlay">
+  <div class="modal-sheet">
+    <div class="modal-header">
+      <h3>新規サロンに訪問</h3>
+      <button class="modal-close" onclick="closeNewSalonModal()">×</button>
+    </div>
+    <label class="input-label">サロン名 <span style="color:var(--danger)">*</span></label>
+    <input type="text" class="text-input" id="new-salon-name" placeholder="サロン名を入力">
+    <label class="input-label">訪問曜日</label>
+    <select class="select-input" id="new-salon-day">
+      <option value="月">月曜日</option>
+      <option value="火">火曜日</option>
+      <option value="水">水曜日</option>
+      <option value="木">木曜日</option>
+      <option value="金">金曜日</option>
+      <option value="土">土曜日</option>
+      <option value="他">曜日なし（随時）</option>
+    </select>
+    <button class="btn btn-primary" onclick="submitNewSalon()">登録して訪問チェック</button>
+  </div>
+</div>
+
+<!-- サロン追加モーダル（管理画面用） -->
+<div id="salons-add-modal" class="modal-overlay">
+  <div class="modal-sheet">
+    <div class="modal-header">
+      <h3>サロンを追加</h3>
+      <button class="modal-close" onclick="closeSalonAddModal()">×</button>
+    </div>
+    <div class="form-row">
+      <label class="input-label">サロン名 <span style="color:var(--danger)">*</span></label>
+      <input type="text" class="text-input" id="salon-add-name" placeholder="サロン名を入力">
+    </div>
+    <div class="form-row">
+      <label class="input-label">コード</label>
+      <input type="text" class="text-input" id="salon-add-code" placeholder="得意先コードなど（任意）">
+    </div>
+    <div class="form-row">
+      <label class="input-label">訪問曜日</label>
+      <select class="select-input" id="salon-add-day">
+        <option value="月">月曜日</option>
+        <option value="火">火曜日</option>
+        <option value="水">水曜日</option>
+        <option value="木">木曜日</option>
+        <option value="金">金曜日</option>
+        <option value="土">土曜日</option>
+        <option value="他">曜日なし（随時）</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" onclick="submitSalonAdd()">追加する</button>
+  </div>
+</div>
+
+<!-- サロン編集モーダル -->
+<div id="salon-edit-modal" class="modal-overlay">
+  <div class="modal-sheet">
+    <div class="modal-header">
+      <h3>サロンを編集</h3>
+      <button class="modal-close" onclick="closeSalonEditModal()">×</button>
+    </div>
+    <div class="form-row">
+      <label class="input-label">サロン名 <span style="color:var(--danger)">*</span></label>
+      <input type="text" class="text-input" id="salon-edit-name" placeholder="サロン名を入力">
+    </div>
+    <div class="form-row">
+      <label class="input-label">コード</label>
+      <input type="text" class="text-input" id="salon-edit-code" placeholder="得意先コードなど（任意）">
+    </div>
+    <div class="form-row">
+      <label class="input-label">訪問曜日</label>
+      <select class="select-input" id="salon-edit-day">
+        <option value="月">月曜日</option>
+        <option value="火">火曜日</option>
+        <option value="水">水曜日</option>
+        <option value="木">木曜日</option>
+        <option value="金">金曜日</option>
+        <option value="土">土曜日</option>
+        <option value="他">曜日なし（随時）</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" onclick="submitSalonEdit()">保存する</button>
+    <div class="danger-zone">
+      <div class="danger-zone-title">危険な操作</div>
+      <button class="btn btn-danger" onclick="confirmDeactivateSalon()">このサロンを無効化する</button>
+    </div>
+  </div>
+</div>
+
+<!-- ユーザー追加モーダル（admin用） -->
+<div id="user-add-modal" class="modal-overlay">
+  <div class="modal-sheet scrollable">
+    <div class="modal-header">
+      <h3>ユーザーを追加</h3>
+      <button class="modal-close" onclick="closeUserAddModal()">×</button>
+    </div>
+    <div class="form-row">
+      <label class="input-label">氏名 <span style="color:var(--danger)">*</span></label>
+      <input type="text" class="text-input" id="user-add-name" placeholder="氏名を入力">
+    </div>
+    <div class="form-row">
+      <label class="input-label">初期PIN（4桁）<span style="color:var(--danger)">*</span></label>
+      <input type="text" class="text-input" id="user-add-pin" placeholder="例：0000" maxlength="4" inputmode="numeric">
+    </div>
+    <div class="form-row">
+      <label class="input-label">ロール</label>
+      <select class="select-input" id="user-add-role">
+        <option value="sales">sales（営業）</option>
+        <option value="manager">manager（部長）</option>
+        <option value="director">director（統括）</option>
+        <option value="admin">admin（管理者）</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label class="input-label">チーム名</label>
+      <input type="text" class="text-input" id="user-add-team" placeholder="例：A、宮崎北、全体など">
+    </div>
+    <button class="btn btn-primary" onclick="submitUserAdd()">追加する</button>
+  </div>
+</div>
+
+<!-- ユーザー編集モーダル（admin用） -->
+<div id="user-edit-modal" class="modal-overlay">
+  <div class="modal-sheet scrollable">
+    <div class="modal-header">
+      <h3>ユーザーを編集</h3>
+      <button class="modal-close" onclick="closeUserEditModal()">×</button>
+    </div>
+    <div class="form-row">
+      <label class="input-label">氏名 <span style="color:var(--danger)">*</span></label>
+      <input type="text" class="text-input" id="user-edit-name" placeholder="氏名を入力">
+    </div>
+    <div class="form-row">
+      <label class="input-label">ロール</label>
+      <select class="select-input" id="user-edit-role">
+        <option value="sales">sales（営業）</option>
+        <option value="manager">manager（部長）</option>
+        <option value="director">director（統括）</option>
+        <option value="admin">admin（管理者）</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label class="input-label">チーム名</label>
+      <input type="text" class="text-input" id="user-edit-team" placeholder="例：A、宮崎北、全体など">
+    </div>
+    <button class="btn btn-primary" onclick="submitUserEdit()">保存する</button>
+    <div class="danger-zone">
+      <div class="danger-zone-title">危険な操作</div>
+      <button class="btn btn-outline" style="margin-bottom:8px" onclick="submitResetPin()">PINを 0000 にリセット</button>
+      <button class="btn btn-danger" onclick="confirmDeactivateUser()">このユーザーを無効化する</button>
+    </div>
+  </div>
+</div>
+
+<!-- adminサロン編集モーダル -->
+<div id="admin-salon-edit-modal" class="modal-overlay">
+  <div class="modal-sheet scrollable">
+    <div class="modal-header">
+      <h3>サロンを編集（管理者）</h3>
+      <button class="modal-close" onclick="closeAdminSalonEditModal()">×</button>
+    </div>
+    <div class="form-row">
+      <label class="input-label">サロン名 <span style="color:var(--danger)">*</span></label>
+      <input type="text" class="text-input" id="admin-salon-edit-name" placeholder="サロン名を入力">
+    </div>
+    <div class="form-row">
+      <label class="input-label">コード</label>
+      <input type="text" class="text-input" id="admin-salon-edit-code" placeholder="得意先コードなど（任意）">
+    </div>
+    <div class="form-row">
+      <label class="input-label">担当者</label>
+      <select class="select-input" id="admin-salon-edit-owner"></select>
+    </div>
+    <div class="form-row">
+      <label class="input-label">訪問曜日</label>
+      <select class="select-input" id="admin-salon-edit-day">
+        <option value="月">月曜日</option>
+        <option value="火">火曜日</option>
+        <option value="水">水曜日</option>
+        <option value="木">木曜日</option>
+        <option value="金">金曜日</option>
+        <option value="土">土曜日</option>
+        <option value="他">曜日なし（随時）</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" onclick="submitAdminSalonEdit()">保存する</button>
+    <div class="danger-zone">
+      <div class="danger-zone-title">危険な操作</div>
+      <button class="btn btn-danger" onclick="confirmAdminDeactivateSalon()">このサロンを無効化する</button>
+    </div>
+  </div>
+</div>
+
+<!-- PIN変更モーダル（全ロール） -->
+<div id="change-pin-modal" class="modal-overlay">
+  <div class="modal-sheet">
+    <div class="modal-header">
+      <h3>PIN変更</h3>
+      <button class="modal-close" onclick="closeChangePinModal()">×</button>
+    </div>
+    <div id="change-pin-step-label" class="pin-step-label">現在のPINを入力してください</div>
+    <div class="pin-display">
+      <div class="pin-dot" id="cpd0"></div>
+      <div class="pin-dot" id="cpd1"></div>
+      <div class="pin-dot" id="cpd2"></div>
+      <div class="pin-dot" id="cpd3"></div>
+    </div>
+    <div id="change-pin-error" class="pin-error"></div>
+    <div class="pin-grid">
+      <button class="pin-key" onclick="changePinInput('1')">1</button>
+      <button class="pin-key" onclick="changePinInput('2')">2</button>
+      <button class="pin-key" onclick="changePinInput('3')">3</button>
+      <button class="pin-key" onclick="changePinInput('4')">4</button>
+      <button class="pin-key" onclick="changePinInput('5')">5</button>
+      <button class="pin-key" onclick="changePinInput('6')">6</button>
+      <button class="pin-key" onclick="changePinInput('7')">7</button>
+      <button class="pin-key" onclick="changePinInput('8')">8</button>
+      <button class="pin-key" onclick="changePinInput('9')">9</button>
+      <button class="pin-key key-cancel" onclick="closeChangePinModal()">取消</button>
+      <button class="pin-key" onclick="changePinInput('0')">0</button>
+      <button class="pin-key" onclick="changePinBackspace()">⌫</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+const APP_VERSION = 'v1.3.4';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
+
+// ============================================================
+// State
+// ============================================================
+let currentUser   = null;
+let currentView   = 'login';
+let viewStack     = [];
+let viewData      = {};
+
+let publicUsers   = [];       // ログイン画面用ユーザー一覧
+let selectedUser  = null;     // PIN入力前の選択ユーザー
+let pinValue      = '';       // 入力中PIN
+
+let todayRoute    = [];       // 今日のルートサロン
+let allMySalons   = [];       // 全担当サロン（イレギュラー追加用）
+let checkedIds    = new Set(); // 当日チェック済みサロンID
+
+// サロン管理
+let editingSalonId = null;  // 編集中のサロンID
+
+// 管理者設定
+let adminUsers          = [];    // getUsers で取得
+let adminSalons         = [];    // getAllSalons で取得
+let editingUserId       = null;  // 編集中ユーザーID
+let editingAdminSalonId = null;  // admin用サロン編集ID
+let adminSalonSearch    = '';    // 全サロン管理画面の検索文字列
+
+// PIN変更
+let changePinStep    = 0;   // 0=現在PIN入力中, 1=新PIN入力中
+let changePinCurrent = '';  // ステップ0で入力した現在PIN
+let changePinValue   = '';  // 入力中のPIN
+
+// 訪問履歴
+let historyData   = null;     // { weeks, rows } GASから取得したデータ
+let historyFilter = {         // フィルタ状態
+  userChoice: 'self',         // 'self' | 'team' | 'all' | 特定user_id
+  month: '',                  // 'YYYY-MM'（空=当月）
+  day_of_week: 'all'          // 'all' | '月'〜'土'
+};
+
+// ============================================================
+// Navigation
+// ============================================================
+function navigate(viewName, data) {
+  viewStack.push(currentView);
+  viewData = data || {};
+  currentView = viewName;
+  renderApp();
+}
+
+function goBack() {
+  if (viewStack.length > 0) {
+    currentView = viewStack.pop();
+    renderApp();
+  }
+}
+
+function resetTo(viewName, data) {
+  viewStack = [];
+  viewData  = data || {};
+  currentView = viewName;
+  renderApp();
+  // 履歴タブに切り替えたら自動ロード
+  if (viewName === 'history' && currentUser && !historyData) {
+    loadHistory();
+  }
+  // 設定タブ（admin）に切り替えたら自動ロード
+  if (viewName === 'admin' && currentUser && currentUser.role === 'admin' && adminUsers.length === 0) {
+    loadAdminData();
+  }
+}
+
+// ============================================================
+// API
+// ============================================================
+async function apiGet(action, params) {
+  const url = new URL(GAS_URL);
+  url.searchParams.set('action', action);
+  if (params && Object.keys(params).length > 0) {
+    url.searchParams.set('data', JSON.stringify(params));
+  }
+  const res  = await fetch(url.toString());
+  const json = await res.json();
+  if (json.status !== 'ok') throw new Error(json.message || 'エラーが発生しました');
+  return json.result;
+}
+
+async function apiPost(action, params) {
+  const body = new URLSearchParams({
+    action: action,
+    data:   JSON.stringify(params || {})
+  });
+  const res  = await fetch(GAS_URL, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body:    body.toString()
+  });
+  const json = await res.json();
+  if (json.status !== 'ok') throw new Error(json.message || 'エラーが発生しました');
+  return json.result;
+}
+
+// ============================================================
+// UI helpers
+// ============================================================
+function showLoading() { document.getElementById('loading').style.display = 'flex'; }
+function hideLoading() { document.getElementById('loading').style.display = 'none'; }
+
+let _toastTimer = null;
+function showToast(msg, type) {
+  type = type || 'success';
+  const el = document.getElementById('toast');
+  el.textContent  = msg;
+  el.className    = 'toast ' + type;
+  el.style.display = 'block';
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(function() { el.style.display = 'none'; }, type === 'error' ? 8000 : 2800);
+}
+
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// ============================================================
+// Render
+// ============================================================
+function renderApp() {
+  const app = document.getElementById('app');
+  switch (currentView) {
+    case 'login':        app.innerHTML = renderLogin();        break;
+    case 'check':        app.innerHTML = renderCheck();        break;
+    case 'history':      app.innerHTML = renderHistory(); bindHistoryFilterEvents(); break;
+    case 'salons':       app.innerHTML = renderSalons();       break;
+    case 'admin':        app.innerHTML = renderAdmin();        break;
+    case 'admin-salons': app.innerHTML = renderAdminSalons();  break;
+    default:             app.innerHTML = renderPlaceholder('❓', 'エラー', '不明な画面です'); break;
+  }
+}
+
+// ログイン画面
+function renderLogin() {
+  var grid;
+  if (publicUsers.length === 0) {
+    grid = '<div class="empty-state">ユーザー情報を読み込み中...</div>';
+  } else {
+    grid = '<div class="user-grid">' +
+      publicUsers.map(function(u) {
+        return '<button class="user-btn" data-uid="' + escHtml(u.user_id) +
+               '" data-uname="' + escHtml(u.name) +
+               '" onclick="openPinModal(this.dataset.uid, this.dataset.uname)">' +
+               escHtml(u.name) + '</button>';
+      }).join('') +
+    '</div>';
+  }
+  return '<div class="login-hero">' +
+    '<div class="login-logo">Beaufield</div>' +
+    '<div class="login-subtitle">ルート訪問チェッカー</div>' +
+    '</div>' +
+    '<div class="content">' +
+    '<div class="section-header" style="margin-bottom:12px;">ログインするユーザーを選択</div>' +
+    grid +
+    '<div class="version-footer">' + APP_VERSION + '</div>' +
+    '</div>';
+}
+
+// 訪問チェック画面
+function renderCheck() {
+  var dayNames = ['日', '月', '火', '水', '木', '金', '土'];
+  var today    = new Date();
+  var todayStr = (today.getMonth() + 1) + '月' + today.getDate() + '日（' + dayNames[today.getDay()] + '）';
+
+  var items = todayRoute.map(function(s) {
+    var checked = checkedIds.has(s.salon_id);
+    return '<li class="salon-item' + (checked ? ' checked' : '') + '">' +
+      '<span class="salon-name">' + escHtml(s.salon_name) + '</span>' +
+      '<button class="check-btn' + (checked ? ' checked' : '') + '"' +
+      ' data-sid="' + escHtml(s.salon_id) + '"' +
+      (checked ? ' disabled' : ' onclick="doCheck(this.dataset.sid)"') +
+      '>' + (checked ? '✅' : '') + '</button>' +
+      '</li>';
+  }).join('');
+
+  var emptyMsg = todayRoute.length === 0
+    ? '<div class="empty-state">本日（' + dayNames[today.getDay()] + '）のルートはありません</div>'
+    : '';
+
+  return '<div class="header">' +
+    '<h1>訪問チェック</h1>' +
+    '<button class="header-btn" onclick="logout()">ログアウト</button>' +
+    '</div>' +
+    '<div class="content">' +
+    '<div class="day-badge">📅 ' + todayStr + '</div>' +
+    '<div class="section-header">本日のルート（' + todayRoute.length + '件）</div>' +
+    emptyMsg +
+    '<ul class="salon-list">' + items + '</ul>' +
+    '<div class="action-btn-group">' +
+    '<button class="btn btn-outline" onclick="openIrregularModal()">＋ 他のサロンを追加（曜日外）</button>' +
+    '<button class="btn btn-ghost" onclick="openNewSalonModal()">＋ 新規サロンに訪問</button>' +
+    '</div>' +
+    '</div>' +
+    renderBottomNav();
+}
+
+// ボトムナビゲーション
+function renderBottomNav() {
+  var role = currentUser ? currentUser.role : '';
+  var sm   = (role === 'sales' || role === 'manager');
+  var tabs = [
+    { id: 'check',   icon: '✔️',  label: 'チェック', show: sm   },
+    { id: 'history', icon: '📋',  label: '履歴',     show: true },
+    { id: 'salons',  icon: '🏪',  label: 'サロン',   show: sm   },
+    { id: 'admin',   icon: '⚙️',  label: '設定',     show: true }
+  ].filter(function(t) { return t.show; });
+
+  // admin-salons は設定タブの子画面として扱う
+  var activeView = (currentView === 'admin-salons') ? 'admin' : currentView;
+
+  return '<nav class="bottom-nav">' +
+    tabs.map(function(t) {
+      return '<button class="nav-item' + (activeView === t.id ? ' active' : '') + '"' +
+             ' onclick="resetTo(\'' + t.id + '\')">' +
+             '<span class="nav-icon">' + t.icon + '</span>' +
+             '<span>' + t.label + '</span></button>';
+    }).join('') +
+  '</nav>';
+}
+
+// プレースホルダー画面
+function renderPlaceholder(icon, title, msg) {
+  return '<div class="header"><h1>' + title + '</h1>' +
+    (currentUser ? '<button class="header-btn" onclick="logout()">ログアウト</button>' : '') +
+    '</div>' +
+    '<div class="content">' +
+    '<div class="placeholder-screen">' +
+    '<div class="placeholder-icon">' + icon + '</div>' +
+    '<div class="placeholder-title">' + title + '</div>' +
+    '<div class="placeholder-msg">' + msg + '</div>' +
+    '</div></div>' +
+    (currentUser ? renderBottomNav() : '');
+}
+
+// ============================================================
+// マイサロン管理（Phase 4）
+// ============================================================
+
+/** サロン管理画面のレンダリング */
+function renderSalons() {
+  var dayOrder = ['月', '火', '水', '木', '金', '土', '他'];
+  var activeSalons = allMySalons.filter(function(s) { return s.active !== false; });
+
+  var content = '';
+  dayOrder.forEach(function(day) {
+    var daySalons = activeSalons
+      .filter(function(s) { return s.visit_day === day; })
+      .sort(function(a, b) { return Number(a.sort_order) - Number(b.sort_order); });
+    if (daySalons.length === 0) return;
+
+    var groupLabel = (day === '他') ? '随時訪問（曜日なし）' : day + '曜日';
+    content += '<div class="salon-day-group">';
+    content += '<div class="salon-day-label">' + groupLabel + '（' + daySalons.length + '件）</div>';
+    daySalons.forEach(function(s, idx) {
+      var isFirst = idx === 0;
+      var isLast  = idx === daySalons.length - 1;
+      content += '<div class="salon-manage-item">' +
+        '<div class="salon-manage-info">' +
+          '<div class="salon-manage-name">' + escHtml(s.salon_name) + '</div>' +
+          (s.code ? '<div class="salon-manage-day">' + escHtml(s.code) + '</div>' : '') +
+        '</div>' +
+        '<div class="salon-manage-actions">' +
+          '<button class="sort-btn" onclick="moveSalon(\'' + s.salon_id + '\',\'up\')"' + (isFirst ? ' disabled' : '') + '>▲</button>' +
+          '<button class="sort-btn" onclick="moveSalon(\'' + s.salon_id + '\',\'down\')"' + (isLast ? ' disabled' : '') + '>▼</button>' +
+          '<button class="edit-btn" onclick="openSalonEditModal(\'' + s.salon_id + '\')">編集</button>' +
+        '</div>' +
+      '</div>';
+    });
+    content += '</div>';
+  });
+
+  if (content === '') {
+    content = '<div class="empty-state">担当サロンがありません。<br>下のボタンから追加してください。</div>';
+  }
+
+  return '<div class="header">' +
+    '<h1>マイサロン</h1>' +
+    '<button class="header-btn" onclick="logout()">ログアウト</button>' +
+    '</div>' +
+    '<div class="content">' +
+    '<button class="btn btn-primary" style="margin-bottom:16px" onclick="openSalonAddModal()">＋ サロンを追加</button>' +
+    content +
+    '</div>' +
+    renderBottomNav();
+}
+
+// ─── サロン追加（管理画面用）─────────────────────────────────
+function openSalonAddModal() {
+  document.getElementById('salon-add-name').value = '';
+  document.getElementById('salon-add-code').value = '';
+  var dayNames = ['日', '月', '火', '水', '木', '金', '土'];
+  var today = dayNames[new Date().getDay()];
+  var sel = document.getElementById('salon-add-day');
+  for (var i = 0; i < sel.options.length; i++) {
+    if (sel.options[i].value === today) { sel.selectedIndex = i; break; }
+  }
+  document.getElementById('salons-add-modal').classList.add('open');
+}
+
+function closeSalonAddModal() {
+  document.getElementById('salons-add-modal').classList.remove('open');
+}
+
+async function submitSalonAdd() {
+  var name = document.getElementById('salon-add-name').value.trim();
+  var code = document.getElementById('salon-add-code').value.trim();
+  var day  = document.getElementById('salon-add-day').value;
+  if (!name) { showToast('サロン名を入力してください', 'error'); return; }
+  closeSalonAddModal();
+  showLoading();
+  try {
+    var result = await apiPost('addSalon', {
+      user_id: currentUser.user_id, salon_name: name, visit_day: day, code: code
+    });
+    var newSalon = {
+      salon_id: result.salon_id, salon_name: name, visit_day: day,
+      sort_order: 9999, owner_user_id: currentUser.user_id, active: true, code: code
+    };
+    allMySalons.push(newSalon);
+    renderApp();
+    showToast('「' + name + '」を追加しました ✅');
+  } catch(e) {
+    showToast('追加に失敗しました: ' + e.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// ─── サロン編集 ───────────────────────────────────────────────
+function openSalonEditModal(salonId) {
+  var salon = allMySalons.find(function(s) { return s.salon_id === salonId; });
+  if (!salon) return;
+  editingSalonId = salonId;
+  document.getElementById('salon-edit-name').value = salon.salon_name;
+  document.getElementById('salon-edit-code').value = salon.code || '';
+  var sel = document.getElementById('salon-edit-day');
+  for (var i = 0; i < sel.options.length; i++) {
+    if (sel.options[i].value === salon.visit_day) { sel.selectedIndex = i; break; }
+  }
+  document.getElementById('salon-edit-modal').classList.add('open');
+}
+
+function closeSalonEditModal() {
+  document.getElementById('salon-edit-modal').classList.remove('open');
+  editingSalonId = null;
+}
+
+async function submitSalonEdit() {
+  if (!editingSalonId) return;
+  var name = document.getElementById('salon-edit-name').value.trim();
+  var code = document.getElementById('salon-edit-code').value.trim();
+  var day  = document.getElementById('salon-edit-day').value;
+  if (!name) { showToast('サロン名を入力してください', 'error'); return; }
+  closeSalonEditModal();
+  showLoading();
+  try {
+    await apiPost('updateSalon', {
+      user_id: currentUser.user_id, salon_id: editingSalonId,
+      salon_name: name, visit_day: day, code: code
+    });
+    // ローカルデータ更新
+    var salon = allMySalons.find(function(s) { return s.salon_id === editingSalonId; });
+    if (salon) { salon.salon_name = name; salon.visit_day = day; salon.code = code; }
+    renderApp();
+    showToast('保存しました ✅');
+  } catch(e) {
+    showToast('保存に失敗しました: ' + e.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// ─── サロン無効化 ─────────────────────────────────────────────
+function confirmDeactivateSalon() {
+  var salon = allMySalons.find(function(s) { return s.salon_id === editingSalonId; });
+  if (!salon) return;
+  if (!confirm('「' + salon.salon_name + '」を無効化しますか？\n訪問ルートから除外されます。')) return;
+  closeSalonEditModal();
+  doDeactivateSalon(editingSalonId);
+}
+
+async function doDeactivateSalon(salonId) {
+  showLoading();
+  try {
+    await apiPost('deactivateSalon', { user_id: currentUser.user_id, salon_id: salonId });
+    // ローカルから除去
+    allMySalons = allMySalons.filter(function(s) { return s.salon_id !== salonId; });
+    renderApp();
+    showToast('無効化しました');
+  } catch(e) {
+    showToast('無効化に失敗しました: ' + e.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// ─── 表示順並び替え ───────────────────────────────────────────
+function moveSalon(salonId, direction) {
+  var salon = allMySalons.find(function(s) { return s.salon_id === salonId; });
+  if (!salon) return;
+
+  // 同曜日のアクティブサロンを sort_order でソート
+  var dayGroup = allMySalons
+    .filter(function(s) { return s.visit_day === salon.visit_day && s.active !== false; })
+    .sort(function(a, b) { return Number(a.sort_order) - Number(b.sort_order); });
+
+  var idx     = dayGroup.findIndex(function(s) { return s.salon_id === salonId; });
+  var swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+  if (swapIdx < 0 || swapIdx >= dayGroup.length) return;
+
+  // 配列上の位置を入れ替え（値の入れ替えではなく要素を移動）
+  var tmp        = dayGroup[idx];
+  dayGroup[idx]  = dayGroup[swapIdx];
+  dayGroup[swapIdx] = tmp;
+
+  // 1始まりで連番を再採番（重複や欠番を正規化）
+  dayGroup.forEach(function(s, i) { s.sort_order = i + 1; });
+
+  // todayRoute も同期（チェック画面はallMySalonsとは別オブジェクトのため個別に更新）
+  todayRoute.forEach(function(tr) {
+    var updated = allMySalons.find(function(s) { return s.salon_id === tr.salon_id; });
+    if (updated) tr.sort_order = updated.sort_order;
+  });
+  todayRoute.sort(function(a, b) { return Number(a.sort_order) - Number(b.sort_order); });
+
+  renderApp();
+
+  // 全件の新しい order をGASに送信
+  apiPost('updateSortOrder', {
+    user_id:    currentUser.user_id,
+    order_list: dayGroup.map(function(s) {
+      return { salon_id: s.salon_id, sort_order: s.sort_order };
+    })
+  }).catch(function(e) { showToast('並び替えの保存に失敗しました', 'error'); });
+}
+
+// ============================================================
+// 管理者設定 / PIN変更（Phase 5・6）
+// ============================================================
+
+/** ロール表示名 */
+function roleLabel(role) {
+  return { admin: '管理者', director: '統括', manager: '部長', sales: '営業' }[role] || role;
+}
+
+/** 設定画面のレンダリング（全ロール共通・admin のみ追加コンテンツあり） */
+function renderAdmin() {
+  var role     = currentUser ? currentUser.role : '';
+  var isAdmin  = role === 'admin';
+
+  // ── PIN変更セクション ──
+  var pinSection =
+    '<div class="settings-section">' +
+    '<div class="settings-section-title">アカウント設定</div>' +
+    '<button class="btn-settings" onclick="openChangePinModal()">' +
+    '<span>🔑 自分のPINを変更する</span>' +
+    '<span class="btn-settings-arrow">›</span>' +
+    '</button>' +
+    '</div>';
+
+  if (!isAdmin) {
+    return '<div class="header"><h1>設定</h1>' +
+      '<button class="header-btn" onclick="logout()">ログアウト</button></div>' +
+      '<div class="content">' + pinSection + '</div>' +
+      renderBottomNav();
+  }
+
+  // ── ユーザー管理セクション（admin のみ）──
+  var userRows = '';
+  if (adminUsers.length === 0) {
+    userRows = '<div class="empty-state">読み込み中...</div>';
+  } else {
+    var sortedUsers = adminUsers.slice().sort(function(a, b) {
+      return (Number(a.display_order) || 9999) - (Number(b.display_order) || 9999);
+    });
+    userRows = sortedUsers.map(function(u, idx) {
+      var isFirst = idx === 0;
+      var isLast  = idx === sortedUsers.length - 1;
+      var roleClass = 'role-' + u.role;
+      return '<div class="user-item' + (u.active === false ? ' inactive' : '') + '">' +
+        '<div class="user-item-info">' +
+          '<div class="user-item-name">' + escHtml(u.name) + '</div>' +
+          '<div class="user-item-sub">' +
+            '<span class="role-badge ' + roleClass + '">' + roleLabel(u.role) + '</span>' +
+            'チーム: ' + escHtml(u.team) +
+            (u.active === false ? '　<span style="color:var(--danger)">無効</span>' : '') +
+          '</div>' +
+        '</div>' +
+        '<div class="salon-manage-actions">' +
+          '<button class="sort-btn" onclick="moveUser(\'' + escHtml(u.user_id) + '\',\'up\')"' + (isFirst ? ' disabled' : '') + '>▲</button>' +
+          '<button class="sort-btn" onclick="moveUser(\'' + escHtml(u.user_id) + '\',\'down\')"' + (isLast ? ' disabled' : '') + '>▼</button>' +
+          '<button class="edit-btn" onclick="openUserEditModal(\'' + escHtml(u.user_id) + '\')">編集</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  var userSection =
+    '<div class="settings-section">' +
+    '<div class="settings-section-title">ユーザー管理</div>' +
+    '<button class="btn btn-outline" style="margin-bottom:12px" onclick="openUserAddModal()">＋ ユーザーを追加</button>' +
+    userRows +
+    '</div>';
+
+  // ── 全サロン管理セクション（admin のみ）── 別画面へのナビゲーション
+  var activeSalonCount = adminSalons.filter(function(s) { return s.active !== false; }).length;
+  var salonCountLabel  = adminSalons.length === 0 ? '読み込み中...' : activeSalonCount + '件';
+  var salonSection =
+    '<div class="settings-section">' +
+    '<div class="settings-section-title">全サロン管理</div>' +
+    '<button class="btn-settings" onclick="navigate(\'admin-salons\')">' +
+    '<span>🏪 全サロンを管理する（' + salonCountLabel + '）</span>' +
+    '<span class="btn-settings-arrow">›</span>' +
+    '</button>' +
+    '</div>';
+
+  return '<div class="header"><h1>設定</h1>' +
+    '<button class="header-btn" onclick="logout()">ログアウト</button></div>' +
+    '<div class="content">' +
+    pinSection + userSection + salonSection +
+    '</div>' +
+    renderBottomNav();
+}
+
+// ============================================================
+// 全サロン管理画面（admin 専用・独立画面）
+// ============================================================
+
+/** 全サロン管理画面のレンダリング */
+function renderAdminSalons() {
+  var activeSalons = adminSalons.filter(function(s) { return s.active !== false; });
+
+  // 検索フィルタ適用（サロン名 or コード）
+  var kw = adminSalonSearch.trim().toLowerCase();
+  var filtered = kw ? activeSalons.filter(function(s) {
+    return s.salon_name.toLowerCase().indexOf(kw) !== -1 ||
+           (s.code || '').toLowerCase().indexOf(kw) !== -1;
+  }) : activeSalons;
+
+  // 担当者名→表示順でソート → 担当者ごとにグループ化
+  var sortedUsers = publicUsers.slice().sort(function(a, b) {
+    return (Number(a.display_order) || 9999) - (Number(b.display_order) || 9999);
+  });
+
+  var content = '';
+  if (adminSalons.length === 0) {
+    content = '<div class="empty-state">読み込み中...</div>';
+  } else if (filtered.length === 0) {
+    content = '<div class="empty-state">該当するサロンがありません</div>';
+  } else {
+    sortedUsers.forEach(function(u) {
+      var ownerSalons = filtered
+        .filter(function(s) { return s.owner_user_id === u.user_id; })
+        .sort(function(a, b) {
+          var dayOrder = ['月', '火', '水', '木', '金', '土'];
+          var dayDiff = dayOrder.indexOf(a.visit_day) - dayOrder.indexOf(b.visit_day);
+          if (dayDiff !== 0) return dayDiff;
+          return Number(a.sort_order) - Number(b.sort_order);
+        });
+      if (ownerSalons.length === 0) return;
+
+      content += '<div class="salon-day-group">';
+      content += '<div class="salon-day-label">' + escHtml(u.name) + '（' + ownerSalons.length + '件）</div>';
+      ownerSalons.forEach(function(s) {
+        content +=
+          '<div class="salon-manage-item">' +
+          '<div class="salon-manage-info">' +
+            '<div class="salon-manage-name">' + escHtml(s.salon_name) + '</div>' +
+            '<div class="salon-manage-day">' +
+              s.visit_day + '曜日' +
+              (s.code ? '　<span style="color:#6b7280">' + escHtml(s.code) + '</span>' : '') +
+            '</div>' +
+          '</div>' +
+          '<button class="edit-btn" onclick="openAdminSalonEditModal(\'' + escHtml(s.salon_id) + '\')">編集</button>' +
+          '</div>';
+      });
+      content += '</div>';
+    });
+
+    // 担当者リストに存在しないオーナーのサロン（念のため）
+    var knownUids = sortedUsers.map(function(u) { return u.user_id; });
+    var orphans = filtered.filter(function(s) { return knownUids.indexOf(s.owner_user_id) === -1; });
+    if (orphans.length > 0) {
+      content += '<div class="salon-day-group">';
+      content += '<div class="salon-day-label">担当者不明（' + orphans.length + '件）</div>';
+      orphans.forEach(function(s) {
+        content +=
+          '<div class="salon-manage-item">' +
+          '<div class="salon-manage-info">' +
+            '<div class="salon-manage-name">' + escHtml(s.salon_name) + '</div>' +
+            '<div class="salon-manage-day">' + s.visit_day + '曜日' + (s.code ? '　' + escHtml(s.code) : '') + '</div>' +
+          '</div>' +
+          '<button class="edit-btn" onclick="openAdminSalonEditModal(\'' + escHtml(s.salon_id) + '\')">編集</button>' +
+          '</div>';
+      });
+      content += '</div>';
+    }
+  }
+
+  return '<div class="header">' +
+    '<button class="header-btn" onclick="goBack()">‹ 戻る</button>' +
+    '<h1>全サロン管理</h1>' +
+    '<button class="header-btn" onclick="logout()">ログアウト</button>' +
+    '</div>' +
+    '<div class="content">' +
+    '<div style="margin-bottom:12px;font-size:12px;color:#6b7280">' +
+      'アクティブ: ' + activeSalons.length + '件' +
+      (kw ? '　絞り込み: ' + filtered.length + '件' : '') +
+    '</div>' +
+    '<input type="text" class="search-input" id="admin-salon-search-input"' +
+    ' placeholder="サロン名・コードで検索..."' +
+    ' value="' + escHtml(adminSalonSearch) + '"' +
+    ' oninput="onAdminSalonSearchChange()">' +
+    content +
+    '</div>' +
+    renderBottomNav();
+}
+
+/** 全サロン管理画面の検索入力イベント */
+function onAdminSalonSearchChange() {
+  var el = document.getElementById('admin-salon-search-input');
+  if (el) { adminSalonSearch = el.value; }
+  renderApp();
+}
+
+/** admin 用データを一括取得 */
+async function loadAdminData() {
+  showLoading();
+  try {
+    var results = await Promise.all([
+      apiGet('getUsers',     { user_id: currentUser.user_id }),
+      apiGet('getAllSalons', { user_id: currentUser.user_id })
+    ]);
+    adminUsers  = results[0].users  || [];
+    adminSalons = results[1].salons || [];
+  } catch(e) {
+    showToast('データ取得に失敗しました: ' + e.message, 'error');
+  } finally {
+    hideLoading();
+    renderApp();
+  }
+}
+
+// ─── ユーザー表示順並び替え ───────────────────────────────────
+function moveUser(userId, direction) {
+  var sorted = adminUsers.slice().sort(function(a, b) {
+    return (Number(a.display_order) || 9999) - (Number(b.display_order) || 9999);
+  });
+  var idx     = sorted.findIndex(function(u) { return u.user_id === userId; });
+  var swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+  if (swapIdx < 0 || swapIdx >= sorted.length) return;
+
+  // 位置を入れ替えて1始まりで連番再採番
+  var tmp        = sorted[idx];
+  sorted[idx]    = sorted[swapIdx];
+  sorted[swapIdx] = tmp;
+  sorted.forEach(function(u, i) { u.display_order = i + 1; });
+
+  // publicUsers の display_order も同期（ログイン画面の順番に反映）
+  sorted.forEach(function(u) {
+    var pu = publicUsers.find(function(p) { return p.user_id === u.user_id; });
+    if (pu) pu.display_order = u.display_order;
+  });
+
+  renderApp();
+
+  apiPost('updateUserOrder', {
+    user_id:    currentUser.user_id,
+    order_list: sorted.map(function(u) { return { user_id: u.user_id, display_order: u.display_order }; })
+  }).catch(function(e) { showToast('並び替えの保存に失敗しました', 'error'); });
+}
+
+// ─── ユーザー追加 ─────────────────────────────────────────────
+function openUserAddModal() {
+  document.getElementById('user-add-name').value = '';
+  document.getElementById('user-add-pin').value  = '';
+  document.getElementById('user-add-role').value = 'sales';
+  document.getElementById('user-add-team').value = 'A';
+  document.getElementById('user-add-modal').classList.add('open');
+}
+function closeUserAddModal() {
+  document.getElementById('user-add-modal').classList.remove('open');
+}
+async function submitUserAdd() {
+  var name = document.getElementById('user-add-name').value.trim();
+  var pin  = document.getElementById('user-add-pin').value.trim();
+  var role = document.getElementById('user-add-role').value;
+  var team = document.getElementById('user-add-team').value;
+  if (!name) { showToast('氏名を入力してください', 'error'); return; }
+  if (!/^\d{4}$/.test(pin)) { showToast('PINは4桁の数字を入力してください', 'error'); return; }
+  closeUserAddModal();
+  showLoading();
+  try {
+    var result = await apiPost('addUser', {
+      user_id: currentUser.user_id, name: name, pin: pin, role: role, team: team
+    });
+    adminUsers.push({ user_id: result.user_id, name: name, role: role, team: team, active: true });
+    // publicUsers にも追加（履歴フィルタ等で使用）
+    publicUsers.push({ user_id: result.user_id, name: name, role: role, team: team });
+    renderApp();
+    showToast('「' + name + '」を追加しました ✅');
+  } catch(e) {
+    showToast('追加に失敗しました: ' + e.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// ─── ユーザー編集 ─────────────────────────────────────────────
+function openUserEditModal(userId) {
+  var user = adminUsers.find(function(u) { return u.user_id === userId; });
+  if (!user) return;
+  editingUserId = userId;
+  document.getElementById('user-edit-name').value = user.name;
+  document.getElementById('user-edit-role').value = user.role;
+  document.getElementById('user-edit-team').value = user.team;
+  document.getElementById('user-edit-modal').classList.add('open');
+}
+function closeUserEditModal() {
+  document.getElementById('user-edit-modal').classList.remove('open');
+  editingUserId = null;
+}
+async function submitUserEdit() {
+  if (!editingUserId) return;
+  var name = document.getElementById('user-edit-name').value.trim();
+  var role = document.getElementById('user-edit-role').value;
+  var team = document.getElementById('user-edit-team').value;
+  if (!name) { showToast('氏名を入力してください', 'error'); return; }
+  var targetId = editingUserId;
+  closeUserEditModal();
+  showLoading();
+  try {
+    await apiPost('updateUser', {
+      user_id: currentUser.user_id, target_user_id: targetId,
+      name: name, role: role, team: team
+    });
+    var user = adminUsers.find(function(u) { return u.user_id === targetId; });
+    if (user) { user.name = name; user.role = role; user.team = team; }
+    var pu = publicUsers.find(function(u) { return u.user_id === targetId; });
+    if (pu) { pu.name = name; pu.role = role; pu.team = team; }
+    renderApp();
+    showToast('保存しました ✅');
+  } catch(e) {
+    showToast('保存に失敗しました: ' + e.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+async function submitResetPin() {
+  if (!editingUserId) return;
+  var user = adminUsers.find(function(u) { return u.user_id === editingUserId; });
+  if (!confirm('「' + (user ? user.name : '') + '」のPINを 0000 にリセットしますか？')) return;
+  var targetId = editingUserId;
+  closeUserEditModal();
+  showLoading();
+  try {
+    await apiPost('resetPin', { user_id: currentUser.user_id, target_user_id: targetId });
+    showToast('PINをリセットしました');
+  } catch(e) {
+    showToast('リセットに失敗しました: ' + e.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+function confirmDeactivateUser() {
+  var user = adminUsers.find(function(u) { return u.user_id === editingUserId; });
+  if (!confirm('「' + (user ? user.name : '') + '」を無効化しますか？')) return;
+  var targetId = editingUserId;
+  closeUserEditModal();
+  doDeactivateUser(targetId);
+}
+async function doDeactivateUser(userId) {
+  showLoading();
+  try {
+    await apiPost('updateUser', {
+      user_id: currentUser.user_id, target_user_id: userId, active: false
+    });
+    var user = adminUsers.find(function(u) { return u.user_id === userId; });
+    if (user) user.active = false;
+    renderApp();
+    showToast('無効化しました');
+  } catch(e) {
+    showToast('無効化に失敗しました: ' + e.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// ─── admin サロン編集 ─────────────────────────────────────────
+function openAdminSalonEditModal(salonId) {
+  var salon = adminSalons.find(function(s) { return s.salon_id === salonId; });
+  if (!salon) return;
+  editingAdminSalonId = salonId;
+  document.getElementById('admin-salon-edit-name').value = salon.salon_name;
+  document.getElementById('admin-salon-edit-code').value = salon.code || '';
+
+  // 担当者プルダウンを構築
+  var sel = document.getElementById('admin-salon-edit-owner');
+  sel.innerHTML = publicUsers.map(function(u) {
+    var selected = u.user_id === salon.owner_user_id ? ' selected' : '';
+    return '<option value="' + escHtml(u.user_id) + '"' + selected + '>' + escHtml(u.name) + '</option>';
+  }).join('');
+
+  var dayEl = document.getElementById('admin-salon-edit-day');
+  for (var i = 0; i < dayEl.options.length; i++) {
+    if (dayEl.options[i].value === salon.visit_day) { dayEl.selectedIndex = i; break; }
+  }
+  document.getElementById('admin-salon-edit-modal').classList.add('open');
+}
+function closeAdminSalonEditModal() {
+  document.getElementById('admin-salon-edit-modal').classList.remove('open');
+  editingAdminSalonId = null;
+}
+async function submitAdminSalonEdit() {
+  if (!editingAdminSalonId) return;
+  var name    = document.getElementById('admin-salon-edit-name').value.trim();
+  var code    = document.getElementById('admin-salon-edit-code').value.trim();
+  var ownerId = document.getElementById('admin-salon-edit-owner').value;
+  var day     = document.getElementById('admin-salon-edit-day').value;
+  if (!name) { showToast('サロン名を入力してください', 'error'); return; }
+  var targetId = editingAdminSalonId;
+  closeAdminSalonEditModal();
+  showLoading();
+  try {
+    await apiPost('updateSalonAdmin', {
+      user_id: currentUser.user_id, salon_id: targetId,
+      salon_name: name, owner_user_id: ownerId, visit_day: day, code: code
+    });
+    var salon = adminSalons.find(function(s) { return s.salon_id === targetId; });
+    if (salon) { salon.salon_name = name; salon.owner_user_id = ownerId; salon.visit_day = day; salon.code = code; }
+    renderApp();
+    showToast('保存しました ✅');
+  } catch(e) {
+    showToast('保存に失敗しました: ' + e.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+function confirmAdminDeactivateSalon() {
+  var salon = adminSalons.find(function(s) { return s.salon_id === editingAdminSalonId; });
+  if (!confirm('「' + (salon ? salon.salon_name : '') + '」を無効化しますか？')) return;
+  var targetId = editingAdminSalonId;
+  closeAdminSalonEditModal();
+  doAdminDeactivateSalon(targetId);
+}
+async function doAdminDeactivateSalon(salonId) {
+  showLoading();
+  try {
+    await apiPost('deactivateSalon', { user_id: currentUser.user_id, salon_id: salonId });
+    adminSalons = adminSalons.filter(function(s) { return s.salon_id !== salonId; });
+    renderApp();
+    showToast('無効化しました');
+  } catch(e) {
+    showToast('無効化に失敗しました: ' + e.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// ─── PIN変更（Phase 6）────────────────────────────────────────
+function openChangePinModal() {
+  changePinStep    = 0;
+  changePinCurrent = '';
+  changePinValue   = '';
+  document.getElementById('change-pin-step-label').textContent = '現在のPINを入力してください';
+  document.getElementById('change-pin-error').textContent = '';
+  updateChangePinDots();
+  document.getElementById('change-pin-modal').classList.add('open');
+}
+function closeChangePinModal() {
+  document.getElementById('change-pin-modal').classList.remove('open');
+  changePinStep = 0; changePinCurrent = ''; changePinValue = '';
+}
+function changePinInput(digit) {
+  if (changePinValue.length >= 4) return;
+  changePinValue += digit;
+  updateChangePinDots();
+  if (changePinValue.length === 4) setTimeout(processChangePinStep, 150);
+}
+function changePinBackspace() {
+  changePinValue = changePinValue.slice(0, -1);
+  updateChangePinDots();
+}
+function updateChangePinDots() {
+  for (var i = 0; i < 4; i++) {
+    var el = document.getElementById('cpd' + i);
+    if (el) el.classList.toggle('filled', i < changePinValue.length);
+  }
+}
+async function processChangePinStep() {
+  if (changePinStep === 0) {
+    // ステップ0：現在のPINを記録してステップ1へ
+    changePinCurrent = changePinValue;
+    changePinValue   = '';
+    changePinStep    = 1;
+    document.getElementById('change-pin-step-label').textContent = '新しいPINを入力してください';
+    document.getElementById('change-pin-error').textContent = '';
+    updateChangePinDots();
+  } else {
+    // ステップ1：新PINでAPIコール
+    var newPin = changePinValue;
+    showLoading();
+    try {
+      await apiPost('changePin', {
+        user_id:     currentUser.user_id,
+        current_pin: changePinCurrent,
+        new_pin:     newPin
+      });
+      closeChangePinModal();
+      showToast('PINを変更しました ✅');
+    } catch(e) {
+      changePinValue = '';
+      changePinStep  = 0;
+      changePinCurrent = '';
+      document.getElementById('change-pin-step-label').textContent = '現在のPINを入力してください';
+      document.getElementById('change-pin-error').textContent = '現在のPINが正しくありません';
+      updateChangePinDots();
+    } finally {
+      hideLoading();
+    }
+  }
+}
+
+// ============================================================
+// 訪問履歴（Phase 3）
+// ============================================================
+
+/** 月プルダウン用：当月を含む過去3ヶ月のラベルを生成 */
+function buildMonthOptions() {
+  var today = new Date();
+  var opts = '';
+  for (var i = 0; i < 4; i++) {
+    var d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    var y = d.getFullYear();
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var val = y + '-' + m;
+    var label = y + '年' + (d.getMonth() + 1) + '月' + (i === 0 ? '（今月）' : '');
+    var sel = (historyFilter.month === val || (i === 0 && !historyFilter.month)) ? ' selected' : '';
+    opts += '<option value="' + val + '"' + sel + '>' + escHtml(label) + '</option>';
+  }
+  return opts;
+}
+
+/** フィルタUIのHTML生成 */
+function buildHistoryFilters() {
+  var role = currentUser ? currentUser.role : 'sales';
+  var team = currentUser ? currentUser.team : '';
+
+  // 担当者フィルタ
+  var userFilterHtml = '';
+  if (role === 'sales') {
+    // salesは自分のみ固定（プルダウンなし）
+    userFilterHtml = '';
+  } else if (role === 'manager') {
+    var tSel = historyFilter.userChoice === 'self' ? ' selected' : '';
+    var aSel = historyFilter.userChoice === 'team' ? ' selected' : '';
+    userFilterHtml = '<select class="filter-select" id="hist-user" onchange="onHistoryFilterChange()">' +
+      '<option value="self"' + tSel + '>自分のみ</option>' +
+      '<option value="team"' + aSel + '>チーム全員</option>' +
+      '</select>';
+  } else {
+    // director / admin
+    var opts = '<option value="all"' + (historyFilter.userChoice === 'all' ? ' selected' : '') + '>全員</option>';
+    publicUsers.forEach(function(u) {
+      var sel = historyFilter.userChoice === u.user_id ? ' selected' : '';
+      opts += '<option value="' + escHtml(u.user_id) + '"' + sel + '>' + escHtml(u.name) + '</option>';
+    });
+    userFilterHtml = '<select class="filter-select" id="hist-user" onchange="onHistoryFilterChange()">' + opts + '</select>';
+  }
+
+  // 曜日フィルタ
+  var days = ['all', '月', '火', '水', '木', '金', '土', '他'];
+  var dayLabels = { all: '全曜日', '月': '月', '火': '火', '水': '水', '木': '木', '金': '金', '土': '土', '他': '随時' };
+  var dayOpts = days.map(function(d) {
+    var sel = historyFilter.day_of_week === d ? ' selected' : '';
+    return '<option value="' + d + '"' + sel + '>' + dayLabels[d] + '</option>';
+  }).join('');
+  var dayFilterHtml = '<select class="filter-select" id="hist-day" onchange="onHistoryFilterChange()">' + dayOpts + '</select>';
+
+  // 月フィルタ
+  var monthFilterHtml = '<select class="filter-select" id="hist-month" onchange="onHistoryFilterChange()">' + buildMonthOptions() + '</select>';
+
+  return '<div class="history-filters">' + userFilterHtml + dayFilterHtml + monthFilterHtml + '</div>';
+}
+
+/** フィルタ変更時のイベント（renderApp後に再バインド）*/
+function bindHistoryFilterEvents() {
+  // セレクトは onchange で直接呼んでいるので追加バインド不要
+}
+
+/** フィルタ変更時に状態更新 → 再ロード */
+function onHistoryFilterChange() {
+  var userEl  = document.getElementById('hist-user');
+  var dayEl   = document.getElementById('hist-day');
+  var monthEl = document.getElementById('hist-month');
+  if (userEl)  historyFilter.userChoice  = userEl.value;
+  if (dayEl)   historyFilter.day_of_week = dayEl.value;
+  if (monthEl) historyFilter.month       = monthEl.value;
+  historyData = null;
+  renderApp();
+  loadHistory();
+}
+
+/** 担当者フィルタから user_ids 配列を決定 */
+function resolveUserIds() {
+  var role   = currentUser ? currentUser.role  : 'sales';
+  var team   = currentUser ? currentUser.team  : '';
+  var uid    = currentUser ? currentUser.user_id : '';
+  var choice = historyFilter.userChoice;
+
+  if (role === 'sales') return [uid];
+
+  if (role === 'manager') {
+    if (choice === 'self') return [uid];
+    // team: publicUsers からチームメンバーを抽出
+    return publicUsers
+      .filter(function(u) { return u.team === team || u.team === 'all'; })
+      .map(function(u) { return u.user_id; });
+  }
+
+  // director / admin
+  if (choice === 'all') return publicUsers.map(function(u) { return u.user_id; });
+  return [choice]; // 特定ユーザー
+}
+
+/** 履歴データをGASから取得してレンダリング */
+async function loadHistory() {
+  if (!currentUser) return;
+  var userIds = resolveUserIds();
+  var today   = new Date();
+  var month   = historyFilter.month ||
+    (today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0'));
+
+  showLoading();
+  try {
+    var result = await apiGet('getVisitHistory', {
+      user_ids:    userIds,
+      month:       month,
+      day_of_week: historyFilter.day_of_week
+    });
+    historyData = result;
+  } catch(e) {
+    showToast('履歴データの取得に失敗しました: ' + e.message, 'error');
+    historyData = { weeks: [], rows: [] };
+  } finally {
+    hideLoading();
+    renderApp();
+  }
+}
+
+/** マトリクステーブルのHTML生成 */
+function buildHistoryMatrix(weeks, rows) {
+  if (rows.length === 0) {
+    return '<div class="empty-state">該当するサロンがありません</div>';
+  }
+
+  // week_label → 列インデックス のマップ
+  var weekIndex = {};
+  weeks.forEach(function(label, i) { weekIndex[label] = i; });
+
+  var alertCount = rows.filter(function(r) { return r.alert; }).length;
+  var summary = '<div class="history-summary">' +
+    rows.length + '件のサロン' +
+    (alertCount > 0 ? '　<span class="alert-count">⚠️ 4週未訪問: ' + alertCount + '件</span>' : '') +
+    '</div>';
+
+  // ヘッダー行
+  var thead = '<thead><tr>' +
+    '<th class="salon-col">サロン</th>' +
+    weeks.map(function(w) { return '<th>' + escHtml(w) + '</th>'; }).join('') +
+    '</tr></thead>';
+
+  // データ行
+  var tbody = '<tbody>' + rows.map(function(row) {
+    // この行の cells を週インデックスに展開
+    var cells = new Array(weeks.length).fill(null); // null=N/A
+    row.cells.forEach(function(cell) {
+      var idx = weekIndex[cell.week_label];
+      if (idx !== undefined) cells[idx] = cell.visited;
+    });
+
+    var isOther   = (row.visit_day === '他');
+    var dayLabel  = isOther ? '随時' : row.visit_day + '曜';
+    var trClass   = row.alert ? ' class="row-alert"' : '';
+    var salonTd   = '<td class="salon-col">' +
+      '<span class="salon-col-name">' + escHtml(row.salon_name) + '</span>' +
+      '<span class="salon-col-user">' +
+        (row.code ? escHtml(row.code) + '・' : '') +
+        escHtml(row.user_name) + '・' + dayLabel +
+      '</span>' +
+      (row.alert ? '<span class="alert-badge">未訪問</span>' : '') +
+      (isOther ? '<span class="alert-badge" style="background:var(--primary)">' + (row.visit_count || 0) + '回</span>' : '') +
+      '</td>';
+
+    var dataCells;
+    if (isOther) {
+      // 「他」サロンは週ラベルに対応するセルがないため全列N/A
+      dataCells = cells.map(function() { return '<td class="cell-na"></td>'; }).join('');
+    } else {
+      dataCells = cells.map(function(v) {
+        if (v === null) return '<td class="cell-na"></td>';
+        if (v === true) return '<td><span class="cell-visited">✅</span></td>';
+        return '<td></td>';
+      }).join('');
+    }
+
+    return '<tr' + trClass + '>' + salonTd + dataCells + '</tr>';
+  }).join('') + '</tbody>';
+
+  return summary +
+    '<div class="matrix-wrap"><table class="matrix-table">' +
+    thead + tbody +
+    '</table></div>';
+}
+
+/** 訪問履歴画面のレンダリング */
+function renderHistory() {
+  var filterHtml = buildHistoryFilters();
+  var matrixHtml;
+
+  if (!historyData) {
+    matrixHtml = '<div class="empty-state">読み込み中...</div>';
+  } else {
+    matrixHtml = buildHistoryMatrix(historyData.weeks, historyData.rows);
+  }
+
+  return '<div class="header">' +
+    '<h1>訪問履歴</h1>' +
+    '<button class="header-btn" onclick="logout()">ログアウト</button>' +
+    '</div>' +
+    '<div class="content">' +
+    filterHtml +
+    matrixHtml +
+    '</div>' +
+    renderBottomNav();
+}
+
+// ============================================================
+// ログイン処理
+// ============================================================
+async function loadPublicUsers() {
+  if (GAS_URL === 'YOUR_GAS_URL_HERE') {
+    publicUsers = [{ user_id: '_demo', name: '⚠️ GAS URL未設定' }];
+    renderApp();
+    return;
+  }
+  try {
+    showLoading();
+    var result = await apiGet('getPublicUsers');
+    publicUsers = result.users || [];
+  } catch(e) {
+    showToast('ユーザー情報の取得に失敗しました', 'error');
+    publicUsers = [];
+  } finally {
+    hideLoading();
+    renderApp();
+  }
+}
+
+function openPinModal(userId, userName) {
+  if (userId === '_demo') {
+    showToast('index.html の GAS_URL を設定してください', 'warning');
+    return;
+  }
+  selectedUser = { user_id: userId, name: userName };
+  pinValue = '';
+  updatePinDots();
+  document.getElementById('pin-modal-title').textContent = userName + ' のPINを入力';
+  document.getElementById('pin-error').textContent = '';
+  document.getElementById('pin-modal').classList.add('open');
+}
+
+function closePinModal() {
+  document.getElementById('pin-modal').classList.remove('open');
+  selectedUser = null;
+  pinValue     = '';
+}
+
+function pinInput(digit) {
+  if (pinValue.length >= 4) return;
+  pinValue += digit;
+  updatePinDots();
+  if (pinValue.length === 4) setTimeout(submitLogin, 150);
+}
+
+function pinBackspace() {
+  pinValue = pinValue.slice(0, -1);
+  updatePinDots();
+}
+
+function updatePinDots() {
+  for (var i = 0; i < 4; i++) {
+    var el = document.getElementById('pd' + i);
+    if (el) el.classList.toggle('filled', i < pinValue.length);
+  }
+}
+
+async function submitLogin() {
+  if (!selectedUser || pinValue.length !== 4) return;
+  showLoading();
+  document.getElementById('pin-error').textContent = '';
+  var pin = pinValue;
+  try {
+    var result = await apiGet('login', { user_id: selectedUser.user_id, pin: pin });
+    currentUser = result;
+    localStorage.setItem('bf_last_uid', result.user_id);
+    closePinModal();
+    await loadCheckScreen();
+  } catch(e) {
+    document.getElementById('pin-error').textContent = 'PINが正しくありません';
+    pinValue = '';
+    updatePinDots();
+  } finally {
+    hideLoading();
+  }
+}
+
+function logout() {
+  currentUser      = null;
+  todayRoute       = [];
+  allMySalons      = [];
+  checkedIds       = new Set();
+  historyData      = null;
+  historyFilter    = { userChoice: 'self', month: '', day_of_week: 'all' };
+  adminUsers       = [];
+  adminSalons      = [];
+  adminSalonSearch = '';
+  resetTo('login');
+  loadPublicUsers();
+}
+
+// ============================================================
+// チェック画面読み込み
+// ============================================================
+async function loadCheckScreen() {
+  if (!currentUser) return;
+  var role = currentUser.role;
+  if (role === 'admin' || role === 'director') {
+    resetTo('history');
+    return;
+  }
+  showLoading();
+  try {
+    var uid = currentUser.user_id;
+    var results = await Promise.all([
+      apiGet('getMyRoute',   { user_id: uid }),
+      apiGet('getTodayLogs', { user_id: uid }),
+      apiGet('getMySalons',  { user_id: uid })
+    ]);
+    todayRoute  = results[0].salons    || [];
+    checkedIds  = new Set(results[1].salon_ids || []);
+    allMySalons = results[2].salons    || [];
+    resetTo('check');
+  } catch(e) {
+    showToast('データ読み込みに失敗しました: ' + e.message, 'error');
+    resetTo('check');
+  } finally {
+    hideLoading();
+  }
+}
+
+// ============================================================
+// 訪問チェック
+// ============================================================
+async function doCheck(salonId) {
+  if (checkedIds.has(salonId)) return;
+
+  // 楽観的UI更新
+  checkedIds.add(salonId);
+  renderApp();
+
+  showLoading();
+  try {
+    var result = await apiPost('checkVisit', {
+      user_id:  currentUser.user_id,
+      salon_id: salonId
+    });
+    if (result.duplicate) {
+      showToast('本日はすでにチェック済みです', 'warning');
+    } else {
+      showToast('チェックしました ✅');
+    }
+  } catch(e) {
+    // ロールバック
+    checkedIds.delete(salonId);
+    renderApp();
+    showToast('チェックに失敗しました: ' + e.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// ============================================================
+// 曜日外サロン追加モーダル
+// ============================================================
+function openIrregularModal() {
+  document.getElementById('irregular-search').value = '';
+  renderIrregularList(getNonRouteSalons());
+  document.getElementById('irregular-modal').classList.add('open');
+}
+
+function closeIrregularModal() {
+  document.getElementById('irregular-modal').classList.remove('open');
+}
+
+function getNonRouteSalons() {
+  return allMySalons.filter(function(s) {
+    return !todayRoute.some(function(r) { return r.salon_id === s.salon_id; });
+  });
+}
+
+function filterIrregularSalons() {
+  var kw = document.getElementById('irregular-search').value.trim().toLowerCase();
+  var base = getNonRouteSalons();
+  var filtered = kw ? base.filter(function(s) {
+    return s.salon_name.toLowerCase().indexOf(kw) !== -1;
+  }) : base;
+  renderIrregularList(filtered);
+}
+
+function renderIrregularList(salons) {
+  var el = document.getElementById('irregular-salon-list');
+  if (!el) return;
+  if (salons.length === 0) {
+    el.innerHTML = '<div class="empty-state">サロンが見つかりません</div>';
+    return;
+  }
+  el.innerHTML = salons.map(function(s) {
+    return '<div class="salon-search-item" data-sid="' + escHtml(s.salon_id) +
+           '" onclick="addIrregularSalon(this.dataset.sid)">' +
+           '<span class="salon-search-item-name">' + escHtml(s.salon_name) + '</span>' +
+           '<span class="salon-search-item-day">' + s.visit_day + '曜日</span>' +
+           '</div>';
+  }).join('');
+}
+
+async function addIrregularSalon(salonId) {
+  closeIrregularModal();
+  if (checkedIds.has(salonId)) {
+    showToast('本日はすでにチェック済みです', 'warning');
+    return;
+  }
+  var salon = allMySalons.find(function(s) { return s.salon_id === salonId; });
+  if (!salon) return;
+  if (!todayRoute.some(function(r) { return r.salon_id === salonId; })) {
+    todayRoute.push(salon);
+  }
+  await doCheck(salonId);
+}
+
+// ============================================================
+// 新規サロン登録モーダル
+// ============================================================
+function openNewSalonModal() {
+  var dayNames = ['日', '月', '火', '水', '木', '金', '土'];
+  var todayDay = dayNames[new Date().getDay()];
+  document.getElementById('new-salon-name').value = '';
+  var sel = document.getElementById('new-salon-day');
+  for (var i = 0; i < sel.options.length; i++) {
+    if (sel.options[i].value === todayDay) { sel.selectedIndex = i; break; }
+  }
+  document.getElementById('new-salon-modal').classList.add('open');
+}
+
+function closeNewSalonModal() {
+  document.getElementById('new-salon-modal').classList.remove('open');
+}
+
+async function submitNewSalon() {
+  var name = document.getElementById('new-salon-name').value.trim();
+  var day  = document.getElementById('new-salon-day').value;
+  if (!name) {
+    showToast('サロン名を入力してください', 'error');
+    return;
+  }
+  closeNewSalonModal();
+  showLoading();
+  try {
+    var result = await apiPost('addSalon', {
+      user_id:    currentUser.user_id,
+      salon_name: name,
+      visit_day:  day
+    });
+    var newSalon = {
+      salon_id: result.salon_id, salon_name: name,
+      visit_day: day, sort_order: 9999,
+      owner_user_id: currentUser.user_id, active: true
+    };
+    allMySalons.push(newSalon);
+    todayRoute.push(newSalon);
+    renderApp();
+    await doCheck(result.salon_id);
+    showToast('「' + name + '」を登録してチェックしました ✅');
+  } catch(e) {
+    showToast('サロン登録に失敗しました: ' + e.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// ============================================================
+// 初期化
+// ============================================================
+document.addEventListener('DOMContentLoaded', function() {
+  renderApp();
+  loadPublicUsers();
+});
+</script>
+</body>
+</html>
