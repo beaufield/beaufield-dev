@@ -675,7 +675,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.3.5';
+const APP_VERSION = 'v1.3.6'; // fix: deactivate salon_id null bug
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 
 // ============================================================
@@ -1093,8 +1093,9 @@ function confirmDeactivateSalon() {
   var salon = allMySalons.find(function(s) { return s.salon_id === editingSalonId; });
   if (!salon) return;
   if (!confirm('「' + salon.salon_name + '」を無効化しますか？\n訪問ルートから除外されます。')) return;
+  var targetId = editingSalonId; // closeSalonEditModal()でnullになる前に退避
   closeSalonEditModal();
-  doDeactivateSalon(editingSalonId);
+  doDeactivateSalon(targetId);
 }
 
 async function doDeactivateSalon(salonId) {
