@@ -395,7 +395,20 @@
       overflow-y: auto;
     }
     .modal-title { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
-    .modal-sub   { font-size: 12px; color: var(--text-light); margin-bottom: 14px; }
+    .modal-sub   { font-size: 12px; color: var(--text-light); margin-bottom: 6px; }
+
+    /* 直近注文バッジ（数量モーダル内） */
+    .qty-last-order {
+      display: none;
+      background: #EEF4FF;
+      border: 1px solid #C7D9FF;
+      border-radius: 8px;
+      padding: 7px 11px;
+      font-size: 12px;
+      color: #3A60C4;
+      margin-bottom: 12px;
+    }
+    .qty-last-order.show { display: block; }
 
     /* トースト */
     .toast {
@@ -646,7 +659,7 @@
 <div class="screen" id="screen-history">
   <div class="card">
     <div class="card-label" style="display:flex;justify-content:space-between;align-items:center">
-      <span>発注履歴（直近30件）</span>
+      <span>発注履歴（直近20件）</span>
       <button class="btn btn-outline btn-sm" onclick="loadHistory(true)">🔄 更新</button>
     </div>
     <div class="hist-filter-wrap">
@@ -709,7 +722,7 @@
   </div>
 </nav>
 
-<div class="version-label" id="version-label">v1.8.0</div>
+<div class="version-label" id="version-label">v1.9.0</div>
 
 <!-- ==============================
      モーダル: 数量入力
@@ -718,6 +731,9 @@
   <div class="modal">
     <div class="modal-title" id="qty-title">数量を選択</div>
     <div class="modal-sub" id="qty-sub"></div>
+
+    <!-- 直近注文バッジ -->
+    <div class="qty-last-order" id="qty-last-order"></div>
 
     <div class="qty-grid">
       <button class="qty-btn selected" onclick="selectQty(this,1)">1</button>
@@ -744,7 +760,7 @@
         style="font-size:26px;text-align:center;font-weight:700" placeholder="0">
     </div>
 
-    <!-- ② 単位選択 -->
+    <!-- 単位選択 -->
     <div class="form-group">
       <label>単位</label>
       <select id="qty-unit" class="unit-select"></select>
@@ -834,7 +850,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.8.0';
+const APP_VERSION    = 'v1.9.0';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const LS_MASTER      = 'bf_pm';
 const LS_MASTER_DATE = 'bf_pm_date';
@@ -849,6 +865,7 @@ let productMaster = [];
 let cartItems     = [];
 let allHistoryOrders  = []; // 履歴全件（フィルタ前）
 let historyDetailCache = {}; // 履歴明細キャッシュ { orderNo: items[] }
+let productHistory    = {}; // 直近20件発注から構築した商品別最終注文情報 { code/jan: { date, qty, unit } }
 
 let currentOrder = {
   supplierCode: '', supplierName: '', fax: '',
@@ -1288,7 +1305,7 @@ function selectProduct(idx) {
 /* ===================================================
    数量入力モーダル
 =================================================== */
-// ② 単位の選択肢を構築（マスター単位を先頭に、個・本を追加）
+// 単位の選択肢を構築（マスター単位を先頭に、個・本を追加）
 function buildUnitOptions(defaultUnit) {
   const extra = ['個', '本'];
   const all   = [defaultUnit, ...extra].filter(Boolean);
@@ -1306,6 +1323,20 @@ function openQtyModal(product, isHandwritten) {
     ? ` | 仕入単価: ${product.purchasePrice.toLocaleString()}円` : '';
   document.getElementById('qty-sub').textContent = isHandwritten ? '' :
     `コード: ${product.code || '-'} | JAN: ${product.jan || '-'} | 単位: ${product.unit || '-'}${priceStr}`;
+
+  // 直近注文情報を表示
+  const lastOrderEl = document.getElementById('qty-last-order');
+  if (!isHandwritten) {
+    const hist = productHistory[product.code] || productHistory[product.jan] || null;
+    if (hist && hist.date) {
+      lastOrderEl.textContent = `🕐 直近注文: ${hist.date}  ×  ${hist.qty}${hist.unit || ''}`;
+      lastOrderEl.classList.add('show');
+    } else {
+      lastOrderEl.classList.remove('show');
+    }
+  } else {
+    lastOrderEl.classList.remove('show');
+  }
 
   document.getElementById('qty-memo').value = '';
   buildUnitOptions(product.unit || '');
@@ -1348,7 +1379,7 @@ function confirmQty() {
     if (!qty || qty < 1) { showToast('数量を入力してください', 'error'); return; }
   }
   const memo = document.getElementById('qty-memo').value.trim();
-  // ② 単位は select から取得
+  // 単位は select から取得
   const unit = document.getElementById('qty-unit').value || pendingProduct.unit || '';
   if (!pendingProduct) return;
 
@@ -1502,7 +1533,7 @@ async function saveOrderToGAS(outputType) {
   else { throw new Error(res.error || 'GAS保存に失敗しました'); }
 }
 
-// ④ CSV出力（ヘッダー行なし）
+// CSV出力（ヘッダー行なし）
 async function outputCSV() {
   const csvItems = cartItems.filter(i => !i.isHandwritten);
   if (csvItems.length === 0) {
@@ -1511,7 +1542,6 @@ async function outputCSV() {
   showLoading('保存・出力中...');
   try {
     await saveOrderToGAS('CSV');
-    // ④ ヘッダー行なし・JANコードと数量のみ
     const body = csvItems.map(i => `${i.janCode},${i.qty}`).join('\n');
     const bom  = new Uint8Array([0xEF, 0xBB, 0xBF]);
     const blob = new Blob([bom, body], { type: 'text/csv;charset=utf-8' });
@@ -1642,9 +1672,9 @@ function renderPDFPage(container, items, orderNo, pageNum, totalPages) {
 /* ===================================================
    発注履歴
 =================================================== */
-const SS_HIST_CACHE = 'bf_hist_sess';
+const SS_HIST_CACHE = 'bf_hist_sess2'; // v1.9.0: キャッシュ形式変更のためキー更新
 
-// ③ GMT対応：スプレッドシートの日付型がDateオブジェクト化した文字列も正しくパース
+// GMT対応：スプレッドシートの日付型がDateオブジェクト化した文字列も正しくパース
 function formatHistoryDate(str) {
   if (!str) return '';
   // パターン1: "2026/03/26 14:30" / "2026-03-26 14:30" / ISO形式
@@ -1680,7 +1710,10 @@ async function loadHistory(forceRefresh) {
     const cached = sessionStorage.getItem(SS_HIST_CACHE);
     if (cached) {
       try {
-        allHistoryOrders = JSON.parse(cached);
+        const parsed = JSON.parse(cached);
+        // キャッシュ形式: { orders: [...], productHistory: {...} }
+        allHistoryOrders = parsed.orders || [];
+        productHistory   = parsed.productHistory || {};
         updateHistoryFilterOptions();
         applyHistoryFilter();
         return;
@@ -1692,11 +1725,17 @@ async function loadHistory(forceRefresh) {
     const res = await gasGet({ action: 'getOrders' });
     if (res.success) {
       allHistoryOrders = res.orders || [];
-      sessionStorage.setItem(SS_HIST_CACHE, JSON.stringify(allHistoryOrders));
+      productHistory   = res.productHistory || {};
+      // orders と productHistory を合わせてキャッシュ
+      sessionStorage.setItem(SS_HIST_CACHE, JSON.stringify({
+        orders: allHistoryOrders,
+        productHistory
+      }));
       updateHistoryFilterOptions();
       applyHistoryFilter();
     } else {
       allHistoryOrders = [];
+      productHistory   = {};
       container.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><div>履歴がありません</div></div>`;
     }
   } catch(e) {
@@ -1730,7 +1769,7 @@ function renderHistoryList(container, orders) {
     container.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><div>履歴がありません</div></div>`;
     return;
   }
-  container.innerHTML = orders.slice(0, 30).map(o => `
+  container.innerHTML = orders.slice(0, 20).map(o => `
     <div class="history-item" onclick="toggleHistoryDetail(this,'${escAttr(o.orderNo)}')">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
         <div>
@@ -1750,7 +1789,7 @@ function renderHistoryList(container, orders) {
     </div>`).join('');
 }
 
-// ① orderNoで全履歴から発注情報を取得
+// orderNoで全履歴から発注情報を取得
 function getHistoryOrderInfo(orderNo) {
   return allHistoryOrders.find(o => o.orderNo === orderNo) || null;
 }
@@ -1766,7 +1805,7 @@ async function toggleHistoryDetail(el, orderNo) {
   try {
     const res = await gasGet({ action: 'getOrderDetail', orderNo });
     if (res.success && res.items && res.items.length > 0) {
-      historyDetailCache[orderNo] = res.items; // ① キャッシュに保存
+      historyDetailCache[orderNo] = res.items;
 
       const itemsHtml = res.items.map(item => `
         <div style="display:flex;gap:6px;padding:4px 0;border-bottom:1px solid var(--border);font-size:13px">
@@ -1776,7 +1815,6 @@ async function toggleHistoryDetail(el, orderNo) {
         ${item.memo ? `<div style="font-size:12px;color:var(--text-light);padding:2px 0 4px 0">　📝 ${escHtml(item.memo)}</div>` : ''}`
       ).join('');
 
-      // ① 再出力ボタン
       const btnsHtml = `
         <div style="display:flex;gap:8px;margin-top:10px;">
           <button class="btn btn-outline btn-sm" onclick="reOutputCSV('${escAttr(orderNo)}');event.stopPropagation()">📥 CSV再出力</button>
@@ -1792,7 +1830,7 @@ async function toggleHistoryDetail(el, orderNo) {
   }
 }
 
-// ① 履歴からCSV再出力（ヘッダーなし）
+// 履歴からCSV再出力（ヘッダーなし）
 async function reOutputCSV(orderNo) {
   const orderInfo = getHistoryOrderInfo(orderNo);
   const items     = historyDetailCache[orderNo];
@@ -1803,7 +1841,6 @@ async function reOutputCSV(orderNo) {
     showToast('CSV出力可能な商品がありません\n（手書き商品はCSV対象外）', 'error'); return;
   }
 
-  // ④ ヘッダー行なし
   const body = csvItems.map(i => `${i.jan},${i.qty}`).join('\n');
   const bom  = new Uint8Array([0xEF, 0xBB, 0xBF]);
   const blob = new Blob([bom, body], { type: 'text/csv;charset=utf-8' });
@@ -1812,7 +1849,7 @@ async function reOutputCSV(orderNo) {
   showToast('CSV再出力しました', 'success');
 }
 
-// ① 履歴からPDF再出力
+// 履歴からPDF再出力
 async function reOutputPDF(orderNo) {
   const orderInfo = getHistoryOrderInfo(orderNo);
   const items     = historyDetailCache[orderNo];
