@@ -103,7 +103,7 @@
       background: #ffffff; border: 2px solid var(--border);
       border-radius: 12px; padding: 18px 8px;
       text-align: center; cursor: pointer;
-      font-size: 14px; font-weight: 700; color: var(--text);
+      font-size: 16px; font-weight: 700; color: var(--text);
       min-height: 64px; line-height: 1.3;
     }
     .user-btn:active { border-color: var(--primary); background: #eff6ff; }
@@ -297,6 +297,13 @@
     .history-summary .alert-count { color: var(--danger); font-weight: 700; }
 
     /* Salon management */
+    .day-filter-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+    .day-filter-tab {
+      padding: 6px 13px; border-radius: 20px;
+      border: 1.5px solid var(--border); background: #fff;
+      font-size: 13px; font-weight: 600; cursor: pointer; color: var(--text);
+    }
+    .day-filter-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
     .salon-day-group { margin-bottom: 20px; }
     .salon-day-label {
       font-size: 12px; font-weight: 700; color: #6b7280;
@@ -455,7 +462,6 @@
     <input type="text" class="text-input" id="new-salon-name" placeholder="サロン名を入力">
     <label class="input-label">訪問曜日</label>
     <select class="select-input" id="new-salon-day">
-      <option value="月">月曜日</option>
       <option value="火">火曜日</option>
       <option value="水">水曜日</option>
       <option value="木">木曜日</option>
@@ -485,7 +491,6 @@
     <div class="form-row">
       <label class="input-label">訪問曜日</label>
       <select class="select-input" id="salon-add-day">
-        <option value="月">月曜日</option>
         <option value="火">火曜日</option>
         <option value="水">水曜日</option>
         <option value="木">木曜日</option>
@@ -516,7 +521,6 @@
     <div class="form-row">
       <label class="input-label">訪問曜日</label>
       <select class="select-input" id="salon-edit-day">
-        <option value="月">月曜日</option>
         <option value="火">火曜日</option>
         <option value="水">水曜日</option>
         <option value="木">木曜日</option>
@@ -620,7 +624,6 @@
     <div class="form-row">
       <label class="input-label">訪問曜日</label>
       <select class="select-input" id="admin-salon-edit-day">
-        <option value="月">月曜日</option>
         <option value="火">火曜日</option>
         <option value="水">水曜日</option>
         <option value="木">木曜日</option>
@@ -672,7 +675,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.3.4';
+const APP_VERSION = 'v1.3.5';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 
 // ============================================================
@@ -700,6 +703,7 @@ let adminSalons         = [];    // getAllSalons で取得
 let editingUserId       = null;  // 編集中ユーザーID
 let editingAdminSalonId = null;  // admin用サロン編集ID
 let adminSalonSearch    = '';    // 全サロン管理画面の検索文字列
+let salonDayFilter      = 'all'; // マイサロン管理画面の曜日フィルタ
 
 // PIN変更
 let changePinStep    = 0;   // 0=現在PIN入力中, 1=新PIN入力中
@@ -925,11 +929,31 @@ function renderPlaceholder(icon, title, msg) {
 
 /** サロン管理画面のレンダリング */
 function renderSalons() {
-  var dayOrder = ['月', '火', '水', '木', '金', '土', '他'];
+  var dayOrder     = ['火', '水', '木', '金', '土', '他'];
   var activeSalons = allMySalons.filter(function(s) { return s.active !== false; });
 
+  // 曜日フィルタタブ（サロンが存在する曜日のみ表示）
+  var existingDays = dayOrder.filter(function(d) {
+    return activeSalons.some(function(s) { return s.visit_day === d; });
+  });
+  var tabsHtml = '';
+  if (existingDays.length > 1) {
+    var tabItems = [{ val: 'all', label: '全て' }].concat(existingDays.map(function(d) {
+      return { val: d, label: d === '他' ? '随時' : d };
+    }));
+    tabsHtml = '<div class="day-filter-tabs">' +
+      tabItems.map(function(t) {
+        var active = salonDayFilter === t.val ? ' active' : '';
+        return '<button class="day-filter-tab' + active + '" onclick="setSalonDayFilter(\'' + t.val + '\')">' + t.label + '</button>';
+      }).join('') +
+    '</div>';
+  }
+
+  // フィルタ適用
+  var displayDays = (salonDayFilter === 'all') ? dayOrder : [salonDayFilter];
+
   var content = '';
-  dayOrder.forEach(function(day) {
+  displayDays.forEach(function(day) {
     var daySalons = activeSalons
       .filter(function(s) { return s.visit_day === day; })
       .sort(function(a, b) { return Number(a.sort_order) - Number(b.sort_order); });
@@ -965,17 +989,24 @@ function renderSalons() {
     '<button class="header-btn" onclick="logout()">ログアウト</button>' +
     '</div>' +
     '<div class="content">' +
+    tabsHtml +
     '<button class="btn btn-primary" style="margin-bottom:16px" onclick="openSalonAddModal()">＋ サロンを追加</button>' +
     content +
     '</div>' +
     renderBottomNav();
 }
 
+/** サロン曜日フィルタ変更 */
+function setSalonDayFilter(day) {
+  salonDayFilter = day;
+  renderApp();
+}
+
 // ─── サロン追加（管理画面用）─────────────────────────────────
 function openSalonAddModal() {
   document.getElementById('salon-add-name').value = '';
   document.getElementById('salon-add-code').value = '';
-  var dayNames = ['日', '月', '火', '水', '木', '金', '土'];
+  var dayNames = ['日', '火', '火', '水', '木', '金', '土']; // 月(定休)は火に丸める
   var today = dayNames[new Date().getDay()];
   var sel = document.getElementById('salon-add-day');
   for (var i = 0; i < sel.options.length; i++) {
@@ -1912,6 +1943,7 @@ function logout() {
   adminUsers       = [];
   adminSalons      = [];
   adminSalonSearch = '';
+  salonDayFilter   = 'all';
   resetTo('login');
   loadPublicUsers();
 }
