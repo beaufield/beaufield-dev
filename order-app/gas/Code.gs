@@ -1,6 +1,6 @@
 // ============================================================
 // Beaufield 発注アプリ - Google Apps Script バックエンド
-// Version: v1.1.1
+// Version: v1.1.2
 // ============================================================
 // [重要] SPREADSHEET_ID を必ず自分のスプレッドシートIDに変更してください
 //   → Googleスプレッドシートを開き、URLの /d/XXXXX/edit の
@@ -8,7 +8,7 @@
 // ============================================================
 
 const SPREADSHEET_ID  = 'ここにスプレッドシートIDを貼り付けてください';
-const VERSION         = 'v1.1.1';
+const VERSION         = 'v1.1.2';
 
 // シート名定数
 const SHEET_HISTORY   = '発注履歴';
@@ -21,7 +21,6 @@ const SHEET_STAFF     = '担当者マスター';
 // ============================================================
 function doGet(e) {
   const action = (e && e.parameter && e.parameter.action) ? e.parameter.action : '';
-
   try {
     switch (action) {
       case 'getMasters':      return jsonResponse(getMasters());
@@ -41,7 +40,6 @@ function doGet(e) {
 function doPost(e) {
   const p      = (e && e.parameter) ? e.parameter : {};
   const action = p.action || '';
-
   try {
     switch (action) {
       case 'saveOrder':    return jsonResponse(saveOrder(p));
@@ -75,12 +73,17 @@ function getSheet(name) {
 
 // ============================================================
 // ヘルパー: セル値を安全に文字列化
-// スプレッドシートが日付型として認識した値は Dateオブジェクトで返ってくる。
-// そのまま String() すると GMT形式になるため、Utilities.formatDate で変換する。
+// スプレッドシートが日付・日時型として認識したセルは getValues() で
+// Dateオブジェクトとして返ってくる。そのまま String() すると
+// "Thu Mar 26 2026 00:00:00 GMT+0900..." のGMT形式になってしまうため、
+// Utilities.formatDate() を使って明示的にフォーマットする。
+//
+// fmt: 省略時は 'yyyy/MM/dd HH:mm'（日時用）
+//       日付のみの場合は 'yyyy/MM/dd' を指定すること
 // ============================================================
-function cellToStr(val) {
+function cellToStr(val, fmt) {
   if (val instanceof Date) {
-    return Utilities.formatDate(val, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm');
+    return Utilities.formatDate(val, 'Asia/Tokyo', fmt || 'yyyy/MM/dd HH:mm');
   }
   return String(val || '');
 }
@@ -93,7 +96,6 @@ function getMasters() {
   const suppSheet  = getSheet(SHEET_SUPPLIERS);
   const staffSheet = getSheet(SHEET_STAFF);
 
-  // 発注先マスター（1行目はヘッダー）
   const suppData  = suppSheet.getDataRange().getValues();
   const suppliers = suppData.slice(1)
     .filter(r => r[0] !== '' && r[0] !== null)
@@ -103,13 +105,10 @@ function getMasters() {
       fax:  String(r[2] || '').trim()
     }));
 
-  // 担当者マスター（1行目はヘッダー）
   const staffData = staffSheet.getDataRange().getValues();
   const staff = staffData.slice(1)
     .filter(r => r[0] !== '' && r[0] !== null)
-    .map(r => ({
-      name: String(r[0]).trim()
-    }));
+    .map(r => ({ name: String(r[0]).trim() }));
 
   return { success: true, suppliers, staff };
 }
@@ -128,24 +127,25 @@ function getOrders() {
     .filter(r => r[0] !== '' && r[0] !== null)
     .map(r => ({
       orderNo:      String(r[0] || ''),
-      date:         String(r[1] || ''),
+      // r[1] は発注日。スプレッドシートが日付型として認識するため cellToStr で変換
+      date:         cellToStr(r[1], 'yyyy/MM/dd'),
       supplierCode: String(r[2] || ''),
       supplierName: String(r[3] || ''),
       fax:          String(r[4] || ''),
       staff:        String(r[5] || ''),
       itemCount:    r[6] || 0,
       outputType:   String(r[7] || ''),
-      // r[8] はスプレッドシートが日付型として認識する場合があるため cellToStr で変換
+      // r[8] は登録日時。同じく cellToStr で変換（デフォルト: 日時フォーマット）
       createdAt:    cellToStr(r[8])
     }))
-    .reverse()   // 登録順（下から）→ 新しい順
+    .reverse()
     .slice(0, 30);
 
   return { success: true, orders };
 }
 
 // ============================================================
-// GET: 発注明細取得（orderNoに対応する明細行を返す）
+// GET: 発注明細取得
 // レスポンス: { success: true, items: [...] }
 // ============================================================
 function getOrderDetail(orderNo) {
@@ -169,10 +169,7 @@ function getOrderDetail(orderNo) {
 }
 
 // ============================================================
-// POST: 発注保存（履歴シート + 明細シートの両方に書き込む）
-// パラメータ: date, supplierCode, supplierName, fax, staff,
-//             outputType, items（JSON文字列）
-// レスポンス: { success: true, orderNo: 'YYYYMMDD-NNN' }
+// POST: 発注保存
 // ============================================================
 function saveOrder(p) {
   const date         = p.date         || '';
@@ -187,25 +184,12 @@ function saveOrder(p) {
     return { success: false, error: '必須項目が不足しています (date, supplierCode, supplierName, staff)' };
   }
 
-  // 発注No採番（YYYYMMDD-NNN）
   const orderNo = generateOrderNo(date);
   const now     = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
 
-  // シート①: 発注履歴に1行追加
   const histSh = getSheet(SHEET_HISTORY);
-  histSh.appendRow([
-    orderNo,
-    date,
-    supplierCode,
-    supplierName,
-    fax,
-    staff,
-    items.length,
-    outputType,
-    now
-  ]);
+  histSh.appendRow([orderNo, date, supplierCode, supplierName, fax, staff, items.length, outputType, now]);
 
-  // シート②: 発注明細に明細行を追加
   const itemsSh = getSheet(SHEET_ITEMS);
   items.forEach(item => {
     itemsSh.appendRow([
@@ -224,13 +208,11 @@ function saveOrder(p) {
   return { success: true, orderNo };
 }
 
-// 発注No採番ヘルパー（YYYYMMDD-NNN）
-// 当日の最大連番を検索して +1 する
+// 発注No採番（YYYYMMDD-NNN）
 function generateOrderNo(dateStr) {
-  const dateKey = dateStr.replace(/-/g, '');  // YYYYMMDD
+  const dateKey = dateStr.replace(/-/g, '');
   const sh      = getSheet(SHEET_HISTORY);
   const data    = sh.getDataRange().getValues();
-
   let maxSeq = 0;
   data.slice(1).forEach(r => {
     const no = String(r[0] || '');
@@ -239,13 +221,11 @@ function generateOrderNo(dateStr) {
       if (seq > maxSeq) maxSeq = seq;
     }
   });
-
   return dateKey + '-' + String(maxSeq + 1).padStart(3, '0');
 }
 
 // ============================================================
 // POST: 発注先マスター操作
-// パラメータ: code, name, fax, mode（add / update / delete）
 // ============================================================
 function saveSupplier(p) {
   const mode = p.mode || '';
@@ -264,7 +244,6 @@ function saveSupplier(p) {
     if (exists) return { success: false, error: 'コード「' + code + '」はすでに登録されています' };
     sh.appendRow([code, name, fax, now]);
     return { success: true };
-
   } else if (mode === 'update') {
     for (let i = 1; i < data.length; i++) {
       if (String(data[i][0]).trim() === code) {
@@ -273,7 +252,6 @@ function saveSupplier(p) {
       }
     }
     return { success: false, error: 'コード「' + code + '」が見つかりません' };
-
   } else if (mode === 'delete') {
     for (let i = 1; i < data.length; i++) {
       if (String(data[i][0]).trim() === code) {
@@ -282,7 +260,6 @@ function saveSupplier(p) {
       }
     }
     return { success: false, error: 'コード「' + code + '」が見つかりません' };
-
   } else {
     return { success: false, error: '不明なmode: ' + mode };
   }
@@ -290,7 +267,6 @@ function saveSupplier(p) {
 
 // ============================================================
 // POST: 担当者マスター操作
-// パラメータ: name, mode（add / delete）
 // ============================================================
 function saveStaff(p) {
   const mode = p.mode || '';
@@ -307,7 +283,6 @@ function saveStaff(p) {
     if (exists) return { success: false, error: '「' + name + '」はすでに登録されています' };
     sh.appendRow([name, now]);
     return { success: true };
-
   } else if (mode === 'delete') {
     for (let i = 1; i < data.length; i++) {
       if (String(data[i][0]).trim() === name) {
@@ -316,64 +291,45 @@ function saveStaff(p) {
       }
     }
     return { success: false, error: '「' + name + '」が見つかりません' };
-
   } else {
     return { success: false, error: '不明なmode: ' + mode };
   }
 }
 
 // ============================================================
-// 初期設定関数（GASエディタから【1回だけ】手動実行してください）
-//
-// 実行方法:
-//   GASエディタ上部の関数選択で「initializeSheets」を選び
-//   ▶ 実行ボタンを押す
+// 初期設定関数（GASエディタから【1回だけ】手動実行）
 // ============================================================
 function initializeSheets() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
 
   function ensureSheet(name, headers) {
     let sh = ss.getSheetByName(name);
-    if (!sh) {
-      sh = ss.insertSheet(name);
-      Logger.log('シートを作成しました: ' + name);
-    }
-    if (sh.getLastRow() === 0) {
-      sh.appendRow(headers);
-      Logger.log('ヘッダーを設定しました: ' + name);
-    }
+    if (!sh) { sh = ss.insertSheet(name); Logger.log('シートを作成しました: ' + name); }
+    if (sh.getLastRow() === 0) { sh.appendRow(headers); Logger.log('ヘッダーを設定しました: ' + name); }
     return sh;
   }
 
-  ensureSheet(SHEET_HISTORY, [
-    '発注No', '発注日', '発注先コード', '発注先名', 'FAX番号',
-    '担当者', '品目数', '出力方法', '登録日時'
-  ]);
+  ensureSheet(SHEET_HISTORY, ['発注No','発注日','発注先コード','発注先名','FAX番号','担当者','品目数','出力方法','登録日時']);
+  ensureSheet(SHEET_ITEMS,   ['発注No','JANコード','Beaufieldコード','商品名','数量','単位','備考','手書きフラグ','登録日時']);
 
-  ensureSheet(SHEET_ITEMS, [
-    '発注No', 'JANコード', 'Beaufieldコード', '商品名',
-    '数量', '単位', '備考', '手書きフラグ', '登録日時'
-  ]);
-
-  const suppSh = ensureSheet(SHEET_SUPPLIERS, ['コード', '名称', 'FAX', '更新日時']);
+  const suppSh = ensureSheet(SHEET_SUPPLIERS, ['コード','名称','FAX','更新日時']);
   if (suppSh.getLastRow() <= 1) {
     const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
-    const initialSuppliers = [
-      ['10', 'デミコスメティクス',      '',              now],
-      ['15', 'アペティート化粧品',       '052-883-1222',  now],
-      ['24', 'シュワルツコフ',           '',              now],
-      ['48', '千代田化学',              '',              now],
-      ['62', 'プレジール',              '0948-24-9801',  now],
-      ['67', 'ナプラ',                  '',              now],
-      ['77', 'earth walk republic',    '078-200-6869',  now],
-      ['81', 'GO-ON',                  '078-200-6678',  now],
-      ['58', 'パシフィックプロダクツ',  '03-5299-0435',  now],
-    ];
-    suppSh.getRange(2, 1, initialSuppliers.length, 4).setValues(initialSuppliers);
+    suppSh.getRange(2, 1, 9, 4).setValues([
+      ['10', 'デミコスメティクス',     '',             now],
+      ['15', 'アペティート化粧品',      '052-883-1222', now],
+      ['24', 'シュワルツコフ',          '',             now],
+      ['48', '千代田化学',             '',             now],
+      ['62', 'プレジール',             '0948-24-9801', now],
+      ['67', 'ナプラ',                 '',             now],
+      ['77', 'earth walk republic',   '078-200-6869', now],
+      ['81', 'GO-ON',                 '078-200-6678', now],
+      ['58', 'パシフィックプロダクツ', '03-5299-0435', now],
+    ]);
     Logger.log('発注先マスターに初期データを登録しました');
   }
 
-  const staffSh = ensureSheet(SHEET_STAFF, ['名前', '更新日時']);
+  const staffSh = ensureSheet(SHEET_STAFF, ['名前','更新日時']);
   if (staffSh.getLastRow() <= 1) {
     const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
     staffSh.appendRow(['前島', now]);
