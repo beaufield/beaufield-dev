@@ -400,12 +400,13 @@
     /* 直近注文バッジ（数量モーダル内） */
     .qty-last-order {
       display: none;
-      background: #EEF4FF;
-      border: 1px solid #C7D9FF;
+      background: #FFF0F0;
+      border: 1px solid #FFBBBB;
       border-radius: 8px;
       padding: 7px 11px;
       font-size: 12px;
-      color: #3A60C4;
+      font-weight: 700;
+      color: #CC0000;
       margin-bottom: 12px;
     }
     .qty-last-order.show { display: block; }
@@ -722,7 +723,7 @@
   </div>
 </nav>
 
-<div class="version-label" id="version-label">v1.9.0</div>
+<div class="version-label" id="version-label">v1.9.1</div>
 
 <!-- ==============================
      モーダル: 数量入力
@@ -787,7 +788,7 @@
       <button class="btn btn-outline" onclick="janNfSearch()">🔎 商品名で検索する</button>
       <button class="btn btn-secondary" onclick="janNfHandwrite()">✏️ 手書きで追加する</button>
     </div>
-    <button class="btn btn-ghost" onclick="closeModal('modal-jan-nf')" style="margin-top:8px">キャンセル</button>
+    <button class="btn btn-ghost" onclick="closeModal('modal-jan-nf');if(currentTab==='scan')setTimeout(focusScanInput,150);" style="margin-top:8px">キャンセル</button>
   </div>
 </div>
 
@@ -850,7 +851,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.9.0';
+const APP_VERSION    = 'v1.9.1';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const LS_MASTER      = 'bf_pm';
 const LS_MASTER_DATE = 'bf_pm_date';
