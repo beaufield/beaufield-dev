@@ -675,7 +675,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.5.0';
+const APP_VERSION = 'v1.6.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 
 // ============================================================
@@ -866,13 +866,26 @@ function renderApp() {
 
 // ログイン画面
 function renderLogin() {
+  var grid;
+  if (publicUsers.length === 0) {
+    grid = '<div class="empty-state">ユーザー情報を読み込み中...</div>';
+  } else {
+    grid = '<div class="user-grid">' +
+      publicUsers.map(function(u) {
+        return '<button class="user-btn" data-uid="' + escHtml(u.user_id) +
+               '" data-uname="' + escHtml(u.name) +
+               '" onclick="openPinModal(this.dataset.uid, this.dataset.uname)">' +
+               escHtml(u.name) + '</button>';
+      }).join('') +
+    '</div>';
+  }
   return '<div class="login-hero">' +
     '<div class="login-logo">Beaufield</div>' +
     '<div class="login-subtitle">ルート訪問チェッカー</div>' +
     '</div>' +
-    '<div class="content" style="text-align:center;padding-top:32px;">' +
-    '<div class="section-header" style="margin-bottom:24px;">4桁のPINを入力してください</div>' +
-    '<button class="btn btn-primary" style="font-size:16px;padding:14px 40px;border-radius:12px;" onclick="openLoginPin()">PINでログイン</button>' +
+    '<div class="content">' +
+    '<div class="section-header" style="margin-bottom:12px;">ログインするユーザーを選択</div>' +
+    grid +
     '<div class="version-footer">' + APP_VERSION + '</div>' +
     '</div>';
 }
@@ -1906,19 +1919,6 @@ async function loadPublicUsers() {
   }
 }
 
-// ログイン画面から呼び出す（PIN-only認証）
-function openLoginPin() {
-  if (GAS_URL === 'YOUR_GAS_URL_HERE') {
-    showToast('index.html の GAS_URL を設定してください', 'warning');
-    return;
-  }
-  pinValue = '';
-  updatePinDots();
-  document.getElementById('pin-modal-title').textContent = 'PINを入力してください';
-  document.getElementById('pin-error').textContent = '';
-  document.getElementById('pin-modal').classList.add('open');
-}
-
 function openPinModal(userId, userName) {
   selectedUser = { user_id: userId, name: userName };
   pinValue = '';
@@ -1954,12 +1954,12 @@ function updatePinDots() {
 }
 
 async function submitLogin() {
-  if (pinValue.length !== 4) return;
+  if (!selectedUser || pinValue.length !== 4) return;
   showLoading();
   document.getElementById('pin-error').textContent = '';
   var pin = pinValue;
   try {
-    var result = await apiGet('login', { pin: pin });
+    var result = await apiGet('login', { user_id: selectedUser.user_id, pin: pin });
     currentUser = result;
     saveSession(result);  // 30日間セッション保持
     closePinModal();
