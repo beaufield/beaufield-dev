@@ -675,7 +675,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.3.6'; // fix: deactivate salon_id null bug
+const APP_VERSION = 'v1.5.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 
 // ============================================================
@@ -717,6 +717,49 @@ let historyFilter = {         // フィルタ状態
   month: '',                  // 'YYYY-MM'（空=当月）
   day_of_week: 'all'          // 'all' | '月'〜'土'
 };
+
+// ============================================================
+// セッション管理（localStorage / 30日保持）
+// ============================================================
+var SESSION_KEY  = 'bfc_session';
+var SESSION_DAYS = 30;
+var SESSION_MS   = SESSION_DAYS * 24 * 60 * 60 * 1000;
+
+/** ログイン成功時にセッションをlocalStorageに保存 */
+function saveSession(user) {
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      user_id:  user.user_id,
+      name:     user.name,
+      role:     user.role,
+      team:     user.team,
+      saved_at: Date.now()
+    }));
+  } catch(e) { /* プライベートモード等では無視 */ }
+}
+
+/** 起動時にlocalStorageから有効なセッションを復元（30日以内のみ）*/
+function tryAutoLogin() {
+  try {
+    var raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return false;
+    var s = JSON.parse(raw);
+    if (!s.user_id || !s.saved_at) return false;
+    if (Date.now() - s.saved_at > SESSION_MS) {
+      localStorage.removeItem(SESSION_KEY); // 期限切れ → 削除
+      return false;
+    }
+    currentUser = { user_id: s.user_id, name: s.name, role: s.role, team: s.team };
+    return true;
+  } catch(e) {
+    return false;
+  }
+}
+
+/** ログアウト時にセッションをlocalStorageから削除 */
+function clearSession() {
+  try { localStorage.removeItem(SESSION_KEY); } catch(e) {}
+}
 
 // ============================================================
 // Navigation
@@ -823,26 +866,13 @@ function renderApp() {
 
 // ログイン画面
 function renderLogin() {
-  var grid;
-  if (publicUsers.length === 0) {
-    grid = '<div class="empty-state">ユーザー情報を読み込み中...</div>';
-  } else {
-    grid = '<div class="user-grid">' +
-      publicUsers.map(function(u) {
-        return '<button class="user-btn" data-uid="' + escHtml(u.user_id) +
-               '" data-uname="' + escHtml(u.name) +
-               '" onclick="openPinModal(this.dataset.uid, this.dataset.uname)">' +
-               escHtml(u.name) + '</button>';
-      }).join('') +
-    '</div>';
-  }
   return '<div class="login-hero">' +
     '<div class="login-logo">Beaufield</div>' +
     '<div class="login-subtitle">ルート訪問チェッカー</div>' +
     '</div>' +
-    '<div class="content">' +
-    '<div class="section-header" style="margin-bottom:12px;">ログインするユーザーを選択</div>' +
-    grid +
+    '<div class="content" style="text-align:center;padding-top:32px;">' +
+    '<div class="section-header" style="margin-bottom:24px;">4桁のPINを入力してください</div>' +
+    '<button class="btn btn-primary" style="font-size:16px;padding:14px 40px;border-radius:12px;" onclick="openLoginPin()">PINでログイン</button>' +
     '<div class="version-footer">' + APP_VERSION + '</div>' +
     '</div>';
 }
@@ -1876,11 +1906,20 @@ async function loadPublicUsers() {
   }
 }
 
-function openPinModal(userId, userName) {
-  if (userId === '_demo') {
+// ログイン画面から呼び出す（PIN-only認証）
+function openLoginPin() {
+  if (GAS_URL === 'YOUR_GAS_URL_HERE') {
     showToast('index.html の GAS_URL を設定してください', 'warning');
     return;
   }
+  pinValue = '';
+  updatePinDots();
+  document.getElementById('pin-modal-title').textContent = 'PINを入力してください';
+  document.getElementById('pin-error').textContent = '';
+  document.getElementById('pin-modal').classList.add('open');
+}
+
+function openPinModal(userId, userName) {
   selectedUser = { user_id: userId, name: userName };
   pinValue = '';
   updatePinDots();
@@ -1915,14 +1954,14 @@ function updatePinDots() {
 }
 
 async function submitLogin() {
-  if (!selectedUser || pinValue.length !== 4) return;
+  if (pinValue.length !== 4) return;
   showLoading();
   document.getElementById('pin-error').textContent = '';
   var pin = pinValue;
   try {
-    var result = await apiGet('login', { user_id: selectedUser.user_id, pin: pin });
+    var result = await apiGet('login', { pin: pin });
     currentUser = result;
-    localStorage.setItem('bf_last_uid', result.user_id);
+    saveSession(result);  // 30日間セッション保持
     closePinModal();
     await loadCheckScreen();
   } catch(e) {
@@ -1935,6 +1974,7 @@ async function submitLogin() {
 }
 
 function logout() {
+  clearSession();          // localStorageからセッション削除
   currentUser      = null;
   todayRoute       = [];
   allMySalons      = [];
@@ -1946,7 +1986,7 @@ function logout() {
   adminSalonSearch = '';
   salonDayFilter   = 'all';
   resetTo('login');
-  loadPublicUsers();
+  loadPublicUsers(); // 履歴フィルタ用ユーザー一覧を再取得
 }
 
 // ============================================================
@@ -2121,9 +2161,12 @@ async function submitNewSalon() {
 // ============================================================
 // 初期化
 // ============================================================
-document.addEventListener('DOMContentLoaded', function() {
-  renderApp();
-  loadPublicUsers();
+document.addEventListener('DOMContentLoaded', async function() {
+  renderApp();                  // ローディング表示
+  await loadPublicUsers();      // ユーザー一覧を取得（履歴フィルタ・管理画面用）
+  if (tryAutoLogin()) {         // localStorageに有効なセッションがあれば
+    await loadCheckScreen();    // → PIN入力なしでそのままチェック画面へ
+  }
 });
 </script>
 </body>
