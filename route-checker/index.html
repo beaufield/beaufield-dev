@@ -694,7 +694,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.7.0';
+const APP_VERSION = 'v1.7.1';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 
 // ============================================================
@@ -1396,7 +1396,7 @@ function renderAdminSalons() {
       var ownerSalons = filtered
         .filter(function(s) { return s.owner_user_id === u.user_id; })
         .sort(function(a, b) {
-          var dayOrder = ['月', '火', '水', '木', '金', '土'];
+          var dayOrder = ['火', '水', '木', '金', '土', '他'];
           var dayDiff = dayOrder.indexOf(a.visit_day) - dayOrder.indexOf(b.visit_day);
           if (dayDiff !== 0) return dayDiff;
           return Number(a.sort_order) - Number(b.sort_order);
@@ -1813,8 +1813,8 @@ function buildHistoryFilters() {
   }
 
   // 曜日フィルタ
-  var days = ['all', '月', '火', '水', '木', '金', '土', '他'];
-  var dayLabels = { all: '全曜日', '月': '月', '火': '火', '水': '水', '木': '木', '金': '金', '土': '土', '他': '随時' };
+  var days = ['all', '火', '水', '木', '金', '土', '他'];
+  var dayLabels = { all: '全曜日', '火': '火', '水': '水', '木': '木', '金': '金', '土': '土', '他': '随時' };
   var dayOpts = days.map(function(d) {
     var sel = historyFilter.day_of_week === d ? ' selected' : '';
     return '<option value="' + d + '"' + sel + '>' + dayLabels[d] + '</option>';
