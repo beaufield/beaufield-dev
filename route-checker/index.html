@@ -253,6 +253,22 @@
     }
     .filter-select:focus { outline: none; border-color: var(--primary); }
 
+    /* Date selector (check screen) */
+    .date-selector { padding: 8px 0 4px; }
+    .date-quick-btns { display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto;
+      padding-bottom: 6px; -webkit-overflow-scrolling: touch; }
+    .date-quick-btns::-webkit-scrollbar { display: none; }
+    .date-pill { flex-shrink: 0; padding: 5px 12px; border-radius: 20px; font-size: 13px;
+      font-weight: 600; border: 1.5px solid var(--border); background: #fff;
+      color: var(--text); cursor: pointer; white-space: nowrap; }
+    .date-pill.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .date-picker-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+    .date-picker-label { font-size: 12px; color: #6b7280; white-space: nowrap; }
+    .date-picker-input { flex: 1; border: 1.5px solid var(--border); border-radius: 8px;
+      padding: 5px 8px; font-size: 13px; color: var(--text); background: #fff; }
+    .check-date-display { font-size: 13px; font-weight: 700; color: var(--primary);
+      margin-bottom: 4px; }
+
     /* History matrix */
     .matrix-wrap {
       overflow-x: auto; border-radius: 10px;
@@ -266,7 +282,8 @@
     }
     .matrix-table th.salon-col {
       background: #374151; text-align: left;
-      min-width: 130px; max-width: 180px;
+      width: 130px; min-width: 100px; max-width: 130px;
+      white-space: normal; word-break: break-all;
       position: sticky; left: 0; z-index: 2;
     }
     .matrix-table td {
@@ -277,6 +294,8 @@
       text-align: left; position: sticky; left: 0;
       background: #fff; z-index: 1;
       border-right: 1px solid var(--border);
+      width: 130px; min-width: 100px; max-width: 130px;
+      white-space: normal; word-break: break-all;
     }
     .matrix-table tr:hover td         { background: #f9fafb; }
     .matrix-table tr:hover td.salon-col { background: #f9fafb; }
@@ -675,7 +694,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.6.0';
+const APP_VERSION = 'v1.7.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 
 // ============================================================
@@ -704,6 +723,7 @@ let editingUserId       = null;  // 編集中ユーザーID
 let editingAdminSalonId = null;  // admin用サロン編集ID
 let adminSalonSearch    = '';    // 全サロン管理画面の検索文字列
 let salonDayFilter      = 'all'; // マイサロン管理画面の曜日フィルタ
+let checkDate           = '';    // チェック画面の対象日（'YYYY-MM-DD'、空=今日）
 
 // PIN変更
 let changePinStep    = 0;   // 0=現在PIN入力中, 1=新PIN入力中
@@ -717,6 +737,47 @@ let historyFilter = {         // フィルタ状態
   month: '',                  // 'YYYY-MM'（空=当月）
   day_of_week: 'all'          // 'all' | '月'〜'土'
 };
+
+// ============================================================
+// 日付ユーティリティ
+// ============================================================
+
+/** 今日の YYYY-MM-DD 文字列を返す */
+function todayStr() {
+  var d = new Date();
+  return d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+}
+
+/** YYYY-MM-DD → 「今日」「昨日」「N日前」 の表示ラベルを返す */
+function dateDiffLabel(dateStr) {
+  var today = todayStr();
+  if (dateStr === today) return '今日';
+  var diff = Math.round((new Date(today) - new Date(dateStr)) / 86400000);
+  if (diff === 1) return '昨日';
+  return diff + '日前';
+}
+
+/** 今日から過去 n 日分の YYYY-MM-DD 配列を返す（今日含む） */
+function getRecentDates(n) {
+  var result = [];
+  for (var i = 0; i < n; i++) {
+    var d = new Date();
+    d.setDate(d.getDate() - i);
+    result.push(d.getFullYear() + '-' +
+      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0'));
+  }
+  return result;
+}
+
+/** YYYY-MM-DD → M/D（曜日）表示 */
+function dateDisplayStr(dateStr) {
+  var d = new Date(dateStr);
+  var dayNames = ['日', '月', '火', '水', '木', '金', '土'];
+  return (d.getMonth() + 1) + '/' + d.getDate() + '（' + dayNames[d.getDay()] + '）';
+}
 
 // ============================================================
 // セッション管理（localStorage / 30日保持）
@@ -892,9 +953,30 @@ function renderLogin() {
 
 // 訪問チェック画面
 function renderCheck() {
-  var dayNames = ['日', '月', '火', '水', '木', '金', '土'];
-  var today    = new Date();
-  var todayStr = (today.getMonth() + 1) + '月' + today.getDate() + '日（' + dayNames[today.getDay()] + '）';
+  // 日付セレクタ
+  var today   = todayStr();
+  var selDate = checkDate || today;
+  var dates   = getRecentDates(6); // 今日〜5日前
+
+  var pills = dates.map(function(d) {
+    var label  = dateDiffLabel(d);
+    var active = (d === selDate) ? ' active' : '';
+    return '<button class="date-pill' + active + '" onclick="changeCheckDate(\'' + d + '\')">' + label + '</button>';
+  }).join('');
+
+  var dateSelector =
+    '<div class="date-selector">' +
+    '<div class="date-quick-btns">' + pills + '</div>' +
+    '<div class="date-picker-row">' +
+    '<span class="date-picker-label">別の日：</span>' +
+    '<input type="date" class="date-picker-input" value="' + selDate + '"' +
+    ' max="' + today + '" onchange="changeCheckDate(this.value)">' +
+    '</div>' +
+    '</div>';
+
+  // チェックリスト
+  var dayNames  = ['日', '月', '火', '水', '木', '金', '土'];
+  var dispLabel = dateDisplayStr(selDate);
 
   var items = todayRoute.map(function(s) {
     var checked = checkedIds.has(s.salon_id);
@@ -908,7 +990,7 @@ function renderCheck() {
   }).join('');
 
   var emptyMsg = todayRoute.length === 0
-    ? '<div class="empty-state">本日（' + dayNames[today.getDay()] + '）のルートはありません</div>'
+    ? '<div class="empty-state">' + dispLabel + ' のルートはありません</div>'
     : '';
 
   return '<div class="header">' +
@@ -916,8 +998,8 @@ function renderCheck() {
     '<button class="header-btn" onclick="logout()">ログアウト</button>' +
     '</div>' +
     '<div class="content">' +
-    '<div class="day-badge">📅 ' + todayStr + '</div>' +
-    '<div class="section-header">本日のルート（' + todayRoute.length + '件）</div>' +
+    dateSelector +
+    '<div class="section-header">📅 ' + dispLabel + ' のルート（' + todayRoute.length + '件）</div>' +
     emptyMsg +
     '<ul class="salon-list">' + items + '</ul>' +
     '<div class="action-btn-group">' +
@@ -1985,6 +2067,7 @@ function logout() {
   adminSalons      = [];
   adminSalonSearch = '';
   salonDayFilter   = 'all';
+  checkDate        = '';
   resetTo('login');
   loadPublicUsers(); // 履歴フィルタ用ユーザー一覧を再取得
 }
@@ -1999,12 +2082,13 @@ async function loadCheckScreen() {
     resetTo('history');
     return;
   }
+  if (!checkDate) checkDate = todayStr(); // デフォルトは今日
   showLoading();
   try {
     var uid = currentUser.user_id;
     var results = await Promise.all([
-      apiGet('getMyRoute',   { user_id: uid }),
-      apiGet('getTodayLogs', { user_id: uid }),
+      apiGet('getMyRoute',   { user_id: uid, date: checkDate }),
+      apiGet('getTodayLogs', { user_id: uid, date: checkDate }),
       apiGet('getMySalons',  { user_id: uid })
     ]);
     todayRoute  = results[0].salons    || [];
@@ -2014,6 +2098,30 @@ async function loadCheckScreen() {
   } catch(e) {
     showToast('データ読み込みに失敗しました: ' + e.message, 'error');
     resetTo('check');
+  } finally {
+    hideLoading();
+  }
+}
+
+/** 日付変更時：ルートとチェック済みを再取得して再描画 */
+async function changeCheckDate(dateStr) {
+  if (!dateStr || !currentUser) return;
+  checkDate  = dateStr;
+  todayRoute = [];
+  checkedIds = new Set();
+  renderApp();
+  showLoading();
+  try {
+    var uid = currentUser.user_id;
+    var results = await Promise.all([
+      apiGet('getMyRoute',   { user_id: uid, date: checkDate }),
+      apiGet('getTodayLogs', { user_id: uid, date: checkDate })
+    ]);
+    todayRoute = results[0].salons    || [];
+    checkedIds = new Set(results[1].salon_ids || []);
+    renderApp();
+  } catch(e) {
+    showToast('データ読み込みに失敗しました: ' + e.message, 'error');
   } finally {
     hideLoading();
   }
@@ -2033,7 +2141,8 @@ async function doCheck(salonId) {
   try {
     var result = await apiPost('checkVisit', {
       user_id:  currentUser.user_id,
-      salon_id: salonId
+      salon_id: salonId,
+      date:     checkDate || todayStr()
     });
     if (result.duplicate) {
       showToast('本日はすでにチェック済みです', 'warning');
