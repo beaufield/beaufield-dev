@@ -6,6 +6,7 @@
   <title>ビューフィールド 発注アプリ</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
   <style>
     :root {
       --primary:      #C9A96E;
@@ -645,6 +646,7 @@
     <div id="output-btns">
       <button class="btn btn-primary" onclick="outputCSV()" style="margin-bottom:8px">📥 CSV出力</button>
       <button class="btn btn-outline" onclick="outputPDF()" style="margin-bottom:8px">📄 PDF保存</button>
+      <button id="btn-grandex-pdf" class="btn btn-secondary" onclick="outputGrandexPDF()" style="margin-bottom:8px;display:none">📋 グランデックス発注書 出力</button>
     </div>
     <div id="new-order-wrap" style="display:none">
       <button class="btn btn-success" onclick="startNewOrder()">➕ 新しい発注を始める</button>
@@ -723,7 +725,7 @@
   </div>
 </nav>
 
-<div class="version-label" id="version-label">v1.9.1</div>
+<div class="version-label" id="version-label">v1.10.0</div>
 
 <!-- ==============================
      モーダル: 数量入力
@@ -851,7 +853,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.9.1';
+const APP_VERSION    = 'v1.10.0';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const LS_MASTER      = 'bf_pm';
 const LS_MASTER_DATE = 'bf_pm_date';
@@ -1517,6 +1519,8 @@ function renderConfirmPage() {
   document.getElementById('complete-banner').style.display = 'none';
   document.getElementById('new-order-wrap').style.display  = 'none';
   document.getElementById('output-btns').style.display     = 'block';
+  document.getElementById('btn-grandex-pdf').style.display =
+    currentOrder.supplierCode === GRANDEX_SUPPLIER_CODE ? 'block' : 'none';
 }
 
 /* ===================================================
@@ -1553,6 +1557,99 @@ async function outputCSV() {
     showToast('CSV出力が完了しました', 'success');
   } catch(e) {
     showToast('エラー: ' + e.message, 'error');
+  } finally { hideLoading(); }
+}
+
+/* ===================================================
+   グランデックス メーカー発注書 出力
+=================================================== */
+const GRANDEX_SUPPLIER_CODE = '54';
+
+// JAN → グランデックス商品コード
+const GRANDEX_JAN_TO_CODE = {
+  "4582142381408":"820","4582142381415":"821","4582142381422":"822",
+  "4582142381439":"823","4582142381446":"824","4582142381453":"825",
+  "4582142381460":"827","4582142381477":"826","4582142381484":"830",
+  "4582142381491":"828","4582142381507":"829","4582142381538":"831",
+  "4582142381552":"850","4582142381569":"851","4582142381576":"852",
+  "4582142381583":"861","4582142381590":"860","4582142380814":"182",
+  "4582142380807":"181","4582142381040":"189","4582142380944":"612",
+  "4582142381521":"834","4582142381514":"833","4582142381644":"835",
+  "4582142381606":"192","4582142381651":"661","4582142381668":"662",
+  "4582142380951":"609","4582142381675":"900","4582142381682":"910",
+  "4582142381699":"920","4582142381705":"930","4582142381729":"940",
+  "4582142381712":"950","4582142381736":"960"
+};
+
+// グランデックス商品コード → PDF座標（pdf-lib座標系: 左下原点）
+const GRANDEX_COORD_MAP = {
+  // 左表 (x=232)
+  "651":{x:232.0,y:665.0},"652":{x:232.0,y:647.8},"653":{x:232.0,y:630.7},
+  "656":{x:232.0,y:613.7},"657":{x:232.0,y:596.6},"658":{x:232.0,y:579.7},
+  "631":{x:232.0,y:562.4},"632":{x:232.0,y:545.3},"633":{x:232.0,y:528.0},
+  "636":{x:232.0,y:510.7},"637":{x:232.0,y:493.5},"638":{x:232.0,y:476.5},
+  "641":{x:232.0,y:459.8},"642":{x:232.0,y:442.5},"643":{x:232.0,y:425.4},
+  "646":{x:232.0,y:408.3},"647":{x:232.0,y:391.1},"648":{x:232.0,y:374.0},
+  "181":{x:232.0,y:340.0},"189":{x:232.0,y:322.7},"186":{x:232.0,y:305.6},
+  "185":{x:232.0,y:288.3},"192":{x:232.0,y:271.2},"182":{x:232.0,y:254.1},
+  "610":{x:232.0,y:237.3},"611":{x:232.0,y:220.3},"612":{x:232.0,y:204.0},
+  "614":{x:232.0,y:172.1},"615":{x:232.0,y:156.0},
+  "661":{x:232.0,y:124.1},"662":{x:232.0,y:108.3},"609":{x:232.0,y:92.1},
+  // 右表 (x=518)
+  "820":{x:518.0,y:665.0},"821":{x:518.0,y:647.6},"822":{x:518.0,y:630.4},
+  "823":{x:518.0,y:613.4},"824":{x:518.0,y:596.3},"825":{x:518.0,y:579.3},
+  "827":{x:518.0,y:562.0},"826":{x:518.0,y:545.0},"830":{x:518.0,y:527.5},
+  "828":{x:518.0,y:510.3},"829":{x:518.0,y:493.2},"831":{x:518.0,y:476.2},
+  "832":{x:518.0,y:459.3},"833":{x:518.0,y:442.0},"834":{x:518.0,y:425.0},
+  "835":{x:518.0,y:407.7},"850":{x:518.0,y:390.5},"851":{x:518.0,y:373.4},
+  "852":{x:518.0,y:356.3},"853":{x:518.0,y:339.2},
+  "861":{x:518.0,y:322.0},"860":{x:518.0,y:305.0},
+  "900":{x:518.0,y:270.4},"910":{x:518.0,y:253.2},"920":{x:518.0,y:236.3},
+  "930":{x:518.0,y:219.2},"940":{x:518.0,y:202.8},"950":{x:518.0,y:186.8},
+  "960":{x:518.0,y:170.6},"616":{x:518.0,y:138.4},"617":{x:518.0,y:122.4},
+  "620":{x:518.0,y:106.5}
+};
+
+async function outputGrandexPDF() {
+  // 手書き商品を除外して対象を絞る
+  const grandexItems = cartItems.filter(i => !i.isHandwritten);
+  const matched = [], unmatched = [];
+  for (const item of grandexItems) {
+    const gCode = GRANDEX_JAN_TO_CODE[item.janCode] || item.code;
+    if (gCode && GRANDEX_COORD_MAP[gCode]) {
+      matched.push({ item, gCode, coord: GRANDEX_COORD_MAP[gCode] });
+    } else {
+      unmatched.push(item);
+    }
+  }
+  if (unmatched.length > 0) {
+    const names = unmatched.map(i => '・' + i.name).join('\n');
+    if (!confirm(`以下の商品はグランデックス発注書に自動入力できません（手書き対応が必要）：\n\n${names}\n\n続けますか？`)) return;
+  }
+  showLoading('グランデックス発注書を生成中...');
+  try {
+    const { PDFDocument, StandardFonts, rgb } = PDFLib;
+    const pdfBytes = await fetch('./grandex.pdf').then(r => {
+      if (!r.ok) throw new Error('grandex.pdf の読み込みに失敗しました');
+      return r.arrayBuffer();
+    });
+    const pdfDoc = await PDFDocument.load(pdfBytes);
+    const page   = pdfDoc.getPages()[0];
+    const font   = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    for (const { item, coord } of matched) {
+      page.drawText(String(item.qty), {
+        x: coord.x, y: coord.y, size: 9, font, color: rgb(0, 0, 0.7)
+      });
+    }
+    await saveOrderToGAS('メーカー発注書');
+    const pdfBytesOut = await pdfDoc.save();
+    const blob = new Blob([pdfBytesOut], { type: 'application/pdf' });
+    const dateStr = currentOrder.date.replace(/-/g, '');
+    downloadBlob(blob, `グランデックス発注書_${dateStr}.pdf`);
+    showCompleteState();
+    showToast(`グランデックス発注書を出力しました（自動記入: ${matched.length}件）`, 'success');
+  } catch(e) {
+    showToast('PDFエラー: ' + e.message, 'error');
   } finally { hideLoading(); }
 }
 
