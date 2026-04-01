@@ -725,7 +725,7 @@
   </div>
 </nav>
 
-<div class="version-label" id="version-label">v1.10.1</div>
+<div class="version-label" id="version-label">v1.10.2</div>
 
 <!-- ==============================
      モーダル: 数量入力
@@ -754,6 +754,8 @@
       <button class="qty-btn" onclick="selectQty(this,24)">24</button>
       <button class="qty-btn" onclick="selectQty(this,25)">25</button>
       <button class="qty-btn" onclick="selectQty(this,30)">30</button>
+      <button class="qty-btn" onclick="selectQty(this,48)">48</button>
+      <button class="qty-btn" onclick="selectQty(this,96)">96</button>
       <button class="qty-btn qty-btn-other" id="btn-other-qty" onclick="selectOtherQty(this)">その他</button>
     </div>
 
@@ -853,7 +855,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.10.1';
+const APP_VERSION    = 'v1.10.2'; // メーカー不一致警告・数量48/96追加
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const LS_MASTER      = 'bf_pm';
 const LS_MASTER_DATE = 'bf_pm_date';
@@ -1247,6 +1249,17 @@ function processJanCode(jan) {
       if (!confirm(`「${found.name}」は廃番商品です。\nそれでも追加しますか？`)) {
         setTimeout(focusScanInput, 100); return;
       }
+    }
+    // ① 指定メーカー以外の商品をスキャンした場合に警告
+    if (currentOrder.supplierCode && found.supplierCD && found.supplierCD !== currentOrder.supplierCode) {
+      const ok = confirm(
+        `⚠️ メーカーが違います！\n\n` +
+        `商品: ${found.name}\n` +
+        `このJANのメーカー: ${found.supplierCD}\n` +
+        `指定メーカー: ${currentOrder.supplierCode}（${currentOrder.supplierName}）\n\n` +
+        `それでも追加しますか？`
+      );
+      if (!ok) { setTimeout(focusScanInput, 100); return; }
     }
     openQtyModal(found, false);
   } else {
