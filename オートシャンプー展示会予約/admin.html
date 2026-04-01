@@ -16,17 +16,6 @@
 
     .container{max-width:900px;margin:0 auto;padding:20px 16px}
 
-    /* ログイン */
-    .login-card{background:#fff;border-radius:12px;padding:40px;box-shadow:0 1px 4px rgba(0,0,0,.1);max-width:360px;margin:24px auto;text-align:center}
-    .login-card h2{font-size:18px;color:#1a365d;margin-bottom:6px}
-    .login-card p{font-size:13px;color:#718096;margin-bottom:24px}
-    .login-card input{width:100%;padding:11px 14px;border:2px solid #e2e8f0;border-radius:8px;font-size:15px;font-family:inherit;text-align:center;letter-spacing:.1em}
-    .login-card input:focus{outline:none;border-color:#4299e1}
-    .btn{display:block;width:100%;padding:12px;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;margin-top:12px}
-    .btn-p{background:#2b6cb0;color:#fff}
-    .btn-p:hover{background:#2c5282}
-    .err{color:#c53030;font-size:13px;margin-top:10px}
-
     /* サマリー */
     .summary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
     .sum-card{background:#fff;border-radius:10px;padding:16px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.08)}
@@ -80,6 +69,20 @@
       .time-grid{grid-template-columns:repeat(3,1fr)}
       .summary{grid-template-columns:repeat(3,1fr)}
     }
+
+    /* 一覧ビュー */
+    .view-btn{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.45);color:#fff;padding:8px 14px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap}
+    .view-btn:hover{background:rgba(255,255,255,.28)}
+    .header-right{display:flex;align-items:center;gap:10px}
+
+    .list-wrap{background:#fff;border-radius:12px;padding:0;box-shadow:0 1px 4px rgba(0,0,0,.1);overflow:hidden}
+    .list-row{display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid #f0f4f8;cursor:pointer;transition:background .12s;gap:12px}
+    .list-row:last-child{border-bottom:none}
+    .list-row:hover{background:#f7fafc}
+    .list-dt{font-size:15px;font-weight:700;color:#2b6cb0;white-space:nowrap;min-width:148px}
+    .list-salon{font-size:15px;color:#2d3748;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .list-count{font-size:13px;color:#718096;white-space:nowrap}
+    .list-empty{text-align:center;padding:40px;color:#a0aec0;font-size:14px}
   </style>
 </head>
 <body>
@@ -89,22 +92,14 @@
     <h1>管理画面 | オートシャンプー展示会</h1>
     <p>4月1日（水）〜 4月7日（火）</p>
   </div>
-  <a class="back-link" href="?page=index">← 予約ページへ</a>
-</div>
-
-<!-- ログイン画面 -->
-<div id="loginView" style="padding:40px 16px">
-  <div class="login-card">
-    <h2>管理画面ログイン</h2>
-    <p>パスワードを入力してください</p>
-    <input type="password" id="pwInput" placeholder="パスワード" onkeydown="if(event.key==='Enter')login()">
-    <button class="btn btn-p" onclick="login()">ログイン</button>
-    <p class="err hidden" id="loginErr">パスワードが正しくありません</p>
+  <div class="header-right">
+    <button class="view-btn" id="viewToggleBtn" onclick="toggleView()">一覧</button>
+    <a class="back-link" href="?page=index">← 予約ページへ</a>
   </div>
 </div>
 
 <!-- メイン画面 -->
-<div id="mainView" class="hidden">
+<div id="mainView">
   <div class="container">
 
     <div id="loadingView" class="loading"><div class="spin"></div><p>データを読み込み中...</p></div>
@@ -122,10 +117,17 @@
       <!-- 日付タブ -->
       <div class="tabs" id="dateTabs"></div>
 
-      <!-- 時間グリッド -->
-      <div class="grid-wrap">
-        <h3 id="gridTitle"></h3>
-        <div class="time-grid" id="timeGrid"></div>
+      <!-- 時間グリッド（グリッドビュー） -->
+      <div id="gridView">
+        <div class="grid-wrap">
+          <h3 id="gridTitle"></h3>
+          <div class="time-grid" id="timeGrid"></div>
+        </div>
+      </div>
+
+      <!-- 一覧ビュー -->
+      <div id="listView" class="hidden">
+        <div class="list-wrap" id="listBody"></div>
       </div>
 
     </div>
@@ -163,16 +165,11 @@ const TIMES = [
 
 let allBookings = [];
 let currentDate = DATES[0].date;
-let pw = '';
 
 // ============================================================
-// ログイン
+// 初期ロード
 // ============================================================
-function login() {
-  pw = document.getElementById('pwInput').value;
-  document.getElementById('loginView').classList.add('hidden');
-  document.getElementById('mainView').classList.remove('hidden');
-
+window.onload = function() {
   // 15秒でタイムアウト
   const adminTimeout = setTimeout(function(){
     document.getElementById('loadingView').innerHTML='<p style="color:#c53030">読み込みがタイムアウトしました。ページを再読み込みしてください。</p>';
@@ -182,10 +179,8 @@ function login() {
     .withSuccessHandler(function(r){
       clearTimeout(adminTimeout);
       document.getElementById('loadingView').classList.add('hidden');
-      if(!r.success){
-        document.getElementById('loginView').classList.remove('hidden');
-        document.getElementById('mainView').classList.add('hidden');
-        document.getElementById('loginErr').classList.remove('hidden');
+      if(!r.success) {
+        document.getElementById('loadingView').innerHTML='<p style="color:#c53030">データの取得に失敗しました。再読み込みしてください。</p>';
         return;
       }
       allBookings = r.bookings || [];
@@ -199,8 +194,8 @@ function login() {
       clearTimeout(adminTimeout);
       document.getElementById('loadingView').innerHTML='<p style="color:#c53030">通信エラーが発生しました。再読み込みしてください。</p>';
     })
-    .getAllBookings(pw);
-}
+    .getAllBookings();
+};
 
 // ============================================================
 // 全体描画
@@ -297,6 +292,52 @@ function closeModal(e) {
   if(!e || e.target===document.getElementById('modalBg')) {
     document.getElementById('modalBg').classList.add('hidden');
   }
+}
+
+// ============================================================
+// ビュー切り替え（グリッド ↔ 一覧）
+// ============================================================
+let isListView = false;
+
+function toggleView() {
+  isListView = !isListView;
+  document.getElementById('gridView').classList.toggle('hidden', isListView);
+  document.getElementById('dateTabs').classList.toggle('hidden', isListView);
+  document.getElementById('listView').classList.toggle('hidden', !isListView);
+  document.getElementById('viewToggleBtn').textContent = isListView ? 'グリッド' : '一覧';
+  if (isListView) renderList();
+}
+
+function renderList() {
+  const body = document.getElementById('listBody');
+  // 日付・時刻順にソート
+  const sorted = allBookings.slice().sort(function(a, b) {
+    if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+    return a.time < b.time ? -1 : 1;
+  });
+
+  if (sorted.length === 0) {
+    body.innerHTML = '<div class="list-empty">予約はありません</div>';
+    return;
+  }
+
+  const dateMap = {
+    '2026-04-01':'4/1（水）','2026-04-02':'4/2（木）','2026-04-03':'4/3（金）',
+    '2026-04-04':'4/4（土）','2026-04-05':'4/5（日）','2026-04-06':'4/6（月）','2026-04-07':'4/7（火）'
+  };
+
+  body.innerHTML = sorted.map(function(b) {
+    var label = (dateMap[b.date] || b.date) + '　' + b.time + '〜';
+    return '<div class="list-row" onclick="showDetail(\'' + b.id + '\')">'
+      + '<span class="list-dt">' + label + '</span>'
+      + '<span class="list-salon">' + escHtml(b.salon) + '</span>'
+      + '<span class="list-count">（' + b.count + '名）</span>'
+      + '</div>';
+  }).join('');
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 </script>
 </body>
