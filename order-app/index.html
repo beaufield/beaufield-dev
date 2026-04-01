@@ -725,7 +725,7 @@
   </div>
 </nav>
 
-<div class="version-label" id="version-label">v1.10.0</div>
+<div class="version-label" id="version-label">v1.10.1</div>
 
 <!-- ==============================
      モーダル: 数量入力
@@ -853,7 +853,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.10.0';
+const APP_VERSION    = 'v1.10.1';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const LS_MASTER      = 'bf_pm';
 const LS_MASTER_DATE = 'bf_pm_date';
@@ -1636,6 +1636,17 @@ async function outputGrandexPDF() {
     const pdfDoc = await PDFDocument.load(pdfBytes);
     const page   = pdfDoc.getPages()[0];
     const font   = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+    // 発注日を令和に変換して記入
+    // 「令和　年　月　日」欄: 右上エリア
+    const [yyyy, mm, dd] = currentOrder.date.split('-').map(Number);
+    const reiwaYear = yyyy - 2018; // 令和元年=2019年、令和8年=2026年
+    const dateColor = rgb(0, 0, 0);
+    page.drawText(String(reiwaYear), { x: 408, y: 718, size: 10, font, color: dateColor });
+    page.drawText(String(mm),        { x: 458, y: 718, size: 10, font, color: dateColor });
+    page.drawText(String(dd),        { x: 506, y: 718, size: 10, font, color: dateColor });
+
+    // 商品数量を記入
     for (const { item, coord } of matched) {
       page.drawText(String(item.qty), {
         x: coord.x, y: coord.y, size: 9, font, color: rgb(0, 0, 0.7)
