@@ -726,7 +726,7 @@
   </div>
 </nav>
 
-<div class="version-label" id="version-label">v1.10.3</div>
+<div class="version-label" id="version-label">v1.10.4</div>
 
 <!-- ==============================
      モーダル: 数量入力
@@ -856,7 +856,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.10.3'; // テキスト出力・発注方法マスター対応
+const APP_VERSION    = 'v1.10.4'; // 履歴画面の再出力ボタンも発注方法に連動
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const LS_MASTER      = 'bf_pm';
 const LS_MASTER_DATE = 'bf_pm_date';
@@ -1986,11 +1986,8 @@ async function toggleHistoryDetail(el, orderNo) {
         ${item.memo ? `<div style="font-size:12px;color:var(--text-light);padding:2px 0 4px 0">　📝 ${escHtml(item.memo)}</div>` : ''}`
       ).join('');
 
-      const btnsHtml = `
-        <div style="display:flex;gap:8px;margin-top:10px;">
-          <button class="btn btn-outline btn-sm" onclick="reOutputCSV('${escAttr(orderNo)}');event.stopPropagation()">📥 CSV再出力</button>
-          <button class="btn btn-secondary btn-sm" onclick="reOutputPDF('${escAttr(orderNo)}');event.stopPropagation()">📄 PDF再出力</button>
-        </div>`;
+      const orderInfo2 = getHistoryOrderInfo(orderNo);
+      const btnsHtml   = buildHistReOutputBtns(orderNo, orderInfo2 ? orderInfo2.supplierCode : '');
 
       detailDiv.innerHTML = itemsHtml + btnsHtml;
     } else {
@@ -1999,6 +1996,25 @@ async function toggleHistoryDetail(el, orderNo) {
   } catch(e) {
     detailDiv.innerHTML = '<div style="font-size:13px;color:var(--danger)">読み込みエラー</div>';
   }
+}
+
+// 発注方法設定に基づいて履歴の再出力ボタンHTMLを生成
+function buildHistReOutputBtns(orderNo, supplierCode) {
+  const sup     = masters.suppliers.find(s => s.code === supplierCode);
+  const methods = (sup && sup.outputMethods && sup.outputMethods.length > 0)
+    ? sup.outputMethods
+    : ['CSV', 'PDF', 'テキスト', 'メーカーPDF'];
+  const esc  = escAttr(orderNo);
+  const btns = [];
+  if (methods.includes('CSV'))
+    btns.push(`<button class="btn btn-outline btn-sm" onclick="reOutputCSV('${esc}');event.stopPropagation()">📥 CSV再出力</button>`);
+  if (methods.includes('PDF'))
+    btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputPDF('${esc}');event.stopPropagation()">📄 PDF再出力</button>`);
+  if (methods.includes('テキスト'))
+    btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputText('${esc}');event.stopPropagation()">💬 テキスト再出力</button>`);
+  if (methods.includes('メーカーPDF') && supplierCode === GRANDEX_SUPPLIER_CODE)
+    btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputGrandexPDF('${esc}');event.stopPropagation()">📋 グランデックス再出力</button>`);
+  return `<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">${btns.join('')}</div>`;
 }
 
 // 履歴からCSV再出力（ヘッダーなし）
@@ -2064,6 +2080,74 @@ async function reOutputPDF(orderNo) {
     showToast('PDF再出力しました', 'success');
   } catch(e) {
     document.getElementById('pdf-wrap').style.left = '-9999px';
+    showToast('PDFエラー: ' + e.message, 'error');
+  } finally { hideLoading(); }
+}
+
+// 履歴からテキスト再出力（クリップボードコピー + .txtダウンロード）
+async function reOutputText(orderNo) {
+  const orderInfo = getHistoryOrderInfo(orderNo);
+  const items     = historyDetailCache[orderNo];
+  if (!items || !orderInfo) { showToast('データが見つかりません', 'error'); return; }
+
+  const text = items.map(i => `${i.name} × ${i.qty}${i.unit || ''}`).join('\n');
+
+  let copied = false;
+  try { await navigator.clipboard.writeText(text); copied = true; } catch(e) {}
+
+  const bom  = new Uint8Array([0xEF, 0xBB, 0xBF]);
+  const blob = new Blob([bom, text], { type: 'text/plain;charset=utf-8' });
+  const dateStr = (orderInfo.date || '').replace(/\//g, '');
+  downloadBlob(blob, `${orderInfo.supplierName}_${dateStr}_${orderNo}.txt`);
+  showToast(copied ? 'テキストをコピー＆ダウンロードしました' : 'テキストを再出力しました', 'success');
+}
+
+// 履歴からグランデックス発注書再出力
+async function reOutputGrandexPDF(orderNo) {
+  const orderInfo = getHistoryOrderInfo(orderNo);
+  const items     = historyDetailCache[orderNo];
+  if (!items || !orderInfo) { showToast('データが見つかりません', 'error'); return; }
+
+  const matched = [], unmatched = [];
+  for (const item of items.filter(i => !i.isHandwritten)) {
+    const gCode = GRANDEX_JAN_TO_CODE[item.jan] || item.code;
+    if (gCode && GRANDEX_COORD_MAP[gCode]) {
+      matched.push({ item, coord: GRANDEX_COORD_MAP[gCode] });
+    } else {
+      unmatched.push(item);
+    }
+  }
+  if (unmatched.length > 0) {
+    const names = unmatched.map(i => '・' + i.name).join('\n');
+    if (!confirm(`以下の商品は自動入力できません（手書き対応が必要）：\n\n${names}\n\n続けますか？`)) return;
+  }
+  showLoading('グランデックス発注書を生成中...');
+  try {
+    const { PDFDocument, StandardFonts, rgb } = PDFLib;
+    const pdfBytes = await fetch('./grandex.pdf').then(r => {
+      if (!r.ok) throw new Error('grandex.pdf の読み込みに失敗しました');
+      return r.arrayBuffer();
+    });
+    const pdfDoc = await PDFDocument.load(pdfBytes);
+    const page   = pdfDoc.getPages()[0];
+    const font   = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    // 発注日（履歴のdate形式は yyyy/MM/dd）
+    const [yyyy, mm, dd] = (orderInfo.date || '').split('/').map(Number);
+    if (yyyy) {
+      const dc = rgb(0, 0, 0);
+      page.drawText(String(yyyy - 2018), { x: 408, y: 718, size: 10, font, color: dc });
+      page.drawText(String(mm),          { x: 458, y: 718, size: 10, font, color: dc });
+      page.drawText(String(dd),          { x: 506, y: 718, size: 10, font, color: dc });
+    }
+    for (const { item, coord } of matched) {
+      page.drawText(String(item.qty), { x: coord.x, y: coord.y, size: 9, font, color: rgb(0, 0, 0.7) });
+    }
+    const pdfBytesOut = await pdfDoc.save();
+    const blob    = new Blob([pdfBytesOut], { type: 'application/pdf' });
+    const dateStr = (orderInfo.date || '').replace(/\//g, '');
+    downloadBlob(blob, `グランデックス発注書_${dateStr}_${orderNo}.pdf`);
+    showToast(`グランデックス発注書を再出力しました（自動記入: ${matched.length}件）`, 'success');
+  } catch(e) {
     showToast('PDFエラー: ' + e.message, 'error');
   } finally { hideLoading(); }
 }
