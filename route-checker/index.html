@@ -61,6 +61,7 @@
       position: sticky; top: 0; z-index: 100; min-height: 52px;
     }
     .header h1 { flex: 1; font-size: 17px; font-weight: 700; }
+    .header-user { font-size: 11px; opacity: 0.8; white-space: nowrap; }
     .header-btn {
       background: rgba(255,255,255,0.15); border: none; color: #fff;
       font-size: 13px; font-weight: 600; cursor: pointer;
@@ -694,7 +695,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.7.1';
+const APP_VERSION = 'v1.7.2';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 
 // ============================================================
@@ -993,10 +994,7 @@ function renderCheck() {
     ? '<div class="empty-state">' + dispLabel + ' のルートはありません</div>'
     : '';
 
-  return '<div class="header">' +
-    '<h1>訪問チェック</h1>' +
-    '<button class="header-btn" onclick="logout()">ログアウト</button>' +
-    '</div>' +
+  return renderHeader('訪問チェック') +
     '<div class="content">' +
     dateSelector +
     '<div class="section-header">📅 ' + dispLabel + ' のルート（' + todayRoute.length + '件）</div>' +
@@ -1008,6 +1006,29 @@ function renderCheck() {
     '</div>' +
     '</div>' +
     renderBottomNav();
+}
+
+/** ヘッダーHTMLを生成（全画面共通）
+ * opts.back: true → 「‹ 戻る」ボタンを左に表示
+ * opts.noUser: true → ユーザー名を非表示（ログイン画面用）
+ */
+function renderHeader(title, opts) {
+  opts = opts || {};
+  var left = opts.back
+    ? '<button class="header-btn" onclick="goBack()">‹ 戻る</button>'
+    : '';
+  var userName = (!opts.noUser && currentUser)
+    ? '<span class="header-user">' + escHtml(currentUser.name) + '</span>'
+    : '';
+  var logout = (!opts.noUser && currentUser)
+    ? '<button class="header-btn" onclick="logout()">ログアウト</button>'
+    : '';
+  return '<div class="header">' +
+    left +
+    '<h1>' + title + '</h1>' +
+    userName +
+    logout +
+    '</div>';
 }
 
 // ボトムナビゲーション
@@ -1036,9 +1057,7 @@ function renderBottomNav() {
 
 // プレースホルダー画面
 function renderPlaceholder(icon, title, msg) {
-  return '<div class="header"><h1>' + title + '</h1>' +
-    (currentUser ? '<button class="header-btn" onclick="logout()">ログアウト</button>' : '') +
-    '</div>' +
+  return renderHeader(title) +
     '<div class="content">' +
     '<div class="placeholder-screen">' +
     '<div class="placeholder-icon">' + icon + '</div>' +
@@ -1109,10 +1128,7 @@ function renderSalons() {
     content = '<div class="empty-state">担当サロンがありません。<br>下のボタンから追加してください。</div>';
   }
 
-  return '<div class="header">' +
-    '<h1>マイサロン</h1>' +
-    '<button class="header-btn" onclick="logout()">ログアウト</button>' +
-    '</div>' +
+  return renderHeader('マイサロン') +
     '<div class="content">' +
     tabsHtml +
     '<button class="btn btn-primary" style="margin-bottom:16px" onclick="openSalonAddModal()">＋ サロンを追加</button>' +
@@ -1303,8 +1319,7 @@ function renderAdmin() {
     '</div>';
 
   if (!isAdmin) {
-    return '<div class="header"><h1>設定</h1>' +
-      '<button class="header-btn" onclick="logout()">ログアウト</button></div>' +
+    return renderHeader('設定') +
       '<div class="content">' + pinSection + '</div>' +
       renderBottomNav();
   }
@@ -1358,8 +1373,7 @@ function renderAdmin() {
     '</button>' +
     '</div>';
 
-  return '<div class="header"><h1>設定</h1>' +
-    '<button class="header-btn" onclick="logout()">ログアウト</button></div>' +
+  return renderHeader('設定') +
     '<div class="content">' +
     pinSection + userSection + salonSection +
     '</div>' +
@@ -1441,11 +1455,7 @@ function renderAdminSalons() {
     }
   }
 
-  return '<div class="header">' +
-    '<button class="header-btn" onclick="goBack()">‹ 戻る</button>' +
-    '<h1>全サロン管理</h1>' +
-    '<button class="header-btn" onclick="logout()">ログアウト</button>' +
-    '</div>' +
+  return renderHeader('全サロン管理', { back: true }) +
     '<div class="content">' +
     '<div style="margin-bottom:12px;font-size:12px;color:#6b7280">' +
       'アクティブ: ' + activeSalons.length + '件' +
@@ -1968,10 +1978,7 @@ function renderHistory() {
     matrixHtml = buildHistoryMatrix(historyData.weeks, historyData.rows);
   }
 
-  return '<div class="header">' +
-    '<h1>訪問履歴</h1>' +
-    '<button class="header-btn" onclick="logout()">ログアウト</button>' +
-    '</div>' +
+  return renderHeader('訪問履歴') +
     '<div class="content">' +
     filterHtml +
     matrixHtml +
