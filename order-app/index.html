@@ -644,8 +644,9 @@
       <div id="confirm-total"></div>
     </div>
     <div id="output-btns">
-      <button class="btn btn-primary" onclick="outputCSV()" style="margin-bottom:8px">📥 CSV出力</button>
-      <button class="btn btn-outline" onclick="outputPDF()" style="margin-bottom:8px">📄 PDF保存</button>
+      <button id="btn-csv"         class="btn btn-primary"   onclick="outputCSV()"        style="margin-bottom:8px">📥 CSV出力</button>
+      <button id="btn-pdf"         class="btn btn-outline"   onclick="outputPDF()"        style="margin-bottom:8px">📄 PDF保存</button>
+      <button id="btn-text"        class="btn btn-secondary" onclick="outputText()"       style="margin-bottom:8px;display:none">💬 テキスト出力</button>
       <button id="btn-grandex-pdf" class="btn btn-secondary" onclick="outputGrandexPDF()" style="margin-bottom:8px;display:none">📋 グランデックス発注書 出力</button>
     </div>
     <div id="new-order-wrap" style="display:none">
@@ -725,7 +726,7 @@
   </div>
 </nav>
 
-<div class="version-label" id="version-label">v1.10.2</div>
+<div class="version-label" id="version-label">v1.10.3</div>
 
 <!-- ==============================
      モーダル: 数量入力
@@ -855,7 +856,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.10.2'; // メーカー不一致警告・数量48/96追加
+const APP_VERSION    = 'v1.10.3'; // テキスト出力・発注方法マスター対応
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const LS_MASTER      = 'bf_pm';
 const LS_MASTER_DATE = 'bf_pm_date';
@@ -965,6 +966,7 @@ function renderSupplierDropdown() {
   masters.suppliers.forEach(s => {
     const opt = document.createElement('option');
     opt.value = s.code; opt.textContent = s.name; opt.dataset.fax = s.fax || '';
+    opt.dataset.outputMethods = JSON.stringify(s.outputMethods || []);
     sel.appendChild(opt);
   });
 }
@@ -1532,8 +1534,27 @@ function renderConfirmPage() {
   document.getElementById('complete-banner').style.display = 'none';
   document.getElementById('new-order-wrap').style.display  = 'none';
   document.getElementById('output-btns').style.display     = 'block';
-  document.getElementById('btn-grandex-pdf').style.display =
-    currentOrder.supplierCode === GRANDEX_SUPPLIER_CODE ? 'block' : 'none';
+  applyOutputButtons();
+}
+
+// 発注先の発注方法設定に応じてボタン表示を制御
+// outputMethods が空 → 全ボタン表示（後方互換）
+function applyOutputButtons() {
+  const sup     = masters.suppliers.find(s => s.code === currentOrder.supplierCode);
+  const methods = (sup && sup.outputMethods && sup.outputMethods.length > 0)
+    ? sup.outputMethods
+    : ['CSV', 'PDF', 'テキスト', 'メーカーPDF'];
+
+  const show = (id, cond) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = cond ? 'block' : 'none';
+  };
+
+  show('btn-csv',         methods.includes('CSV'));
+  show('btn-pdf',         methods.includes('PDF'));
+  show('btn-text',        methods.includes('テキスト'));
+  show('btn-grandex-pdf', methods.includes('メーカーPDF') &&
+                          currentOrder.supplierCode === GRANDEX_SUPPLIER_CODE);
 }
 
 /* ===================================================
@@ -1549,6 +1570,34 @@ async function saveOrderToGAS(outputType) {
   });
   if (res.success) { savedOrderNo = res.orderNo; return savedOrderNo; }
   else { throw new Error(res.error || 'GAS保存に失敗しました'); }
+}
+
+// テキスト出力（LINE等のメッセージ用）
+// 手書き商品も含め「商品名 × 数量単位」形式で出力
+// クリップボードコピー + .txtダウンロードの両方を実行
+async function outputText() {
+  const lines = cartItems.map(i => `${i.name} × ${i.qty}${i.unit || ''}`);
+  const text  = lines.join('\n');
+
+  // クリップボードコピー（ボタンクリック直後 = ユーザー操作コンテキスト内）
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    copied = true;
+  } catch(e) { /* 権限なし等の場合は無視してダウンロードのみ実行 */ }
+
+  showLoading('保存・出力中...');
+  try {
+    await saveOrderToGAS('テキスト');
+    const bom  = new Uint8Array([0xEF, 0xBB, 0xBF]);
+    const blob = new Blob([bom, text], { type: 'text/plain;charset=utf-8' });
+    const dateStr = currentOrder.date.replace(/-/g, '');
+    downloadBlob(blob, `${currentOrder.supplierName}_${dateStr}.txt`);
+    showCompleteState();
+    showToast(copied ? 'テキストをコピー＆ダウンロードしました' : 'テキストを出力しました', 'success');
+  } catch(e) {
+    showToast('エラー: ' + e.message, 'error');
+  } finally { hideLoading(); }
 }
 
 // CSV出力（ヘッダー行なし）
