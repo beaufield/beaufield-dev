@@ -695,7 +695,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.7.2';
+const APP_VERSION = 'v1.8.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 
 // ============================================================
@@ -787,6 +787,13 @@ var SESSION_KEY  = 'bfc_session';
 var SESSION_DAYS = 30;
 var SESSION_MS   = SESSION_DAYS * 24 * 60 * 60 * 1000;
 
+// ============================================================
+// サロンキャッシュ（localStorage / 1時間保持）
+// 担当サロン一覧はほぼ変わらないため、起動時の通信を削減する
+// ============================================================
+var SALON_CACHE_KEY = 'bfc_salons_v1';
+var SALON_CACHE_TTL = 60 * 60 * 1000; // 1時間
+
 /** ログイン成功時にセッションをlocalStorageに保存 */
 function saveSession(user) {
   try {
@@ -821,6 +828,48 @@ function tryAutoLogin() {
 /** ログアウト時にセッションをlocalStorageから削除 */
 function clearSession() {
   try { localStorage.removeItem(SESSION_KEY); } catch(e) {}
+}
+
+/** サロン一覧をlocalStorageにキャッシュ保存 */
+function saveSalonCache(userId, salons) {
+  try {
+    localStorage.setItem(SALON_CACHE_KEY, JSON.stringify({
+      user_id:  userId,
+      salons:   salons,
+      saved_at: Date.now()
+    }));
+  } catch(e) { /* プライベートモード等では無視 */ }
+}
+
+/** localStorageから有効なサロンキャッシュを取得（期限切れ・ユーザー不一致はnull）*/
+function loadSalonCache(userId) {
+  try {
+    var raw = localStorage.getItem(SALON_CACHE_KEY);
+    if (!raw) return null;
+    var c = JSON.parse(raw);
+    if (c.user_id !== userId) return null;
+    if (Date.now() - c.saved_at > SALON_CACHE_TTL) return null;
+    return c.salons;
+  } catch(e) { return null; }
+}
+
+/** サロンキャッシュを削除（ログアウト時・編集後に呼ぶ）*/
+function clearSalonCache() {
+  try { localStorage.removeItem(SALON_CACHE_KEY); } catch(e) {}
+}
+
+// ============================================================
+// ルート計算（ローカル処理・GAS不要）
+// ============================================================
+
+/** allMySalons から指定日のルート（当日曜日のサロン）をローカルで計算する */
+function computeRouteForDate(dateStr) {
+  var dayNames = ['日', '月', '火', '水', '木', '金', '土'];
+  var d = new Date(dateStr);
+  var dayName = dayNames[d.getDay()];
+  return allMySalons
+    .filter(function(s) { return s.visit_day === dayName; })
+    .sort(function(a, b) { return Number(a.sort_order) - Number(b.sort_order); });
 }
 
 // ============================================================
@@ -1176,6 +1225,7 @@ async function submitSalonAdd() {
       sort_order: 9999, owner_user_id: currentUser.user_id, active: true, code: code
     };
     allMySalons.push(newSalon);
+    saveSalonCache(currentUser.user_id, allMySalons); // キャッシュ更新
     renderApp();
     showToast('「' + name + '」を追加しました ✅');
   } catch(e) {
@@ -1220,6 +1270,7 @@ async function submitSalonEdit() {
     // ローカルデータ更新
     var salon = allMySalons.find(function(s) { return s.salon_id === editingSalonId; });
     if (salon) { salon.salon_name = name; salon.visit_day = day; salon.code = code; }
+    saveSalonCache(currentUser.user_id, allMySalons); // キャッシュ更新
     renderApp();
     showToast('保存しました ✅');
   } catch(e) {
@@ -1245,6 +1296,7 @@ async function doDeactivateSalon(salonId) {
     await apiPost('deactivateSalon', { user_id: currentUser.user_id, salon_id: salonId });
     // ローカルから除去
     allMySalons = allMySalons.filter(function(s) { return s.salon_id !== salonId; });
+    saveSalonCache(currentUser.user_id, allMySalons); // キャッシュ更新
     renderApp();
     showToast('無効化しました');
   } catch(e) {
@@ -2064,6 +2116,7 @@ async function submitLogin() {
 
 function logout() {
   clearSession();          // localStorageからセッション削除
+  clearSalonCache();       // サロンキャッシュも削除
   currentUser      = null;
   todayRoute       = [];
   allMySalons      = [];
@@ -2090,17 +2143,26 @@ async function loadCheckScreen() {
     return;
   }
   if (!checkDate) checkDate = todayStr(); // デフォルトは今日
+
+  var uid          = currentUser.user_id;
+  var cachedSalons = loadSalonCache(uid); // localStorageキャッシュを確認
+
   showLoading();
   try {
-    var uid = currentUser.user_id;
-    var results = await Promise.all([
-      apiGet('getMyRoute',   { user_id: uid, date: checkDate }),
-      apiGet('getTodayLogs', { user_id: uid, date: checkDate }),
-      apiGet('getMySalons',  { user_id: uid })
-    ]);
-    todayRoute  = results[0].salons    || [];
-    checkedIds  = new Set(results[1].salon_ids || []);
-    allMySalons = results[2].salons    || [];
+    if (cachedSalons) {
+      // ── キャッシュヒット：サロン一覧はローカルから、ログのみGASで取得（1回） ──
+      allMySalons = cachedSalons;
+      todayRoute  = computeRouteForDate(checkDate); // ローカル計算（0秒）
+      var logsResult = await apiGet('getTodayLogs', { user_id: uid, date: checkDate });
+      checkedIds  = new Set(logsResult.salon_ids || []);
+    } else {
+      // ── キャッシュなし：全データを1回のGASコールで取得 ──
+      var result  = await apiGet('getCheckScreenData', { user_id: uid, date: checkDate });
+      todayRoute  = result.route    || [];
+      checkedIds  = new Set(result.salon_ids || []);
+      allMySalons = result.salons   || [];
+      saveSalonCache(uid, allMySalons); // 次回のためにキャッシュ保存
+    }
     resetTo('check');
   } catch(e) {
     showToast('データ読み込みに失敗しました: ' + e.message, 'error');
@@ -2110,25 +2172,22 @@ async function loadCheckScreen() {
   }
 }
 
-/** 日付変更時：ルートとチェック済みを再取得して再描画 */
+/** 日付変更時：ルートをローカルで即座に計算し、ログのみGASから取得（1回） */
 async function changeCheckDate(dateStr) {
   if (!dateStr || !currentUser) return;
   checkDate  = dateStr;
-  todayRoute = [];
+  // ルートはローカル計算で即座に表示（GAS不要）
+  todayRoute = computeRouteForDate(dateStr);
   checkedIds = new Set();
   renderApp();
+  // チェック済みログのみGASから取得
   showLoading();
   try {
-    var uid = currentUser.user_id;
-    var results = await Promise.all([
-      apiGet('getMyRoute',   { user_id: uid, date: checkDate }),
-      apiGet('getTodayLogs', { user_id: uid, date: checkDate })
-    ]);
-    todayRoute = results[0].salons    || [];
-    checkedIds = new Set(results[1].salon_ids || []);
+    var result = await apiGet('getTodayLogs', { user_id: currentUser.user_id, date: checkDate });
+    checkedIds = new Set(result.salon_ids || []);
     renderApp();
   } catch(e) {
-    showToast('データ読み込みに失敗しました: ' + e.message, 'error');
+    showToast('チェック履歴の読み込みに失敗しました: ' + e.message, 'error');
   } finally {
     hideLoading();
   }
@@ -2140,11 +2199,11 @@ async function changeCheckDate(dateStr) {
 async function doCheck(salonId) {
   if (checkedIds.has(salonId)) return;
 
-  // 楽観的UI更新
+  // 即座にUI更新（オプティミスティックUI）ローディングなし
   checkedIds.add(salonId);
   renderApp();
 
-  showLoading();
+  // バックグラウンドでGASに記録（ユーザーを待たせない）
   try {
     var result = await apiPost('checkVisit', {
       user_id:  currentUser.user_id,
@@ -2157,12 +2216,10 @@ async function doCheck(salonId) {
       showToast('チェックしました ✅');
     }
   } catch(e) {
-    // ロールバック
+    // GAS送信失敗時はロールバック＋通知
     checkedIds.delete(salonId);
     renderApp();
     showToast('チェックに失敗しました: ' + e.message, 'error');
-  } finally {
-    hideLoading();
   }
 }
 
@@ -2264,6 +2321,7 @@ async function submitNewSalon() {
     };
     allMySalons.push(newSalon);
     todayRoute.push(newSalon);
+    saveSalonCache(currentUser.user_id, allMySalons); // キャッシュ更新
     renderApp();
     await doCheck(result.salon_id);
     showToast('「' + name + '」を登録してチェックしました ✅');
