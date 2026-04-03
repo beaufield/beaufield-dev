@@ -727,7 +727,7 @@
   </div>
 </nav>
 
-<div class="version-label" id="version-label">v1.10.8</div>
+<div class="version-label" id="version-label">v1.10.9</div>
 
 <!-- ==============================
      モーダル: 数量入力
@@ -868,7 +868,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.10.8'; // 発注先設定に発注方法・修正機能を追加
+const APP_VERSION    = 'v1.10.9'; // 発注先設定に発注方法・修正機能を追加
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const LS_MASTER      = 'bf_pm';
 const LS_MASTER_DATE = 'bf_pm_date';
@@ -1823,7 +1823,8 @@ const CHIYODA_COORD_MAP = {
 };
 
 async function outputChiyodaPDF() {
-  const targetItems = cartItems.filter(i => !i.isHandwritten && CHIYODA_TARGET_CODES.has(i.code));
+  // 手書き以外の全商品を対象に、商品名から型番が抽出できたものをmatched、できなかったものをunmatchedに振り分ける
+  const targetItems = cartItems.filter(i => !i.isHandwritten);
   const matched = [], unmatched = [];
   for (const item of targetItems) {
     const type = extractChiyodaType(item.name);
