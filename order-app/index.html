@@ -726,7 +726,7 @@
   </div>
 </nav>
 
-<div class="version-label" id="version-label">v1.10.4</div>
+<div class="version-label" id="version-label">v1.10.5</div>
 
 <!-- ==============================
      モーダル: 数量入力
@@ -800,7 +800,8 @@
 <!-- モーダル: 発注先追加 -->
 <div class="modal-overlay" id="modal-add-supplier">
   <div class="modal">
-    <div class="modal-title">発注先を追加</div>
+    <div class="modal-title" id="sup-modal-title">発注先を追加</div>
+    <input type="hidden" id="sup-modal-mode" value="add">
     <div class="form-group">
       <label>仕入先コード</label>
       <input type="text" id="new-sup-code" placeholder="例: 10">
@@ -813,9 +814,18 @@
       <label>FAX番号（任意）</label>
       <input type="text" id="new-sup-fax" placeholder="0XX-XX-XXXX">
     </div>
+    <div class="form-group">
+      <label>発注方法（複数選択可・未選択=全ボタン表示）</label>
+      <div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:6px;font-size:15px">
+        <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" class="sup-method-chk" value="CSV"> CSV</label>
+        <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" class="sup-method-chk" value="PDF"> PDF</label>
+        <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" class="sup-method-chk" value="テキスト"> テキスト</label>
+        <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" class="sup-method-chk" value="メーカーPDF"> メーカーPDF</label>
+      </div>
+    </div>
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="closeModal('modal-add-supplier')">キャンセル</button>
-      <button class="btn btn-primary" onclick="saveNewSupplier()">追加</button>
+      <button class="btn btn-primary" id="sup-modal-save-btn" onclick="saveSupplierModal()">追加</button>
     </div>
   </div>
 </div>
@@ -856,7 +866,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.10.4'; // 履歴画面の再出力ボタンも発注方法に連動
+const APP_VERSION    = 'v1.10.5'; // 発注先設定に発注方法・修正機能を追加
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const LS_MASTER      = 'bf_pm';
 const LS_MASTER_DATE = 'bf_pm_date';
@@ -2162,14 +2172,21 @@ function renderSettingsSuppliers() {
   if (masters.suppliers.length === 0) {
     container.innerHTML = '<div style="color:var(--text-light);font-size:14px;padding:8px 0">登録なし</div>'; return;
   }
-  container.innerHTML = masters.suppliers.map(s => `
+  container.innerHTML = masters.suppliers.map(s => {
+    const methods = (s.outputMethods && s.outputMethods.length > 0)
+      ? s.outputMethods.join('・') : '全て';
+    return `
     <div class="setting-row">
-      <div>
+      <div style="flex:1;min-width:0">
         <div class="setting-row-info">${escHtml(s.name)}</div>
-        <div class="setting-row-sub">CD: ${s.code} | FAX: ${s.fax || '未登録'}</div>
+        <div class="setting-row-sub">CD: ${s.code} | FAX: ${s.fax || '未登録'} | 発注方法: ${escHtml(methods)}</div>
       </div>
-      <button class="btn btn-danger btn-sm" onclick="deleteSupplier('${escAttr(s.code)}','${escAttr(s.name)}')">削除</button>
-    </div>`).join('');
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button class="btn btn-outline btn-sm" onclick="openEditSupplier('${escAttr(s.code)}')">修正</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteSupplier('${escAttr(s.code)}','${escAttr(s.name)}')">削除</button>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 function renderSettingsStaff() {
@@ -2185,20 +2202,48 @@ function renderSettingsStaff() {
 }
 
 function openAddSupplier() {
+  document.getElementById('sup-modal-title').textContent   = '発注先を追加';
+  document.getElementById('sup-modal-mode').value          = 'add';
+  document.getElementById('sup-modal-save-btn').textContent = '追加';
+  document.getElementById('new-sup-code').disabled = false;
   ['new-sup-code','new-sup-name','new-sup-fax'].forEach(id => { document.getElementById(id).value = ''; });
+  document.querySelectorAll('.sup-method-chk').forEach(cb => { cb.checked = false; });
   openModal('modal-add-supplier');
 }
-async function saveNewSupplier() {
-  const code = document.getElementById('new-sup-code').value.trim();
-  const name = document.getElementById('new-sup-name').value.trim();
-  const fax  = document.getElementById('new-sup-fax').value.trim();
+
+function openEditSupplier(code) {
+  const s = masters.suppliers.find(s => s.code === code);
+  if (!s) return;
+  document.getElementById('sup-modal-title').textContent   = '発注先を修正';
+  document.getElementById('sup-modal-mode').value          = 'update';
+  document.getElementById('sup-modal-save-btn').textContent = '保存';
+  document.getElementById('new-sup-code').value    = s.code;
+  document.getElementById('new-sup-code').disabled = true; // コードは変更不可
+  document.getElementById('new-sup-name').value    = s.name;
+  document.getElementById('new-sup-fax').value     = s.fax || '';
+  document.querySelectorAll('.sup-method-chk').forEach(cb => {
+    cb.checked = (s.outputMethods || []).includes(cb.value);
+  });
+  openModal('modal-add-supplier');
+}
+
+async function saveSupplierModal() {
+  const mode          = document.getElementById('sup-modal-mode').value;
+  const code          = document.getElementById('new-sup-code').value.trim();
+  const name          = document.getElementById('new-sup-name').value.trim();
+  const fax           = document.getElementById('new-sup-fax').value.trim();
+  const outputMethods = [...document.querySelectorAll('.sup-method-chk:checked')]
+                          .map(cb => cb.value).join(',');
   if (!code) { showToast('コードを入力してください', 'error'); return; }
   if (!name) { showToast('発注先名を入力してください', 'error'); return; }
   showLoading('保存中...');
   try {
-    const res = await gasPost({ action: 'saveSupplier', code, name, fax, mode: 'add' });
-    if (res.success) { closeModal('modal-add-supplier'); await loadMasters(); showToast('発注先を追加しました', 'success'); }
-    else { showToast('エラー: ' + (res.error || '不明'), 'error'); }
+    const res = await gasPost({ action: 'saveSupplier', code, name, fax, outputMethods, mode });
+    if (res.success) {
+      closeModal('modal-add-supplier');
+      await loadMasters();
+      showToast(mode === 'add' ? '発注先を追加しました' : '発注先を更新しました', 'success');
+    } else { showToast('エラー: ' + (res.error || '不明'), 'error'); }
   } catch(e) { showToast('通信エラー', 'error'); } finally { hideLoading(); }
 }
 async function deleteSupplier(code, name) {
