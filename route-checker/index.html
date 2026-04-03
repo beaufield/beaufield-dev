@@ -182,8 +182,12 @@
       display: flex; align-items: center; justify-content: center;
       font-size: 22px; flex-shrink: 0; transition: all 0.15s;
     }
-    .check-btn.checked { background: var(--success); border-color: var(--success); cursor: default; }
+    .check-btn.checked { background: var(--success); border-color: var(--success); cursor: pointer; }
+    .check-btn.checked:active { opacity: 0.75; }
     .check-btn:not(.checked):active { background: #eff6ff; border-color: var(--primary); }
+    /* チェック時刻エリア（チェックボタン左側） */
+    .check-area { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .check-time { font-size: 11px; color: #6b7280; min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
     .action-btn-group { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
 
     /* Buttons */
@@ -303,6 +307,8 @@
     .salon-col-name { font-weight: 700; font-size: 13px; display: block; }
     .salon-col-user { font-size: 11px; color: #9ca3af; display: block; }
     .cell-visited { color: var(--success); font-size: 15px; line-height: 1; }
+    /* 履歴マトリクス内の訪問時刻 */
+    .cell-time { display: block; font-size: 9px; color: #9ca3af; line-height: 1.2; margin-top: 2px; font-variant-numeric: tabular-nums; }
     .cell-na { background: #f3f4f6; }
     .row-alert td            { background: #fee2e2 !important; }
     .row-alert td.salon-col  { background: #fee2e2 !important; }
@@ -695,7 +701,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.8.0';
+const APP_VERSION = 'v1.9.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 
 // ============================================================
@@ -712,7 +718,7 @@ let pinValue      = '';       // 入力中PIN
 
 let todayRoute    = [];       // 今日のルートサロン
 let allMySalons   = [];       // 全担当サロン（イレギュラー追加用）
-let checkedIds    = new Set(); // 当日チェック済みサロンID
+let checkedTimes  = new Map(); // 当日チェック済み: salon_id → "HH:MM"（空文字の場合もあり）
 
 // サロン管理
 let editingSalonId = null;  // 編集中のサロンID
@@ -856,6 +862,19 @@ function loadSalonCache(userId) {
 /** サロンキャッシュを削除（ログアウト時・編集後に呼ぶ）*/
 function clearSalonCache() {
   try { localStorage.removeItem(SALON_CACHE_KEY); } catch(e) {}
+}
+
+// ============================================================
+// チェックタイムズ ユーティリティ
+// ============================================================
+
+/** GASから返された logs 配列を checkedTimes Map に変換する */
+function buildCheckedTimesFromLogs(logs) {
+  var map = new Map();
+  (logs || []).forEach(function(l) {
+    map.set(l.salon_id, l.time || '');
+  });
+  return map;
 }
 
 // ============================================================
@@ -1029,13 +1048,17 @@ function renderCheck() {
   var dispLabel = dateDisplayStr(selDate);
 
   var items = todayRoute.map(function(s) {
-    var checked = checkedIds.has(s.salon_id);
+    var checked = checkedTimes.has(s.salon_id);
+    var time    = checked ? (checkedTimes.get(s.salon_id) || '') : '';
     return '<li class="salon-item' + (checked ? ' checked' : '') + '">' +
       '<span class="salon-name">' + escHtml(s.salon_name) + '</span>' +
+      '<div class="check-area">' +
+      (checked && time ? '<span class="check-time">' + escHtml(time) + '</span>' : '') +
       '<button class="check-btn' + (checked ? ' checked' : '') + '"' +
       ' data-sid="' + escHtml(s.salon_id) + '"' +
-      (checked ? ' disabled' : ' onclick="doCheck(this.dataset.sid)"') +
+      ' onclick="doCheck(this.dataset.sid)"' +
       '>' + (checked ? '✅' : '') + '</button>' +
+      '</div>' +
       '</li>';
   }).join('');
 
@@ -1978,11 +2001,11 @@ function buildHistoryMatrix(weeks, rows) {
 
   // データ行
   var tbody = '<tbody>' + rows.map(function(row) {
-    // この行の cells を週インデックスに展開
+    // この行の cells を週インデックスに展開（cell オブジェクトごと保持）
     var cells = new Array(weeks.length).fill(null); // null=N/A
     row.cells.forEach(function(cell) {
       var idx = weekIndex[cell.week_label];
-      if (idx !== undefined) cells[idx] = cell.visited;
+      if (idx !== undefined) cells[idx] = cell; // { visited, time, ... }
     });
 
     var isOther   = (row.visit_day === '他');
@@ -2005,7 +2028,11 @@ function buildHistoryMatrix(weeks, rows) {
     } else {
       dataCells = cells.map(function(v) {
         if (v === null) return '<td class="cell-na"></td>';
-        if (v === true) return '<td><span class="cell-visited">✅</span></td>';
+        if (v && v.visited) {
+          return '<td><span class="cell-visited">✅</span>' +
+            (v.time ? '<span class="cell-time">' + escHtml(v.time) + '</span>' : '') +
+            '</td>';
+        }
         return '<td></td>';
       }).join('');
     }
@@ -2120,7 +2147,7 @@ function logout() {
   currentUser      = null;
   todayRoute       = [];
   allMySalons      = [];
-  checkedIds       = new Set();
+  checkedTimes     = new Map();
   historyData      = null;
   historyFilter    = { userChoice: 'self', month: '', day_of_week: 'all' };
   adminUsers       = [];
@@ -2151,16 +2178,16 @@ async function loadCheckScreen() {
   try {
     if (cachedSalons) {
       // ── キャッシュヒット：サロン一覧はローカルから、ログのみGASで取得（1回） ──
-      allMySalons = cachedSalons;
-      todayRoute  = computeRouteForDate(checkDate); // ローカル計算（0秒）
+      allMySalons  = cachedSalons;
+      todayRoute   = computeRouteForDate(checkDate); // ローカル計算（0秒）
       var logsResult = await apiGet('getTodayLogs', { user_id: uid, date: checkDate });
-      checkedIds  = new Set(logsResult.salon_ids || []);
+      checkedTimes = buildCheckedTimesFromLogs(logsResult.logs);
     } else {
       // ── キャッシュなし：全データを1回のGASコールで取得 ──
-      var result  = await apiGet('getCheckScreenData', { user_id: uid, date: checkDate });
-      todayRoute  = result.route    || [];
-      checkedIds  = new Set(result.salon_ids || []);
-      allMySalons = result.salons   || [];
+      var result   = await apiGet('getCheckScreenData', { user_id: uid, date: checkDate });
+      todayRoute   = result.route   || [];
+      checkedTimes = buildCheckedTimesFromLogs(result.logs);
+      allMySalons  = result.salons  || [];
       saveSalonCache(uid, allMySalons); // 次回のためにキャッシュ保存
     }
     resetTo('check');
@@ -2177,14 +2204,14 @@ async function changeCheckDate(dateStr) {
   if (!dateStr || !currentUser) return;
   checkDate  = dateStr;
   // ルートはローカル計算で即座に表示（GAS不要）
-  todayRoute = computeRouteForDate(dateStr);
-  checkedIds = new Set();
+  todayRoute   = computeRouteForDate(dateStr);
+  checkedTimes = new Map();
   renderApp();
   // チェック済みログのみGASから取得
   showLoading();
   try {
     var result = await apiGet('getTodayLogs', { user_id: currentUser.user_id, date: checkDate });
-    checkedIds = new Set(result.salon_ids || []);
+    checkedTimes = buildCheckedTimesFromLogs(result.logs);
     renderApp();
   } catch(e) {
     showToast('チェック履歴の読み込みに失敗しました: ' + e.message, 'error');
@@ -2197,13 +2224,17 @@ async function changeCheckDate(dateStr) {
 // 訪問チェック
 // ============================================================
 async function doCheck(salonId) {
-  if (checkedIds.has(salonId)) return;
+  if (checkedTimes.has(salonId)) {
+    // チェック済み → 取り消し
+    await doUncheck(salonId);
+    return;
+  }
 
   // 即座にUI更新（オプティミスティックUI）ローディングなし
-  checkedIds.add(salonId);
+  checkedTimes.set(salonId, ''); // 時刻は確定後に更新
   renderApp();
 
-  // バックグラウンドでGASに記録（ユーザーを待たせない）
+  // バックグラウンドでGASに記録
   try {
     var result = await apiPost('checkVisit', {
       user_id:  currentUser.user_id,
@@ -2213,13 +2244,41 @@ async function doCheck(salonId) {
     if (result.duplicate) {
       showToast('本日はすでにチェック済みです', 'warning');
     } else {
+      // 記録成功：返ってきた時刻をMapに反映
+      var time = '';
+      if (result.visited_at) {
+        var m = String(result.visited_at).match(/T(\d{2}:\d{2})/);
+        if (m) time = m[1];
+      }
+      checkedTimes.set(salonId, time);
+      renderApp();
       showToast('チェックしました ✅');
     }
   } catch(e) {
-    // GAS送信失敗時はロールバック＋通知
-    checkedIds.delete(salonId);
+    checkedTimes.delete(salonId);
     renderApp();
     showToast('チェックに失敗しました: ' + e.message, 'error');
+  }
+}
+
+/** チェック取り消し（再タップ時・オプティミスティックUI）*/
+async function doUncheck(salonId) {
+  var prevTime = checkedTimes.get(salonId); // ロールバック用に退避
+  checkedTimes.delete(salonId);
+  renderApp();
+
+  try {
+    await apiPost('uncheckVisit', {
+      user_id:  currentUser.user_id,
+      salon_id: salonId,
+      date:     checkDate || todayStr()
+    });
+    showToast('チェックを取り消しました');
+  } catch(e) {
+    // GAS失敗時はロールバック
+    checkedTimes.set(salonId, prevTime || '');
+    renderApp();
+    showToast('取り消しに失敗しました: ' + e.message, 'error');
   }
 }
 
@@ -2269,7 +2328,7 @@ function renderIrregularList(salons) {
 
 async function addIrregularSalon(salonId) {
   closeIrregularModal();
-  if (checkedIds.has(salonId)) {
+  if (checkedTimes.has(salonId)) {
     showToast('本日はすでにチェック済みです', 'warning');
     return;
   }
