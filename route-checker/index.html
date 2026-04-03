@@ -187,7 +187,7 @@
     .check-btn:not(.checked):active { background: #eff6ff; border-color: var(--primary); }
     /* チェック時刻エリア（チェックボタン左側） */
     .check-area { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-    .check-time { font-size: 11px; color: #6b7280; min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
+    .check-time { font-size: 11px; color: #6b7280; min-width: 62px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .action-btn-group { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
 
     /* Buttons */
@@ -701,7 +701,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.9.1';
+const APP_VERSION = 'v1.9.2';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 
 // ============================================================
