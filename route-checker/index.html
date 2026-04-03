@@ -701,7 +701,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.9.0';
+const APP_VERSION = 'v1.9.1';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 
 // ============================================================
@@ -1899,7 +1899,7 @@ function buildHistoryFilters() {
 
   // 曜日フィルタ
   var days = ['all', '火', '水', '木', '金', '土', '他'];
-  var dayLabels = { all: '全曜日', '火': '火', '水': '水', '木': '木', '金': '金', '土': '土', '他': '随時' };
+  var dayLabels = { all: '全て', '火': '火', '水': '水', '木': '木', '金': '金', '土': '土', '他': '随時' };
   var dayOpts = days.map(function(d) {
     var sel = historyFilter.day_of_week === d ? ' selected' : '';
     return '<option value="' + d + '"' + sel + '>' + dayLabels[d] + '</option>';
