@@ -647,7 +647,8 @@
       <button id="btn-csv"         class="btn btn-primary"   onclick="outputCSV()"        style="margin-bottom:8px">📥 CSV出力</button>
       <button id="btn-pdf"         class="btn btn-outline"   onclick="outputPDF()"        style="margin-bottom:8px">📄 PDF保存</button>
       <button id="btn-text"        class="btn btn-secondary" onclick="outputText()"       style="margin-bottom:8px;display:none">💬 テキスト出力</button>
-      <button id="btn-grandex-pdf" class="btn btn-secondary" onclick="outputGrandexPDF()" style="margin-bottom:8px;display:none">📋 グランデックス発注書 出力</button>
+      <button id="btn-grandex-pdf"  class="btn btn-secondary" onclick="outputGrandexPDF()"  style="margin-bottom:8px;display:none">📋 グランデックス発注書 出力</button>
+      <button id="btn-chiyoda-pdf"  class="btn btn-secondary" onclick="outputChiyodaPDF()"  style="margin-bottom:8px;display:none">📋 千代田化学発注書 出力</button>
     </div>
     <div id="new-order-wrap" style="display:none">
       <button class="btn btn-success" onclick="startNewOrder()">➕ 新しい発注を始める</button>
@@ -726,7 +727,7 @@
   </div>
 </nav>
 
-<div class="version-label" id="version-label">v1.10.6</div>
+<div class="version-label" id="version-label">v1.10.7</div>
 
 <!-- ==============================
      モーダル: 数量入力
@@ -867,7 +868,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.10.6'; // 発注先設定に発注方法・修正機能を追加
+const APP_VERSION    = 'v1.10.7'; // 発注先設定に発注方法・修正機能を追加
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const LS_MASTER      = 'bf_pm';
 const LS_MASTER_DATE = 'bf_pm_date';
@@ -1566,6 +1567,12 @@ function applyOutputButtons() {
   show('btn-text',        methods.includes('テキスト'));
   show('btn-grandex-pdf', methods.includes('メーカーPDF') &&
                           currentOrder.supplierCode === GRANDEX_SUPPLIER_CODE);
+
+  // 千代田化学：メーカーPDF対象かつカートにミルフィ対象商品が含まれる場合
+  const hasChiyodaItems = methods.includes('メーカーPDF') &&
+                          currentOrder.supplierCode === CHIYODA_SUPPLIER_CODE &&
+                          cartItems.some(i => CHIYODA_TARGET_CODES.has(i.code));
+  show('btn-chiyoda-pdf', hasChiyodaItems);
 }
 
 /* ===================================================
@@ -1732,6 +1739,140 @@ async function outputGrandexPDF() {
     downloadBlob(blob, `グランデックス発注書_${dateStr}.pdf`);
     showCompleteState();
     showToast(`グランデックス発注書を出力しました（自動記入: ${matched.length}件）`, 'success');
+  } catch(e) {
+    showToast('PDFエラー: ' + e.message, 'error');
+  } finally { hideLoading(); }
+}
+
+/* ===================================================
+   千代田化学 メーカー発注書 出力
+=================================================== */
+const CHIYODA_SUPPLIER_CODE = '48';
+
+// ミルフィ対象商品コード一覧
+const CHIYODA_TARGET_CODES = new Set([
+  '5359','5360','5361','5362','5363','5364','5365','5366','5367',
+  '5368','5369','5370','5371','5372','5373','5374','5375',
+  '5389','5390',
+  '6021','6022','6023','6024','6025','6026','6027','6028',
+  '6029','6030','6031','6032','6033','6034','6035','6038','6293',
+  '6868','6869','6870','6871','6872','6873','6874','6875',
+  '6876','6877','6878','6879','7039',
+  '8157','8158','8159','8160','8161','8162','8163',
+  '8164','8165','8166','8167','8168','8169'
+]);
+
+// 商品名から型番を抽出
+// 例: "デラクシオ ミルフィ 6NB 120g" → "6NB"
+// 例: "デラクシオ ミルフィラピ 120g R-6NB" → "R-6NB"
+// 例: "デラクシオ ミルフィ ﾚﾍﾞﾙｺﾝﾄﾛｰﾙ UC 120g" → "UC"
+function extractChiyodaType(name) {
+  // R-XXX 系（ラピ）
+  const rapiMatch = name.match(/R-(\d+[A-Z]+|[A-Z]+)/);
+  if (rapiMatch) return 'R-' + rapiMatch[1];
+  // DK（ラピ コントロール）
+  if (/\bDK\b/.test(name)) return 'DK';
+  // UC / DC / LT（コントロールカラー）
+  const ctrlMatch = name.match(/\b(UC|DC|LT)\b/);
+  if (ctrlMatch) return ctrlMatch[1];
+  // NB/CB/BB/YB/AB/PB/RB/MB 系（数字+アルファベット2文字）
+  const stdMatch = name.match(/\b(\d+[A-Z]{2})\b/);
+  if (stdMatch) return stdMatch[1];
+  return null;
+}
+
+// 型番 → PDF「本」欄の座標 (pdf-lib: 左下原点, H=841.92)
+// 左表(ミルフィカラー NB/BB/YB/コントロール): 本x=187
+// 中表(ミルフィカラー CB/MB/RB/AB/PB):       本x=356
+// ラピ右表:                                   本x=532
+const CHIYODA_COORD_MAP = {
+  // === ミルフィカラー 左表（本 x=187） ===
+  // NB
+  '4NB': {x:187, y:561.2}, '5NB': {x:187, y:540.8}, '6NB': {x:187, y:520.4},
+  '7NB': {x:187, y:500.0}, '8NB': {x:187, y:479.6}, '9NB': {x:187, y:459.2},
+  // BB
+  '5BB': {x:187, y:438.8}, '6BB': {x:187, y:418.4}, '7BB': {x:187, y:398.0},
+  '8BB': {x:187, y:377.6}, '9BB': {x:187, y:357.2},
+  // YB
+  '5YB': {x:187, y:336.8}, '6YB': {x:187, y:316.4}, '7YB': {x:187, y:296.0},
+  '8YB': {x:187, y:275.6}, '9YB': {x:187, y:255.2},
+  // コントロール
+  'DC':  {x:187, y:234.8}, 'UC':  {x:187, y:214.4}, 'LT':  {x:187, y:194.0},
+  // === ミルフィカラー 中表（本 x=356） ===
+  // CB
+  '5CB': {x:356, y:561.2}, '6CB': {x:356, y:540.8}, '7CB': {x:356, y:520.4},
+  '8CB': {x:356, y:500.0}, '9CB': {x:356, y:479.6},
+  // MB
+  '6MB': {x:356, y:459.2}, '7MB': {x:356, y:438.8}, '8MB': {x:356, y:418.4},
+  // RB
+  '6RB': {x:356, y:398.0}, '7RB': {x:356, y:377.6}, '8RB': {x:356, y:357.2},
+  // AB
+  '6AB': {x:356, y:336.8}, '7AB': {x:356, y:316.4}, '8AB': {x:356, y:296.0},
+  // PB
+  '6PB': {x:356, y:275.6}, '7PB': {x:356, y:255.2}, '8PB': {x:356, y:234.8},
+  // === ミルフィラピ 右表（本 x=532） ===
+  'R-5NB':  {x:532, y:561.2}, 'R-6NB':  {x:532, y:540.8}, 'R-7NB':  {x:532, y:520.4},
+  'R-8NB':  {x:532, y:500.0}, 'R-9NB':  {x:532, y:479.6},
+  'R-6BB':  {x:532, y:459.2}, 'R-7BB':  {x:532, y:438.8}, 'R-8BB':  {x:532, y:418.4},
+  'R-6AB':  {x:532, y:398.0}, 'R-7AB':  {x:532, y:377.6},
+  'R-6RB':  {x:532, y:357.2}, 'R-7RB':  {x:532, y:336.8},
+  'DK':     {x:532, y:316.4},
+  'R-3NE':  {x:532, y:296.0}, 'R-5NE':  {x:532, y:275.6}, 'R-6NE':  {x:532, y:255.2},
+  'R-7NE':  {x:532, y:234.8}, 'R-8NE':  {x:532, y:214.4}, 'R-9NE':  {x:532, y:194.0},
+  'R-10NE': {x:532, y:174.9},
+  'R-5GG':  {x:532, y:156.4}, 'R-7GG':  {x:532, y:137.2}, 'R-9GG':  {x:532, y:118.0},
+  'R-5BG':  {x:532, y:98.8},  'R-7BG':  {x:532, y:79.6},  'R-9BG':  {x:532, y:60.4},
+};
+
+async function outputChiyodaPDF() {
+  const targetItems = cartItems.filter(i => !i.isHandwritten && CHIYODA_TARGET_CODES.has(i.code));
+  const matched = [], unmatched = [];
+  for (const item of targetItems) {
+    const type = extractChiyodaType(item.name);
+    const coord = type ? CHIYODA_COORD_MAP[type] : null;
+    if (coord) {
+      matched.push({ item, type, coord });
+    } else {
+      unmatched.push(item);
+    }
+  }
+  if (unmatched.length > 0) {
+    const names = unmatched.map(i => '・' + i.name).join('\n');
+    if (!confirm(`以下の商品は千代田化学発注書に自動入力できません（手書き対応が必要）：\n\n${names}\n\n続けますか？`)) return;
+  }
+  showLoading('千代田化学発注書を生成中...');
+  try {
+    const { PDFDocument, StandardFonts, rgb } = PDFLib;
+    const pdfBytes = await fetch('./メーカー発注書/千代田化学.pdf').then(r => {
+      if (!r.ok) throw new Error('千代田化学.pdf の読み込みに失敗しました');
+      return r.arrayBuffer();
+    });
+    const pdfDoc = await PDFDocument.load(pdfBytes);
+    const page   = pdfDoc.getPages()[0];
+    const font   = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const black  = rgb(0, 0, 0);
+    const blue   = rgb(0, 0, 0.7);
+
+    // 発注日を記入（年 x=370, 月 x=418, 日 x=466, plib_y=686）
+    const [yyyy, mm, dd] = currentOrder.date.split('-').map(Number);
+    const reiwaYear = yyyy - 2018;
+    page.drawText(String(reiwaYear), { x: 370, y: 686, size: 10, font, color: black });
+    page.drawText(String(mm),        { x: 418, y: 686, size: 10, font, color: black });
+    page.drawText(String(dd),        { x: 466, y: 686, size: 10, font, color: black });
+
+    // 商品数量（本欄）を記入
+    for (const { item, coord } of matched) {
+      page.drawText(String(item.qty), {
+        x: coord.x, y: coord.y, size: 9, font, color: blue
+      });
+    }
+    await saveOrderToGAS('メーカー発注書');
+    const pdfBytesOut = await pdfDoc.save();
+    const blob = new Blob([pdfBytesOut], { type: 'application/pdf' });
+    const dateStr = currentOrder.date.replace(/-/g, '');
+    downloadBlob(blob, `千代田化学発注書_${dateStr}.pdf`);
+    showCompleteState();
+    showToast(`千代田化学発注書を出力しました（自動記入: ${matched.length}件）`, 'success');
   } catch(e) {
     showToast('PDFエラー: ' + e.message, 'error');
   } finally { hideLoading(); }
