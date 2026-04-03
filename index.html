@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>Beaufield ポータル</title>
+  <style>
+    :root {
+      --primary:       #2563eb;
+      --primary-dark:  #1d4ed8;
+      --primary-light: #eff6ff;
+      --bg:            #f1f5f9;
+      --card:          #ffffff;
+      --text:          #0f172a;
+      --text-sub:      #64748b;
+      --border:        #e2e8f0;
+      --danger:        #ef4444;
+      --danger-light:  #fef2f2;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── ローディング ── */
+    .loading-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(255,255,255,0.85);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+    .spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── ログイン画面 ── */
+    #loginScreen {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .login-card {
+      background: var(--card);
+      border-radius: 20px;
+      padding: 32px 24px;
+      width: 100%;
+      max-width: 400px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    }
+
+    .login-logo {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+    .login-logo h1 {
+      font-size: 26px;
+      font-weight: 700;
+      color: var(--primary);
+      letter-spacing: -0.5px;
+    }
+    .login-logo p {
+      font-size: 13px;
+      color: var(--text-sub);
+      margin-top: 4px;
+    }
+
+    .section-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-sub);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 10px;
+    }
+
+    /* ユーザーグリッド */
+    .user-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+    .user-btn {
+      background: var(--bg);
+      border: 2px solid transparent;
+      border-radius: 10px;
+      padding: 10px 6px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+      cursor: pointer;
+      transition: all 0.15s;
+      text-align: center;
+      line-height: 1.3;
+    }
+    .user-btn:hover  { background: var(--primary-light); }
+    .user-btn.active {
+      background: var(--primary-light);
+      border-color: var(--primary);
+      color: var(--primary);
+      font-weight: 700;
+    }
+
+    /* PIN入力 */
+    .pin-section { margin-bottom: 20px; }
+    .pin-dots {
+      display: flex;
+      gap: 14px;
+      justify-content: center;
+      margin: 10px 0 12px;
+    }
+    .pin-dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--border);
+      transition: background 0.15s;
+    }
+    .pin-dot.filled { background: var(--primary); }
+
+    .pin-input {
+      width: 100%;
+      padding: 12px;
+      font-size: 20px;
+      border: 2px solid var(--border);
+      border-radius: 10px;
+      text-align: center;
+      letter-spacing: 10px;
+      outline: none;
+      background: var(--bg);
+      -webkit-text-security: disc;
+      text-security: disc;
+    }
+    .pin-input:focus {
+      border-color: var(--primary);
+      background: var(--primary-light);
+    }
+
+    /* ログインボタン */
+    .login-btn {
+      width: 100%;
+      padding: 14px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .login-btn:hover    { background: var(--primary-dark); }
+    .login-btn:disabled { background: var(--border); color: var(--text-sub); cursor: not-allowed; }
+
+    /* エラーメッセージ */
+    .error-msg {
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: var(--danger-light);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--danger);
+      text-align: center;
+      display: none;
+    }
+
+    /* ── ホーム画面 ── */
+    #homeScreen { display: none; min-height: 100vh; }
+
+    .home-header {
+      background: var(--primary);
+      color: white;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .home-header-left h2 { font-size: 18px; font-weight: 700; }
+    .home-header-left p  { font-size: 12px; opacity: 0.8; margin-top: 2px; }
+
+    .logout-btn {
+      background: rgba(255,255,255,0.2);
+      border: none;
+      color: white;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .logout-btn:hover { background: rgba(255,255,255,0.3); }
+
+    .home-body { padding: 24px 20px; }
+    .home-body > p {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-sub);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 16px;
+    }
+
+    /* アプリタイル */
+    .app-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px;
+    }
+    @media (min-width: 480px) { .app-grid { grid-template-columns: repeat(3, 1fr); } }
+    @media (min-width: 640px) { .app-grid { grid-template-columns: repeat(4, 1fr); } }
+
+    .app-tile {
+      background: var(--card);
+      border-radius: 16px;
+      padding: 24px 12px;
+      text-align: center;
+      cursor: pointer;
+      text-decoration: none;
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      transition: transform 0.15s, box-shadow 0.15s;
+      border: 2px solid transparent;
+    }
+    .app-tile:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(0,0,0,0.1);
+      border-color: var(--primary-light);
+    }
+    .app-tile:active { transform: translateY(0); }
+
+    .app-icon  { font-size: 38px; line-height: 1; }
+    .app-label { font-size: 13px; font-weight: 600; line-height: 1.3; }
+
+    .no-apps {
+      grid-column: 1 / -1;
+      text-align: center;
+      color: var(--text-sub);
+      padding: 40px 0;
+      font-size: 14px;
+    }
+
+    .home-footer {
+      text-align: center;
+      padding: 32px 20px 20px;
+      font-size: 11px;
+      color: var(--border);
+    }
+  </style>
+</head>
+<body>
+
+<!-- ローディング -->
+<div class="loading-overlay" id="loading">
+  <div class="spinner"></div>
+</div>
+
+<!-- ── ログイン画面 ── -->
+<div id="loginScreen">
+  <div class="login-card">
+    <div class="login-logo">
+      <h1>Beaufield</h1>
+      <p>アプリポータル</p>
+    </div>
+
+    <div class="section-label">ユーザーを選択</div>
+    <div class="user-grid" id="userGrid">
+      <div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--text-sub);font-size:13px">読み込み中...</div>
+    </div>
+
+    <div class="pin-section">
+      <div class="section-label">PIN（4桁）</div>
+      <div class="pin-dots">
+        <div class="pin-dot" id="dot0"></div>
+        <div class="pin-dot" id="dot1"></div>
+        <div class="pin-dot" id="dot2"></div>
+        <div class="pin-dot" id="dot3"></div>
+      </div>
+      <input type="password" id="pinInput" class="pin-input"
+        maxlength="4" inputmode="numeric" pattern="[0-9]*"
+        placeholder="• • • •" autocomplete="off">
+    </div>
+
+    <button class="login-btn" id="loginBtn" onclick="doLogin()">ログイン</button>
+    <div class="error-msg" id="errorMsg"></div>
+  </div>
+</div>
+
+<!-- ── ホーム画面 ── -->
+<div id="homeScreen">
+  <div class="home-header">
+    <div class="home-header-left">
+      <h2>Beaufield</h2>
+      <p id="welcomeText">ようこそ</p>
+    </div>
+    <button class="logout-btn" onclick="doLogout()">ログアウト</button>
+  </div>
+  <div class="home-body">
+    <p>アプリ一覧</p>
+    <div class="app-grid" id="appGrid">
+      <div class="no-apps">読み込み中...</div>
+    </div>
+  </div>
+  <div class="home-footer">Beaufield Portal v1.0.0</div>
+</div>
+
+<script>
+  const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzNVW7AaPUTuwneE-M40DTN1clO5VT2yLCHq7cjYvaHqfMfXgVi38UAOsDZQbmmN3wOzw/exec';
+  const SESSION_KEY  = 'bf_session';
+  const SESSION_DAYS = 30;
+
+  let selectedUserId = null;
+
+  // ── 初期化 ────────────────────────────────────────────────────
+  window.addEventListener('DOMContentLoaded', async () => {
+    const session = getSession();
+    if (session) {
+      await showHome(session.user_id, session.name);
+    } else {
+      await loadUsers();
+    }
+
+    document.getElementById('pinInput').addEventListener('input', e => {
+      const len = e.target.value.length;
+      for (let i = 0; i < 4; i++) {
+        document.getElementById('dot' + i).classList.toggle('filled', i < len);
+      }
+    });
+    document.getElementById('pinInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') doLogin();
+    });
+  });
+
+  // ── セッション管理 ─────────────────────────────────────────────
+  function getSession() {
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      const s = JSON.parse(raw);
+      if (Date.now() > s.expires) { localStorage.removeItem(SESSION_KEY); return null; }
+      return s;
+    } catch { return null; }
+  }
+
+  function saveSession(user_id, name) {
+    const expires = Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000;
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ user_id, name, expires }));
+  }
+
+  function clearSession() {
+    localStorage.removeItem(SESSION_KEY);
+  }
+
+  // ── ユーザー一覧読み込み ──────────────────────────────────────
+  async function loadUsers() {
+    try {
+      const res  = await gasGet('getUsers', {});
+      const grid = document.getElementById('userGrid');
+      if (!res.success || !res.users || !res.users.length) {
+        grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--text-sub);font-size:13px">ユーザーが見つかりません</div>';
+        return;
+      }
+      grid.innerHTML = res.users.map(u =>
+        `<button class="user-btn" data-id="${u.user_id}" onclick="selectUser('${u.user_id}','${escHtml(u.name)}')">${escHtml(u.name)}</button>`
+      ).join('');
+    } catch {
+      showError('ユーザー情報の読み込みに失敗しました');
+    }
+  }
+
+  // ── ユーザー選択 ──────────────────────────────────────────────
+  function selectUser(id, name) {
+    selectedUserId = id;
+    document.querySelectorAll('.user-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector(`.user-btn[data-id="${id}"]`).classList.add('active');
+    document.getElementById('pinInput').focus();
+    hideError();
+  }
+
+  // ── ログイン ──────────────────────────────────────────────────
+  async function doLogin() {
+    const pin = document.getElementById('pinInput').value;
+    if (!selectedUserId)   { showError('ユーザーを選択してください'); return; }
+    if (pin.length !== 4)  { showError('4桁のPINを入力してください'); return; }
+
+    setLoading(true);
+    try {
+      const res = await gasPost('login', { user_id: selectedUserId, pin });
+      if (res.success) {
+        saveSession(res.user_id, res.name);
+        clearPinInput();
+        await showHome(res.user_id, res.name);
+      } else {
+        showError(res.message || 'ログインに失敗しました');
+        clearPinInput();
+      }
+    } catch {
+      showError('通信エラーが発生しました。再度お試しください。');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ── ホーム画面表示 ─────────────────────────────────────────────
+  async function showHome(userId, name) {
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('homeScreen').style.display  = 'block';
+    document.getElementById('welcomeText').textContent   = 'ようこそ、' + name + 'さん';
+
+    setLoading(true);
+    try {
+      const res  = await gasGet('getUserApps', { user_id: userId });
+      const grid = document.getElementById('appGrid');
+      if (!res.success || !res.apps || !res.apps.length) {
+        grid.innerHTML = '<div class="no-apps">利用可能なアプリがありません<br><small style="font-size:11px;margin-top:4px;display:block">管理者にお問い合わせください</small></div>';
+        return;
+      }
+      grid.innerHTML = res.apps.map(app =>
+        `<a class="app-tile" href="${app.url}" target="_blank" rel="noopener noreferrer">
+          <div class="app-icon">${app.icon}</div>
+          <div class="app-label">${escHtml(app.label)}</div>
+        </a>`
+      ).join('');
+    } catch {
+      document.getElementById('appGrid').innerHTML =
+        '<div class="no-apps">アプリ一覧の読み込みに失敗しました</div>';
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ── ログアウト ─────────────────────────────────────────────────
+  function doLogout() {
+    clearSession();
+    selectedUserId = null;
+    document.getElementById('homeScreen').style.display  = 'none';
+    document.getElementById('loginScreen').style.display = 'flex';
+    clearPinInput();
+    document.querySelectorAll('.user-btn').forEach(b => b.classList.remove('active'));
+    hideError();
+  }
+
+  // ── GAS 通信 ──────────────────────────────────────────────────
+  async function gasGet(action, data) {
+    const qs  = 'action=' + action + '&data=' + encodeURIComponent(JSON.stringify(data));
+    const res = await fetch(GAS_URL + '?' + qs);
+    return res.json();
+  }
+
+  async function gasPost(action, data) {
+    const body = 'action=' + encodeURIComponent(action)
+               + '&data='   + encodeURIComponent(JSON.stringify(data));
+    const res  = await fetch(GAS_URL, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body
+    });
+    return res.json();
+  }
+
+  // ── ヘルパー ──────────────────────────────────────────────────
+  function showError(msg) {
+    const el = document.getElementById('errorMsg');
+    el.textContent   = msg;
+    el.style.display = 'block';
+  }
+  function hideError() {
+    document.getElementById('errorMsg').style.display = 'none';
+  }
+  function setLoading(on) {
+    document.getElementById('loading').style.display = on ? 'flex' : 'none';
+  }
+  function clearPinInput() {
+    document.getElementById('pinInput').value = '';
+    for (let i = 0; i < 4; i++) document.getElementById('dot' + i).classList.remove('filled');
+  }
+  function escHtml(str) {
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+</script>
+</body>
+</html>
