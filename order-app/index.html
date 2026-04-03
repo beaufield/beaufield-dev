@@ -146,81 +146,6 @@
     .btn-outline   { background: transparent; border: 2px solid var(--primary); color: var(--primary); }
     .btn-ghost     { background: transparent; color: var(--text-light); font-weight: 500; }
 
-    /* ── 認証オーバーレイ ── */
-    .auth-overlay {
-      position: fixed;
-      inset: 0;
-      background: var(--bg);
-      z-index: 200;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 20px;
-    }
-    .auth-card {
-      background: #fff;
-      border-radius: 16px;
-      padding: 28px 20px;
-      width: 100%;
-      max-width: 360px;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.12);
-    }
-    .auth-logo { text-align: center; margin-bottom: 22px; }
-    .auth-logo h1 { font-size: 20px; font-weight: 700; color: var(--primary); }
-    .auth-logo p  { font-size: 12px; color: var(--text-light); margin-top: 3px; }
-    .auth-label {
-      font-size: 11px; font-weight: 700; color: var(--text-light);
-      text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px;
-    }
-    .auth-user-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 6px;
-      margin-bottom: 18px;
-    }
-    .auth-user-btn {
-      background: var(--bg);
-      border: 2px solid transparent;
-      border-radius: 8px;
-      padding: 8px 4px;
-      font-size: 12px;
-      font-weight: 500;
-      color: var(--text);
-      cursor: pointer;
-      text-align: center;
-      transition: all 0.15s;
-    }
-    .auth-user-btn:hover  { background: #FFF8EE; }
-    .auth-user-btn.active {
-      background: #FFF8EE;
-      border-color: var(--primary);
-      color: var(--primary-dark);
-      font-weight: 700;
-    }
-    .auth-pin-dots {
-      display: flex; gap: 12px; justify-content: center;
-      margin: 8px 0 10px;
-    }
-    .auth-pin-dot {
-      width: 12px; height: 12px; border-radius: 50%;
-      background: var(--border); transition: background 0.15s;
-    }
-    .auth-pin-dot.filled { background: var(--primary); }
-    .auth-pin-input {
-      width: 100%; padding: 12px;
-      font-size: 18px; border: 1.5px solid var(--border);
-      border-radius: 10px; text-align: center; letter-spacing: 10px;
-      outline: none; background: var(--bg);
-      -webkit-text-security: disc; text-security: disc;
-      margin-bottom: 14px;
-    }
-    .auth-pin-input:focus { border-color: var(--primary); background: #FFF8EE; }
-    .auth-error {
-      margin-top: 10px; padding: 8px 12px;
-      background: #FFF0F0; border-radius: 8px;
-      font-size: 12px; color: var(--danger);
-      text-align: center; display: none;
-    }
     .btn-sm        { padding: 8px 14px; font-size: 13px; min-height: 36px; width: auto; display: inline-block; }
     .btn-row       { display: flex; gap: 8px; }
     .btn-row .btn  { flex: 1; }
@@ -625,7 +550,8 @@
       </div>
       <div class="form-group">
         <label>担当者</label>
-        <select id="sel-staff"><option value="">-- 選択してください --</option></select>
+        <select id="sel-staff" style="display:none"><option value="">-- 選択してください --</option></select>
+        <div id="staff-display" style="padding:13px 12px;background:#FAFAFA;border:1.5px solid var(--border);border-radius:10px;font-size:17px;color:var(--text)">—</div>
       </div>
       <div class="form-group">
         <label>発注日</label>
@@ -928,32 +854,6 @@
   </div>
 </div>
 
-<!-- ── 認証オーバーレイ ── -->
-<div class="auth-overlay" id="authOverlay">
-  <div class="auth-card">
-    <div class="auth-logo">
-      <h1>Beaufield</h1>
-      <p>発注アプリ</p>
-    </div>
-    <div class="auth-label">ユーザーを選択</div>
-    <div class="auth-user-grid" id="authUserGrid">
-      <div style="grid-column:1/-1;text-align:center;padding:16px;color:var(--text-light);font-size:12px">読み込み中...</div>
-    </div>
-    <div class="auth-label">PIN（4桁）</div>
-    <div class="auth-pin-dots">
-      <div class="auth-pin-dot" id="authDot0"></div>
-      <div class="auth-pin-dot" id="authDot1"></div>
-      <div class="auth-pin-dot" id="authDot2"></div>
-      <div class="auth-pin-dot" id="authDot3"></div>
-    </div>
-    <input type="password" id="authPinInput" class="auth-pin-input"
-      maxlength="4" inputmode="numeric" pattern="[0-9]*"
-      placeholder="• • • •" autocomplete="off">
-    <button class="btn btn-primary" onclick="doAuthLogin()">ログイン</button>
-    <div class="auth-error" id="authError"></div>
-  </div>
-</div>
-
 <!-- ローディング -->
 <div class="loading-overlay" id="loading-overlay">
   <div class="loading-box">
@@ -975,9 +875,9 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.11.0'; // beaufield-auth ログイン認証を追加
+const APP_VERSION    = 'v1.11.1'; // ポータル経由のみアクセス可に変更・担当者固定
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
-const PORTAL_GAS_URL = 'https://script.google.com/macros/s/AKfycbzNVW7AaPUTuwneE-M40DTN1clO5VT2yLCHq7cjYvaHqfMfXgVi38UAOsDZQbmmN3wOzw/exec';
+const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER      = 'bf_pm';
 const LS_MASTER_DATE = 'bf_pm_date';
 const SS_CART        = 'bf_cart';
@@ -1015,24 +915,15 @@ let currentScreen = 'order';
    初期化
 =================================================== */
 document.addEventListener('DOMContentLoaded', async () => {
-  // ── セッション確認 ────────────────────────────────────────────
+  // ── セッション確認（なければポータルへリダイレクト） ──────────
   const session = getAuthSession();
-  if (session) {
-    currentUser = { user_id: session.user_id, name: session.name };
-    document.getElementById('authOverlay').style.display = 'none';
-    const nameEl = document.getElementById('settings-user-name');
-    if (nameEl) nameEl.textContent = 'ログイン中: ' + session.name;
-  } else {
-    loadAuthUsers();
-    document.getElementById('authPinInput').addEventListener('input', e => {
-      const len = e.target.value.length;
-      for (let i = 0; i < 4; i++)
-        document.getElementById('authDot' + i).classList.toggle('filled', i < len);
-    });
-    document.getElementById('authPinInput').addEventListener('keydown', e => {
-      if (e.key === 'Enter') doAuthLogin();
-    });
+  if (!session) {
+    location.replace(PORTAL_URL);
+    return;
   }
+  currentUser = { user_id: session.user_id, name: session.name };
+  const nameEl = document.getElementById('settings-user-name');
+  if (nameEl) nameEl.textContent = 'ログイン中: ' + session.name;
   // ────────────────────────────────────────────────────────────
 
   document.getElementById('version-label').textContent = APP_VERSION;
@@ -1122,15 +1013,14 @@ function renderStaffDropdown() {
     opt.value = s.name; opt.textContent = s.name;
     sel.appendChild(opt);
   });
-  if (masters.staff.length > 0) {
-    // ログイン中ユーザーに一致する担当者を自動選択
-    if (currentUser) {
-      const matched = masters.staff.find(s => s.name === currentUser.name || currentUser.name.includes(s.name));
-      sel.value = matched ? matched.name : masters.staff[0].name;
-    } else {
-      sel.value = masters.staff[0].name;
-    }
+  // ログインユーザーに一致する担当者を固定設定
+  if (currentUser && masters.staff.length > 0) {
+    const matched = masters.staff.find(s => s.name === currentUser.name || currentUser.name.includes(s.name));
+    sel.value = matched ? matched.name : masters.staff[0].name;
   }
+  // 表示用divにも反映
+  const display = document.getElementById('staff-display');
+  if (display) display.textContent = sel.value || currentUser?.name || '—';
 }
 
 /* ===================================================
@@ -2691,79 +2581,6 @@ function getAuthSession() {
     if (Date.now() > s.expires) { localStorage.removeItem(SESSION_KEY); return null; }
     return s;
   } catch { return null; }
-}
-
-let authSelectedUserId = null;
-
-async function loadAuthUsers() {
-  try {
-    const res  = await fetch(PORTAL_GAS_URL + '?action=getUsers&data=' + encodeURIComponent('{}'));
-    const data = await res.json();
-    const grid = document.getElementById('authUserGrid');
-    if (!data.success || !data.users || !data.users.length) {
-      grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:12px;color:var(--text-light);font-size:12px">ユーザーが取得できません</div>';
-      return;
-    }
-    grid.innerHTML = data.users.map(u =>
-      `<button class="auth-user-btn" data-id="${u.user_id}" onclick="authSelectUser('${u.user_id}','${escHtml(u.name)}')">${escHtml(u.name)}</button>`
-    ).join('');
-  } catch {
-    document.getElementById('authError').textContent = 'ユーザー情報の読み込みに失敗しました';
-    document.getElementById('authError').style.display = 'block';
-  }
-}
-
-function authSelectUser(id, name) {
-  authSelectedUserId = id;
-  document.querySelectorAll('.auth-user-btn').forEach(b => b.classList.remove('active'));
-  document.querySelector(`.auth-user-btn[data-id="${id}"]`).classList.add('active');
-  document.getElementById('authPinInput').focus();
-  document.getElementById('authError').style.display = 'none';
-}
-
-async function doAuthLogin() {
-  const pin = document.getElementById('authPinInput').value;
-  if (!authSelectedUserId) { showAuthError('ユーザーを選択してください'); return; }
-  if (pin.length !== 4)    { showAuthError('4桁のPINを入力してください'); return; }
-
-  showLoading('認証中...');
-  try {
-    const body = 'action=login&data=' + encodeURIComponent(JSON.stringify({ user_id: authSelectedUserId, pin }));
-    const res  = await fetch(PORTAL_GAS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body
-    });
-    const data = await res.json();
-
-    if (data.success) {
-      const expires = Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000;
-      localStorage.setItem(SESSION_KEY, JSON.stringify({ user_id: data.user_id, name: data.name, expires }));
-      currentUser = { user_id: data.user_id, name: data.name };
-      document.getElementById('authOverlay').style.display = 'none';
-      // 担当者ドロップダウンをログインユーザーに合わせる
-      const sel = document.getElementById('sel-staff');
-      const matched = Array.from(sel.options).find(o => o.value === data.name || data.name.includes(o.value));
-      if (matched) sel.value = matched.value;
-      // 設定画面のユーザー名表示を更新
-      const nameEl = document.getElementById('settings-user-name');
-      if (nameEl) nameEl.textContent = 'ログイン中: ' + data.name;
-    } else {
-      showAuthError(data.message || 'ログインに失敗しました');
-      document.getElementById('authPinInput').value = '';
-      for (let i = 0; i < 4; i++) document.getElementById('authDot' + i).classList.remove('filled');
-    }
-  } catch {
-    showAuthError('通信エラーが発生しました');
-  } finally {
-    hideLoading();
-  }
-}
-
-function showAuthError(msg) {
-  const el = document.getElementById('authError');
-  el.textContent   = msg;
-  el.style.display = 'block';
 }
 
 function doAuthLogout() {
