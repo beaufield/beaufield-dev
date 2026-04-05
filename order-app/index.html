@@ -549,11 +549,6 @@
         <select id="sel-supplier"><option value="">-- 選択してください --</option></select>
       </div>
       <div class="form-group">
-        <label>担当者</label>
-        <select id="sel-staff" style="display:none"><option value="">-- 選択してください --</option></select>
-        <div id="staff-display" style="padding:13px 12px;background:#FAFAFA;border:1.5px solid var(--border);border-radius:10px;font-size:17px;color:var(--text)">—</div>
-      </div>
-      <div class="form-group">
         <label>発注日</label>
         <input type="date" id="input-date">
       </div>
@@ -875,7 +870,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.12.0'; // GASバックエンドにセッショントークン検証を追加
+const APP_VERSION    = 'v1.13.0'; // 担当者をログインユーザー自動設定・選択UI削除
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER      = 'bf_pm';
@@ -1026,21 +1021,7 @@ function renderSupplierDropdown() {
 }
 
 function renderStaffDropdown() {
-  const sel = document.getElementById('sel-staff');
-  sel.innerHTML = '<option value="">-- 選択してください --</option>';
-  masters.staff.forEach(s => {
-    const opt = document.createElement('option');
-    opt.value = s.name; opt.textContent = s.name;
-    sel.appendChild(opt);
-  });
-  // ログインユーザーに一致する担当者を固定設定
-  if (currentUser && masters.staff.length > 0) {
-    const matched = masters.staff.find(s => s.name === currentUser.name || currentUser.name.includes(s.name));
-    sel.value = matched ? matched.name : masters.staff[0].name;
-  }
-  // 表示用divにも反映
-  const display = document.getElementById('staff-display');
-  if (display) display.textContent = sel.value || currentUser?.name || '—';
+  // 担当者はログインユーザー固定のため何もしない
 }
 
 /* ===================================================
@@ -1182,12 +1163,10 @@ function showStep(id) {
    発注フロー
 =================================================== */
 async function startOrder() {
-  const supSel   = document.getElementById('sel-supplier');
-  const staffSel = document.getElementById('sel-staff');
-  const dateIn   = document.getElementById('input-date');
-  if (!supSel.value)   { showToast('発注先を選択してください', 'error'); return; }
-  if (!staffSel.value) { showToast('担当者を選択してください', 'error'); return; }
-  if (!dateIn.value)   { showToast('発注日を入力してください', 'error'); return; }
+  const supSel = document.getElementById('sel-supplier');
+  const dateIn = document.getElementById('input-date');
+  if (!supSel.value) { showToast('発注先を選択してください', 'error'); return; }
+  if (!dateIn.value) { showToast('発注日を入力してください', 'error'); return; }
 
   const pmDate = localStorage.getItem(LS_MASTER_DATE);
   const today  = getTodayStr();
@@ -1200,7 +1179,7 @@ async function startOrder() {
   const opt = supSel.options[supSel.selectedIndex];
   currentOrder = {
     supplierCode: supSel.value, supplierName: opt.textContent,
-    fax: opt.dataset.fax || '', staff: staffSel.value,
+    fax: opt.dataset.fax || '', staff: currentUser.name,
     date: dateIn.value, outputType: ''
   };
   cartItems = []; savedOrderNo = null; saveCart();
