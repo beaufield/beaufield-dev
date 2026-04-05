@@ -875,7 +875,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.11.1'; // ポータル経由のみアクセス可に変更・担当者固定
+const APP_VERSION    = 'v1.12.0'; // GASバックエンドにセッショントークン検証を追加
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER      = 'bf_pm';
@@ -954,12 +954,25 @@ document.addEventListener('DOMContentLoaded', async () => {
    GAS通信
 =================================================== */
 async function gasGet(params) {
+  // セッショントークンを自動付与
+  const session = getAuthSession();
+  if (session && session.token) params.session_token = session.token;
   const qs = Object.keys(params).map(k => `${k}=${encodeURIComponent(params[k])}`).join('&');
   const res = await fetch(`${GAS_URL}?${qs}`);
-  return res.json();
+  const data = await res.json();
+  // セッション無効エラーはポータルへリダイレクト
+  if (data && data.error === 'SESSION_INVALID') {
+    localStorage.removeItem(SESSION_KEY);
+    location.replace(PORTAL_URL);
+    return data;
+  }
+  return data;
 }
 
 async function gasPost(params) {
+  // セッショントークンを自動付与
+  const session = getAuthSession();
+  if (session && session.token) params.session_token = session.token;
   const body = Object.keys(params)
     .map(k => encodeURIComponent(k) + '=' + encodeURIComponent(params[k]))
     .join('&');
@@ -968,7 +981,14 @@ async function gasPost(params) {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body
   });
-  return res.json();
+  const data = await res.json();
+  // セッション無効エラーはポータルへリダイレクト
+  if (data && data.error === 'SESSION_INVALID') {
+    localStorage.removeItem(SESSION_KEY);
+    location.replace(PORTAL_URL);
+    return data;
+  }
+  return data;
 }
 
 /* ===================================================
