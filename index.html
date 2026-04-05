@@ -347,6 +347,7 @@
       for (let i = 0; i < 4; i++) {
         document.getElementById('dot' + i).classList.toggle('filled', i < len);
       }
+      if (len === 4) doLogin(); // 4桁入力で自動ログイン
     });
     document.getElementById('pinInput').addEventListener('keydown', e => {
       if (e.key === 'Enter') doLogin();
