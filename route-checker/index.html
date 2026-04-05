@@ -701,8 +701,9 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.9.2';
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
+const APP_VERSION = 'v1.9.3';
+const GAS_URL     = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
+const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
 
 // ============================================================
 // State
@@ -787,9 +788,9 @@ function dateDisplayStr(dateStr) {
 }
 
 // ============================================================
-// セッション管理（localStorage / 30日保持）
+// セッション管理（localStorage / ポータル共通セッション bf_session を使用）
 // ============================================================
-var SESSION_KEY  = 'bfc_session';
+var SESSION_KEY  = 'bf_session'; // ポータルと共通キー
 var SESSION_DAYS = 30;
 var SESSION_MS   = SESSION_DAYS * 24 * 60 * 60 * 1000;
 
@@ -800,38 +801,37 @@ var SESSION_MS   = SESSION_DAYS * 24 * 60 * 60 * 1000;
 var SALON_CACHE_KEY = 'bfc_salons_v1';
 var SALON_CACHE_TTL = 60 * 60 * 1000; // 1時間
 
-/** ログイン成功時にセッションをlocalStorageに保存 */
-function saveSession(user) {
-  try {
-    localStorage.setItem(SESSION_KEY, JSON.stringify({
-      user_id:  user.user_id,
-      name:     user.name,
-      role:     user.role,
-      team:     user.team,
-      saved_at: Date.now()
-    }));
-  } catch(e) { /* プライベートモード等では無視 */ }
-}
-
-/** 起動時にlocalStorageから有効なセッションを復元（30日以内のみ）*/
-function tryAutoLogin() {
+/** bf_sessionを読み込んで有効なら返す（期限切れはnull） */
+function _getBfSession() {
   try {
     var raw = localStorage.getItem(SESSION_KEY);
-    if (!raw) return false;
+    if (!raw) return null;
     var s = JSON.parse(raw);
-    if (!s.user_id || !s.saved_at) return false;
-    if (Date.now() - s.saved_at > SESSION_MS) {
-      localStorage.removeItem(SESSION_KEY); // 期限切れ → 削除
-      return false;
+    if (!s.user_id) return null;
+    // expires（ポータル形式）またはsaved_at（旧形式）で期限チェック
+    var expiry = s.expires || (s.saved_at ? s.saved_at + SESSION_MS : 0);
+    if (Date.now() > expiry) {
+      localStorage.removeItem(SESSION_KEY);
+      return null;
     }
-    currentUser = { user_id: s.user_id, name: s.name, role: s.role, team: s.team };
-    return true;
-  } catch(e) {
-    return false;
-  }
+    return s;
+  } catch(e) { return null; }
 }
 
-/** ログアウト時にセッションをlocalStorageから削除 */
+/** route-checker固有情報（role/team）をbf_sessionにマージして保存 */
+function saveSession(user) {
+  try {
+    var existing = _getBfSession() || {};
+    localStorage.setItem(SESSION_KEY, JSON.stringify(Object.assign(existing, {
+      user_id: user.user_id,
+      name:    user.name,
+      role:    user.role,
+      team:    user.team
+    })));
+  } catch(e) {}
+}
+
+/** ログアウト時にセッション削除 */
 function clearSession() {
   try { localStorage.removeItem(SESSION_KEY); } catch(e) {}
 }
@@ -2142,21 +2142,9 @@ async function submitLogin() {
 }
 
 function logout() {
-  clearSession();          // localStorageからセッション削除
-  clearSalonCache();       // サロンキャッシュも削除
-  currentUser      = null;
-  todayRoute       = [];
-  allMySalons      = [];
-  checkedTimes     = new Map();
-  historyData      = null;
-  historyFilter    = { userChoice: 'self', month: '', day_of_week: 'all' };
-  adminUsers       = [];
-  adminSalons      = [];
-  adminSalonSearch = '';
-  salonDayFilter   = 'all';
-  checkDate        = '';
-  resetTo('login');
-  loadPublicUsers(); // 履歴フィルタ用ユーザー一覧を再取得
+  clearSession();    // bf_sessionを削除（全アプリ共通ログアウト）
+  clearSalonCache();
+  location.replace(PORTAL_URL); // ポータルへリダイレクト
 }
 
 // ============================================================
@@ -2395,10 +2383,35 @@ async function submitNewSalon() {
 // 初期化
 // ============================================================
 document.addEventListener('DOMContentLoaded', async function() {
-  renderApp();                  // ローディング表示
-  await loadPublicUsers();      // ユーザー一覧を取得（履歴フィルタ・管理画面用）
-  if (tryAutoLogin()) {         // localStorageに有効なセッションがあれば
-    await loadCheckScreen();    // → PIN入力なしでそのままチェック画面へ
+  renderApp();
+
+  // bf_sessionを確認（なければポータルへリダイレクト）
+  var session = _getBfSession();
+  if (!session) {
+    location.replace(PORTAL_URL);
+    return;
+  }
+
+  // ユーザー一覧を取得（履歴フィルタ・管理画面用）
+  await loadPublicUsers();
+
+  if (session.role && session.team) {
+    // route-checker固有情報あり（過去にログイン済み）→ そのまま利用
+    currentUser = { user_id: session.user_id, name: session.name, role: session.role, team: session.team };
+    await loadCheckScreen();
+  } else {
+    // ポータルから初回アクセス → publicUsersからrole/teamを取得してbf_sessionにマージ
+    var found = publicUsers.find(function(u) { return u.user_id === session.user_id; });
+    if (found) {
+      session.role = found.role;
+      session.team = found.team;
+      try { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch(e) {}
+      currentUser = { user_id: session.user_id, name: session.name, role: found.role, team: found.team };
+      await loadCheckScreen();
+    } else {
+      // route-checkerにユーザー登録なし → ポータルへ
+      location.replace(PORTAL_URL);
+    }
   }
 });
 </script>
