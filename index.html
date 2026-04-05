@@ -364,9 +364,9 @@
     } catch { return null; }
   }
 
-  function saveSession(user_id, name) {
+  function saveSession(user_id, name, token) {
     const expires = Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000;
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ user_id, name, expires }));
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ user_id, name, token: token || '', expires }));
   }
 
   function clearSession() {
@@ -409,7 +409,7 @@
     try {
       const res = await gasPost('login', { user_id: selectedUserId, pin });
       if (res.success) {
-        saveSession(res.user_id, res.name);
+        saveSession(res.user_id, res.name, res.session_token);
         clearPinInput();
         await showHome(res.user_id, res.name);
       } else {
@@ -460,6 +460,7 @@
     clearPinInput();
     document.querySelectorAll('.user-btn').forEach(b => b.classList.remove('active'));
     hideError();
+    loadUsers(); // ログアウト後にユーザー一覧を再取得
   }
 
   // ── GAS 通信 ──────────────────────────────────────────────────
