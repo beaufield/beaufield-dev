@@ -16,6 +16,8 @@
       --border:        #e2e8f0;
       --danger:        #ef4444;
       --danger-light:  #fef2f2;
+      --success:       #16a34a;
+      --success-light: #f0fdf4;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -183,6 +185,26 @@
       display: none;
     }
 
+    /* PIN忘れ案内 */
+    .pin-forgot {
+      margin-top: 16px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-sub);
+    }
+
+    /* 成功メッセージ */
+    .success-msg {
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: var(--success-light);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--success);
+      text-align: center;
+      display: none;
+    }
+
     /* ── ホーム画面 ── */
     #homeScreen { display: none; min-height: 100vh; }
 
@@ -196,6 +218,21 @@
     }
     .home-header-left h2 { font-size: 18px; font-weight: 700; }
     .home-header-left p  { font-size: 12px; opacity: 0.8; margin-top: 2px; }
+
+    .header-actions { display: flex; gap: 8px; }
+
+    .manage-btn {
+      background: rgba(255,255,255,0.2);
+      border: none;
+      color: white;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: none;
+    }
+    .manage-btn:hover { background: rgba(255,255,255,0.3); }
 
     .logout-btn {
       background: rgba(255,255,255,0.2);
@@ -268,6 +305,99 @@
       font-size: 11px;
       color: var(--border);
     }
+
+    /* ── モーダル ── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+      padding: 20px;
+    }
+    .modal-card {
+      background: var(--card);
+      border-radius: 20px;
+      padding: 28px 24px;
+      width: 100%;
+      max-width: 400px;
+      max-height: 85vh;
+      overflow-y: auto;
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .modal-header h3 {
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .modal-close {
+      background: var(--bg);
+      border: none;
+      border-radius: 8px;
+      width: 32px;
+      height: 32px;
+      font-size: 16px;
+      cursor: pointer;
+      color: var(--text-sub);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-close:hover { background: var(--border); }
+
+    /* モーダル内PINリセットセクション */
+    #pinResetSection {
+      margin-top: 20px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+    }
+    #pinResetSection .section-label { margin-bottom: 8px; }
+
+    .reset-target-name {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--primary);
+      margin-bottom: 14px;
+    }
+
+    .modal-pin-input {
+      width: 100%;
+      padding: 12px;
+      font-size: 20px;
+      border: 2px solid var(--border);
+      border-radius: 10px;
+      text-align: center;
+      letter-spacing: 10px;
+      outline: none;
+      background: var(--bg);
+      -webkit-text-security: disc;
+      text-security: disc;
+    }
+    .modal-pin-input:focus {
+      border-color: var(--primary);
+      background: var(--primary-light);
+    }
+
+    .reset-btn {
+      width: 100%;
+      margin-top: 12px;
+      padding: 13px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .reset-btn:hover { background: var(--primary-dark); }
   </style>
 </head>
 <body>
@@ -305,6 +435,7 @@
 
     <button class="login-btn" id="loginBtn" onclick="doLogin()">ログイン</button>
     <div class="error-msg" id="errorMsg"></div>
+    <div class="pin-forgot">PINを忘れた場合は管理者にお問い合わせください</div>
   </div>
 </div>
 
@@ -315,7 +446,10 @@
       <h2>Beaufield</h2>
       <p id="welcomeText">ようこそ</p>
     </div>
-    <button class="logout-btn" onclick="doLogout()">ログアウト</button>
+    <div class="header-actions">
+      <button class="manage-btn" id="manageBtn" onclick="openManageModal()">ユーザー管理</button>
+      <button class="logout-btn" onclick="doLogout()">ログアウト</button>
+    </div>
   </div>
   <div class="home-body">
     <p>アプリ一覧</p>
@@ -323,7 +457,34 @@
       <div class="no-apps">読み込み中...</div>
     </div>
   </div>
-  <div class="home-footer">Beaufield Portal v1.0.0</div>
+  <div class="home-footer">Beaufield Portal v1.1.0</div>
+</div>
+
+<!-- ── ユーザー管理モーダル ── -->
+<div class="modal-overlay" id="manageModal" onclick="onManageOverlayClick(event)">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3>ユーザー管理</h3>
+      <button class="modal-close" onclick="closeManageModal()">✕</button>
+    </div>
+
+    <div class="section-label">PINをリセットするユーザーを選択</div>
+    <div class="user-grid" id="manageUserGrid">
+      <div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--text-sub);font-size:13px">読み込み中...</div>
+    </div>
+
+    <div id="pinResetSection" style="display:none;">
+      <div class="section-label">新しいPINをセット</div>
+      <div class="reset-target-name" id="resetTargetName"></div>
+      <input type="password" id="newPinInput" class="modal-pin-input"
+        maxlength="4" inputmode="numeric" pattern="[0-9]*"
+        placeholder="• • • •" autocomplete="off">
+      <button class="reset-btn" onclick="doResetPin()">PINをセット</button>
+    </div>
+
+    <div class="error-msg"   id="manageErrorMsg"></div>
+    <div class="success-msg" id="manageSuccessMsg"></div>
+  </div>
 </div>
 
 <script>
@@ -331,13 +492,15 @@
   const SESSION_KEY  = 'bf_session';
   const SESSION_DAYS = 30;
 
-  let selectedUserId = null;
+  let selectedUserId     = null;
+  let manageSelectedId   = null;
+  let manageSelectedName = null;
 
   // ── 初期化 ────────────────────────────────────────────────────
   window.addEventListener('DOMContentLoaded', async () => {
     const session = getSession();
     if (session) {
-      await showHome(session.user_id, session.name);
+      await showHome(session.user_id, session.name, session.is_admin);
     } else {
       await loadUsers();
     }
@@ -352,6 +515,11 @@
     document.getElementById('pinInput').addEventListener('keydown', e => {
       if (e.key === 'Enter') doLogin();
     });
+
+    // モーダル内のPIN入力でEnterキー対応
+    document.getElementById('newPinInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') doResetPin();
+    });
   });
 
   // ── セッション管理 ─────────────────────────────────────────────
@@ -365,9 +533,11 @@
     } catch { return null; }
   }
 
-  function saveSession(user_id, name, token) {
+  function saveSession(user_id, name, token, is_admin) {
     const expires = Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000;
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ user_id, name, token: token || '', expires }));
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      user_id, name, token: token || '', expires, is_admin: !!is_admin
+    }));
   }
 
   function clearSession() {
@@ -410,9 +580,9 @@
     try {
       const res = await gasPost('login', { user_id: selectedUserId, pin });
       if (res.success) {
-        saveSession(res.user_id, res.name, res.session_token);
+        saveSession(res.user_id, res.name, res.session_token, res.is_admin);
         clearPinInput();
-        await showHome(res.user_id, res.name);
+        await showHome(res.user_id, res.name, res.is_admin);
       } else {
         showError(res.message || 'ログインに失敗しました');
         clearPinInput();
@@ -425,10 +595,13 @@
   }
 
   // ── ホーム画面表示 ─────────────────────────────────────────────
-  async function showHome(userId, name) {
+  async function showHome(userId, name, isAdmin) {
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('homeScreen').style.display  = 'block';
     document.getElementById('welcomeText').textContent   = 'ようこそ、' + name + 'さん';
+
+    // 管理者のみ「ユーザー管理」ボタンを表示
+    document.getElementById('manageBtn').style.display = isAdmin ? 'block' : 'none';
 
     setLoading(true);
     try {
@@ -464,6 +637,97 @@
     loadUsers(); // ログアウト後にユーザー一覧を再取得
   }
 
+  // ── ユーザー管理モーダル ──────────────────────────────────────
+  async function openManageModal() {
+    manageSelectedId   = null;
+    manageSelectedName = null;
+    document.getElementById('pinResetSection').style.display = 'none';
+    document.getElementById('newPinInput').value = '';
+    document.getElementById('manageErrorMsg').style.display   = 'none';
+    document.getElementById('manageSuccessMsg').style.display = 'none';
+    document.getElementById('manageModal').style.display = 'flex';
+
+    // ユーザー一覧を読み込む
+    const grid = document.getElementById('manageUserGrid');
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--text-sub);font-size:13px">読み込み中...</div>';
+    try {
+      const res = await gasGet('getUsers', {});
+      if (!res.success || !res.users || !res.users.length) {
+        grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--text-sub);font-size:13px">ユーザーが見つかりません</div>';
+        return;
+      }
+      grid.innerHTML = res.users.map(u =>
+        `<button class="user-btn" data-mid="${u.user_id}" onclick="selectManageUser('${u.user_id}','${escHtml(u.name)}')">${escHtml(u.name)}</button>`
+      ).join('');
+    } catch {
+      grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--danger);font-size:13px">読み込みに失敗しました</div>';
+    }
+  }
+
+  function closeManageModal() {
+    document.getElementById('manageModal').style.display = 'none';
+  }
+
+  function onManageOverlayClick(e) {
+    if (e.target === document.getElementById('manageModal')) closeManageModal();
+  }
+
+  function selectManageUser(id, name) {
+    manageSelectedId   = id;
+    manageSelectedName = name;
+    document.querySelectorAll('#manageUserGrid .user-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector(`#manageUserGrid .user-btn[data-mid="${id}"]`).classList.add('active');
+    document.getElementById('resetTargetName').textContent = name + ' さんの新しいPIN';
+    document.getElementById('pinResetSection').style.display = 'block';
+    document.getElementById('newPinInput').value = '';
+    document.getElementById('manageErrorMsg').style.display   = 'none';
+    document.getElementById('manageSuccessMsg').style.display = 'none';
+    document.getElementById('newPinInput').focus();
+  }
+
+  // ── PINリセット実行 ────────────────────────────────────────────
+  async function doResetPin() {
+    const newPin = document.getElementById('newPinInput').value;
+    if (!manageSelectedId) {
+      showManageMsg('error', 'ユーザーを選択してください');
+      return;
+    }
+    if (newPin.length !== 4 || !/^\d{4}$/.test(newPin)) {
+      showManageMsg('error', '4桁の数字を入力してください');
+      return;
+    }
+
+    const session = getSession();
+    if (!session) {
+      showManageMsg('error', 'セッションが切れています。再ログインしてください');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await gasPost('resetPin', {
+        session_token:   session.token,
+        target_user_id:  manageSelectedId,
+        new_pin:         newPin
+      });
+      if (res.success) {
+        showManageMsg('success', manageSelectedName + ' さんのPINを更新しました');
+        document.getElementById('newPinInput').value = '';
+        // 選択状態を解除
+        manageSelectedId   = null;
+        manageSelectedName = null;
+        document.querySelectorAll('#manageUserGrid .user-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById('pinResetSection').style.display = 'none';
+      } else {
+        showManageMsg('error', res.message || 'PINの更新に失敗しました');
+      }
+    } catch {
+      showManageMsg('error', '通信エラーが発生しました');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   // ── GAS 通信 ──────────────────────────────────────────────────
   async function gasGet(action, data) {
     const qs  = 'action=' + action + '&data=' + encodeURIComponent(JSON.stringify(data));
@@ -490,6 +754,19 @@
   }
   function hideError() {
     document.getElementById('errorMsg').style.display = 'none';
+  }
+  function showManageMsg(type, msg) {
+    const errEl = document.getElementById('manageErrorMsg');
+    const sucEl = document.getElementById('manageSuccessMsg');
+    if (type === 'error') {
+      errEl.textContent   = msg;
+      errEl.style.display = 'block';
+      sucEl.style.display = 'none';
+    } else {
+      sucEl.textContent   = msg;
+      sucEl.style.display = 'block';
+      errEl.style.display = 'none';
+    }
   }
   function setLoading(on) {
     document.getElementById('loading').style.display = on ? 'flex' : 'none';
