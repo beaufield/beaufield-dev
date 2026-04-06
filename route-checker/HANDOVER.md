@@ -1,5 +1,5 @@
 # 引継情報 — Beaufield ルート訪問チェッカー
-最終更新: 2026-04-03（v1.9.2 / GAS v1.5.3）
+最終更新: 2026-04-06（v1.9.4 / GAS v1.6.0）
 
 ---
 
@@ -32,11 +32,11 @@
 
 ---
 
-## バージョン状況（2026-04-03時点）
+## バージョン状況（2026-04-06時点）
 | ファイル | バージョン | 状態 |
 |----------|-----------|------|
-| gas/Code.gs | v1.5.3 | ✅ GASデプロイ済み |
-| index.html | v1.9.2 | ✅ GitHub Pages 反映済み |
+| gas/Code.gs | v1.6.0 | ✅ GASデプロイ済み |
+| index.html | v1.9.4 | ✅ GitHub Pages 反映済み |
 
 ---
 
@@ -106,6 +106,8 @@
    - 対処: `instanceof Date` チェックして formatDate で正規化（v1.5.3〜）
 7. **時刻が再読み込みで消える**: _readSheet の Date 変換が 'yyyy-MM-dd' のみで時刻を切り捨てていた
    - 対処: 時刻情報がある場合は "yyyy-MM-dd'T'HH:mm:ss" 形式で保持（v1.5.1〜）
+8. **GAS URLがGitHub publicリポジトリに公開されており、セッション検証なしで誰でもAPIを叩ける状態だった**
+   - 対処: GAS側にvalidateSession()を実装（beaufield-auth sessionsシートでトークン照合）、apiGet/apiPostでトークン送信（v1.9.4/GAS v1.6.0〜）
 
 ---
 
