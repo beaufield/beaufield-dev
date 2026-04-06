@@ -701,7 +701,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.9.3';
+const APP_VERSION = 'v1.9.4';
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
 
@@ -932,16 +932,27 @@ async function apiGet(action, params) {
   if (params && Object.keys(params).length > 0) {
     url.searchParams.set('data', JSON.stringify(params));
   }
+  // 認証不要アクション以外はセッショントークンを付与
+  const publicActions = ['login', 'getPublicUsers'];
+  if (!publicActions.includes(action)) {
+    var session = _getBfSession();
+    if (session && session.token) url.searchParams.set('session_token', session.token);
+  }
   const res  = await fetch(url.toString());
   const json = await res.json();
-  if (json.status !== 'ok') throw new Error(json.message || 'エラーが発生しました');
+  if (json.status !== 'ok') {
+    if (json.message === 'SESSION_INVALID') { location.replace(PORTAL_URL); return; }
+    throw new Error(json.message || 'エラーが発生しました');
+  }
   return json.result;
 }
 
 async function apiPost(action, params) {
+  var session = _getBfSession();
   const body = new URLSearchParams({
-    action: action,
-    data:   JSON.stringify(params || {})
+    action:         action,
+    data:           JSON.stringify(params || {}),
+    session_token:  (session && session.token) ? session.token : ''
   });
   const res  = await fetch(GAS_URL, {
     method:  'POST',
@@ -949,7 +960,10 @@ async function apiPost(action, params) {
     body:    body.toString()
   });
   const json = await res.json();
-  if (json.status !== 'ok') throw new Error(json.message || 'エラーが発生しました');
+  if (json.status !== 'ok') {
+    if (json.message === 'SESSION_INVALID') { location.replace(PORTAL_URL); return; }
+    throw new Error(json.message || 'エラーが発生しました');
+  }
   return json.result;
 }
 
