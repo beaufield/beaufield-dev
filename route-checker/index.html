@@ -701,7 +701,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.9.5';
+const APP_VERSION = 'v1.10.0';
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
 
@@ -862,6 +862,36 @@ function loadSalonCache(userId) {
 /** サロンキャッシュを削除（ログアウト時・編集後に呼ぶ）*/
 function clearSalonCache() {
   try { localStorage.removeItem(SALON_CACHE_KEY); } catch(e) {}
+}
+
+// ============================================================
+// 履歴キャッシュ（localStorage / 10分保持）
+// フィルタ変更のたびにGASを叩かないよう、組み合わせごとにキャッシュ
+// ============================================================
+var HISTORY_CACHE_PREFIX = 'bfc_history_v1_';
+var HISTORY_CACHE_TTL    = 10 * 60 * 1000; // 10分
+
+function _historyKey(userIds, month, dayOfWeek) {
+  return HISTORY_CACHE_PREFIX + [].concat(userIds).sort().join(',') + '_' + month + '_' + dayOfWeek;
+}
+
+function loadHistoryCache(userIds, month, dayOfWeek) {
+  try {
+    var raw = localStorage.getItem(_historyKey(userIds, month, dayOfWeek));
+    if (!raw) return null;
+    var c = JSON.parse(raw);
+    if (Date.now() - c.saved_at > HISTORY_CACHE_TTL) return null;
+    return c.data;
+  } catch(e) { return null; }
+}
+
+function saveHistoryCache(userIds, month, dayOfWeek, data) {
+  try {
+    localStorage.setItem(
+      _historyKey(userIds, month, dayOfWeek),
+      JSON.stringify({ saved_at: Date.now(), data: data })
+    );
+  } catch(e) {}
 }
 
 // ============================================================
@@ -1967,22 +1997,33 @@ function resolveUserIds() {
   return [choice]; // 特定ユーザー
 }
 
-/** 履歴データをGASから取得してレンダリング */
+/** 履歴データをGASから取得してレンダリング（キャッシュヒット時はGAS呼び出しなし）*/
 async function loadHistory() {
   if (!currentUser) return;
   var userIds = resolveUserIds();
   var today   = new Date();
   var month   = historyFilter.month ||
     (today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0'));
+  var dow = historyFilter.day_of_week;
 
+  // ── キャッシュ確認（10分以内なら GAS 呼び出しをスキップ）──
+  var cached = loadHistoryCache(userIds, month, dow);
+  if (cached) {
+    historyData = cached;
+    renderApp();
+    return;
+  }
+
+  // ── キャッシュなし → GAS から取得 ──
   showLoading();
   try {
     var result = await apiGet('getVisitHistory', {
       user_ids:    userIds,
       month:       month,
-      day_of_week: historyFilter.day_of_week
+      day_of_week: dow
     });
     historyData = result;
+    saveHistoryCache(userIds, month, dow, result); // 取得データをキャッシュ保存
   } catch(e) {
     showToast('履歴データの取得に失敗しました: ' + e.message, 'error');
     historyData = { weeks: [], rows: [] };
