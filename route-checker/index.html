@@ -322,6 +322,8 @@
     .cell-na { background: #f3f4f6; }
     .row-alert td            { background: #fee2e2 !important; }
     .row-alert td.salon-col  { background: #fee2e2 !important; }
+    .count-row th { background: #eff6ff; font-size: 11px; color: var(--primary); font-weight: 700; padding: 4px 2px; }
+    .count-row .count-label { color: #9ca3af; font-weight: 600; }
     .alert-badge {
       font-size: 10px; background: var(--danger); color: #fff;
       border-radius: 4px; padding: 1px 4px;
@@ -711,7 +713,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.12.0';
+const APP_VERSION = 'v1.13.0';
 const START_MONTH = '2026-04'; // 運用開始月（これより前は選択肢に表示しない）
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
@@ -2102,10 +2104,23 @@ function buildHistoryMatrix(weeks, rows) {
     (alertCount > 0 ? '　<span class="alert-count">⚠️ 4週未訪問: ' + alertCount + '件</span>' : '') +
     '</div>';
 
-  // ヘッダー行
+  // 週ごとの訪問件数を集計（「他」サロンは対象外）
+  var visitCounts = new Array(weeks.length).fill(0);
+  rows.forEach(function(row) {
+    if (row.visit_day === '他') return;
+    row.cells.forEach(function(cell) {
+      var idx = weekIndex[cell.week_label];
+      if (idx !== undefined && cell.visited) visitCounts[idx]++;
+    });
+  });
+
+  // ヘッダー行（週ラベル行 + 件数行）
   var thead = '<thead><tr>' +
     '<th class="salon-col">サロン</th>' +
     weeks.map(function(w) { return '<th>' + escHtml(w) + '</th>'; }).join('') +
+    '</tr><tr class="count-row">' +
+    '<th class="salon-col count-label">件数</th>' +
+    visitCounts.map(function(c) { return '<th>' + c + '件</th>'; }).join('') +
     '</tr></thead>';
 
   // データ行
