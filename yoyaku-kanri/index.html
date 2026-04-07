@@ -1,0 +1,1213 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Beaufield 予約管理</title>
+  <style>
+    :root {
+      --primary: #2563eb;
+      --danger:  #dc2626;
+      --success: #16a34a;
+      --warning: #d97706;
+      --text:    #1f2937;
+      --border:  #e5e7eb;
+      --bg:      #f3f4f6;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    button, input, select, textarea { font-family: inherit; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Yu Gothic', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      max-width: 860px;
+      margin: 0 auto;
+      min-height: 100vh;
+    }
+
+    /* ローディング */
+    #loading {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.45);
+      justify-content: center; align-items: center;
+      z-index: 2000;
+    }
+    #loading.show { display: flex; }
+    .spinner {
+      width: 48px; height: 48px;
+      border: 5px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* トースト */
+    #toast {
+      position: fixed;
+      bottom: 76px; left: 50%; transform: translateX(-50%);
+      padding: 11px 18px; border-radius: 8px;
+      font-size: 13px; font-weight: 600;
+      z-index: 1900; max-width: 340px; text-align: center;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      display: none;
+    }
+    #toast.success { background: var(--success); color: #fff; display: block; }
+    #toast.error   { background: var(--danger);  color: #fff; display: block; }
+    #toast.warning { background: var(--warning); color: #fff; display: block; }
+
+    /* ヘッダー */
+    .header {
+      background: var(--primary); color: #fff;
+      padding: 12px 16px; display: flex; align-items: center; gap: 10px;
+      position: sticky; top: 0; z-index: 100;
+    }
+    .header h1 { flex: 1; font-size: 17px; font-weight: 700; }
+    .header-user    { font-size: 11px; opacity: 0.85; white-space: nowrap; }
+    .header-version { font-size: 10px; opacity: 0.55; white-space: nowrap; }
+
+    /* コンテンツ */
+    .content { padding: 16px; padding-bottom: 80px; }
+
+    /* ボトムナビ */
+    .bottom-nav {
+      position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 100%; max-width: 860px; height: 60px;
+      background: #fff; border-top: 1px solid var(--border);
+      display: flex; z-index: 100;
+    }
+    .nav-item {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 2px;
+      font-size: 10px; color: #9ca3af;
+      cursor: pointer; border: none; background: none; padding: 4px 0;
+    }
+    .nav-item.active { color: var(--primary); }
+    .nav-icon { font-size: 20px; line-height: 1; }
+
+    /* タブ */
+    .tab { display: none; }
+    .tab.active { display: block; }
+
+    /* カード */
+    .card {
+      background: #fff; border-radius: 12px;
+      padding: 16px; margin-bottom: 12px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+
+    /* フォーム */
+    .form-group { margin-bottom: 14px; }
+    .form-label { font-size: 12px; font-weight: 700; color: #6b7280; margin-bottom: 4px; display: block; }
+    .form-control {
+      width: 100%; padding: 10px 12px;
+      border: 1.5px solid var(--border); border-radius: 8px;
+      font-size: 15px; color: var(--text); background: #fff;
+      -webkit-appearance: none; appearance: none;
+    }
+    .form-control:focus { outline: none; border-color: var(--primary); }
+
+    /* ボタン */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: 6px; padding: 10px 18px; border-radius: 8px;
+      font-size: 14px; font-weight: 600; cursor: pointer; border: none;
+    }
+    .btn:active { opacity: 0.75; }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-success { background: var(--success); color: #fff; }
+    .btn-danger  { background: var(--danger);  color: #fff; }
+    .btn-warning { background: var(--warning); color: #fff; }
+    .btn-gray    { background: #e5e7eb; color: var(--text); }
+    .btn-sm      { padding: 6px 12px; font-size: 12px; }
+    .btn-full    { width: 100%; }
+
+    /* バッジ */
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 12px;
+      font-size: 11px; font-weight: 700;
+    }
+    .badge-blue  { background: #dbeafe; color: #1d4ed8; }
+    .badge-green { background: #dcfce7; color: #15803d; }
+    .badge-gray  { background: #f3f4f6; color: #6b7280; }
+    .badge-red   { background: #fee2e2; color: #dc2626; }
+
+    /* 予約カード */
+    .reservation-card {
+      background: #fff; border-radius: 10px;
+      padding: 12px 14px; margin-bottom: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      border-left: 4px solid var(--border);
+    }
+    .reservation-card.status-予約 { border-left-color: var(--primary); }
+    .reservation-card.status-確定 { border-left-color: var(--success); }
+    .rc-header {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+    }
+    .rc-no    { font-size: 12px; color: #9ca3af; font-weight: 700; }
+    .rc-salon { font-size: 16px; font-weight: 700; flex: 1; }
+    .rc-body  { font-size: 13px; color: #374151; margin-bottom: 8px; line-height: 1.7; }
+    .rc-footer {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    }
+    .rc-date { font-size: 11px; color: #9ca3af; }
+
+    /* フィルタ行 */
+    .filter-row {
+      display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;
+    }
+    .filter-row select {
+      flex: 1; min-width: 100px;
+      padding: 8px 10px; border: 1.5px solid var(--border); border-radius: 8px;
+      font-size: 13px; background: #fff; color: var(--text);
+      -webkit-appearance: none; appearance: none;
+    }
+
+    /* 集計テーブル */
+    .stats-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .stats-table th, .stats-table td {
+      padding: 8px 10px; text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    .stats-table th { background: #f9fafb; font-weight: 700; font-size: 12px; color: #6b7280; }
+    .stats-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+    /* バーグラフ */
+    .bar-row   { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .bar-label { font-size: 13px; width: 90px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bar-track { flex: 1; background: var(--border); border-radius: 4px; height: 18px; overflow: hidden; }
+    .bar-fill  { background: var(--primary); height: 100%; border-radius: 4px; }
+    .bar-val   { font-size: 13px; font-weight: 700; width: 36px; text-align: right; }
+
+    /* クロス集計 */
+    .cross-table { overflow-x: auto; }
+    .cross-table table { border-collapse: collapse; font-size: 12px; min-width: 400px; }
+    .cross-table th, .cross-table td {
+      padding: 6px 10px; border: 1px solid var(--border); white-space: nowrap;
+    }
+    .cross-table th { background: #f9fafb; font-weight: 700; }
+    .cross-table .num { text-align: right; }
+    .cross-table .total-col { font-weight: 700; background: #eff6ff; }
+    .cross-table .total-row td { font-weight: 700; background: #f0fdf4; }
+    .cross-table .grand-total { background: #dcfce7 !important; }
+
+    /* 在庫バー */
+    .stock-bar   { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+    .stock-track { flex: 1; background: var(--border); border-radius: 3px; height: 8px; overflow: hidden; }
+    .stock-fill  { background: var(--primary); height: 100%; }
+    .stock-fill.danger  { background: var(--danger); }
+    .stock-fill.warning { background: var(--warning); }
+
+    /* 残数情報 */
+    .stock-info {
+      font-size: 12px; margin-top: 4px;
+      padding: 6px 10px; border-radius: 6px;
+    }
+    .stock-info.ok      { color: var(--success); background: #f0fdf4; }
+    .stock-info.warning { color: var(--warning); background: #fffbeb; }
+    .stock-info.danger  { color: var(--danger);  background: #fff1f2; }
+    .stock-info.none    { color: #6b7280; background: #f9fafb; }
+
+    /* 商品カード */
+    .product-card {
+      background: #fff; border-radius: 10px;
+      padding: 12px 14px; margin-bottom: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .product-card.inactive { opacity: 0.55; }
+    .pc-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .pc-name   { font-size: 15px; font-weight: 700; flex: 1; }
+    .pc-body   { font-size: 12px; color: #6b7280; line-height: 1.6; }
+    .pc-footer { display: flex; gap: 8px; margin-top: 10px; }
+
+    /* セクションタイトル */
+    .section-title {
+      font-size: 12px; font-weight: 700; color: #6b7280;
+      margin: 16px 0 8px; text-transform: uppercase; letter-spacing: 0.06em;
+    }
+
+    /* 空状態 */
+    .empty-state { text-align: center; padding: 40px 16px; color: #9ca3af; }
+    .empty-icon  { font-size: 40px; margin-bottom: 8px; }
+    .empty-text  { font-size: 14px; }
+
+    /* モーダル */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.5); z-index: 1000;
+      align-items: flex-end; justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal-sheet {
+      background: #fff; border-radius: 20px 20px 0 0;
+      padding: 24px 20px; width: 100%; max-width: 860px;
+      max-height: 90vh; overflow-y: auto;
+    }
+    .modal-title   { font-size: 16px; font-weight: 700; margin-bottom: 18px; }
+    .modal-actions { display: flex; gap: 10px; margin-top: 16px; }
+    .modal-actions .btn { flex: 1; }
+
+    /* 確認ダイアログ */
+    .confirm-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.5); z-index: 1100;
+      align-items: center; justify-content: center;
+    }
+    .confirm-overlay.open { display: flex; }
+    .confirm-box {
+      background: #fff; border-radius: 16px; padding: 24px 20px;
+      max-width: 320px; width: 90%; text-align: center;
+    }
+    .confirm-box p    { font-size: 15px; margin-bottom: 20px; line-height: 1.5; }
+    .confirm-actions  { display: flex; gap: 10px; }
+    .confirm-actions .btn { flex: 1; }
+  </style>
+</head>
+<body>
+
+<!-- ローディング -->
+<div id="loading"><div class="spinner"></div></div>
+
+<!-- トースト -->
+<div id="toast"></div>
+
+<!-- ヘッダー -->
+<header class="header">
+  <h1>📋 予約管理</h1>
+  <span class="header-user" id="headerUser"></span>
+  <span class="header-version">v1.0.0</span>
+</header>
+
+<!-- ============================================================ -->
+<!-- 予約登録タブ                                                  -->
+<!-- ============================================================ -->
+<div id="tab-register" class="tab content">
+  <div class="card">
+    <div class="form-group">
+      <label class="form-label">担当者</label>
+      <select id="regStaff" class="form-control">
+        <option value="">担当者を選択...</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">サロン名</label>
+      <input type="text" id="regSalon" class="form-control" placeholder="サロン名を入力">
+    </div>
+    <div class="form-group">
+      <label class="form-label">商品</label>
+      <select id="regProduct" class="form-control" onchange="onProductChange()">
+        <option value="">商品を選択...</option>
+      </select>
+      <div id="stockInfo" class="stock-info" style="display:none"></div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">数量</label>
+      <input type="number" id="regQty" class="form-control" min="1" value="1">
+    </div>
+    <div class="form-group">
+      <label class="form-label">発送方法</label>
+      <select id="regDelivery" class="form-control">
+        <option value="発送">発送</option>
+        <option value="持参">持参</option>
+      </select>
+    </div>
+    <button class="btn btn-primary btn-full" onclick="registerReservation()">📝 予約を登録する</button>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 予約一覧タブ                                                  -->
+<!-- ============================================================ -->
+<div id="tab-list" class="tab content">
+  <div class="filter-row">
+    <select id="filterProduct" onchange="renderList()">
+      <option value="">すべての商品</option>
+    </select>
+    <select id="filterStaff" onchange="renderList()" style="display:none">
+      <option value="">すべての担当</option>
+    </select>
+    <select id="filterStatus" onchange="renderList()">
+      <option value="">すべて</option>
+      <option value="予約">予約</option>
+      <option value="確定">確定</option>
+    </select>
+  </div>
+  <div id="reservationList"></div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 集計タブ（事務のみ）                                          -->
+<!-- ============================================================ -->
+<div id="tab-stats" class="tab content">
+  <div class="section-title">📦 商品別予約数</div>
+  <div class="card" id="statsProduct"></div>
+
+  <div class="section-title">👤 担当別予約数</div>
+  <div class="card" id="statsStaff"></div>
+
+  <div class="section-title">🏪 サロン別予約数（上位20件）</div>
+  <div class="card" id="statsSalon"></div>
+
+  <div class="section-title">📊 クロス集計（担当 × サロン）</div>
+  <div class="card">
+    <div class="form-group" style="margin-bottom:12px">
+      <select id="crossProductFilter" class="form-control" onchange="loadStats()">
+        <option value="">すべての商品</option>
+      </select>
+    </div>
+    <div class="cross-table" id="statsCross"></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 商品管理タブ（事務のみ）                                      -->
+<!-- ============================================================ -->
+<div id="tab-products" class="tab content">
+  <button class="btn btn-primary btn-full" style="margin-bottom:16px" onclick="openProductModal(null)">
+    ＋ 商品を追加
+  </button>
+  <div id="productList"></div>
+</div>
+
+<!-- ============================================================ -->
+<!-- ボトムナビ                                                    -->
+<!-- ============================================================ -->
+<nav class="bottom-nav">
+  <button class="nav-item active" data-tab="register" onclick="switchTab('register')">
+    <span class="nav-icon">📝</span>予約登録
+  </button>
+  <button class="nav-item" data-tab="list" onclick="switchTab('list')">
+    <span class="nav-icon">📋</span>予約一覧
+  </button>
+  <button class="nav-item admin-only" data-tab="stats" onclick="switchTab('stats')" style="display:none">
+    <span class="nav-icon">📊</span>集計
+  </button>
+  <button class="nav-item admin-only" data-tab="products" onclick="switchTab('products')" style="display:none">
+    <span class="nav-icon">🏷️</span>商品管理
+  </button>
+</nav>
+
+<!-- ============================================================ -->
+<!-- 予約編集モーダル                                              -->
+<!-- ============================================================ -->
+<div id="editModal" class="modal-overlay">
+  <div class="modal-sheet">
+    <div class="modal-title" id="editModalTitle">予約を編集</div>
+    <input type="hidden" id="editReservationNo">
+    <div class="form-group">
+      <label class="form-label">担当者</label>
+      <select id="editStaff" class="form-control">
+        <option value="">担当者を選択...</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">サロン名</label>
+      <input type="text" id="editSalon" class="form-control">
+    </div>
+    <div class="form-group">
+      <label class="form-label">商品</label>
+      <select id="editProduct" class="form-control" onchange="onEditProductChange()">
+        <option value="">商品を選択...</option>
+      </select>
+      <div id="editStockInfo" class="stock-info" style="display:none"></div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">数量</label>
+      <input type="number" id="editQty" class="form-control" min="1">
+    </div>
+    <div class="form-group">
+      <label class="form-label">発送方法</label>
+      <select id="editDelivery" class="form-control">
+        <option value="発送">発送</option>
+        <option value="持参">持参</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-gray"    onclick="closeModal('editModal')">キャンセル</button>
+      <button class="btn btn-primary" onclick="saveEditReservation()">保存する</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 商品編集モーダル                                              -->
+<!-- ============================================================ -->
+<div id="productModal" class="modal-overlay">
+  <div class="modal-sheet">
+    <div class="modal-title" id="productModalTitle">商品を登録</div>
+    <input type="hidden" id="productModalId">
+    <div class="form-group">
+      <label class="form-label">商品名</label>
+      <input type="text" id="productName" class="form-control" placeholder="商品名を入力">
+    </div>
+    <div class="form-group">
+      <label class="form-label">予約上限数（0 = 無制限）</label>
+      <input type="number" id="productLimit" class="form-control" min="0" value="0">
+    </div>
+    <div class="form-group">
+      <label class="form-label">受付期限（空欄 = 無期限）</label>
+      <input type="date" id="productDeadline" class="form-control">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-gray"    onclick="closeModal('productModal')">キャンセル</button>
+      <button class="btn btn-primary" onclick="saveProduct()">保存する</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 確認ダイアログ                                                -->
+<!-- ============================================================ -->
+<div id="confirmDialog" class="confirm-overlay">
+  <div class="confirm-box">
+    <p id="confirmMessage"></p>
+    <div class="confirm-actions">
+      <button class="btn btn-gray" onclick="closeConfirm(false)">キャンセル</button>
+      <button class="btn btn-danger" id="confirmOkBtn" onclick="closeConfirm(true)">削除する</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// 設定（デプロイ後に GAS_URL を変更すること）
+// ============================================================
+const GAS_URL    = 'https://script.google.com/macros/s/AKfycbxvWbUf17DVe6dpW8cHEqrCuA3BbqF49EXqU3JXkA7hIR5lcT5sZwlQtgJPSi8rKTeo3w/exec';
+const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
+
+// ============================================================
+// グローバル状態
+// ============================================================
+let currentUser    = null;  // { user_id, name, is_admin }
+let token          = null;
+let users          = [];    // 営業スタッフ一覧
+let products       = [];    // 全商品
+let activeProducts = [];    // 受付中商品（予約登録用）
+let reservations   = [];    // 予約一覧（現在ロード済み）
+let currentTab     = 'register';
+let confirmCallback = null;
+
+// ============================================================
+// 初期化
+// ============================================================
+window.addEventListener('DOMContentLoaded', async () => {
+  // beaufield-auth セッション確認
+  const session = JSON.parse(localStorage.getItem('bf_session') || 'null');
+  if (!session || !session.token || Date.now() > session.expires) {
+    location.href = PORTAL_URL;
+    return;
+  }
+  token = session.token;
+
+  showLoading();
+  try {
+    // ログインユーザー情報取得
+    const res = await gasGet('getUserInfo');
+    if (!res.success) throw new Error(res.error);
+    currentUser = res.data;
+
+    document.getElementById('headerUser').textContent = currentUser.name;
+
+    // 事務（is_admin）メニューを表示
+    if (currentUser.is_admin) {
+      document.querySelectorAll('.admin-only').forEach(el => el.style.display = '');
+      document.getElementById('filterStaff').style.display = '';
+    }
+
+    // 初期データ読み込み
+    await Promise.all([loadUsers(), loadProducts()]);
+    await loadReservations();
+
+  } catch(e) {
+    showToast('初期化エラー: ' + e.message, 'error');
+  } finally {
+    hideLoading();
+  }
+});
+
+// ============================================================
+// タブ切り替え
+// ============================================================
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+
+  if (tab === 'stats')    loadStats();
+  if (tab === 'products') renderProducts();
+  if (tab === 'list')     loadReservations();
+}
+
+// ============================================================
+// データ読み込み
+// ============================================================
+async function loadUsers() {
+  const res = await gasGet('getUsers');
+  if (!res.success) return;
+  users = res.data;
+
+  // 担当者ドロップダウン（登録・編集フォーム共通）
+  ['regStaff', 'editStaff'].forEach(id => {
+    const sel = document.getElementById(id);
+    sel.innerHTML = '<option value="">担当者を選択...</option>';
+    users.forEach(u => {
+      sel.innerHTML += `<option value="${u.user_id}">${esc(u.name)}</option>`;
+    });
+  });
+
+  // 一覧フィルタ用
+  const fs = document.getElementById('filterStaff');
+  fs.innerHTML = '<option value="">すべての担当</option>';
+  users.forEach(u => {
+    fs.innerHTML += `<option value="${u.user_id}">${esc(u.name)}</option>`;
+  });
+}
+
+async function loadProducts() {
+  // 全商品（管理・集計用）
+  const res1 = await gasGet('getProducts');
+  if (res1.success) products = res1.data;
+
+  // 受付中のみ（予約登録用）
+  const res2 = await gasGet('getProducts', { activeOnly: true });
+  if (res2.success) activeProducts = res2.data;
+
+  // 予約登録・編集フォームのドロップダウン
+  ['regProduct', 'editProduct'].forEach(id => {
+    const sel = document.getElementById(id);
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">商品を選択...</option>';
+    activeProducts.forEach(p => {
+      const rem = p.remaining !== null ? `（残${p.remaining}個）` : '';
+      sel.innerHTML += `<option value="${p.product_id}">${esc(p.name)}${rem}</option>`;
+    });
+    sel.value = cur;
+  });
+
+  // 一覧フィルタ用（全商品）
+  const fp = document.getElementById('filterProduct');
+  const fpVal = fp.value;
+  fp.innerHTML = '<option value="">すべての商品</option>';
+  products.forEach(p => {
+    fp.innerHTML += `<option value="${p.product_id}">${esc(p.name)}</option>`;
+  });
+  fp.value = fpVal;
+
+  // クロス集計フィルタ用
+  const cp = document.getElementById('crossProductFilter');
+  const cpVal = cp.value;
+  cp.innerHTML = '<option value="">すべての商品</option>';
+  products.forEach(p => {
+    cp.innerHTML += `<option value="${p.product_id}">${esc(p.name)}</option>`;
+  });
+  cp.value = cpVal;
+}
+
+async function loadReservations() {
+  showLoading();
+  try {
+    const res = await gasGet('getReservations');
+    if (!res.success) throw new Error(res.error);
+    reservations = res.data;
+    renderList();
+  } catch(e) {
+    showToast('予約データの取得に失敗しました', 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// ============================================================
+// 予約登録
+// ============================================================
+function onProductChange() {
+  updateStockInfo(
+    document.getElementById('regProduct').value,
+    'stockInfo',
+    null
+  );
+}
+
+function onEditProductChange() {
+  updateStockInfo(
+    document.getElementById('editProduct').value,
+    'editStockInfo',
+    Number(document.getElementById('editReservationNo').value) || null
+  );
+}
+
+function updateStockInfo(productId, infoId) {
+  const el = document.getElementById(infoId);
+  if (!productId) { el.style.display = 'none'; return; }
+
+  const p = activeProducts.find(x => x.product_id === productId);
+  if (!p) { el.style.display = 'none'; return; }
+
+  if (p.remaining === null) {
+    el.className = 'stock-info none';
+    el.textContent = '予約上限なし';
+  } else if (p.remaining === 0) {
+    el.className = 'stock-info danger';
+    el.textContent = '予約満了（残0個）';
+  } else if (p.remaining <= 5) {
+    el.className = 'stock-info warning';
+    el.textContent = `残り ${p.remaining} 個（上限 ${p.stock_limit} 個）`;
+  } else {
+    el.className = 'stock-info ok';
+    el.textContent = `残り ${p.remaining} 個（上限 ${p.stock_limit} 個）`;
+  }
+  el.style.display = 'block';
+}
+
+async function registerReservation() {
+  const staffSel  = document.getElementById('regStaff');
+  const staffId   = staffSel.value;
+  const staffName = staffSel.options[staffSel.selectedIndex]?.text || '';
+  const salonName = document.getElementById('regSalon').value.trim();
+  const productId = document.getElementById('regProduct').value;
+  const qty       = Number(document.getElementById('regQty').value);
+  const delivery  = document.getElementById('regDelivery').value;
+
+  if (!staffId || !salonName || !productId || qty < 1) {
+    showToast('すべての項目を入力してください', 'error');
+    return;
+  }
+
+  showLoading();
+  try {
+    const res = await gasPost('saveReservation', {
+      salon_name:      salonName,
+      product_id:      productId,
+      quantity:        qty,
+      staff_id:        staffId,
+      staff_name:      staffName,
+      delivery_method: delivery
+    });
+    if (!res.success) throw new Error(res.error);
+
+    showToast(`予約No.${res.data.reservation_no} を登録しました`, 'success');
+
+    // フォームをリセット
+    document.getElementById('regSalon').value   = '';
+    document.getElementById('regProduct').value = '';
+    document.getElementById('regQty').value     = '1';
+    document.getElementById('stockInfo').style.display = 'none';
+
+    await loadProducts();    // 残数を更新
+    await loadReservations();
+
+  } catch(e) {
+    showToast(e.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// ============================================================
+// 予約一覧
+// ============================================================
+function renderList() {
+  const fpid   = document.getElementById('filterProduct').value;
+  const fstaff = document.getElementById('filterStaff').value;
+  const fst    = document.getElementById('filterStatus').value;
+
+  let list = reservations.slice();
+  if (fpid)   list = list.filter(r => r.product_id === fpid);
+  if (fstaff) list = list.filter(r => r.staff_id   === fstaff);
+  if (fst)    list = list.filter(r => r.status     === fst);
+
+  const container = document.getElementById('reservationList');
+  if (list.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">📭</div>
+        <div class="empty-text">該当する予約がありません</div>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = list.map(r => {
+    // 編集・削除可否
+    const canEdit = currentUser.is_admin ||
+      (r.staff_id === currentUser.user_id && r.status === '予約');
+
+    const statusBadge = r.status === '確定'
+      ? `<span class="badge badge-green">確定</span>`
+      : `<span class="badge badge-blue">予約</span>`;
+
+    const delivBadge = `<span class="badge badge-gray">${esc(r.delivery_method)}</span>`;
+    const dateStr    = r.reserved_at ? r.reserved_at.substring(0, 16) : '';
+
+    // 操作者が担当者と異なる場合（代理入力）のみ表示
+    const operatorNote = (currentUser.is_admin && r.operator_name && r.operator_name !== r.staff_name)
+      ? `<br>✏️ 操作者: ${esc(r.operator_name)}` : '';
+
+    let actions = '';
+    if (canEdit) {
+      actions += `<button class="btn btn-gray btn-sm" onclick="openEditModal(${r.reservation_no})">編集</button>`;
+      actions += `<button class="btn btn-danger btn-sm" onclick="confirmDelete(${r.reservation_no})">削除</button>`;
+    }
+    if (currentUser.is_admin && r.status === '予約') {
+      actions += `<button class="btn btn-success btn-sm" onclick="confirmStatus(${r.reservation_no},'確定')">確定にする</button>`;
+    }
+    if (currentUser.is_admin && r.status === '確定') {
+      actions += `<button class="btn btn-warning btn-sm" onclick="confirmStatus(${r.reservation_no},'予約')">予約に戻す</button>`;
+    }
+
+    return `
+      <div class="reservation-card status-${esc(r.status)}">
+        <div class="rc-header">
+          <span class="rc-no">No.${r.reservation_no}</span>
+          <span class="rc-salon">${esc(r.salon_name)}</span>
+          ${statusBadge}
+        </div>
+        <div class="rc-body">
+          🏷️ ${esc(r.product_name)} × ${r.quantity}個<br>
+          👤 担当: ${esc(r.staff_name)}${operatorNote}
+        </div>
+        <div class="rc-footer">
+          ${delivBadge}
+          <span class="rc-date">${dateStr}</span>
+          <div style="flex:1"></div>
+          ${actions}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ============================================================
+// 予約編集
+// ============================================================
+function openEditModal(reservationNo) {
+  const r = reservations.find(x => x.reservation_no === reservationNo);
+  if (!r) return;
+
+  document.getElementById('editReservationNo').value = reservationNo;
+  document.getElementById('editModalTitle').textContent = `予約 No.${reservationNo} を編集`;
+  document.getElementById('editSalon').value    = r.salon_name;
+  document.getElementById('editQty').value      = r.quantity;
+  document.getElementById('editDelivery').value = r.delivery_method;
+
+  // ドロップダウンは遅延セット（options が生成されてから）
+  setTimeout(() => {
+    document.getElementById('editStaff').value   = r.staff_id;
+    document.getElementById('editProduct').value = r.product_id;
+    onEditProductChange();
+  }, 50);
+
+  openModal('editModal');
+}
+
+async function saveEditReservation() {
+  const reservationNo = Number(document.getElementById('editReservationNo').value);
+  const staffSel      = document.getElementById('editStaff');
+  const staffId       = staffSel.value;
+  const staffName     = staffSel.options[staffSel.selectedIndex]?.text || '';
+  const salonName     = document.getElementById('editSalon').value.trim();
+  const productId     = document.getElementById('editProduct').value;
+  const qty           = Number(document.getElementById('editQty').value);
+  const delivery      = document.getElementById('editDelivery').value;
+
+  if (!staffId || !salonName || !productId || qty < 1) {
+    showToast('すべての項目を入力してください', 'error');
+    return;
+  }
+
+  showLoading();
+  try {
+    const res = await gasPost('saveReservation', {
+      reservation_no:  reservationNo,
+      salon_name:      salonName,
+      product_id:      productId,
+      quantity:        qty,
+      staff_id:        staffId,
+      staff_name:      staffName,
+      delivery_method: delivery
+    });
+    if (!res.success) throw new Error(res.error);
+
+    closeModal('editModal');
+    showToast('更新しました', 'success');
+    await loadProducts();
+    await loadReservations();
+
+  } catch(e) {
+    showToast(e.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// ============================================================
+// 削除・ステータス変更
+// ============================================================
+function confirmDelete(reservationNo) {
+  const r = reservations.find(x => x.reservation_no === reservationNo);
+  showConfirm(
+    `No.${reservationNo}（${r?.salon_name || ''}）を削除しますか？\nこの操作は取り消せません。`,
+    '削除する',
+    async () => {
+      showLoading();
+      try {
+        const res = await gasPost('deleteReservation', { reservation_no: reservationNo });
+        if (!res.success) throw new Error(res.error);
+        showToast('削除しました', 'success');
+        await loadProducts();
+        await loadReservations();
+      } catch(e) {
+        showToast(e.message, 'error');
+      } finally {
+        hideLoading();
+      }
+    },
+    'btn-danger'
+  );
+}
+
+function confirmStatus(reservationNo, newStatus) {
+  const btnClass = newStatus === '確定' ? 'btn-success' : 'btn-warning';
+  showConfirm(
+    `No.${reservationNo} のステータスを「${newStatus}」に変更しますか？`,
+    '変更する',
+    async () => {
+      showLoading();
+      try {
+        const res = await gasPost('updateStatus', {
+          reservation_no: reservationNo,
+          status: newStatus
+        });
+        if (!res.success) throw new Error(res.error);
+        showToast(`ステータスを「${newStatus}」に変更しました`, 'success');
+        await loadReservations();
+      } catch(e) {
+        showToast(e.message, 'error');
+      } finally {
+        hideLoading();
+      }
+    },
+    btnClass
+  );
+}
+
+// ============================================================
+// 集計
+// ============================================================
+async function loadStats() {
+  if (currentTab !== 'stats') return;
+  showLoading();
+  try {
+    const filterPid = document.getElementById('crossProductFilter').value;
+    const res = await gasGet('getStats', { filter_product_id: filterPid });
+    if (!res.success) throw new Error(res.error);
+    renderStats(res.data);
+  } catch(e) {
+    showToast('集計データの取得に失敗しました', 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+function renderStats(data) {
+  // ---- 商品別 ----
+  const prodEl = document.getElementById('statsProduct');
+  if (!data.byProduct.length) {
+    prodEl.innerHTML = '<p style="color:#9ca3af;font-size:13px">データなし</p>';
+  } else {
+    prodEl.innerHTML = `
+      <table class="stats-table">
+        <tr>
+          <th>商品名</th>
+          <th class="num">予約数</th>
+          <th class="num">確定数</th>
+          <th class="num">上限</th>
+          <th class="num">残数</th>
+        </tr>
+        ${data.byProduct.map(p => `
+          <tr>
+            <td>${esc(p.product_name)}</td>
+            <td class="num">${p.total}</td>
+            <td class="num">${p.confirmed}</td>
+            <td class="num">${p.stock_limit > 0 ? p.stock_limit : '—'}</td>
+            <td class="num" style="color:${p.remaining !== null && p.remaining <= 5 ? 'var(--danger)' : 'inherit'}">
+              ${p.remaining !== null ? p.remaining : '—'}
+            </td>
+          </tr>`).join('')}
+      </table>`;
+  }
+
+  // ---- 担当別バーグラフ ----
+  const maxStaff = Math.max(...data.byStaff.map(s => s.total), 1);
+  document.getElementById('statsStaff').innerHTML =
+    data.byStaff.map(s => `
+      <div class="bar-row">
+        <div class="bar-label" title="${esc(s.staff_name)}">${esc(s.staff_name)}</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:${(s.total / maxStaff * 100).toFixed(1)}%"></div>
+        </div>
+        <div class="bar-val">${s.total}</div>
+      </div>`).join('') || '<p style="color:#9ca3af;font-size:13px">データなし</p>';
+
+  // ---- サロン別（上位20件）----
+  const top20     = data.bySalon.slice(0, 20);
+  const maxSalon  = Math.max(...top20.map(s => s.total), 1);
+  document.getElementById('statsSalon').innerHTML =
+    top20.map(s => `
+      <div class="bar-row">
+        <div class="bar-label" title="${esc(s.salon_name)}">${esc(s.salon_name)}</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:${(s.total / maxSalon * 100).toFixed(1)}%"></div>
+        </div>
+        <div class="bar-val">${s.total}</div>
+      </div>`).join('') || '<p style="color:#9ca3af;font-size:13px">データなし</p>';
+
+  // ---- クロス集計 ----
+  renderCrossTable(data.crossTable);
+}
+
+function renderCrossTable(cross) {
+  const el = document.getElementById('statsCross');
+  if (!cross.staffList.length || !cross.salonList.length) {
+    el.innerHTML = '<p style="color:#9ca3af;font-size:13px">データなし</p>';
+    return;
+  }
+
+  const { staffList, salonList, data } = cross;
+
+  // 担当ごとの合計
+  const staffTotals = {};
+  staffList.forEach(s => {
+    staffTotals[s.id] = salonList.reduce((sum, salon) => sum + (data[s.id]?.[salon] || 0), 0);
+  });
+  // サロンごとの合計
+  const salonTotals = {};
+  salonList.forEach(salon => {
+    salonTotals[salon] = staffList.reduce((sum, s) => sum + (data[s.id]?.[salon] || 0), 0);
+  });
+  const grandTotal = Object.values(staffTotals).reduce((s, v) => s + v, 0);
+
+  let html = `<table>
+    <tr>
+      <th>担当 \\ サロン</th>
+      ${salonList.map(s => `<th>${esc(s)}</th>`).join('')}
+      <th>合計</th>
+    </tr>`;
+
+  staffList.forEach(s => {
+    html += `<tr>
+      <td style="font-weight:700">${esc(s.name)}</td>
+      ${salonList.map(salon => {
+        const v = data[s.id]?.[salon] || 0;
+        return `<td class="num" style="${v ? 'color:var(--primary);font-weight:600' : 'color:#d1d5db'}">${v || ''}</td>`;
+      }).join('')}
+      <td class="num total-col">${staffTotals[s.id]}</td>
+    </tr>`;
+  });
+
+  html += `<tr class="total-row">
+    <td>合計</td>
+    ${salonList.map(salon => `<td class="num">${salonTotals[salon]}</td>`).join('')}
+    <td class="num grand-total">${grandTotal}</td>
+  </tr></table>`;
+
+  el.innerHTML = html;
+}
+
+// ============================================================
+// 商品管理
+// ============================================================
+function renderProducts() {
+  const container = document.getElementById('productList');
+  if (!products.length) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">🏷️</div>
+        <div class="empty-text">商品が登録されていません</div>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = products.map(p => {
+    const limitStr   = p.stock_limit > 0 ? `上限 ${p.stock_limit}個` : '上限なし';
+    const reservedStr = `予約済 ${p.reserved_total}個`;
+    const deadlineStr = p.deadline ? `期限: ${p.deadline}` : '期限なし';
+
+    const statusBadge = !p.is_active
+      ? `<span class="badge badge-red">停止中</span>`
+      : p.is_expired
+        ? `<span class="badge badge-gray">期限切れ</span>`
+        : `<span class="badge badge-green">受付中</span>`;
+
+    let barHtml = '';
+    if (p.stock_limit > 0) {
+      const pct = Math.min(100, (p.reserved_total / p.stock_limit * 100));
+      const cls = pct >= 100 ? 'danger' : pct >= 80 ? 'warning' : '';
+      barHtml = `
+        <div class="stock-bar">
+          <div class="stock-track">
+            <div class="stock-fill ${cls}" style="width:${pct.toFixed(1)}%"></div>
+          </div>
+          <span style="font-size:11px;white-space:nowrap">${p.reserved_total}/${p.stock_limit}</span>
+        </div>`;
+    }
+
+    return `
+      <div class="product-card ${p.is_active ? '' : 'inactive'}">
+        <div class="pc-header">
+          <div class="pc-name">${esc(p.name)}</div>
+          ${statusBadge}
+        </div>
+        <div class="pc-body">${limitStr} ／ ${reservedStr} ／ ${deadlineStr}</div>
+        ${barHtml}
+        <div class="pc-footer">
+          <button class="btn btn-gray btn-sm" onclick="openProductModal('${p.product_id}')">編集</button>
+          <button class="btn ${p.is_active ? 'btn-warning' : 'btn-success'} btn-sm"
+            onclick="toggleProduct('${p.product_id}')">
+            ${p.is_active ? '停止する' : '再開する'}
+          </button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function openProductModal(productId) {
+  if (productId) {
+    const p = products.find(x => x.product_id === productId);
+    if (!p) return;
+    document.getElementById('productModalTitle').textContent = '商品を編集';
+    document.getElementById('productModalId').value   = p.product_id;
+    document.getElementById('productName').value      = p.name;
+    document.getElementById('productLimit').value     = p.stock_limit;
+    document.getElementById('productDeadline').value  = p.deadline || '';
+  } else {
+    document.getElementById('productModalTitle').textContent = '商品を追加';
+    document.getElementById('productModalId').value   = '';
+    document.getElementById('productName').value      = '';
+    document.getElementById('productLimit').value     = '0';
+    document.getElementById('productDeadline').value  = '';
+  }
+  openModal('productModal');
+}
+
+async function saveProduct() {
+  const productId = document.getElementById('productModalId').value;
+  const name      = document.getElementById('productName').value.trim();
+  const limit     = Number(document.getElementById('productLimit').value) || 0;
+  const deadline  = document.getElementById('productDeadline').value;
+
+  if (!name) { showToast('商品名は必須です', 'error'); return; }
+
+  showLoading();
+  try {
+    const res = await gasPost('saveProduct', {
+      product_id: productId || undefined,
+      name, stock_limit: limit, deadline, is_active: true
+    });
+    if (!res.success) throw new Error(res.error);
+    closeModal('productModal');
+    showToast(res.data.message, 'success');
+    await loadProducts();
+    renderProducts();
+  } catch(e) {
+    showToast(e.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+async function toggleProduct(productId) {
+  showLoading();
+  try {
+    const res = await gasPost('toggleProductActive', { product_id: productId });
+    if (!res.success) throw new Error(res.error);
+    showToast(res.data.is_active ? '受付を再開しました' : '受付を停止しました', 'success');
+    await loadProducts();
+    renderProducts();
+  } catch(e) {
+    showToast(e.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// ============================================================
+// GAS API 通信
+// ============================================================
+async function gasGet(action, params = {}) {
+  const qs = new URLSearchParams({
+    action,
+    session_token: token,
+    data: JSON.stringify(params)
+  });
+  const res = await fetch(`${GAS_URL}?${qs}`, { redirect: 'follow' });
+  return res.json();
+}
+
+async function gasPost(action, data = {}) {
+  const body = new URLSearchParams({
+    action,
+    session_token: token,
+    data: JSON.stringify(data)
+  });
+  const res = await fetch(GAS_URL, {
+    method: 'POST',
+    body,
+    redirect: 'follow'
+  });
+  return res.json();
+}
+
+// ============================================================
+// UI ユーティリティ
+// ============================================================
+function showLoading() { document.getElementById('loading').classList.add('show'); }
+function hideLoading() { document.getElementById('loading').classList.remove('show'); }
+
+let toastTimer = null;
+function showToast(msg, type = 'success') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className   = type;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = ''; el.style.display = ''; }, 3500);
+}
+
+function openModal(id)  { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+function showConfirm(msg, btnText, callback, btnClass = 'btn-danger') {
+  document.getElementById('confirmMessage').innerHTML = msg.replace(/\n/g, '<br>');
+  const btn = document.getElementById('confirmOkBtn');
+  btn.textContent = btnText;
+  btn.className   = `btn ${btnClass}`;
+  confirmCallback = callback;
+  document.getElementById('confirmDialog').classList.add('open');
+}
+
+function closeConfirm(confirmed) {
+  document.getElementById('confirmDialog').classList.remove('open');
+  if (confirmed && confirmCallback) confirmCallback();
+  confirmCallback = null;
+}
+
+function esc(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// モーダル外クリックで閉じる
+document.querySelectorAll('.modal-overlay, .confirm-overlay').forEach(el => {
+  el.addEventListener('click', e => {
+    if (e.target === el) {
+      el.classList.remove('open');
+      confirmCallback = null;
+    }
+  });
+});
+</script>
+</body>
+</html>
