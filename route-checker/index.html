@@ -250,13 +250,23 @@
     .version-footer { text-align: center; color: #d1d5db; font-size: 11px; padding: 24px 0 8px; }
 
     /* History filters */
-    .history-filters { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+    .history-filters { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
     .filter-select {
       flex: 1; min-width: 80px; padding: 8px 10px;
       border: 1.5px solid var(--border); border-radius: 8px;
       font-size: 13px; background: #fff; color: var(--text);
     }
     .filter-select:focus { outline: none; border-color: var(--primary); }
+
+    /* Member tabs (history - manager team view) */
+    .member-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+    .member-tab {
+      padding: 5px 14px; border-radius: 16px;
+      border: 1.5px solid var(--border);
+      background: #fff; font-size: 13px; font-weight: 600;
+      cursor: pointer; color: var(--text); white-space: nowrap;
+    }
+    .member-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 
     /* Date selector (check screen) */
     .date-selector { padding: 8px 0 4px; }
@@ -701,7 +711,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.10.0';
+const APP_VERSION = 'v1.11.0';
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
 
@@ -743,7 +753,8 @@ let historyData   = null;     // { weeks, rows } GASから取得したデータ
 let historyFilter = {         // フィルタ状態
   userChoice: 'self',         // 'self' | 'team' | 'all' | 特定user_id
   month: '',                  // 'YYYY-MM'（空=当月）
-  day_of_week: 'all'          // 'all' | '月'〜'土'
+  day_of_week: 'all',         // 'all' | '月'〜'土'
+  memberFilter: 'all'         // manager+チーム全員時のローカル絞り込み: 'all' | 特定user_id
 };
 
 // ============================================================
@@ -1933,12 +1944,14 @@ function buildHistoryFilters() {
       '<option value="team"' + aSel + '>チーム全員</option>' +
       '</select>';
   } else {
-    // director / admin
+    // director / admin：担当サロンを持つロール（sales/manager）のみ選択肢に表示
     var opts = '<option value="all"' + (historyFilter.userChoice === 'all' ? ' selected' : '') + '>全員</option>';
-    publicUsers.forEach(function(u) {
-      var sel = historyFilter.userChoice === u.user_id ? ' selected' : '';
-      opts += '<option value="' + escHtml(u.user_id) + '"' + sel + '>' + escHtml(u.name) + '</option>';
-    });
+    publicUsers
+      .filter(function(u) { return u.role === 'sales' || u.role === 'manager'; })
+      .forEach(function(u) {
+        var sel = historyFilter.userChoice === u.user_id ? ' selected' : '';
+        opts += '<option value="' + escHtml(u.user_id) + '"' + sel + '>' + escHtml(u.name) + '</option>';
+      });
     userFilterHtml = '<select class="filter-select" id="hist-user" onchange="onHistoryFilterChange()">' + opts + '</select>';
   }
 
@@ -1967,12 +1980,50 @@ function onHistoryFilterChange() {
   var userEl  = document.getElementById('hist-user');
   var dayEl   = document.getElementById('hist-day');
   var monthEl = document.getElementById('hist-month');
-  if (userEl)  historyFilter.userChoice  = userEl.value;
+  if (userEl) {
+    var newChoice = userEl.value;
+    if (newChoice !== historyFilter.userChoice) {
+      historyFilter.memberFilter = 'all'; // 担当者切り替え時はメンバータブをリセット
+    }
+    historyFilter.userChoice = newChoice;
+  }
   if (dayEl)   historyFilter.day_of_week = dayEl.value;
   if (monthEl) historyFilter.month       = monthEl.value;
   historyData = null;
   renderApp();
   loadHistory();
+}
+
+/** メンバータブのHTML生成（manager + チーム全員 時のみ表示）*/
+function buildMemberTabs() {
+  if (!currentUser || currentUser.role !== 'manager') return '';
+  if (historyFilter.userChoice !== 'team') return '';
+  if (!historyData) return '';
+
+  // チームメンバーを resolveUserIds() と同じ条件で取得
+  var team    = currentUser.team;
+  var members = publicUsers.filter(function(u) {
+    return u.team === team || u.team === 'all';
+  });
+  if (members.length <= 1) return ''; // 自分1人ならタブ不要
+
+  var allActive = historyFilter.memberFilter === 'all' ? ' active' : '';
+  var tabs = '<div class="member-tabs">' +
+    '<button class="member-tab' + allActive + '" onclick="setMemberFilter(\'all\')">全員</button>' +
+    members.map(function(u) {
+      var active = historyFilter.memberFilter === u.user_id ? ' active' : '';
+      return '<button class="member-tab' + active +
+             '" onclick="setMemberFilter(\'' + escHtml(u.user_id) + '\')">' +
+             escHtml(u.name) + '</button>';
+    }).join('') +
+    '</div>';
+  return tabs;
+}
+
+/** メンバータブクリック時：ローカルフィルタのみ（GAS呼び出しなし）*/
+function setMemberFilter(uid) {
+  historyFilter.memberFilter = uid;
+  renderApp();
 }
 
 /** 担当者フィルタから user_ids 配列を決定 */
@@ -2104,18 +2155,27 @@ function buildHistoryMatrix(weeks, rows) {
 
 /** 訪問履歴画面のレンダリング */
 function renderHistory() {
-  var filterHtml = buildHistoryFilters();
+  var filterHtml    = buildHistoryFilters();
+  var memberTabsHtml = buildMemberTabs();
   var matrixHtml;
 
   if (!historyData) {
     matrixHtml = '<div class="empty-state">読み込み中...</div>';
   } else {
-    matrixHtml = buildHistoryMatrix(historyData.weeks, historyData.rows);
+    var rows = historyData.rows;
+    // manager + チーム全員 + 特定メンバー選択時：ローカルで絞り込み（GAS不要）
+    if (currentUser && currentUser.role === 'manager' &&
+        historyFilter.userChoice === 'team' &&
+        historyFilter.memberFilter !== 'all') {
+      rows = rows.filter(function(r) { return r.user_id === historyFilter.memberFilter; });
+    }
+    matrixHtml = buildHistoryMatrix(historyData.weeks, rows);
   }
 
   return renderHeader('訪問履歴') +
     '<div class="content">' +
     filterHtml +
+    memberTabsHtml +
     matrixHtml +
     '</div>' +
     renderBottomNav();
