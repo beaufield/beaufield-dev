@@ -701,7 +701,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.9.4';
+const APP_VERSION = 'v1.9.5';
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
 
@@ -1111,7 +1111,7 @@ function renderHeader(title, opts) {
     : '';
   return '<div class="header">' +
     left +
-    '<h1>' + title + '</h1>' +
+    '<h1>' + title + ' <span style="font-size:10px;color:#9ca3af;font-weight:normal">' + APP_VERSION + '</span></h1>' +
     userName +
     logout +
     '</div>';
@@ -1297,15 +1297,16 @@ async function submitSalonEdit() {
   var code = document.getElementById('salon-edit-code').value.trim();
   var day  = document.getElementById('salon-edit-day').value;
   if (!name) { showToast('サロン名を入力してください', 'error'); return; }
+  var targetId = editingSalonId; // closeSalonEditModal()でnullになる前に退避
   closeSalonEditModal();
   showLoading();
   try {
     await apiPost('updateSalon', {
-      user_id: currentUser.user_id, salon_id: editingSalonId,
+      user_id: currentUser.user_id, salon_id: targetId,
       salon_name: name, visit_day: day, code: code
     });
     // ローカルデータ更新
-    var salon = allMySalons.find(function(s) { return s.salon_id === editingSalonId; });
+    var salon = allMySalons.find(function(s) { return s.salon_id === targetId; });
     if (salon) { salon.salon_name = name; salon.visit_day = day; salon.code = code; }
     saveSalonCache(currentUser.user_id, allMySalons); // キャッシュ更新
     renderApp();
@@ -2397,9 +2398,8 @@ async function submitNewSalon() {
 // 初期化
 // ============================================================
 document.addEventListener('DOMContentLoaded', async function() {
-  renderApp();
-
   // bf_sessionを確認（なければポータルへリダイレクト）
+  // ※ renderApp()をセッション確認前に呼ばない（旧ログイン画面の一瞬表示を防止）
   var session = _getBfSession();
   if (!session) {
     location.replace(PORTAL_URL);
