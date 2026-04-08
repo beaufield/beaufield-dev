@@ -132,25 +132,32 @@
     .badge-gray  { background: #f3f4f6; color: #6b7280; }
     .badge-red   { background: #fee2e2; color: #dc2626; }
 
-    /* 予約カード */
+    /* 予約カード（2行コンパクト） */
     .reservation-card {
-      background: #fff; border-radius: 10px;
-      padding: 12px 14px; margin-bottom: 10px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      background: #fff; border-radius: 8px;
+      padding: 8px 10px 8px 12px; margin-bottom: 6px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.07);
       border-left: 4px solid var(--border);
     }
     .reservation-card.status-予約 { border-left-color: var(--primary); }
     .reservation-card.status-確定 { border-left-color: var(--success); }
-    .rc-header {
-      display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+    /* 1行目: No. + サロン名 + ステータス + ボタン */
+    .rc-row1 {
+      display: flex; align-items: center; gap: 6px;
+      margin-bottom: 3px; flex-wrap: nowrap;
     }
-    .rc-no    { font-size: 12px; color: #9ca3af; font-weight: 700; }
-    .rc-salon { font-size: 16px; font-weight: 700; flex: 1; }
-    .rc-body  { font-size: 13px; color: #374151; margin-bottom: 8px; line-height: 1.7; }
-    .rc-footer {
-      display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    .rc-no    { font-size: 11px; color: #9ca3af; font-weight: 700; white-space: nowrap; flex-shrink: 0; }
+    .rc-salon { font-size: 14px; font-weight: 700; flex: 1; min-width: 0;
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rc-actions { display: flex; gap: 4px; flex-shrink: 0; }
+    /* 2行目: 商品・担当・発送・日時 */
+    .rc-row2 {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 11px; color: #6b7280; flex-wrap: wrap;
     }
-    .rc-date { font-size: 11px; color: #9ca3af; }
+    .rc-product { color: var(--text); font-weight: 600; white-space: nowrap; }
+    .rc-staff   { white-space: nowrap; }
+    .rc-date    { white-space: nowrap; margin-left: auto; }
 
     /* フィルタ行 */
     .filter-row {
@@ -275,7 +282,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.2.0</span>
+  <span class="header-version">v1.2.1</span>
 </header>
 
 <!-- ============================================================ -->
@@ -803,20 +810,17 @@ function renderList() {
 
     return `
       <div class="reservation-card status-${esc(r.status)}">
-        <div class="rc-header">
+        <div class="rc-row1">
           <span class="rc-no">No.${r.reservation_no}</span>
           <span class="rc-salon">${esc(r.salon_name)}</span>
           ${statusBadge}
+          <div class="rc-actions">${actions}</div>
         </div>
-        <div class="rc-body">
-          🏷️ ${esc(r.product_name)} × ${r.quantity}個<br>
-          👤 担当: ${esc(r.staff_name)}${operatorNote}
-        </div>
-        <div class="rc-footer">
+        <div class="rc-row2">
+          <span class="rc-product">🏷️ ${esc(r.product_name)} × ${r.quantity}個</span>
+          <span class="rc-staff">👤 ${esc(r.staff_name)}${operatorNote}</span>
           ${delivBadge}
           <span class="rc-date">${dateStr}</span>
-          <div style="flex:1"></div>
-          ${actions}
         </div>
       </div>`;
   }).join('');
