@@ -342,8 +342,7 @@ function toggleProductActive(data) {
 
 /**
  * 予約一覧取得
- * 営業（is_admin=false）: 自分の予約のみ
- * 事務（is_admin=true） : 全件
+ * 全ユーザー: 全件表示
  */
 function getReservations(data) {
   const userInfo = data._userInfo;
@@ -372,11 +371,6 @@ function getReservations(data) {
       reserved_at:     r[11] ? String(r[11]) : '',
       updated_at:      r[12] ? String(r[12]) : ''
     }));
-
-  // 営業は自分の予約のみ表示
-  if (!userInfo.is_admin) {
-    list = list.filter(r => r.staff_id === String(data._userId));
-  }
 
   // 予約No 降順ソート
   list.sort((a, b) => b.reservation_no - a.reservation_no);
@@ -609,11 +603,11 @@ function getUsers(data) {
 }
 
 // ============================================================
-// 集計データ取得（事務のみ）
+// 集計データ取得（全ユーザー）
 // ============================================================
 function getStats(data) {
   const userInfo = data._userInfo;
-  if (!userInfo || !userInfo.is_admin) return _err('権限がありません');
+  if (!userInfo) return _err('ユーザー情報が取得できません');
 
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const rs = ss.getSheetByName(SHEET_RESERVATIONS);

@@ -275,7 +275,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.1.2</span>
+  <span class="header-version">v1.2.0</span>
 </header>
 
 <!-- ============================================================ -->
@@ -324,7 +324,7 @@
     <select id="filterProduct" onchange="renderList()">
       <option value="">すべての商品</option>
     </select>
-    <select id="filterStaff" onchange="renderList()" style="display:none">
+    <select id="filterStaff" onchange="renderList()">
       <option value="">すべての担当</option>
     </select>
     <select id="filterStatus" onchange="renderList()">
@@ -380,7 +380,7 @@
   <button class="nav-item" data-tab="list" onclick="switchTab('list')">
     <span class="nav-icon">📋</span>予約一覧
   </button>
-  <button class="nav-item admin-only" data-tab="stats" onclick="switchTab('stats')" style="display:none">
+  <button class="nav-item" data-tab="stats" onclick="switchTab('stats')">
     <span class="nav-icon">📊</span>集計
   </button>
   <button class="nav-item admin-only" data-tab="products" onclick="switchTab('products')" style="display:none">
@@ -529,7 +529,6 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     if (currentUser.is_admin) {
       document.querySelectorAll('.admin-only').forEach(el => el.style.display = '');
-      document.getElementById('filterStaff').style.display = '';
     }
 
     // ③ ドロップダウンにデータを反映（GAS 呼び出しなし）
