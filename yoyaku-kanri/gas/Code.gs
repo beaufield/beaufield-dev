@@ -577,7 +577,12 @@ function updateStatus(data) {
 
 // ============================================================
 // ユーザー一覧（担当者ドロップダウン用）
-// is_admin=FALSE かつ active=TRUE の営業スタッフのみ返す
+// G列 role='営業' かつ active=TRUE のスタッフのみ返す
+//
+// ※ beaufield-auth の users シートに G列（role）が必要
+//    role='営業' → 担当者に表示
+//    role='事務' or 空欄 → 担当者に表示しない
+//    is_admin は管理権限の制御のみに使用（この絞り込みには使わない）
 // ============================================================
 function getUsers(data) {
   try {
@@ -588,9 +593,12 @@ function getUsers(data) {
     const rows  = sh.getDataRange().getValues();
     const users = [];
     for (let i = 1; i < rows.length; i++) {
-      const active   = rows[i][3] === true || String(rows[i][3]).toUpperCase() === 'TRUE';
+      const active = rows[i][3] === true || String(rows[i][3]).toUpperCase() === 'TRUE';
+      const role   = String(rows[i][6] || '').trim(); // G列: role
+      // G列が未設定の場合は is_admin=FALSE を従来通りフォールバックとして使う
       const is_admin = rows[i][5] === true || String(rows[i][5]).toUpperCase() === 'TRUE';
-      if (active && !is_admin) {
+      const isSales = role === '営業' || (role === '' && !is_admin);
+      if (active && isSales) {
         users.push({ user_id: String(rows[i][0]), name: String(rows[i][1]) });
       }
     }
