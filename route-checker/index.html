@@ -713,7 +713,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.13.0';
+const APP_VERSION = 'v1.14.0';
 const START_MONTH = '2026-04'; // 運用開始月（これより前は選択肢に表示しない）
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
@@ -2153,7 +2153,10 @@ function buildHistoryMatrix(weeks, rows) {
       dataCells = cells.map(function(v) {
         if (v === null) return '<td class="cell-na"></td>';
         if (v && v.visited) {
-          return '<td><span class="cell-visited">✅</span>' +
+          var mark = v.off_schedule
+            ? '<span class="cell-visited" title="曜日外訪問" style="opacity:0.55;font-size:0.85em">✅曜外</span>'
+            : '<span class="cell-visited">✅</span>';
+          return '<td>' + mark +
             (v.time ? '<span class="cell-time">' + escHtml(v.time) + '</span>' : '') +
             '</td>';
         }
@@ -2216,7 +2219,7 @@ async function loadPublicUsers() {
     publicUsers = [];
   } finally {
     hideLoading();
-    renderApp();
+    // ※ renderApp()はここでは呼ばない（ポータル認証後にログイン画面が一瞬表示されるバグを防止）
   }
 }
 
