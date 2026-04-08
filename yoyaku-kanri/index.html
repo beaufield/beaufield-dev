@@ -275,7 +275,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.0.0</span>
+  <span class="header-version">v1.1.0</span>
 </header>
 
 <!-- ============================================================ -->
@@ -482,16 +482,15 @@ let currentUser    = null;  // { user_id, name, is_admin }
 let token          = null;
 let users          = [];    // 営業スタッフ一覧
 let products       = [];    // 全商品
-let activeProducts = [];    // 受付中商品（予約登録用）
+let activeProducts = [];    // 受付中商品（予約登録用・ローカル計算）
 let reservations   = [];    // 予約一覧（現在ロード済み）
 let currentTab     = 'register';
 let confirmCallback = null;
 
 // ============================================================
-// 初期化
+// 初期化（GAS 呼び出し: 5回 → 1回）
 // ============================================================
 window.addEventListener('DOMContentLoaded', async () => {
-  // beaufield-auth セッション確認
   const session = JSON.parse(localStorage.getItem('bf_session') || 'null');
   if (!session || !session.token || Date.now() > session.expires) {
     location.href = PORTAL_URL;
@@ -501,22 +500,33 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   showLoading();
   try {
-    // ログインユーザー情報取得
-    const res = await gasGet('getUserInfo');
-    if (!res.success) throw new Error(res.error);
-    currentUser = res.data;
+    // 1回のリクエストで全初期データを取得
+    const res = await gasGet('init');
+    if (!res.success) {
+      if (res.error === 'SESSION_INVALID') { location.href = PORTAL_URL; return; }
+      throw new Error(res.error);
+    }
+
+    const d  = res.data;
+    currentUser  = d.user;
+    users        = d.users;
+    products     = d.products;
+    reservations = d.reservations;
+
+    // activeProducts をローカルで計算（GAS 追加呼び出し不要）
+    _refreshActiveProducts();
 
     document.getElementById('headerUser').textContent = currentUser.name;
 
-    // 事務（is_admin）メニューを表示
     if (currentUser.is_admin) {
       document.querySelectorAll('.admin-only').forEach(el => el.style.display = '');
       document.getElementById('filterStaff').style.display = '';
     }
 
-    // 初期データ読み込み
-    await Promise.all([loadUsers(), loadProducts()]);
-    await loadReservations();
+    // ドロップダウン・一覧を DOM に反映（GAS 呼び出しなし）
+    _updateUserDropdowns();
+    _updateProductDropdowns();
+    renderList();
 
   } catch(e) {
     showToast('初期化エラー: ' + e.message, 'error');
@@ -537,18 +547,39 @@ function switchTab(tab) {
 
   if (tab === 'stats')    loadStats();
   if (tab === 'products') renderProducts();
-  if (tab === 'list')     loadReservations();
+  if (tab === 'list')     renderList();  // GAS 呼び出しなし（既にローカルにある）
 }
 
 // ============================================================
-// データ読み込み
+// ローカルデータ管理ヘルパー
 // ============================================================
-async function loadUsers() {
-  const res = await gasGet('getUsers');
-  if (!res.success) return;
-  users = res.data;
 
-  // 担当者ドロップダウン（登録・編集フォーム共通）
+/** activeProducts をローカルの products から再計算（GAS 呼び出し不要） */
+function _refreshActiveProducts() {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  activeProducts = products.filter(p =>
+    p.is_active && !p.is_expired && (!p.deadline || p.deadline >= todayStr)
+  );
+}
+
+/** 予約データから products の集計値をローカルで更新（GAS 呼び出し不要） */
+function _refreshProductCounts() {
+  const reservedMap = {};
+  reservations.forEach(r => {
+    reservedMap[r.product_id] = (reservedMap[r.product_id] || 0) + r.quantity;
+  });
+  products.forEach(p => {
+    p.reserved_total = reservedMap[p.product_id] || 0;
+    if (p.stock_limit > 0) {
+      p.remaining = Math.max(0, p.stock_limit - p.reserved_total);
+    }
+  });
+  _refreshActiveProducts();
+  _updateProductDropdowns();
+}
+
+/** 担当者ドロップダウンを更新 */
+function _updateUserDropdowns() {
   ['regStaff', 'editStaff'].forEach(id => {
     const sel = document.getElementById(id);
     sel.innerHTML = '<option value="">担当者を選択...</option>';
@@ -556,8 +587,6 @@ async function loadUsers() {
       sel.innerHTML += `<option value="${u.user_id}">${esc(u.name)}</option>`;
     });
   });
-
-  // 一覧フィルタ用
   const fs = document.getElementById('filterStaff');
   fs.innerHTML = '<option value="">すべての担当</option>';
   users.forEach(u => {
@@ -565,16 +594,8 @@ async function loadUsers() {
   });
 }
 
-async function loadProducts() {
-  // 全商品（管理・集計用）
-  const res1 = await gasGet('getProducts');
-  if (res1.success) products = res1.data;
-
-  // 受付中のみ（予約登録用）
-  const res2 = await gasGet('getProducts', { activeOnly: true });
-  if (res2.success) activeProducts = res2.data;
-
-  // 予約登録・編集フォームのドロップダウン
+/** 商品ドロップダウンを更新 */
+function _updateProductDropdowns() {
   ['regProduct', 'editProduct'].forEach(id => {
     const sel = document.getElementById(id);
     const cur = sel.value;
@@ -586,7 +607,6 @@ async function loadProducts() {
     sel.value = cur;
   });
 
-  // 一覧フィルタ用（全商品）
   const fp = document.getElementById('filterProduct');
   const fpVal = fp.value;
   fp.innerHTML = '<option value="">すべての商品</option>';
@@ -595,7 +615,6 @@ async function loadProducts() {
   });
   fp.value = fpVal;
 
-  // クロス集計フィルタ用
   const cp = document.getElementById('crossProductFilter');
   const cpVal = cp.value;
   cp.innerHTML = '<option value="">すべての商品</option>';
@@ -605,12 +624,28 @@ async function loadProducts() {
   cp.value = cpVal;
 }
 
+// ============================================================
+// データ読み込み（GAS 呼び出しが必要な場合のみ使用）
+// ============================================================
+
+/** 商品マスターが変わったときだけ呼ぶ（saveProduct/toggleProduct 後） */
+async function loadProducts() {
+  const res = await gasGet('getProducts');
+  if (!res.success) return;
+  products = res.data;
+  _refreshActiveProducts();
+  _updateProductDropdowns();
+}
+
+/** 予約一覧を再取得（変更操作後に呼ぶ） */
 async function loadReservations() {
   showLoading();
   try {
     const res = await gasGet('getReservations');
     if (!res.success) throw new Error(res.error);
     reservations = res.data;
+    // 商品残数もローカルで更新（GAS 追加呼び出し不要）
+    _refreshProductCounts();
     renderList();
   } catch(e) {
     showToast('予約データの取得に失敗しました', 'error');
@@ -695,7 +730,7 @@ async function registerReservation() {
     document.getElementById('regQty').value     = '1';
     document.getElementById('stockInfo').style.display = 'none';
 
-    await loadProducts();    // 残数を更新
+    // 予約一覧を再取得（残数もローカルで自動更新）
     await loadReservations();
 
   } catch(e) {
@@ -830,7 +865,6 @@ async function saveEditReservation() {
 
     closeModal('editModal');
     showToast('更新しました', 'success');
-    await loadProducts();
     await loadReservations();
 
   } catch(e) {
@@ -854,7 +888,6 @@ function confirmDelete(reservationNo) {
         const res = await gasPost('deleteReservation', { reservation_no: reservationNo });
         if (!res.success) throw new Error(res.error);
         showToast('削除しました', 'success');
-        await loadProducts();
         await loadReservations();
       } catch(e) {
         showToast(e.message, 'error');
