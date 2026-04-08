@@ -498,16 +498,23 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
   token = session.token;
 
-  showLoading();
+  // ① GAS通信前にUIシェルを即表示（コールドスタート中も画面が見える）
+  switchTab('register');
+  document.getElementById('regStaff').innerHTML    = '<option value="">読み込み中...</option>';
+  document.getElementById('regProduct').innerHTML  = '<option value="">読み込み中...</option>';
+
+  // ② ローディングをフルスクリーンではなくヘッダー色変化に留める
+  document.querySelector('.header').style.opacity = '0.6';
+
   try {
-    // 1回のリクエストで全初期データを取得
+    // 1回のリクエストで全初期データを取得（旧: 5回）
     const res = await gasGet('init');
     if (!res.success) {
       if (res.error === 'SESSION_INVALID') { location.href = PORTAL_URL; return; }
       throw new Error(res.error);
     }
 
-    const d  = res.data;
+    const d = res.data;
     currentUser  = d.user;
     users        = d.users;
     products     = d.products;
@@ -523,15 +530,17 @@ window.addEventListener('DOMContentLoaded', async () => {
       document.getElementById('filterStaff').style.display = '';
     }
 
-    // ドロップダウン・一覧を DOM に反映（GAS 呼び出しなし）
+    // ③ ドロップダウンにデータを反映（GAS 呼び出しなし）
     _updateUserDropdowns();
     _updateProductDropdowns();
-    renderList();
+
+    // 現在のタブを再描画（一覧タブに居る場合は一覧を描画）
+    if (currentTab === 'list') renderList();
 
   } catch(e) {
     showToast('初期化エラー: ' + e.message, 'error');
   } finally {
-    hideLoading();
+    document.querySelector('.header').style.opacity = '';
   }
 });
 
