@@ -399,6 +399,19 @@
     .modal-title { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
     .modal-sub   { font-size: 12px; color: var(--text-light); margin-bottom: 6px; }
 
+    /* 在庫数バッジ（数量モーダル内） */
+    .qty-stock {
+      display: none;
+      background: #F0F4FF;
+      border: 1px solid #B8C8EE;
+      border-radius: 6px;
+      padding: 5px 10px;
+      font-size: 13px;
+      color: #3A5AAA;
+      margin-bottom: 8px;
+    }
+    .qty-stock.show { display: block; }
+
     /* 直近注文バッジ（数量モーダル内） */
     .qty-last-order {
       display: none;
@@ -739,6 +752,9 @@
     <div class="modal-title" id="qty-title">数量を選択</div>
     <div class="modal-sub" id="qty-sub"></div>
 
+    <!-- 在庫数バッジ -->
+    <div class="qty-stock" id="qty-stock"></div>
+
     <!-- 直近注文バッジ -->
     <div class="qty-last-order" id="qty-last-order"></div>
 
@@ -871,7 +887,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.13.1'; // 数量選択肢に36を追加
+const APP_VERSION    = 'v1.14.0'; // 在庫数表示・カタカナ全角半角検索対応
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER      = 'bf_pm';
@@ -1053,7 +1069,8 @@ function parseProductCSV(text, fileName) {
       supplierCD:    findColIdx(headers, '仕入先CD'),
       jan:           findColIdx(headers, 'JANCD'),
       purchasePrice: findColIdx(headers, '仕入単価'),
-      discontinued:  findColIdx(headers, '廃番')
+      discontinued:  findColIdx(headers, '廃番'),
+      stock:         findColIdx(headers, '在庫数')
     };
 
     const requiredCols = ['code','name','kana','unit','supplierCD','jan'];
@@ -1062,6 +1079,7 @@ function parseProductCSV(text, fileName) {
 
     const hasPriceCol = colMap.purchasePrice !== -1;
     const hasDisconCol = colMap.discontinued !== -1;
+    const hasStockCol  = colMap.stock !== -1;
 
     const products = [];
     for (let i = 1; i < lines.length; i++) {
@@ -1076,7 +1094,8 @@ function parseProductCSV(text, fileName) {
         jan:           cleanCell(cols[colMap.jan]),
         purchasePrice: hasPriceCol
           ? parseFloat(cleanCell(cols[colMap.purchasePrice]).replace(/,/g, '')) || 0 : 0,
-        discontinued: hasDisconCol ? cleanCell(cols[colMap.discontinued]) : ''
+        discontinued: hasDisconCol ? cleanCell(cols[colMap.discontinued]) : '',
+        stock:        hasStockCol  ? cleanCell(cols[colMap.stock]) : ''
       };
       if (p.name) products.push(p);
     }
@@ -1379,6 +1398,15 @@ function openQtyModal(product, isHandwritten) {
     ? ` | 仕入単価: ${product.purchasePrice.toLocaleString()}円` : '';
   document.getElementById('qty-sub').textContent = isHandwritten ? '' :
     `コード: ${product.code || '-'} | JAN: ${product.jan || '-'} | 単位: ${product.unit || '-'}${priceStr}`;
+
+  // 在庫数を表示
+  const stockEl = document.getElementById('qty-stock');
+  if (!isHandwritten && product.stock !== '' && product.stock !== undefined) {
+    stockEl.textContent = `📦 在庫数: ${product.stock}`;
+    stockEl.classList.add('show');
+  } else {
+    stockEl.classList.remove('show');
+  }
 
   // 直近注文情報を表示
   const lastOrderEl = document.getElementById('qty-last-order');
@@ -2532,9 +2560,21 @@ function escAttr(str) {
 =================================================== */
 function normalizeKana(str) {
   if (!str) return '';
+  // 半角カナの濁点・半濁点結合を先に処理（ﾍﾟ→ペ 等）
+  let s = str
+    .replace(/([ｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾊﾋﾌﾍﾎｳ])ﾞ/g, (_, c) => {
+      const from = 'ｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾊﾋﾌﾍﾎｳ';
+      const to   = 'ガギグゲゴザジズゼゾダヂヅデドバビブベボヴ';
+      const i = from.indexOf(c); return i >= 0 ? to[i] : _;
+    })
+    .replace(/([ﾊﾋﾌﾍﾎ])ﾟ/g, (_, c) => {
+      const from = 'ﾊﾋﾌﾍﾎ'; const to = 'パピプペポ';
+      const i = from.indexOf(c); return i >= 0 ? to[i] : _;
+    });
+  // 残りの半角カナを全角カタカナへ変換
   const HAN = 'ｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ･ｰ';
   const ZEN = 'ヲァィゥェォャュョッーアイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワン・ー';
-  let s = str.replace(/[\uFF65-\uFF9F]/g, ch => { const i = HAN.indexOf(ch); return i >= 0 ? ZEN[i] : ch; });
+  s = s.replace(/[\uFF65-\uFF9F]/g, ch => { const i = HAN.indexOf(ch); return i >= 0 ? ZEN[i] : ch; });
   s = s.replace(/([ウカキクケコサシスセソタチツテトハヒフヘホ])゛/g, (_, c) => {
     const from = 'ウカキクケコサシスセソタチツテトハヒフヘホ';
     const to   = 'ヴガギグゲゴザジズゼゾダヂヅデドバビブベボ';
@@ -2544,6 +2584,7 @@ function normalizeKana(str) {
     const from = 'ハヒフヘホ'; const to = 'パピプペポ';
     const i = from.indexOf(c); return i >= 0 ? to[i] : _;
   });
+  // ひらがな→カタカナ
   return s.replace(/[\u3041-\u3096]/g, ch => String.fromCharCode(ch.charCodeAt(0) + 0x60));
 }
 
