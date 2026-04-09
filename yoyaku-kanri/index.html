@@ -304,7 +304,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.3.4</span>
+  <span class="header-version">v1.3.5</span>
 </header>
 
 <!-- ============================================================ -->
@@ -852,7 +852,7 @@ function renderList() {
 
     // 「予約」ステータスの場合のみ順位表示
     const rankStr = (r.status === '予約' && rankMap[r.reservation_no])
-      ? `<span class="rc-rank">${rankMap[r.reservation_no]}番目</span>` : '';
+      ? `<span class="rc-rank">累計${rankMap[r.reservation_no]}個目</span>` : '';
 
     let actions = '';
     if (canEdit) {
