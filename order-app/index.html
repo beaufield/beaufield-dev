@@ -897,11 +897,12 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.14.1'; // 在庫数・直近注文を横並び表示
+const APP_VERSION    = 'v1.14.2'; // 直近注文をlocalStorage永続化・起動時自動取得
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER      = 'bf_pm';
 const LS_MASTER_DATE = 'bf_pm_date';
+const LS_PROD_HIST   = 'bf_prod_hist'; // 商品別直近注文（localStorage永続）
 const SS_CART        = 'bf_cart';
 const LS_MEMO_HIST   = 'bf_memo_h';
 const SESSION_KEY    = 'bf_session';
@@ -959,6 +960,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadProductMasterFromCache();
   updateMasterBadge();
   updateMemoDatalist();
+
+  // 直近注文履歴をlocalStorageから即座に復元
+  try {
+    const ph = localStorage.getItem(LS_PROD_HIST);
+    if (ph) productHistory = JSON.parse(ph);
+  } catch(e) {}
+  // バックグラウンドで最新履歴を取得（画面描画をブロックしない）
+  loadHistory(false);
 
   document.getElementById('csv-file').addEventListener('change', onCSVSelected);
   setupScanInput();
@@ -2110,6 +2119,7 @@ async function loadHistory(forceRefresh) {
         // キャッシュ形式: { orders: [...], productHistory: {...} }
         allHistoryOrders = parsed.orders || [];
         productHistory   = parsed.productHistory || {};
+        localStorage.setItem(LS_PROD_HIST, JSON.stringify(productHistory));
         updateHistoryFilterOptions();
         applyHistoryFilter();
         return;
@@ -2127,6 +2137,7 @@ async function loadHistory(forceRefresh) {
         orders: allHistoryOrders,
         productHistory
       }));
+      localStorage.setItem(LS_PROD_HIST, JSON.stringify(productHistory));
       updateHistoryFilterOptions();
       applyHistoryFilter();
     } else {
