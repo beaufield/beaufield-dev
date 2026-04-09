@@ -198,6 +198,28 @@
     }
     .btn-print:active { background: #f3f4f6; }
 
+    /* 入荷処理モーダル */
+    .arrival-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .arrival-table th, .arrival-table td {
+      padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left;
+    }
+    .arrival-table th { background: #f9fafb; font-weight: 700; font-size: 11px; color: #6b7280; }
+    .arrival-table td.num { text-align: right; }
+    .arrival-table tr.disabled { opacity: 0.45; }
+    .arrival-qty-input {
+      width: 60px; padding: 3px 6px;
+      border: 1.5px solid var(--border); border-radius: 5px;
+      font-size: 13px; text-align: right; font-family: inherit;
+    }
+    .arrival-qty-input:focus { outline: none; border-color: var(--primary); }
+    .arrival-summary {
+      display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+      padding: 10px 14px; background: #eff6ff; border: 1.5px solid #bfdbfe;
+      border-radius: 8px; margin: 10px 0; font-size: 13px;
+    }
+    .arrival-remaining          { color: var(--success); font-weight: 700; }
+    .arrival-remaining.over     { color: var(--danger);  font-weight: 700; }
+
     /* 集計テーブル */
     .stats-table { width: 100%; border-collapse: collapse; font-size: 13px; }
     .stats-table th, .stats-table td {
@@ -310,7 +332,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.7.1</span>
+  <span class="header-version">v1.8.0</span>
 </header>
 
 <!-- ============================================================ -->
@@ -370,6 +392,7 @@
       <option value="確定">確定</option>
     </select>
     <button class="btn-print" onclick="printReservations()" title="現在のフィルタ条件で印刷（PDF出力）">🖨️ 印刷</button>
+    <button class="btn-print admin-only" id="arrivalBtn" style="display:none" onclick="openArrivalModal()" title="入荷処理（事務専用）">📦 入荷処理</button>
   </div>
 
   <!-- 商品別サマリー（商品フィルタ選択時に表示） -->
@@ -505,6 +528,62 @@
     <div class="modal-actions">
       <button class="btn btn-gray"    onclick="closeModal('productModal')">キャンセル</button>
       <button class="btn btn-primary" onclick="saveProduct()">保存する</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 入荷処理モーダル（事務専用・2ステップ）                        -->
+<!-- ============================================================ -->
+<div id="arrivalModal" class="modal-overlay">
+  <div class="modal-sheet">
+
+    <!-- ステップ1: 商品選択・入荷数入力 -->
+    <div id="arrivalStep1">
+      <div class="modal-title">📦 入荷処理</div>
+      <div class="form-group">
+        <label class="form-label">商品（予約ありのもの）</label>
+        <select id="arrivalProduct" class="form-control">
+          <option value="">商品を選択...</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">入荷数</label>
+        <input type="number" id="arrivalQty" class="form-control" min="1" placeholder="入荷数量を入力">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-gray"    onclick="closeModal('arrivalModal')">キャンセル</button>
+        <button class="btn btn-primary" onclick="showArrivalPreview()">プレビュー表示 →</button>
+      </div>
+    </div>
+
+    <!-- ステップ2: 割り当てプレビュー・編集 -->
+    <div id="arrivalStep2" style="display:none">
+      <div class="modal-title" id="arrivalStep2Title">入荷処理 プレビュー</div>
+
+      <!-- サマリー（入荷数 / 割り当て済 / 残り） -->
+      <div class="arrival-summary" id="arrivalSummary"></div>
+
+      <div style="overflow-x:auto; max-height:45vh; overflow-y:auto;">
+        <table class="arrival-table">
+          <thead>
+            <tr>
+              <th style="width:26px"></th>
+              <th style="width:42px" class="num">No.</th>
+              <th>サロン名</th>
+              <th style="width:46px">担当</th>
+              <th style="width:46px" class="num">予約数</th>
+              <th style="width:72px" class="num">確定数</th>
+            </tr>
+          </thead>
+          <tbody id="arrivalTableBody"></tbody>
+        </table>
+      </div>
+
+      <div class="modal-actions" style="margin-top:14px">
+        <button class="btn btn-gray"    onclick="backToArrivalStep1()">← 戻る</button>
+        <button class="btn btn-success" id="arrivalExecuteBtn" onclick="executeArrival()">✅ 実行する</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1318,6 +1397,190 @@ function executeBulkConfirm() {
     },
     'btn-success'
   );
+}
+
+// ============================================================
+// 入荷処理（adminのみ）
+// ============================================================
+
+// 入荷処理の内部状態
+let arrivalProductId = null;
+let arrivalTotal     = 0;
+let arrivalRows      = []; // { reservation_no, salon_name, staff_name, quantity, confirm_qty, enabled }
+
+/** 入荷処理モーダルを開く */
+function openArrivalModal() {
+  if (currentUser?.yoyaku_role !== 'admin') return;
+
+  // ステップ1をリセット表示
+  document.getElementById('arrivalStep1').style.display = '';
+  document.getElementById('arrivalStep2').style.display = 'none';
+  document.getElementById('arrivalQty').value = '';
+
+  // 「予約」ステータスが存在する商品のみセレクトに表示
+  const hasPending = new Set(
+    reservations.filter(r => r.status === '予約').map(r => r.product_id)
+  );
+  const sel = document.getElementById('arrivalProduct');
+  sel.innerHTML = '<option value="">商品を選択...</option>';
+  products
+    .filter(p => hasPending.has(p.product_id))
+    .forEach(p => {
+      const cnt = reservations
+        .filter(r => r.product_id === p.product_id && r.status === '予約')
+        .reduce((s, r) => s + r.quantity, 0);
+      sel.innerHTML += `<option value="${p.product_id}">${esc(p.name)}（予約 ${cnt}個）</option>`;
+    });
+
+  openModal('arrivalModal');
+}
+
+/** プレビューを生成してステップ2へ */
+function showArrivalPreview() {
+  const productId = document.getElementById('arrivalProduct').value;
+  const qty       = Number(document.getElementById('arrivalQty').value);
+
+  if (!productId)    { showToast('商品を選択してください', 'error');   return; }
+  if (!qty || qty < 1) { showToast('入荷数を入力してください', 'error'); return; }
+
+  arrivalProductId = productId;
+  arrivalTotal     = qty;
+
+  // 当該商品の「予約」一覧をNo昇順に並べる
+  const pending = reservations
+    .filter(r => r.product_id === productId && r.status === '予約')
+    .sort((a, b) => a.reservation_no - b.reservation_no);
+
+  // 入荷数を使い切るまでNo昇順で自動割り当て
+  let remaining = qty;
+  arrivalRows = pending.map(r => {
+    const confirmQty = Math.min(r.quantity, remaining);
+    remaining -= confirmQty;
+    return {
+      reservation_no: r.reservation_no,
+      salon_name:     r.salon_name,
+      staff_name:     getShortName(r.staff_id, r.staff_name),
+      quantity:       r.quantity,
+      confirm_qty:    confirmQty,
+      enabled:        confirmQty > 0
+    };
+  });
+
+  const p = products.find(x => x.product_id === productId);
+  document.getElementById('arrivalStep2Title').textContent =
+    `入荷処理 プレビュー — ${p?.name || ''}`;
+
+  document.getElementById('arrivalStep1').style.display = 'none';
+  document.getElementById('arrivalStep2').style.display = '';
+  renderArrivalPreview();
+}
+
+/** プレビューテーブルを描画 */
+function renderArrivalPreview() {
+  const tbody = document.getElementById('arrivalTableBody');
+  tbody.innerHTML = arrivalRows.map((r, idx) => `
+    <tr class="${r.enabled ? '' : 'disabled'}">
+      <td>
+        <input type="checkbox" ${r.enabled ? 'checked' : ''}
+          onchange="onArrivalCheck(${idx}, this.checked)">
+      </td>
+      <td class="num">${r.reservation_no}</td>
+      <td style="font-size:12px">${esc(r.salon_name)}</td>
+      <td style="font-size:11px;color:#6b7280;white-space:nowrap">${esc(r.staff_name)}</td>
+      <td class="num">${r.quantity}</td>
+      <td class="num">
+        <input type="number" class="arrival-qty-input"
+          min="0" max="${r.quantity}" value="${r.confirm_qty}"
+          ${r.enabled ? '' : 'disabled'}
+          onchange="onArrivalQtyChange(${idx}, this.value)">
+      </td>
+    </tr>`).join('');
+
+  updateArrivalSummary();
+}
+
+/** チェックボックスON/OFF */
+function onArrivalCheck(idx, checked) {
+  arrivalRows[idx].enabled = checked;
+  if (!checked) {
+    arrivalRows[idx].confirm_qty = 0;
+  } else {
+    // 再有効化: 他の割り当て合計を除いた残り枠を上限に元の予約数を復元
+    const usedByOthers = arrivalRows.reduce(
+      (s, r, i) => i !== idx ? s + (r.enabled ? r.confirm_qty : 0) : s, 0
+    );
+    const avail = arrivalTotal - usedByOthers;
+    arrivalRows[idx].confirm_qty = Math.max(0, Math.min(arrivalRows[idx].quantity, avail));
+  }
+  renderArrivalPreview();
+}
+
+/** 確定数入力変更 */
+function onArrivalQtyChange(idx, val) {
+  const v = Math.max(0, Math.min(arrivalRows[idx].quantity, Number(val) || 0));
+  arrivalRows[idx].confirm_qty = v;
+  arrivalRows[idx].enabled     = v > 0;
+  updateArrivalSummary();
+}
+
+/** サマリー（残り個数カウンター）を更新 */
+function updateArrivalSummary() {
+  const assigned  = arrivalRows.reduce((s, r) => s + (r.enabled ? r.confirm_qty : 0), 0);
+  const remaining = arrivalTotal - assigned;
+  const isOver    = remaining < 0;
+
+  const el = document.getElementById('arrivalSummary');
+  el.innerHTML = `
+    <span>入荷数: <b>${arrivalTotal}</b>個</span>
+    <span>割り当て済: <b>${assigned}</b>個</span>
+    <span class="arrival-remaining ${isOver ? 'over' : ''}">残り: <b>${remaining}</b>個${isOver ? '　⚠️超過' : ''}</span>`;
+
+  document.getElementById('arrivalExecuteBtn').disabled = isOver;
+}
+
+/** ← 戻る（ステップ1へ） */
+function backToArrivalStep1() {
+  document.getElementById('arrivalStep1').style.display = '';
+  document.getElementById('arrivalStep2').style.display = 'none';
+}
+
+/** 入荷処理を実行 */
+async function executeArrival() {
+  const assigned = arrivalRows.reduce((s, r) => s + (r.enabled ? r.confirm_qty : 0), 0);
+  if (assigned > arrivalTotal) {
+    showToast('入荷数を超えて割り当てることはできません', 'error');
+    return;
+  }
+  const targets = arrivalRows.filter(r => r.enabled && r.confirm_qty > 0);
+  if (targets.length === 0) {
+    showToast('割り当て対象がありません', 'warning');
+    return;
+  }
+
+  showLoading();
+  try {
+    const res = await gasPost('processArrival', {
+      product_id:  arrivalProductId,
+      allocations: targets.map(r => ({
+        reservation_no: r.reservation_no,
+        confirm_qty:    r.confirm_qty
+      }))
+    });
+    if (!res.success) throw new Error(res.error);
+
+    closeModal('arrivalModal');
+    showToast(res.data.message, 'success');
+
+    // 予約一覧を再取得して確定フィルタで表示
+    await loadReservations();
+    document.getElementById('filterStatus').value = '確定';
+    switchTab('list');
+
+  } catch(e) {
+    showToast(e.message, 'error');
+  } finally {
+    hideLoading();
+  }
 }
 
 // ============================================================
