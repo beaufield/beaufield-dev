@@ -141,6 +141,9 @@
     }
     .reservation-card.status-予約 { border-left-color: var(--primary); }
     .reservation-card.status-確定 { border-left-color: var(--success); }
+    /* タップで編集できるカードは視覚的にインタラクティブを示す */
+    .reservation-card.editable { cursor: pointer; }
+    .reservation-card.editable:active { background: #f0f7ff; }
     /* 1行目: チェック + No. + サロン名 + ステータス + ボタン */
     .rc-row1 {
       display: flex; align-items: flex-start; gap: 5px;
@@ -332,7 +335,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.8.0</span>
+  <span class="header-version">v1.9.0</span>
 </header>
 
 <!-- ============================================================ -->
@@ -480,16 +483,16 @@
       <div id="editStockInfo" class="stock-info" style="display:none"></div>
     </div>
     <div class="form-group">
-      <label class="form-label">数量</label>
-      <input type="number" id="editQty" class="form-control" min="1">
-    </div>
-    <div class="form-group">
       <label class="form-label">発送方法</label>
       <select id="editDelivery" class="form-control">
         <option value="未定">未定</option>
         <option value="発送">発送</option>
         <option value="持参">持参</option>
       </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">数量 <span id="editQtyHint" style="font-weight:400;color:#9ca3af;font-size:11px"></span></label>
+      <input type="number" id="editQty" class="form-control" min="1">
     </div>
     <!-- 担当者：adminは選択、staffは自身固定 -->
     <div class="form-group" id="editStaffGroup">
@@ -986,24 +989,31 @@ function renderList() {
       ? `× ${r.quantity}個`
       : `${esc(r.product_name)} × ${r.quantity}個`;
 
+    // 削除ボタン（編集権限がある場合のみ表示）
     let actions = '';
     if (canEdit) {
-      actions += `<button class="btn btn-gray btn-sm" onclick="openEditModal(${r.reservation_no})">編集</button>`;
-      actions += `<button class="btn btn-danger btn-sm" onclick="confirmDelete(${r.reservation_no})">削除</button>`;
+      actions += `<button class="btn btn-danger btn-sm" onclick="event.stopPropagation();confirmDelete(${r.reservation_no})">削除</button>`;
     }
+    // 確定・予約に戻すボタンは事務（admin）のみ表示
     if (currentUser.yoyaku_role === 'admin' && r.status === '予約') {
-      actions += `<button class="btn btn-success btn-sm" onclick="confirmStatus(${r.reservation_no},'確定')">確定</button>`;
+      actions += `<button class="btn btn-success btn-sm" onclick="event.stopPropagation();confirmStatus(${r.reservation_no},'確定')">確定</button>`;
     }
     if (currentUser.yoyaku_role === 'admin' && r.status === '確定') {
-      actions += `<button class="btn btn-warning btn-sm" onclick="confirmStatus(${r.reservation_no},'予約')">予約に戻す</button>`;
+      actions += `<button class="btn btn-warning btn-sm" onclick="event.stopPropagation();confirmStatus(${r.reservation_no},'予約')">予約に戻す</button>`;
     }
 
+    // チェックボックス: stopPropagation でカードクリックとの干渉を防ぐ
     const checkbox = canEdit
-      ? `<input type="checkbox" class="rc-check" data-no="${r.reservation_no}" onchange="onCheckChange(this)">`
+      ? `<input type="checkbox" class="rc-check" data-no="${r.reservation_no}"
+           onclick="event.stopPropagation()" onchange="onCheckChange(this)">`
       : '';
 
+    // カードタップで編集モーダルを開く（編集権限がある場合のみ）
+    const cardClick = canEdit ? `onclick="openEditModal(${r.reservation_no})"` : '';
+    const cardEditable = canEdit ? 'editable' : '';
+
     return `
-      <div class="reservation-card status-${esc(r.status)}">
+      <div class="reservation-card status-${esc(r.status)} ${cardEditable}" ${cardClick}>
         <div class="rc-row1">
           ${checkbox}
           <span class="rc-no">No.${r.reservation_no}</span>
@@ -1207,6 +1217,8 @@ function openEditModal(reservationNo) {
   document.getElementById('editModalTitle').textContent = `予約 No.${reservationNo} を編集`;
   document.getElementById('editSalon').value    = r.salon_name;
   document.getElementById('editQty').value      = r.quantity;
+  document.getElementById('editQty').max        = r.quantity;  // 数量増加を入力レベルで制限
+  document.getElementById('editQtyHint').textContent = `（上限 ${r.quantity}個・増量不可）`;
   document.getElementById('editDelivery').value = r.delivery_method;
 
   // ドロップダウンは遅延セット（options が生成されてから）
@@ -1231,6 +1243,13 @@ async function saveEditReservation() {
 
   if (!staffId || !salonName || !productId || qty < 1) {
     showToast('すべての項目を入力してください', 'error');
+    return;
+  }
+
+  // 数量増加は予約優先度の公平性を損なうため拒否
+  const orig = reservations.find(x => x.reservation_no === reservationNo);
+  if (orig && qty > orig.quantity) {
+    showToast(`数量を増やすことはできません（現在: ${orig.quantity}個）`, 'error');
     return;
   }
 

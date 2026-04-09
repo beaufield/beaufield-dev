@@ -10,7 +10,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.5.0';
+const VERSION  = '1.5.1';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -505,6 +505,11 @@ function saveReservation(data) {
         if (userInfo.yoyaku_role !== 'admin') {
           if (String(rows[i][6]) !== String(data._userId)) return _err('他の担当者の予約は変更できません');
           if (String(rows[i][5]) !== '予約') return _err('確定済みの予約は変更できません');
+        }
+        // 数量増加は予約優先度の公平性を損なうため拒否（admin含む全ユーザー）
+        const originalQty = Number(rows[i][4]);
+        if (quantity > originalQty) {
+          return _err(`数量を増やすことはできません（現在: ${originalQty}個）`);
         }
         rs.getRange(i + 2, 2, 1, 10).setValues([[
           salonName, productId, product.name, quantity,
