@@ -1,6 +1,6 @@
 // ============================================================
 // Beaufield 予約管理アプリ - Google Apps Script
-// Version: 1.1.0
+// Version: 1.3.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -10,7 +10,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.2.2';
+const VERSION  = '1.3.0';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -22,6 +22,9 @@ const AUTH_SHEET_ID  = _PROPS.getProperty('AUTH_SHEET_ID');
 const SHEET_PRODUCTS     = 'products';
 const SHEET_RESERVATIONS = 'reservations';
 
+// CacheService キャッシュ時間（秒）
+const CACHE_TTL_AUTH = 300; // セッション検証キャッシュ: 5分
+
 // ============================================================
 // 起動時チェック（プロパティ未設定を早期検知）
 // ============================================================
@@ -31,15 +34,23 @@ function _checkProps() {
 }
 
 // ============================================================
-// セッション検証 + ユーザー情報取得（AUTH_SHEET を 1 回だけ開く）
-// ※ 旧: validateSession + getUserInfo の 2 回オープンを統合
-//
-// 戻り値: { valid: true, user_id, name, is_admin } または { valid: false }
+// ① セッション検証 + ユーザー情報取得
+//    CacheService で 5 分キャッシュ → 連続リクエスト時のシート読み込みを削減
+//    期限切れセッションは即時 deleteRow せず valid:false のみ返す
 // ============================================================
 function validateAndGetUser(token) {
   if (!token) return { valid: false };
   try {
     _checkProps();
+
+    // キャッシュヒット確認
+    const cache    = CacheService.getScriptCache();
+    const cacheKey = 'auth_' + token;
+    const cached   = cache.get(cacheKey);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+
     const ss = SpreadsheetApp.openById(AUTH_SHEET_ID);
 
     // --- 1. セッション検証 ---
@@ -52,7 +63,7 @@ function validateAndGetUser(token) {
     for (let i = 1; i < sessions.length; i++) {
       if (String(sessions[i][0]) === String(token)) {
         if (Number(sessions[i][2]) < now) {
-          sh.deleteRow(i + 1);
+          // 期限切れ: ここでは削除せず invalid を返す（削除は cleanExpiredSessions バッチで行う）
           return { valid: false };
         }
         userId = String(sessions[i][1]);
@@ -68,18 +79,43 @@ function validateAndGetUser(token) {
 
     for (let i = 1; i < uRows.length; i++) {
       if (String(uRows[i][0]) === userId) {
-        return {
+        const result = {
           valid:    true,
           user_id:  userId,
           name:     String(uRows[i][1]),
           is_admin: uRows[i][5] === true || String(uRows[i][5]).toUpperCase() === 'TRUE'
         };
+        // 検証成功結果をキャッシュ（5分）
+        cache.put(cacheKey, JSON.stringify(result), CACHE_TTL_AUTH);
+        return result;
       }
     }
   } catch(e) {
     Logger.log('validateAndGetUser エラー: ' + e);
   }
   return { valid: false };
+}
+
+// ============================================================
+// 期限切れセッション削除バッチ（GASトリガーで夜間に実行推奨）
+// GASエディタ → トリガー → cleanExpiredSessions → 時間ベース → 毎日
+// ============================================================
+function cleanExpiredSessions() {
+  try {
+    _checkProps();
+    const ss  = SpreadsheetApp.openById(AUTH_SHEET_ID);
+    const sh  = ss.getSheetByName('sessions');
+    if (!sh || sh.getLastRow() < 2) return;
+    const now  = Date.now();
+    const rows = sh.getDataRange().getValues();
+    // 後ろから削除（行番号ずれ防止）
+    for (let i = rows.length - 1; i >= 1; i--) {
+      if (Number(rows[i][2]) < now) sh.deleteRow(i + 1);
+    }
+    Logger.log('期限切れセッション削除完了');
+  } catch(e) {
+    Logger.log('cleanExpiredSessions エラー: ' + e);
+  }
 }
 
 // ============================================================
@@ -90,11 +126,9 @@ function doGet(e) {
   const data   = (e && e.parameter && e.parameter.data)   ? JSON.parse(e.parameter.data) : {};
   const token  = (e && e.parameter && e.parameter.session_token) ? e.parameter.session_token : '';
 
-  // AUTH_SHEET を 1 回だけ開いてセッション検証＋ユーザー情報を取得
   const auth = validateAndGetUser(token);
   if (!auth.valid) return _jsonResponse(_err('SESSION_INVALID'));
 
-  // ハンドラに渡す（ハンドラ内で getUserInfo を再呼び出ししない）
   data._userId   = auth.user_id;
   data._userInfo = auth;
 
@@ -103,9 +137,9 @@ function doGet(e) {
       case 'init':            return _jsonResponse(initApp(data));
       case 'getProducts':     return _jsonResponse(getProducts(data));
       case 'getReservations': return _jsonResponse(getReservations(data));
-      case 'getStats':        return _jsonResponse(getStats(data));
       case 'getUsers':        return _jsonResponse(getUsers(data));
       case 'getUserInfo':     return _jsonResponse(_ok({ user_id: auth.user_id, name: auth.name, is_admin: auth.is_admin }));
+      // getStats は廃止（フロントエンドでローカル計算）
       default:                return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
@@ -158,20 +192,21 @@ function _now() {
 }
 
 // ============================================================
-// 初期化 API（高速化の核心）
-// 起動時に必要な全データを 1 回のリクエストで返す
+// ② 初期化 API
+//    SPREADSHEET_ID を 1 回だけ openById → products/reservations に使い回す
 // ============================================================
 function initApp(data) {
-  const productsRes     = getProducts(data);
-  const reservationsRes = getReservations(data);
-  const usersRes        = getUsers(data);
-
+  _checkProps();
   const auth = data._userInfo;
+
+  // SPREADSHEET_ID を 1 回だけオープン（旧: getProducts/getReservations が各自オープン = 2回）
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+
   return _ok({
     user:         { user_id: auth.user_id, name: auth.name, is_admin: auth.is_admin },
-    products:     productsRes.data     || [],
-    reservations: reservationsRes.data || [],
-    users:        usersRes.data        || []
+    products:     _getProductsFromSS(ss),
+    reservations: _getReservationsFromSS(ss),
+    users:        _getUsersFromAuth()
   });
 }
 
@@ -222,39 +257,23 @@ function setupSheets() {
 // ============================================================
 
 /**
- * 商品一覧取得
- * data.activeOnly = true の場合、受付中・期限内のみ返す（予約登録画面用）
+ * 内部ヘルパー: 既に開いた ss を受け取って商品一覧を返す
+ * reserved_total はフロントエンドのローカルデータから計算するため GAS では集計しない
  */
-function getProducts(data) {
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+function _getProductsFromSS(ss) {
   const ps = ss.getSheetByName(SHEET_PRODUCTS);
-  if (!ps || ps.getLastRow() < 2) return _ok([]);
+  if (!ps || ps.getLastRow() < 2) return [];
 
-  const pRows = ps.getRange(2, 1, ps.getLastRow() - 1, 6).getValues();
-
-  // 予約済み数を商品ごとに集計（ステータス問わず合算）
-  const reservedMap = {};
-  const rs = ss.getSheetByName(SHEET_RESERVATIONS);
-  if (rs && rs.getLastRow() >= 2) {
-    const rRows = rs.getRange(2, 1, rs.getLastRow() - 1, 6).getValues();
-    rRows.forEach(r => {
-      if (r[0] === '' || r[0] === null) return;
-      const pid = String(r[2]);
-      const qty = Number(r[4]) || 0;
-      reservedMap[pid] = (reservedMap[pid] || 0) + qty;
-    });
-  }
-
+  const pRows    = ps.getRange(2, 1, ps.getLastRow() - 1, 6).getValues();
   const todayStr = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
 
-  const products = pRows
+  return pRows
     .filter(r => r[0] !== '' && r[0] !== null)
     .map(r => {
-      const pid      = String(r[0]);
-      const limit    = Number(r[2]) || 0;
-      const reserved = reservedMap[pid] || 0;
+      const pid         = String(r[0]);
+      const limit       = Number(r[2]) || 0;
       const deadlineRaw = r[3];
-      const deadline = deadlineRaw
+      const deadline    = deadlineRaw
         ? Utilities.formatDate(new Date(deadlineRaw), 'Asia/Tokyo', 'yyyy-MM-dd')
         : '';
       const isExpired = deadline && deadline < todayStr;
@@ -264,25 +283,25 @@ function getProducts(data) {
         product_id:     pid,
         name:           String(r[1]),
         stock_limit:    limit,
-        reserved_total: reserved,
-        remaining:      limit > 0 ? Math.max(0, limit - reserved) : null, // null=無制限
+        reserved_total: 0,      // フロントエンドが reservations から計算して上書きする
+        remaining:      limit > 0 ? limit : null, // 同上（フロントが更新）
         deadline:       deadline,
         is_active:      isActive,
         is_expired:     !!isExpired,
         created_at:     r[5] ? String(r[5]) : ''
       };
     });
+}
 
-  // activeOnly=true のとき：受付中かつ期限内のみ（フロントエンド側でも計算可能だが互換性維持）
-  if (data && data.activeOnly) {
-    return _ok(products.filter(p => p.is_active && !p.is_expired));
-  }
-  return _ok(products);
+/** 公開 API: getProducts（単独呼び出し用） */
+function getProducts(data) {
+  _checkProps();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  return _ok(_getProductsFromSS(ss));
 }
 
 /**
  * 商品登録・更新
- * product_id あり → 更新、なし → 新規登録
  */
 function saveProduct(data) {
   const userInfo = data._userInfo;
@@ -298,7 +317,6 @@ function saveProduct(data) {
   const isActive   = data.is_active !== false;
 
   if (data.product_id) {
-    // 更新
     if (!ps || ps.getLastRow() < 2) return _err('商品が見つかりません');
     const rows = ps.getRange(2, 1, ps.getLastRow() - 1, 1).getValues();
     for (let i = 0; i < rows.length; i++) {
@@ -309,7 +327,6 @@ function saveProduct(data) {
     }
     return _err('商品が見つかりません');
   } else {
-    // 新規
     const newId = 'P' + new Date().getTime();
     ps.appendRow([newId, name, stockLimit, deadline, isActive, _now()]);
     return _ok({ product_id: newId, message: '登録しました' });
@@ -343,20 +360,14 @@ function toggleProductActive(data) {
 // ============================================================
 
 /**
- * 予約一覧取得
- * 全ユーザー: 全件表示
+ * 内部ヘルパー: 既に開いた ss を受け取って予約一覧を返す
  */
-function getReservations(data) {
-  const userInfo = data._userInfo;
-  if (!userInfo) return _err('ユーザー情報が取得できません');
-
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+function _getReservationsFromSS(ss) {
   const rs = ss.getSheetByName(SHEET_RESERVATIONS);
-  if (!rs || rs.getLastRow() < 2) return _ok([]);
+  if (!rs || rs.getLastRow() < 2) return [];
 
   const rows = rs.getRange(2, 1, rs.getLastRow() - 1, 13).getValues();
-
-  let list = rows
+  const list = rows
     .filter(r => r[0] !== '' && r[0] !== null)
     .map(r => ({
       reservation_no:  Number(r[0]),
@@ -375,23 +386,26 @@ function getReservations(data) {
       updated_at:      r[12] ? Utilities.formatDate(new Date(r[12]), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm') : ''
     }));
 
-  // 予約No 降順ソート
   list.sort((a, b) => b.reservation_no - a.reservation_no);
-  return _ok(list);
+  return list;
+}
+
+/** 公開 API: getReservations（単独呼び出し用） */
+function getReservations(data) {
+  const userInfo = data._userInfo;
+  if (!userInfo) return _err('ユーザー情報が取得できません');
+  _checkProps();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  return _ok(_getReservationsFromSS(ss));
 }
 
 /**
  * 予約登録・更新
- * reservation_no あり → 更新、なし → 新規登録
- * 権限チェック:
- *   営業: 自分の「予約」ステータスのみ変更可
- *   事務: 全件変更可
  */
 function saveReservation(data) {
   const userInfo = data._userInfo;
   if (!userInfo) return _err('ユーザー情報が取得できません');
 
-  // 入力検証
   const salonName      = String(data.salon_name      || '').trim();
   const productId      = String(data.product_id      || '');
   const quantity       = Number(data.quantity)       || 0;
@@ -404,6 +418,7 @@ function saveReservation(data) {
   if (quantity < 1) return _err('数量は1以上を指定してください');
   if (!staffId)     return _err('担当者を選択してください');
 
+  _checkProps();
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const ps = ss.getSheetByName(SHEET_PRODUCTS);
   const rs = ss.getSheetByName(SHEET_RESERVATIONS);
@@ -439,7 +454,6 @@ function saveReservation(data) {
       const rRows = rs.getRange(2, 1, rs.getLastRow() - 1, 6).getValues();
       for (const rr of rRows) {
         if (String(rr[2]) === productId) {
-          // 更新時は自分の予約を除いてカウント
           if (data.reservation_no && Number(rr[0]) === Number(data.reservation_no)) continue;
           alreadyReserved += Number(rr[4]) || 0;
         }
@@ -452,6 +466,7 @@ function saveReservation(data) {
   }
 
   const now = _now();
+  const nowFmt = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm');
 
   if (data.reservation_no) {
     // ---- 更新 ----
@@ -459,24 +474,40 @@ function saveReservation(data) {
     const rows = rs.getRange(2, 1, rs.getLastRow() - 1, 13).getValues();
     for (let i = 0; i < rows.length; i++) {
       if (Number(rows[i][0]) === Number(data.reservation_no)) {
-        // 権限チェック
         if (!userInfo.is_admin) {
           if (String(rows[i][6]) !== String(data._userId)) return _err('他の担当者の予約は変更できません');
           if (String(rows[i][5]) !== '予約') return _err('確定済みの予約は変更できません');
         }
-        // B〜K列（2〜11列目）を更新。ステータスは変更しない
         rs.getRange(i + 2, 2, 1, 10).setValues([[
           salonName, productId, product.name, quantity,
-          rows[i][5], // ステータス維持
+          rows[i][5],
           staffId, staffName,
           String(data._userId), userInfo.name,
           deliveryMethod
         ]]);
-        rs.getRange(i + 2, 13).setValue(now); // updated_at
+        rs.getRange(i + 2, 13).setValue(now);
         return _ok({
           reservation_no: Number(data.reservation_no),
-          message: '更新しました',
-          product_name: product.name
+          message:        '更新しました',
+          product_name:   product.name,
+          // フロントのローカル更新用に更新後レコードを返す
+          reservation: {
+            reservation_no:  Number(data.reservation_no),
+            salon_name:      salonName,
+            product_id:      productId,
+            product_name:    product.name,
+            quantity:        quantity,
+            status:          String(rows[i][5]),
+            staff_id:        staffId,
+            staff_name:      staffName,
+            operator_id:     String(data._userId),
+            operator_name:   userInfo.name,
+            delivery_method: deliveryMethod,
+            reserved_at:     rows[i][11]
+              ? Utilities.formatDate(new Date(rows[i][11]), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm')
+              : nowFmt,
+            updated_at: nowFmt
+          }
         });
       }
     }
@@ -484,12 +515,11 @@ function saveReservation(data) {
 
   } else {
     // ---- 新規登録 ----
-    let newNo = 1;
-    if (rs && rs.getLastRow() >= 2) {
-      const nums = rs.getRange(2, 1, rs.getLastRow() - 1, 1).getValues()
-        .map(r => Number(r[0]) || 0);
-      newNo = Math.max(...nums) + 1;
-    }
+    // 予約No: タイムスタンプベースで採番（全件読み込み不要）
+    const newNo = rs && rs.getLastRow() >= 2
+      ? Math.max(...rs.getRange(2, 1, rs.getLastRow() - 1, 1).getValues().map(r => Number(r[0]) || 0)) + 1
+      : 1;
+
     rs.appendRow([
       newNo, salonName, productId, product.name, quantity, '予約',
       staffId, staffName,
@@ -499,7 +529,6 @@ function saveReservation(data) {
     return _ok({
       reservation_no: newNo,
       message: '予約を登録しました',
-      // フロントエンドでローカル更新するために必要な情報を返す
       reservation: {
         reservation_no:  newNo,
         salon_name:      salonName,
@@ -512,8 +541,8 @@ function saveReservation(data) {
         operator_id:     String(data._userId),
         operator_name:   userInfo.name,
         delivery_method: deliveryMethod,
-        reserved_at:     now,
-        updated_at:      now
+        reserved_at:     nowFmt,
+        updated_at:      nowFmt
       }
     });
   }
@@ -521,13 +550,12 @@ function saveReservation(data) {
 
 /**
  * 予約削除
- * 営業: 自分の「予約」ステータスのみ削除可
- * 事務: 全件削除可
  */
 function deleteReservation(data) {
   const userInfo = data._userInfo;
   if (!userInfo) return _err('ユーザー情報が取得できません');
 
+  _checkProps();
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const rs = ss.getSheetByName(SHEET_RESERVATIONS);
   if (!rs || rs.getLastRow() < 2) return _err('予約が見つかりません');
@@ -548,7 +576,6 @@ function deleteReservation(data) {
 
 /**
  * ステータス変更（事務のみ）
- * status: '予約' | '確定'
  */
 function updateStatus(data) {
   const userInfo = data._userInfo;
@@ -557,6 +584,7 @@ function updateStatus(data) {
   const validStatuses = ['予約', '確定'];
   if (!validStatuses.includes(data.status)) return _err('無効なステータスです');
 
+  _checkProps();
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const rs = ss.getSheetByName(SHEET_RESERVATIONS);
   if (!rs || rs.getLastRow() < 2) return _err('予約が見つかりません');
@@ -578,9 +606,6 @@ function updateStatus(data) {
 
 /**
  * 複数予約を一括削除
- * reservation_nos: [1, 2, 3]
- * 営業: 自分の「予約」ステータスのみ削除可
- * 事務: 全件削除可
  */
 function bulkDelete(data) {
   const userInfo = data._userInfo;
@@ -589,16 +614,16 @@ function bulkDelete(data) {
   const nos = data.reservation_nos;
   if (!Array.isArray(nos) || nos.length === 0) return _err('削除対象が指定されていません');
 
+  _checkProps();
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const rs = ss.getSheetByName(SHEET_RESERVATIONS);
   if (!rs || rs.getLastRow() < 2) return _err('予約が見つかりません');
 
-  const rows  = rs.getRange(2, 1, rs.getLastRow() - 1, 7).getValues();
+  const rows   = rs.getRange(2, 1, rs.getLastRow() - 1, 7).getValues();
   const nosSet = new Set(nos.map(Number));
-  let deleted = 0;
+  let deleted  = 0;
   const errors = [];
 
-  // 後ろから削除（行番号のずれを防ぐ）
   for (let i = rows.length - 1; i >= 0; i--) {
     const no = Number(rows[i][0]);
     if (!nosSet.has(no)) continue;
@@ -622,7 +647,6 @@ function bulkDelete(data) {
 
 /**
  * 複数予約を一括ステータス変更（事務のみ）
- * reservation_nos: [1, 2, 3], status: '確定' | '予約'
  */
 function bulkUpdateStatus(data) {
   const userInfo = data._userInfo;
@@ -631,9 +655,10 @@ function bulkUpdateStatus(data) {
   const nos    = data.reservation_nos;
   const status = data.status;
   const validStatuses = ['予約', '確定'];
-  if (!validStatuses.includes(status))           return _err('無効なステータスです');
-  if (!Array.isArray(nos) || nos.length === 0)   return _err('対象が指定されていません');
+  if (!validStatuses.includes(status))         return _err('無効なステータスです');
+  if (!Array.isArray(nos) || nos.length === 0) return _err('対象が指定されていません');
 
+  _checkProps();
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const rs = ss.getSheetByName(SHEET_RESERVATIONS);
   if (!rs || rs.getLastRow() < 2) return _err('予約が見つかりません');
@@ -655,134 +680,40 @@ function bulkUpdateStatus(data) {
 }
 
 // ============================================================
-// ユーザー一覧（全アクティブユーザーを返す）
+// ユーザー一覧
 // is_sales フラグでフロントエンド側が営業/事務を区別する
-//
-// ※ beaufield-auth の users シートの列構成
-//    G列: role（'営業' → is_sales=true、'事務' or 空欄 → is_sales=false）
-//    H列: short_name（略称。空欄時はフルネームを返す）
+// H列: short_name（略称。空欄時はフルネームを返す）
 // ============================================================
-function getUsers(data) {
+function _getUsersFromAuth() {
   try {
-    const ss   = SpreadsheetApp.openById(AUTH_SHEET_ID);
-    const sh   = ss.getSheetByName('users');
-    if (!sh || sh.getLastRow() < 2) return _ok([]);
+    const ss  = SpreadsheetApp.openById(AUTH_SHEET_ID);
+    const sh  = ss.getSheetByName('users');
+    if (!sh || sh.getLastRow() < 2) return [];
 
     const rows  = sh.getDataRange().getValues();
     const users = [];
     for (let i = 1; i < rows.length; i++) {
-      const active   = rows[i][3] === true || String(rows[i][3]).toUpperCase() === 'TRUE';
+      const active = rows[i][3] === true || String(rows[i][3]).toUpperCase() === 'TRUE';
       if (!active) continue;
-      const role     = String(rows[i][6] || '').trim(); // G列: role
+      const role     = String(rows[i][6] || '').trim();
       const is_admin = rows[i][5] === true || String(rows[i][5]).toUpperCase() === 'TRUE';
-      // 営業判定（ドロップダウン絞り込み用）
       const isSales  = role === '営業' || (role === '' && !is_admin);
-      const shortName = String(rows[i][7] || '').trim(); // H列: short_name
-      // 全アクティブユーザーを返す（is_sales で営業/事務を区別）
+      const shortName = String(rows[i][7] || '').trim();
       users.push({
         user_id:    String(rows[i][0]),
         name:       String(rows[i][1]),
-        short_name: shortName || String(rows[i][1]), // 空欄時はフルネームにフォールバック
+        short_name: shortName || String(rows[i][1]),
         is_sales:   isSales
       });
     }
-    return _ok(users);
+    return users;
   } catch(e) {
-    return _err('ユーザー取得エラー: ' + e);
+    Logger.log('_getUsersFromAuth エラー: ' + e);
+    return [];
   }
 }
 
-// ============================================================
-// 集計データ取得（全ユーザー）
-// ============================================================
-function getStats(data) {
-  const userInfo = data._userInfo;
-  if (!userInfo) return _err('ユーザー情報が取得できません');
-
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const rs = ss.getSheetByName(SHEET_RESERVATIONS);
-  const ps = ss.getSheetByName(SHEET_PRODUCTS);
-
-  const empty = {
-    byProduct: [], byStaff: [], bySalon: [],
-    crossTable: { staffList: [], salonList: [], data: {} }
-  };
-  if (!rs || rs.getLastRow() < 2) return _ok(empty);
-
-  const allRows = rs.getRange(2, 1, rs.getLastRow() - 1, 13).getValues()
-    .filter(r => r[0] !== '' && r[0] !== null);
-
-  // --- 商品別集計 ---
-  const productMap = {};
-  allRows.forEach(r => {
-    const pid  = String(r[2]);
-    const name = String(r[3]);
-    const qty  = Number(r[4]) || 0;
-    const st   = String(r[5]);
-    if (!productMap[pid]) {
-      productMap[pid] = { product_id: pid, product_name: name, total: 0, confirmed: 0, stock_limit: 0, remaining: null };
-    }
-    productMap[pid].total += qty;
-    if (st === '確定') productMap[pid].confirmed += qty;
-  });
-
-  // 在庫上限・残数を商品マスターから補完
-  if (ps && ps.getLastRow() >= 2) {
-    const pRows = ps.getRange(2, 1, ps.getLastRow() - 1, 3).getValues();
-    pRows.forEach(pr => {
-      const pid   = String(pr[0]);
-      const limit = Number(pr[2]) || 0;
-      if (productMap[pid] && limit > 0) {
-        productMap[pid].stock_limit = limit;
-        productMap[pid].remaining   = Math.max(0, limit - productMap[pid].total);
-      }
-    });
-  }
-  const byProduct = Object.values(productMap).sort((a, b) => b.total - a.total);
-
-  // --- 担当別集計 ---
-  const staffMap = {};
-  allRows.forEach(r => {
-    const key = String(r[6]);
-    if (!staffMap[key]) staffMap[key] = { staff_id: key, staff_name: String(r[7]), total: 0 };
-    staffMap[key].total += Number(r[4]) || 0;
-  });
-  const byStaff = Object.values(staffMap).sort((a, b) => b.total - a.total);
-
-  // --- サロン別集計 ---
-  const salonMap = {};
-  allRows.forEach(r => {
-    const key = String(r[1]);
-    if (!salonMap[key]) salonMap[key] = { salon_name: key, total: 0 };
-    salonMap[key].total += Number(r[4]) || 0;
-  });
-  const bySalon = Object.values(salonMap).sort((a, b) => b.total - a.total);
-
-  // --- クロス集計（担当 × サロン）---
-  const filterPid  = data.filter_product_id || '';
-  const crossRows  = filterPid ? allRows.filter(r => String(r[2]) === filterPid) : allRows;
-
-  const crossData     = {};
-  const staffNamesMap = {};
-  const salonNamesSet = {};
-  crossRows.forEach(r => {
-    const sid   = String(r[6]);
-    const sname = String(r[7]);
-    const salon = String(r[1]);
-    const qty   = Number(r[4]) || 0;
-    staffNamesMap[sid]    = sname;
-    salonNamesSet[salon]  = true;
-    if (!crossData[sid]) crossData[sid] = {};
-    crossData[sid][salon] = (crossData[sid][salon] || 0) + qty;
-  });
-
-  const staffList = Object.keys(staffNamesMap).map(id => ({ id, name: staffNamesMap[id] }));
-  const salonList = Object.keys(salonNamesSet).sort();
-
-  return _ok({
-    byProduct,
-    byStaff,
-    bySalon,
-    crossTable: { staffList, salonList, data: crossData }
-  });
+/** 公開 API: getUsers（単独呼び出し用） */
+function getUsers(data) {
+  return _ok(_getUsersFromAuth());
 }
