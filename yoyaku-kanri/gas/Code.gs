@@ -1,6 +1,6 @@
 // ============================================================
 // Beaufield 予約管理アプリ - Google Apps Script
-// Version: 1.3.0
+// Version: 1.4.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -10,7 +10,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.3.0';
+const VERSION  = '1.4.0';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -35,8 +35,9 @@ function _checkProps() {
 
 // ============================================================
 // ① セッション検証 + ユーザー情報取得
+//    beaufield-auth の user_app_roles シートからアプリ固有ロール取得
+//    yoyaku_role: "admin"（事務） / "staff"（営業） / null（未登録）
 //    CacheService で 5 分キャッシュ → 連続リクエスト時のシート読み込みを削減
-//    期限切れセッションは即時 deleteRow せず valid:false のみ返す
 // ============================================================
 function validateAndGetUser(token) {
   if (!token) return { valid: false };
@@ -47,9 +48,7 @@ function validateAndGetUser(token) {
     const cache    = CacheService.getScriptCache();
     const cacheKey = 'auth_' + token;
     const cached   = cache.get(cacheKey);
-    if (cached) {
-      return JSON.parse(cached);
-    }
+    if (cached) return JSON.parse(cached);
 
     const ss = SpreadsheetApp.openById(AUTH_SHEET_ID);
 
@@ -72,24 +71,45 @@ function validateAndGetUser(token) {
     }
     if (!userId) return { valid: false };
 
-    // --- 2. ユーザー情報取得（同じ SS を使い回す） ---
+    // --- 2. ユーザー情報取得 ---
     const ush = ss.getSheetByName('users');
     if (!ush) return { valid: false };
     const uRows = ush.getDataRange().getValues();
+    let userName = null;
 
     for (let i = 1; i < uRows.length; i++) {
       if (String(uRows[i][0]) === userId) {
-        const result = {
-          valid:    true,
-          user_id:  userId,
-          name:     String(uRows[i][1]),
-          is_admin: uRows[i][5] === true || String(uRows[i][5]).toUpperCase() === 'TRUE'
-        };
-        // 検証成功結果をキャッシュ（5分）
-        cache.put(cacheKey, JSON.stringify(result), CACHE_TTL_AUTH);
-        return result;
+        userName = String(uRows[i][1]);
+        break;
       }
     }
+    if (!userName) return { valid: false };
+
+    // --- 3. user_app_roles からアプリ固有ロール取得 ---
+    //    "admin" → 事務（商品管理・全予約管理）
+    //    "staff" → 営業（担当者として登録・自分の予約のみ操作）
+    //    未登録  → null（アクセス不可）
+    const arSh = ss.getSheetByName('user_app_roles');
+    let yoyakuRole = null;
+    if (arSh && arSh.getLastRow() >= 2) {
+      const arRows = arSh.getDataRange().getValues();
+      for (let i = 1; i < arRows.length; i++) {
+        if (String(arRows[i][0]) === userId && String(arRows[i][1]) === APP_NAME) {
+          yoyakuRole = String(arRows[i][2]).trim() || null;
+          break;
+        }
+      }
+    }
+
+    const result = {
+      valid:       true,
+      user_id:     userId,
+      name:        userName,
+      yoyaku_role: yoyakuRole   // "admin" / "staff" / null
+    };
+    cache.put(cacheKey, JSON.stringify(result), CACHE_TTL_AUTH);
+    return result;
+
   } catch(e) {
     Logger.log('validateAndGetUser エラー: ' + e);
   }
@@ -138,8 +158,7 @@ function doGet(e) {
       case 'getProducts':     return _jsonResponse(getProducts(data));
       case 'getReservations': return _jsonResponse(getReservations(data));
       case 'getUsers':        return _jsonResponse(getUsers(data));
-      case 'getUserInfo':     return _jsonResponse(_ok({ user_id: auth.user_id, name: auth.name, is_admin: auth.is_admin }));
-      // getStats は廃止（フロントエンドでローカル計算）
+      case 'getUserInfo':     return _jsonResponse(_ok({ user_id: auth.user_id, name: auth.name, yoyaku_role: auth.yoyaku_role }));
       default:                return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
@@ -193,17 +212,25 @@ function _now() {
 
 // ============================================================
 // ② 初期化 API
+//    user_app_roles 未登録ユーザーはここで ACCESS_DENIED を返す
 //    SPREADSHEET_ID を 1 回だけ openById → products/reservations に使い回す
 // ============================================================
 function initApp(data) {
   _checkProps();
   const auth = data._userInfo;
 
-  // SPREADSHEET_ID を 1 回だけオープン（旧: getProducts/getReservations が各自オープン = 2回）
+  // user_app_roles に yoyaku-kanri のエントリがないユーザーはアクセス不可
+  if (!auth.yoyaku_role) return _err('ACCESS_DENIED');
+
+  // SPREADSHEET_ID を 1 回だけオープン
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
 
   return _ok({
-    user:         { user_id: auth.user_id, name: auth.name, is_admin: auth.is_admin },
+    user: {
+      user_id:     auth.user_id,
+      name:        auth.name,
+      yoyaku_role: auth.yoyaku_role  // "admin" or "staff"
+    },
     products:     _getProductsFromSS(ss),
     reservations: _getReservationsFromSS(ss),
     users:        _getUsersFromAuth()
@@ -301,11 +328,11 @@ function getProducts(data) {
 }
 
 /**
- * 商品登録・更新
+ * 商品登録・更新（adminのみ）
  */
 function saveProduct(data) {
   const userInfo = data._userInfo;
-  if (!userInfo || !userInfo.is_admin) return _err('権限がありません');
+  if (!userInfo || userInfo.yoyaku_role !== 'admin') return _err('権限がありません');
 
   const ss   = SpreadsheetApp.openById(SPREADSHEET_ID);
   const ps   = ss.getSheetByName(SHEET_PRODUCTS);
@@ -334,11 +361,11 @@ function saveProduct(data) {
 }
 
 /**
- * 商品の有効 / 無効を切り替える
+ * 商品の有効 / 無効を切り替える（adminのみ）
  */
 function toggleProductActive(data) {
   const userInfo = data._userInfo;
-  if (!userInfo || !userInfo.is_admin) return _err('権限がありません');
+  if (!userInfo || userInfo.yoyaku_role !== 'admin') return _err('権限がありません');
 
   const ss   = SpreadsheetApp.openById(SPREADSHEET_ID);
   const ps   = ss.getSheetByName(SHEET_PRODUCTS);
@@ -465,7 +492,7 @@ function saveReservation(data) {
     }
   }
 
-  const now = _now();
+  const now    = _now();
   const nowFmt = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm');
 
   if (data.reservation_no) {
@@ -474,7 +501,7 @@ function saveReservation(data) {
     const rows = rs.getRange(2, 1, rs.getLastRow() - 1, 13).getValues();
     for (let i = 0; i < rows.length; i++) {
       if (Number(rows[i][0]) === Number(data.reservation_no)) {
-        if (!userInfo.is_admin) {
+        if (userInfo.yoyaku_role !== 'admin') {
           if (String(rows[i][6]) !== String(data._userId)) return _err('他の担当者の予約は変更できません');
           if (String(rows[i][5]) !== '予約') return _err('確定済みの予約は変更できません');
         }
@@ -490,7 +517,6 @@ function saveReservation(data) {
           reservation_no: Number(data.reservation_no),
           message:        '更新しました',
           product_name:   product.name,
-          // フロントのローカル更新用に更新後レコードを返す
           reservation: {
             reservation_no:  Number(data.reservation_no),
             salon_name:      salonName,
@@ -515,7 +541,6 @@ function saveReservation(data) {
 
   } else {
     // ---- 新規登録 ----
-    // 予約No: タイムスタンプベースで採番（全件読み込み不要）
     const newNo = rs && rs.getLastRow() >= 2
       ? Math.max(...rs.getRange(2, 1, rs.getLastRow() - 1, 1).getValues().map(r => Number(r[0]) || 0)) + 1
       : 1;
@@ -563,7 +588,7 @@ function deleteReservation(data) {
   const rows = rs.getRange(2, 1, rs.getLastRow() - 1, 7).getValues();
   for (let i = 0; i < rows.length; i++) {
     if (Number(rows[i][0]) === Number(data.reservation_no)) {
-      if (!userInfo.is_admin) {
+      if (userInfo.yoyaku_role !== 'admin') {
         if (String(rows[i][6]) !== String(data._userId)) return _err('他の担当者の予約は削除できません');
         if (String(rows[i][5]) !== '予約') return _err('確定済みの予約は削除できません');
       }
@@ -575,11 +600,11 @@ function deleteReservation(data) {
 }
 
 /**
- * ステータス変更（事務のみ）
+ * ステータス変更（adminのみ）
  */
 function updateStatus(data) {
   const userInfo = data._userInfo;
-  if (!userInfo || !userInfo.is_admin) return _err('権限がありません');
+  if (!userInfo || userInfo.yoyaku_role !== 'admin') return _err('権限がありません');
 
   const validStatuses = ['予約', '確定'];
   if (!validStatuses.includes(data.status)) return _err('無効なステータスです');
@@ -628,7 +653,7 @@ function bulkDelete(data) {
     const no = Number(rows[i][0]);
     if (!nosSet.has(no)) continue;
 
-    if (!userInfo.is_admin) {
+    if (userInfo.yoyaku_role !== 'admin') {
       if (String(rows[i][6]) !== String(data._userId)) {
         errors.push(`No.${no}: 他の担当者の予約は削除できません`);
         continue;
@@ -646,11 +671,11 @@ function bulkDelete(data) {
 }
 
 /**
- * 複数予約を一括ステータス変更（事務のみ）
+ * 複数予約を一括ステータス変更（adminのみ）
  */
 function bulkUpdateStatus(data) {
   const userInfo = data._userInfo;
-  if (!userInfo || !userInfo.is_admin) return _err('権限がありません');
+  if (!userInfo || userInfo.yoyaku_role !== 'admin') return _err('権限がありません');
 
   const nos    = data.reservation_nos;
   const status = data.status;
@@ -681,13 +706,28 @@ function bulkUpdateStatus(data) {
 
 // ============================================================
 // ユーザー一覧
-// is_sales フラグでフロントエンド側が営業/事務を区別する
-// H列: short_name（略称。空欄時はフルネームを返す）
+//   user_app_roles シートで yoyaku-kanri に登録済みのユーザーのみ返す
+//   yoyaku_role: "admin"（事務・担当者非表示）/ "staff"（営業・担当者として表示）
 // ============================================================
 function _getUsersFromAuth() {
   try {
-    const ss  = SpreadsheetApp.openById(AUTH_SHEET_ID);
-    const sh  = ss.getSheetByName('users');
+    const ss = SpreadsheetApp.openById(AUTH_SHEET_ID);
+
+    // user_app_roles から yoyaku-kanri 登録ユーザーとロールを取得
+    const arSh = ss.getSheetByName('user_app_roles');
+    const roleMap = {};
+    if (arSh && arSh.getLastRow() >= 2) {
+      const arRows = arSh.getDataRange().getValues();
+      for (let i = 1; i < arRows.length; i++) {
+        if (String(arRows[i][1]) === APP_NAME) {
+          const uid  = String(arRows[i][0]);
+          const role = String(arRows[i][2]).trim();
+          if (uid && role) roleMap[uid] = role;
+        }
+      }
+    }
+
+    const sh = ss.getSheetByName('users');
     if (!sh || sh.getLastRow() < 2) return [];
 
     const rows  = sh.getDataRange().getValues();
@@ -695,15 +735,16 @@ function _getUsersFromAuth() {
     for (let i = 1; i < rows.length; i++) {
       const active = rows[i][3] === true || String(rows[i][3]).toUpperCase() === 'TRUE';
       if (!active) continue;
-      const role     = String(rows[i][6] || '').trim();
-      const is_admin = rows[i][5] === true || String(rows[i][5]).toUpperCase() === 'TRUE';
-      const isSales  = role === '営業' || (role === '' && !is_admin);
+      const uid        = String(rows[i][0]);
+      const yoyakuRole = roleMap[uid];
+      if (!yoyakuRole) continue;  // yoyaku-kanri 未登録はスキップ
+
       const shortName = String(rows[i][7] || '').trim();
       users.push({
-        user_id:    String(rows[i][0]),
-        name:       String(rows[i][1]),
-        short_name: shortName || String(rows[i][1]),
-        is_sales:   isSales
+        user_id:     uid,
+        name:        String(rows[i][1]),
+        short_name:  shortName || String(rows[i][1]),
+        yoyaku_role: yoyakuRole  // "admin" or "staff"
       });
     }
     return users;
