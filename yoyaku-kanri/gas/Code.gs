@@ -10,7 +10,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.1.0';
+const VERSION  = '1.2.0';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -135,6 +135,8 @@ function doPost(e) {
       case 'saveReservation':     return _jsonResponse(saveReservation(data));
       case 'deleteReservation':   return _jsonResponse(deleteReservation(data));
       case 'updateStatus':        return _jsonResponse(updateStatus(data));
+      case 'bulkDelete':          return _jsonResponse(bulkDelete(data));
+      case 'bulkUpdateStatus':    return _jsonResponse(bulkUpdateStatus(data));
       default:                    return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
@@ -570,6 +572,88 @@ function updateStatus(data) {
 }
 
 // ============================================================
+// 一括操作
+// ============================================================
+
+/**
+ * 複数予約を一括削除
+ * reservation_nos: [1, 2, 3]
+ * 営業: 自分の「予約」ステータスのみ削除可
+ * 事務: 全件削除可
+ */
+function bulkDelete(data) {
+  const userInfo = data._userInfo;
+  if (!userInfo) return _err('ユーザー情報が取得できません');
+
+  const nos = data.reservation_nos;
+  if (!Array.isArray(nos) || nos.length === 0) return _err('削除対象が指定されていません');
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const rs = ss.getSheetByName(SHEET_RESERVATIONS);
+  if (!rs || rs.getLastRow() < 2) return _err('予約が見つかりません');
+
+  const rows  = rs.getRange(2, 1, rs.getLastRow() - 1, 7).getValues();
+  const nosSet = new Set(nos.map(Number));
+  let deleted = 0;
+  const errors = [];
+
+  // 後ろから削除（行番号のずれを防ぐ）
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const no = Number(rows[i][0]);
+    if (!nosSet.has(no)) continue;
+
+    if (!userInfo.is_admin) {
+      if (String(rows[i][6]) !== String(data._userId)) {
+        errors.push(`No.${no}: 他の担当者の予約は削除できません`);
+        continue;
+      }
+      if (String(rows[i][5]) !== '予約') {
+        errors.push(`No.${no}: 確定済みの予約は削除できません`);
+        continue;
+      }
+    }
+    rs.deleteRow(i + 2);
+    deleted++;
+  }
+
+  return _ok({ deleted, errors });
+}
+
+/**
+ * 複数予約を一括ステータス変更（事務のみ）
+ * reservation_nos: [1, 2, 3], status: '確定' | '予約'
+ */
+function bulkUpdateStatus(data) {
+  const userInfo = data._userInfo;
+  if (!userInfo || !userInfo.is_admin) return _err('権限がありません');
+
+  const nos    = data.reservation_nos;
+  const status = data.status;
+  const validStatuses = ['予約', '確定'];
+  if (!validStatuses.includes(status))           return _err('無効なステータスです');
+  if (!Array.isArray(nos) || nos.length === 0)   return _err('対象が指定されていません');
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const rs = ss.getSheetByName(SHEET_RESERVATIONS);
+  if (!rs || rs.getLastRow() < 2) return _err('予約が見つかりません');
+
+  const rows   = rs.getRange(2, 1, rs.getLastRow() - 1, 1).getValues();
+  const nosSet = new Set(nos.map(Number));
+  const now    = _now();
+  let updated  = 0;
+
+  for (let i = 0; i < rows.length; i++) {
+    if (nosSet.has(Number(rows[i][0]))) {
+      rs.getRange(i + 2, 6).setValue(status);
+      rs.getRange(i + 2, 13).setValue(now);
+      updated++;
+    }
+  }
+
+  return _ok({ updated });
+}
+
+// ============================================================
 // ユーザー一覧（担当者ドロップダウン用）
 // G列 role='営業' かつ active=TRUE のスタッフのみ返す
 //
@@ -593,7 +677,12 @@ function getUsers(data) {
       const is_admin = rows[i][5] === true || String(rows[i][5]).toUpperCase() === 'TRUE';
       const isSales = role === '営業' || (role === '' && !is_admin);
       if (active && isSales) {
-        users.push({ user_id: String(rows[i][0]), name: String(rows[i][1]) });
+        const shortName = String(rows[i][7] || '').trim(); // H列: short_name
+        users.push({
+          user_id:    String(rows[i][0]),
+          name:       String(rows[i][1]),
+          short_name: shortName || String(rows[i][1]) // 空欄時はフルネームにフォールバック
+        });
       }
     }
     return _ok(users);
