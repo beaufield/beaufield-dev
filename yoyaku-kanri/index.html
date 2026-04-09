@@ -310,7 +310,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.6.0</span>
+  <span class="header-version">v1.7.0</span>
 </header>
 
 <!-- ============================================================ -->
@@ -318,12 +318,6 @@
 <!-- ============================================================ -->
 <div id="tab-register" class="tab content">
   <div class="card">
-    <div class="form-group">
-      <label class="form-label">担当者</label>
-      <select id="regStaff" class="form-control">
-        <option value="">担当者を選択...</option>
-      </select>
-    </div>
     <div class="form-group">
       <label class="form-label">サロン名</label>
       <input type="text" id="regSalon" class="form-control" placeholder="サロン名を入力">
@@ -346,6 +340,14 @@
         <option value="発送">発送</option>
         <option value="持参">持参</option>
       </select>
+    </div>
+    <!-- 担当者：adminは選択、staffは自身を自動セット -->
+    <div class="form-group" id="regStaffGroup">
+      <label class="form-label">担当者</label>
+      <select id="regStaff" class="form-control">
+        <option value="">担当者を選択...</option>
+      </select>
+      <div id="regStaffFixed" style="display:none; padding:8px 10px; background:#f3f4f6; border:1.5px solid #e5e7eb; border-radius:7px; font-size:14px; color:#374151;"></div>
     </div>
     <button class="btn btn-primary btn-full" onclick="registerReservation()">📝 予約を登録する</button>
   </div>
@@ -444,12 +446,6 @@
     <div class="modal-title" id="editModalTitle">予約を編集</div>
     <input type="hidden" id="editReservationNo">
     <div class="form-group">
-      <label class="form-label">担当者</label>
-      <select id="editStaff" class="form-control">
-        <option value="">担当者を選択...</option>
-      </select>
-    </div>
-    <div class="form-group">
       <label class="form-label">サロン名</label>
       <input type="text" id="editSalon" class="form-control">
     </div>
@@ -471,6 +467,14 @@
         <option value="発送">発送</option>
         <option value="持参">持参</option>
       </select>
+    </div>
+    <!-- 担当者：adminは選択、staffは自身固定 -->
+    <div class="form-group" id="editStaffGroup">
+      <label class="form-label">担当者</label>
+      <select id="editStaff" class="form-control">
+        <option value="">担当者を選択...</option>
+      </select>
+      <div id="editStaffFixed" style="display:none; padding:8px 10px; background:#f3f4f6; border:1.5px solid #e5e7eb; border-radius:7px; font-size:14px; color:#374151;"></div>
     </div>
     <div class="modal-actions">
       <button class="btn btn-gray"    onclick="closeModal('editModal')">キャンセル</button>
@@ -647,15 +651,51 @@ function _refreshProductCounts() {
   _updateProductDropdowns();
 }
 
-/** 担当者ドロップダウンを更新 */
+/** 担当者ドロップダウンを更新
+ *  staff（営業）: セレクト非表示・自身の名前を固定表示
+ *  admin（事務）: セレクトに全staffユーザーを列挙 */
 function _updateUserDropdowns() {
-  ['regStaff', 'editStaff'].forEach(id => {
-    const sel = document.getElementById(id);
-    sel.innerHTML = '<option value="">担当者を選択...</option>';
+  const isStaff = currentUser?.yoyaku_role === 'staff';
+
+  // 登録フォーム
+  const regSel   = document.getElementById('regStaff');
+  const regFixed = document.getElementById('regStaffFixed');
+  if (isStaff) {
+    // staffは自分自身を自動セット・非表示
+    regSel.style.display   = 'none';
+    regFixed.style.display = '';
+    regFixed.textContent   = currentUser.name;
+    // selectにも値をセットしておく（registerReservation で読む場合の保険）
+    regSel.innerHTML = `<option value="${currentUser.user_id}">${esc(currentUser.name)}</option>`;
+    regSel.value     = currentUser.user_id;
+  } else {
+    regSel.style.display   = '';
+    regFixed.style.display = 'none';
+    regSel.innerHTML = '<option value="">担当者を選択...</option>';
     users.forEach(u => {
-      sel.innerHTML += `<option value="${u.user_id}">${esc(u.name)}</option>`;
+      regSel.innerHTML += `<option value="${u.user_id}">${esc(u.name)}</option>`;
     });
-  });
+  }
+
+  // 編集モーダル（担当者欄はadminのみ変更可。staffは自分固定）
+  const editSel   = document.getElementById('editStaff');
+  const editFixed = document.getElementById('editStaffFixed');
+  if (isStaff) {
+    editSel.style.display   = 'none';
+    editFixed.style.display = '';
+    editFixed.textContent   = currentUser.name;
+    editSel.innerHTML = `<option value="${currentUser.user_id}">${esc(currentUser.name)}</option>`;
+    editSel.value     = currentUser.user_id;
+  } else {
+    editSel.style.display   = '';
+    editFixed.style.display = 'none';
+    editSel.innerHTML = '<option value="">担当者を選択...</option>';
+    users.forEach(u => {
+      editSel.innerHTML += `<option value="${u.user_id}">${esc(u.name)}</option>`;
+    });
+  }
+
+  // フィルタドロップダウン（filterStaff）はstaffユーザーのみ
   const fs = document.getElementById('filterStaff');
   fs.innerHTML = '<option value="">すべての担当</option>';
   users.forEach(u => {
@@ -766,9 +806,16 @@ function updateStockInfo(productId, infoId) {
 }
 
 async function registerReservation() {
-  const staffSel  = document.getElementById('regStaff');
-  const staffId   = staffSel.value;
-  const staffName = staffSel.options[staffSel.selectedIndex]?.text || '';
+  // staffは自身を自動セット、adminはセレクトから取得
+  let staffId, staffName;
+  if (currentUser.yoyaku_role === 'staff') {
+    staffId   = currentUser.user_id;
+    staffName = currentUser.name;
+  } else {
+    const staffSel = document.getElementById('regStaff');
+    staffId   = staffSel.value;
+    staffName = staffSel.options[staffSel.selectedIndex]?.text || '';
+  }
   const salonName = document.getElementById('regSalon').value.trim();
   const productId = document.getElementById('regProduct').value;
   const qty       = Number(document.getElementById('regQty').value);
@@ -1109,13 +1156,20 @@ function openEditModal(reservationNo) {
 
 async function saveEditReservation() {
   const reservationNo = Number(document.getElementById('editReservationNo').value);
-  const staffSel      = document.getElementById('editStaff');
-  const staffId       = staffSel.value;
-  const staffName     = staffSel.options[staffSel.selectedIndex]?.text || '';
-  const salonName     = document.getElementById('editSalon').value.trim();
-  const productId     = document.getElementById('editProduct').value;
-  const qty           = Number(document.getElementById('editQty').value);
-  const delivery      = document.getElementById('editDelivery').value;
+  // staffは自身を自動セット、adminはセレクトから取得
+  let staffId, staffName;
+  if (currentUser.yoyaku_role === 'staff') {
+    staffId   = currentUser.user_id;
+    staffName = currentUser.name;
+  } else {
+    const staffSel = document.getElementById('editStaff');
+    staffId   = staffSel.value;
+    staffName = staffSel.options[staffSel.selectedIndex]?.text || '';
+  }
+  const salonName = document.getElementById('editSalon').value.trim();
+  const productId = document.getElementById('editProduct').value;
+  const qty       = Number(document.getElementById('editQty').value);
+  const delivery  = document.getElementById('editDelivery').value;
 
   if (!staffId || !salonName || !productId || qty < 1) {
     showToast('すべての項目を入力してください', 'error');
