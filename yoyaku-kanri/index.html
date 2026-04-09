@@ -310,7 +310,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.5.2</span>
+  <span class="header-version">v1.6.0</span>
 </header>
 
 <!-- ============================================================ -->
@@ -528,7 +528,7 @@ const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // ============================================================
 // グローバル状態
 // ============================================================
-let currentUser    = null;  // { user_id, name, is_admin }
+let currentUser    = null;  // { user_id, name, yoyaku_role: "admin"|"staff" }
 let token          = null;
 let allUsers       = [];    // 全アクティブユーザー（略称ルックアップ用）
 let users          = [];    // 営業スタッフのみ（ドロップダウン用）
@@ -563,13 +563,21 @@ window.addEventListener('DOMContentLoaded', async () => {
     const res = await gasGet('init');
     if (!res.success) {
       if (res.error === 'SESSION_INVALID') { location.href = PORTAL_URL; return; }
+      if (res.error === 'ACCESS_DENIED') {
+        document.querySelector('.header').style.opacity = '';
+        document.getElementById('mainContent').innerHTML =
+          '<div style="padding:40px;text-align:center;color:#dc2626;font-size:15px;">' +
+          '⛔ このアプリへのアクセス権限がありません。<br>管理者にお問い合わせください。</div>';
+        return;
+      }
       throw new Error(res.error);
     }
 
     const d = res.data;
     currentUser  = d.user;
     allUsers     = d.users;
-    users        = d.users.filter(u => u.is_sales); // ドロップダウン用（営業のみ）
+    // yoyaku_role="staff" のユーザーのみ担当者ドロップダウンに表示
+    users        = d.users.filter(u => u.yoyaku_role === 'staff');
     products     = d.products;
     reservations = d.reservations;
 
@@ -578,7 +586,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     document.getElementById('headerUser').textContent = currentUser.name;
 
-    if (currentUser.is_admin) {
+    if (currentUser.yoyaku_role === 'admin') {
       document.querySelectorAll('.admin-only').forEach(el => el.style.display = '');
     }
 
@@ -842,7 +850,7 @@ function renderList() {
   baseForRank.forEach(r => { cumQty += r.quantity; rankMap[r.reservation_no] = cumQty; });
 
   container.innerHTML = list.map(r => {
-    const canEdit = currentUser.is_admin ||
+    const canEdit = currentUser.yoyaku_role === 'admin' ||
       (r.staff_id === currentUser.user_id && r.status === '予約');
 
     const statusBadge = r.status === '確定'
@@ -854,7 +862,7 @@ function renderList() {
     const displayName = getShortName(r.staff_id, r.staff_name);
 
     const operatorShort = getShortName(r.operator_id, r.operator_name);
-    const operatorNote  = (currentUser.is_admin && r.operator_id && r.operator_id !== r.staff_id)
+    const operatorNote  = (currentUser.yoyaku_role === 'admin' && r.operator_id && r.operator_id !== r.staff_id)
       ? ` ✏️${esc(operatorShort)}` : '';
 
     // 「予約」ステータスの場合のみ順位表示
@@ -871,10 +879,10 @@ function renderList() {
       actions += `<button class="btn btn-gray btn-sm" onclick="openEditModal(${r.reservation_no})">編集</button>`;
       actions += `<button class="btn btn-danger btn-sm" onclick="confirmDelete(${r.reservation_no})">削除</button>`;
     }
-    if (currentUser.is_admin && r.status === '予約') {
+    if (currentUser.yoyaku_role === 'admin' && r.status === '予約') {
       actions += `<button class="btn btn-success btn-sm" onclick="confirmStatus(${r.reservation_no},'確定')">確定</button>`;
     }
-    if (currentUser.is_admin && r.status === '確定') {
+    if (currentUser.yoyaku_role === 'admin' && r.status === '確定') {
       actions += `<button class="btn btn-warning btn-sm" onclick="confirmStatus(${r.reservation_no},'予約')">予約に戻す</button>`;
     }
 
@@ -1209,7 +1217,7 @@ function updateBulkBar() {
   document.getElementById('bulkCount').textContent = `${count}件選択中`;
   // 一括確定ボタンは管理者のみ表示
   const btn = document.getElementById('bulkConfirmBtn');
-  if (btn) btn.style.display = currentUser?.is_admin ? '' : 'none';
+  if (btn) btn.style.display = currentUser?.yoyaku_role === 'admin' ? '' : 'none';
 }
 
 function clearSelection() {
