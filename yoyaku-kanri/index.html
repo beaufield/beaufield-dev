@@ -304,7 +304,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.3.5</span>
+  <span class="header-version">v1.4.0</span>
 </header>
 
 <!-- ============================================================ -->
@@ -393,7 +393,7 @@
   <div class="section-title">📊 クロス集計（担当 × サロン）</div>
   <div class="card">
     <div class="form-group" style="margin-bottom:12px">
-      <select id="crossProductFilter" class="form-control" onchange="loadStats()">
+      <select id="crossProductFilter" class="form-control" onchange="renderStats()">
         <option value="">すべての商品</option>
       </select>
     </div>
@@ -566,8 +566,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     products     = d.products;
     reservations = d.reservations;
 
-    // activeProducts をローカルで計算（GAS 追加呼び出し不要）
-    _refreshActiveProducts();
+    // GAS側では reserved_total=0 で返すため、ローカルで計算して反映
+    _refreshProductCounts();
 
     document.getElementById('headerUser').textContent = currentUser.name;
 
@@ -599,7 +599,7 @@ function switchTab(tab) {
   document.getElementById('tab-' + tab).classList.add('active');
   document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
 
-  if (tab === 'stats')    loadStats();
+  if (tab === 'stats')    renderStats();
   if (tab === 'products') renderProducts();
   if (tab === 'list')     renderList();  // GAS 呼び出しなし（既にローカルにある）
 }
@@ -1127,27 +1127,67 @@ function executeBulkConfirm() {
 }
 
 // ============================================================
-// 集計
+// ③ 集計：GAS呼び出し廃止 → reservations/products のローカルデータから計算
 // ============================================================
-async function loadStats() {
+function renderStats() {
   if (currentTab !== 'stats') return;
-  showLoading();
-  try {
-    const filterPid = document.getElementById('crossProductFilter').value;
-    const res = await gasGet('getStats', { filter_product_id: filterPid });
-    if (!res.success) throw new Error(res.error);
-    renderStats(res.data);
-  } catch(e) {
-    showToast('集計データの取得に失敗しました', 'error');
-  } finally {
-    hideLoading();
-  }
-}
 
-function renderStats(data) {
-  // ---- 商品別 ----
+  const filterPid = document.getElementById('crossProductFilter').value;
+
+  // ---- 商品別集計 ----
+  const productMap = {};
+  reservations.forEach(r => {
+    const pid = r.product_id;
+    if (!productMap[pid]) {
+      productMap[pid] = { product_id: pid, product_name: r.product_name, total: 0, confirmed: 0 };
+    }
+    productMap[pid].total += r.quantity;
+    if (r.status === '確定') productMap[pid].confirmed += r.quantity;
+  });
+  // 在庫上限・残数を products から補完
+  products.forEach(p => {
+    if (productMap[p.product_id]) {
+      productMap[p.product_id].stock_limit = p.stock_limit;
+      productMap[p.product_id].remaining   = p.stock_limit > 0
+        ? Math.max(0, p.stock_limit - productMap[p.product_id].total) : null;
+    }
+  });
+  const byProduct = Object.values(productMap).sort((a, b) => b.total - a.total);
+
+  // ---- 担当別集計 ----
+  const staffMap = {};
+  reservations.forEach(r => {
+    if (!staffMap[r.staff_id]) staffMap[r.staff_id] = { staff_id: r.staff_id, staff_name: r.staff_name, total: 0 };
+    staffMap[r.staff_id].total += r.quantity;
+  });
+  const byStaff = Object.values(staffMap).sort((a, b) => b.total - a.total);
+
+  // ---- サロン別集計 ----
+  const salonMap = {};
+  reservations.forEach(r => {
+    if (!salonMap[r.salon_name]) salonMap[r.salon_name] = { salon_name: r.salon_name, total: 0 };
+    salonMap[r.salon_name].total += r.quantity;
+  });
+  const bySalon = Object.values(salonMap).sort((a, b) => b.total - a.total);
+
+  // ---- クロス集計 ----
+  const crossRows = filterPid ? reservations.filter(r => r.product_id === filterPid) : reservations;
+  const crossData = {};
+  const staffNamesMap = {};
+  const salonNamesSet = {};
+  crossRows.forEach(r => {
+    staffNamesMap[r.staff_id] = r.staff_name;
+    salonNamesSet[r.salon_name] = true;
+    if (!crossData[r.staff_id]) crossData[r.staff_id] = {};
+    crossData[r.staff_id][r.salon_name] = (crossData[r.staff_id][r.salon_name] || 0) + r.quantity;
+  });
+  const staffList = Object.keys(staffNamesMap).map(id => ({ id, name: staffNamesMap[id] }));
+  const salonList = Object.keys(salonNamesSet).sort();
+
+  // ---- 描画 ----
+  // 商品別
   const prodEl = document.getElementById('statsProduct');
-  if (!data.byProduct.length) {
+  if (!byProduct.length) {
     prodEl.innerHTML = '<p style="color:#9ca3af;font-size:13px">データなし</p>';
   } else {
     prodEl.innerHTML = `
@@ -1159,7 +1199,7 @@ function renderStats(data) {
           <th class="num">上限</th>
           <th class="num">残数</th>
         </tr>
-        ${data.byProduct.map(p => `
+        ${byProduct.map(p => `
           <tr>
             <td>${esc(p.product_name)}</td>
             <td class="num">${p.total}</td>
@@ -1172,10 +1212,10 @@ function renderStats(data) {
       </table>`;
   }
 
-  // ---- 担当別バーグラフ ----
-  const maxStaff = Math.max(...data.byStaff.map(s => s.total), 1);
+  // 担当別バーグラフ
+  const maxStaff = Math.max(...byStaff.map(s => s.total), 1);
   document.getElementById('statsStaff').innerHTML =
-    data.byStaff.map(s => `
+    byStaff.map(s => `
       <div class="bar-row">
         <div class="bar-label" title="${esc(s.staff_name)}">${esc(s.staff_name)}</div>
         <div class="bar-track">
@@ -1184,9 +1224,9 @@ function renderStats(data) {
         <div class="bar-val">${s.total}</div>
       </div>`).join('') || '<p style="color:#9ca3af;font-size:13px">データなし</p>';
 
-  // ---- サロン別（上位20件）----
-  const top20     = data.bySalon.slice(0, 20);
-  const maxSalon  = Math.max(...top20.map(s => s.total), 1);
+  // サロン別（上位20件）
+  const top20    = bySalon.slice(0, 20);
+  const maxSalon = Math.max(...top20.map(s => s.total), 1);
   document.getElementById('statsSalon').innerHTML =
     top20.map(s => `
       <div class="bar-row">
@@ -1197,8 +1237,8 @@ function renderStats(data) {
         <div class="bar-val">${s.total}</div>
       </div>`).join('') || '<p style="color:#9ca3af;font-size:13px">データなし</p>';
 
-  // ---- クロス集計 ----
-  renderCrossTable(data.crossTable);
+  // クロス集計
+  renderCrossTable({ staffList, salonList, data: crossData });
 }
 
 function renderCrossTable(cross) {
