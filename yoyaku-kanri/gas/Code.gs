@@ -10,7 +10,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.2.0';
+const VERSION  = '1.2.1';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -654,13 +654,12 @@ function bulkUpdateStatus(data) {
 }
 
 // ============================================================
-// ユーザー一覧（担当者ドロップダウン用）
-// G列 role='営業' かつ active=TRUE のスタッフのみ返す
+// ユーザー一覧（全アクティブユーザーを返す）
+// is_sales フラグでフロントエンド側が営業/事務を区別する
 //
-// ※ beaufield-auth の users シートに G列（role）が必要
-//    role='営業' → 担当者に表示
-//    role='事務' or 空欄 → 担当者に表示しない
-//    is_admin は管理権限の制御のみに使用（この絞り込みには使わない）
+// ※ beaufield-auth の users シートの列構成
+//    G列: role（'営業' → is_sales=true、'事務' or 空欄 → is_sales=false）
+//    H列: short_name（略称。空欄時はフルネームを返す）
 // ============================================================
 function getUsers(data) {
   try {
@@ -671,19 +670,20 @@ function getUsers(data) {
     const rows  = sh.getDataRange().getValues();
     const users = [];
     for (let i = 1; i < rows.length; i++) {
-      const active = rows[i][3] === true || String(rows[i][3]).toUpperCase() === 'TRUE';
-      const role   = String(rows[i][6] || '').trim(); // G列: role
-      // G列が未設定の場合は is_admin=FALSE を従来通りフォールバックとして使う
+      const active   = rows[i][3] === true || String(rows[i][3]).toUpperCase() === 'TRUE';
+      if (!active) continue;
+      const role     = String(rows[i][6] || '').trim(); // G列: role
       const is_admin = rows[i][5] === true || String(rows[i][5]).toUpperCase() === 'TRUE';
-      const isSales = role === '営業' || (role === '' && !is_admin);
-      if (active && isSales) {
-        const shortName = String(rows[i][7] || '').trim(); // H列: short_name
-        users.push({
-          user_id:    String(rows[i][0]),
-          name:       String(rows[i][1]),
-          short_name: shortName || String(rows[i][1]) // 空欄時はフルネームにフォールバック
-        });
-      }
+      // 営業判定（ドロップダウン絞り込み用）
+      const isSales  = role === '営業' || (role === '' && !is_admin);
+      const shortName = String(rows[i][7] || '').trim(); // H列: short_name
+      // 全アクティブユーザーを返す（is_sales で営業/事務を区別）
+      users.push({
+        user_id:    String(rows[i][0]),
+        name:       String(rows[i][1]),
+        short_name: shortName || String(rows[i][1]), // 空欄時はフルネームにフォールバック
+        is_sales:   isSales
+      });
     }
     return _ok(users);
   } catch(e) {
