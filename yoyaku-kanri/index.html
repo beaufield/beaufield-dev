@@ -310,7 +310,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.5.1</span>
+  <span class="header-version">v1.5.2</span>
 </header>
 
 <!-- ============================================================ -->
@@ -920,7 +920,7 @@ function printReservations() {
 
   // フィルタ条件の説明文
   const filterParts = [];
-  if (fpid)   { const p = products.find(x => x.product_id === fpid);   if (p) filterParts.push('商品: ' + p.product_name); }
+  if (fpid)   { const p = products.find(x => x.product_id === fpid);   if (p) filterParts.push('商品: ' + p.name); }
   if (fstaff) { const u = allUsers.find(x => x.user_id   === fstaff);  if (u) filterParts.push('担当: ' + u.name); }
   if (fst)    filterParts.push('ステータス: ' + fst);
   const filterStr = filterParts.length > 0 ? filterParts.join('　') : '全件';
