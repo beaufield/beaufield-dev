@@ -10,7 +10,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.4.0';
+const VERSION  = '1.5.0';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -190,6 +190,7 @@ function doPost(e) {
       case 'updateStatus':        return _jsonResponse(updateStatus(data));
       case 'bulkDelete':          return _jsonResponse(bulkDelete(data));
       case 'bulkUpdateStatus':    return _jsonResponse(bulkUpdateStatus(data));
+      case 'processArrival':      return _jsonResponse(processArrival(data));
       default:                    return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
@@ -702,6 +703,107 @@ function bulkUpdateStatus(data) {
   }
 
   return _ok({ updated });
+}
+
+// ============================================================
+// 入荷処理（adminのみ）
+//   allocations: [{reservation_no, confirm_qty}]
+//   confirm_qty === quantity  → ステータスを「確定」に変更
+//   confirm_qty < quantity    → 元行: 数量を (quantity - confirm_qty) に減らす（予約継続）
+//                               新行: confirm_qty / ステータス「確定」/ 新No
+//   元行のNoを維持することで予約順位が保たれる（スプリット設計）
+// ============================================================
+function processArrival(data) {
+  const userInfo = data._userInfo;
+  if (!userInfo || userInfo.yoyaku_role !== 'admin') return _err('権限がありません');
+
+  const productId   = String(data.product_id || '');
+  const allocations = data.allocations; // [{reservation_no, confirm_qty}]
+
+  if (!productId)                                              return _err('商品IDは必須です');
+  if (!Array.isArray(allocations) || allocations.length === 0) return _err('割り当て情報がありません');
+
+  _checkProps();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const rs = ss.getSheetByName(SHEET_RESERVATIONS);
+  if (!rs || rs.getLastRow() < 2) return _err('予約データが見つかりません');
+
+  const rows = rs.getRange(2, 1, rs.getLastRow() - 1, 13).getValues();
+  const now  = _now();
+
+  // allocations を Map 化（reservation_no → confirm_qty）
+  const allocMap = {};
+  for (const a of allocations) {
+    const no  = Number(a.reservation_no);
+    const qty = Number(a.confirm_qty);
+    if (no > 0 && qty > 0) allocMap[no] = qty;
+  }
+
+  if (Object.keys(allocMap).length === 0) return _err('有効な割り当て情報がありません');
+
+  // 現在の最大No（スプリット時の新No発番用）
+  let maxNo = Math.max(...rows.map(r => Number(r[0]) || 0));
+
+  // スプリット行バッファ（appendRow をまとめて最後に実行）
+  const newRows = [];
+  let processed = 0;
+
+  for (let i = 0; i < rows.length; i++) {
+    const no = Number(rows[i][0]);
+    if (allocMap[no] === undefined) continue;
+
+    const confirmQty = allocMap[no];
+    const curQty     = Number(rows[i][4]);
+    const curStatus  = String(rows[i][5]);
+
+    // 念のためガード（確定済みや数量超過は処理しない）
+    if (curStatus === '確定')        continue;
+    if (confirmQty > curQty)         continue;
+    if (confirmQty <= 0)             continue;
+
+    if (confirmQty === curQty) {
+      // ── 全数確定: ステータスだけ「確定」に変更 ────────────
+      rs.getRange(i + 2, 6).setValue('確定');
+      rs.getRange(i + 2, 13).setValue(now);
+    } else {
+      // ── 部分確定: スプリット処理 ──────────────────────────
+      // 元行: 残数（= curQty - confirmQty）に更新、ステータスは「予約」のまま（No変わらず=優先順位維持）
+      rs.getRange(i + 2, 5).setValue(curQty - confirmQty);
+      rs.getRange(i + 2, 13).setValue(now);
+
+      // 新行: 確定分を新No で追記
+      maxNo++;
+      newRows.push([
+        maxNo,
+        rows[i][1],              // salon_name
+        rows[i][2],              // product_id
+        rows[i][3],              // product_name
+        confirmQty,              // 確定数量
+        '確定',
+        rows[i][6],              // staff_id (コピー)
+        rows[i][7],              // staff_name (コピー)
+        String(userInfo.user_id), // operator_id（入荷処理実行者）
+        userInfo.name,            // operator_name
+        rows[i][10],             // delivery_method (コピー)
+        rows[i][11],             // reserved_at (元の予約日時をコピー)
+        now                      // updated_at
+      ]);
+    }
+    processed++;
+  }
+
+  // スプリット行を一括追加
+  for (const row of newRows) {
+    rs.appendRow(row);
+  }
+
+  if (processed === 0) return _err('処理対象の予約が見つかりませんでした');
+
+  return _ok({
+    message:  `入荷処理が完了しました（${processed}件処理、うちスプリット${newRows.length}件）`,
+    processed: processed,
+    splits:    newRows.length
+  });
 }
 
 // ============================================================
