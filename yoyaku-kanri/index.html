@@ -160,14 +160,26 @@
     }
     #bulkActionBar.show { display: flex; }
     #bulkCount { font-size: 12px; font-weight: 700; color: var(--primary); flex: 1; }
-    /* 2行目: 商品・担当・発送・日時 */
-    .rc-row2 {
-      display: flex; align-items: center; gap: 6px;
-      font-size: 10px; color: #6b7280; flex-wrap: wrap;
-    }
-    .rc-product { color: var(--text); font-weight: 600; white-space: nowrap; }
+    /* 2行目: 商品名・数量（サロン名と同サイズ） */
+    .rc-row2 { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+    .rc-product { font-size: 13px; font-weight: 700; color: var(--text); flex: 1;
+                  overflow-wrap: break-word; word-break: break-word; }
+    .rc-rank    { font-size: 10px; color: #9ca3af; white-space: nowrap; flex-shrink: 0; }
+    /* 3行目: 担当・発送・日付 */
+    .rc-row3 { display: flex; align-items: center; gap: 6px;
+               font-size: 10px; color: #6b7280; flex-wrap: wrap; }
     .rc-staff   { white-space: nowrap; }
     .rc-date    { white-space: nowrap; margin-left: auto; }
+
+    /* 商品別サマリー */
+    #productSummary {
+      display: none; background: #eff6ff; border: 1px solid #bfdbfe;
+      border-radius: 6px; padding: 6px 10px; margin-bottom: 5px;
+      font-size: 12px; color: var(--text); flex-wrap: wrap; gap: 8px;
+    }
+    #productSummary.show { display: flex; align-items: center; }
+    .ps-item { white-space: nowrap; }
+    .ps-sep  { color: #cbd5e1; }
 
     /* フィルタ行 */
     .filter-row {
@@ -292,7 +304,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.3.2</span>
+  <span class="header-version">v1.3.3</span>
 </header>
 
 <!-- ============================================================ -->
@@ -350,6 +362,9 @@
       <option value="確定">確定</option>
     </select>
   </div>
+
+  <!-- 商品別サマリー（商品フィルタ選択時に表示） -->
+  <div id="productSummary"></div>
 
   <!-- 一括操作バー（チェック時に表示） -->
   <div id="bulkActionBar">
@@ -791,6 +806,9 @@ function renderList() {
   const fstaff = document.getElementById('filterStaff').value;
   const fst    = document.getElementById('filterStatus').value;
 
+  // 商品サマリー表示
+  renderProductSummary(fpid);
+
   let list = reservations.slice();
   if (fpid)   list = list.filter(r => r.product_id === fpid);
   if (fstaff) list = list.filter(r => r.staff_id   === fstaff);
@@ -806,8 +824,16 @@ function renderList() {
     return;
   }
 
+  // 「予約」ステータスの累計順位を reservation_no 昇順で計算
+  // 商品フィルタがある場合はその商品内での順位、なければ全体
+  const baseForRank = fpid
+    ? reservations.filter(r => r.product_id === fpid && r.status === '予約')
+    : reservations.filter(r => r.status === '予約');
+  baseForRank.sort((a, b) => a.reservation_no - b.reservation_no);
+  const rankMap = {};
+  baseForRank.forEach((r, i) => { rankMap[r.reservation_no] = i + 1; });
+
   container.innerHTML = list.map(r => {
-    // 編集・削除可否
     const canEdit = currentUser.is_admin ||
       (r.staff_id === currentUser.user_id && r.status === '予約');
 
@@ -815,14 +841,17 @@ function renderList() {
       ? `<span class="badge badge-green">確定</span>`
       : `<span class="badge badge-blue">予約</span>`;
 
-    const delivBadge   = `<span class="badge badge-gray">${esc(r.delivery_method)}</span>`;
-    const dateStr      = formatDateJP(r.reserved_at);
-    const displayName  = getShortName(r.staff_id, r.staff_name);
+    const delivBadge  = `<span class="badge badge-gray">${esc(r.delivery_method)}</span>`;
+    const dateStr     = formatDateJP(r.reserved_at);
+    const displayName = getShortName(r.staff_id, r.staff_name);
 
-    // 操作者が担当者と異なる場合（代理入力）のみ略称で表示
     const operatorShort = getShortName(r.operator_id, r.operator_name);
     const operatorNote  = (currentUser.is_admin && r.operator_id && r.operator_id !== r.staff_id)
       ? ` ✏️${esc(operatorShort)}` : '';
+
+    // 「予約」ステータスの場合のみ順位表示
+    const rankStr = (r.status === '予約' && rankMap[r.reservation_no])
+      ? `<span class="rc-rank">${rankMap[r.reservation_no]}番目</span>` : '';
 
     let actions = '';
     if (canEdit) {
@@ -836,7 +865,6 @@ function renderList() {
       actions += `<button class="btn btn-warning btn-sm" onclick="confirmStatus(${r.reservation_no},'予約')">予約に戻す</button>`;
     }
 
-    // チェックボックス（編集権限がある場合のみ表示）
     const checkbox = canEdit
       ? `<input type="checkbox" class="rc-check" data-no="${r.reservation_no}" onchange="onCheckChange(this)">`
       : '';
@@ -851,13 +879,47 @@ function renderList() {
           <div class="rc-actions">${actions}</div>
         </div>
         <div class="rc-row2">
-          <span class="rc-product">🏷️ ${esc(r.product_name)} × ${r.quantity}個</span>
+          <span class="rc-product">${esc(r.product_name)} × ${r.quantity}個</span>
+          ${rankStr}
+        </div>
+        <div class="rc-row3">
           <span class="rc-staff">👤 ${esc(displayName)}${operatorNote}</span>
           ${delivBadge}
           <span class="rc-date">${dateStr}</span>
         </div>
       </div>`;
   }).join('');
+}
+
+/** 商品フィルタ選択中に予約数サマリーを表示 */
+function renderProductSummary(fpid) {
+  const el = document.getElementById('productSummary');
+  if (!fpid) { el.className = ''; el.innerHTML = ''; return; }
+
+  const p = products.find(x => x.product_id === fpid);
+  if (!p) { el.className = ''; el.innerHTML = ''; return; }
+
+  const all       = reservations.filter(r => r.product_id === fpid);
+  const yoyaku    = all.filter(r => r.status === '予約');
+  const kakutei   = all.filter(r => r.status === '確定');
+  const yoyakuQty = yoyaku.reduce((s, r) => s + r.quantity, 0);
+  const kakuteiQty= kakutei.reduce((s, r) => s + r.quantity, 0);
+  const totalQty  = yoyakuQty + kakuteiQty;
+
+  const limitStr = p.stock_limit > 0
+    ? `<span class="ps-sep">｜</span><span class="ps-item">上限 ${p.stock_limit}個</span><span class="ps-sep">｜</span><span class="ps-item" style="color:${p.remaining <= 0 ? 'var(--danger)' : p.remaining <= 5 ? 'var(--warning)' : 'var(--success)'}">残 ${p.remaining ?? '—'}個</span>`
+    : '';
+
+  el.className = 'show';
+  el.innerHTML = `
+    <span class="ps-item" style="font-weight:700">${esc(p.name)}</span>
+    <span class="ps-sep">｜</span>
+    <span class="ps-item">予約 <b>${yoyakuQty}</b>個（${yoyaku.length}件）</span>
+    <span class="ps-sep">｜</span>
+    <span class="ps-item">確定 <b>${kakuteiQty}</b>個（${kakutei.length}件）</span>
+    <span class="ps-sep">｜</span>
+    <span class="ps-item">合計 <b>${totalQty}</b>個</span>
+    ${limitStr}`;
 }
 
 // ============================================================
