@@ -292,7 +292,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.3.1</span>
+  <span class="header-version">v1.3.2</span>
 </header>
 
 <!-- ============================================================ -->
@@ -346,7 +346,7 @@
     </select>
     <select id="filterStatus" onchange="renderList()">
       <option value="">すべて</option>
-      <option value="予約">予約</option>
+      <option value="予約" selected>予約</option>
       <option value="確定">確定</option>
     </select>
   </div>
@@ -1159,27 +1159,28 @@ function renderCrossTable(cross) {
   });
   const grandTotal = Object.values(staffTotals).reduce((s, v) => s + v, 0);
 
+  // サロンを行・担当を列に配置（縦横を入れ替え）
   let html = `<table>
     <tr>
-      <th>担当 \\ サロン</th>
-      ${salonList.map(s => `<th>${esc(s)}</th>`).join('')}
+      <th>サロン \\ 担当</th>
+      ${staffList.map(s => `<th>${esc(s.name)}</th>`).join('')}
       <th>合計</th>
     </tr>`;
 
-  staffList.forEach(s => {
+  salonList.forEach(salon => {
     html += `<tr>
-      <td style="font-weight:700">${esc(s.name)}</td>
-      ${salonList.map(salon => {
+      <td style="font-weight:700">${esc(salon)}</td>
+      ${staffList.map(s => {
         const v = data[s.id]?.[salon] || 0;
         return `<td class="num" style="${v ? 'color:var(--primary);font-weight:600' : 'color:#d1d5db'}">${v || ''}</td>`;
       }).join('')}
-      <td class="num total-col">${staffTotals[s.id]}</td>
+      <td class="num total-col">${salonTotals[salon]}</td>
     </tr>`;
   });
 
   html += `<tr class="total-row">
     <td>合計</td>
-    ${salonList.map(salon => `<td class="num">${salonTotals[salon]}</td>`).join('')}
+    ${staffList.map(s => `<td class="num">${staffTotals[s.id]}</td>`).join('')}
     <td class="num grand-total">${grandTotal}</td>
   </tr></table>`;
 
@@ -1313,13 +1314,22 @@ function getShortName(userId, fallbackName) {
   return u?.short_name || fallbackName;
 }
 
-/** 日付文字列を「2026年4月9日（木）」形式に変換 */
+/** 日付文字列を「4月9日（木）14:30」形式に変換
+ *  GASからは "yyyy-MM-dd HH:mm" 形式で来る想定
+ *  Date.toString()形式（GMT+0900付き）にも対応 */
 function formatDateJP(dateStr) {
   if (!dateStr) return '';
-  const d = new Date(dateStr.replace(' ', 'T'));
+  // "yyyy-MM-dd HH:mm" → "yyyy-MM-ddTHH:mm" に変換してローカル時刻として解釈
+  let d = new Date(dateStr.replace(' ', 'T'));
+  if (isNaN(d.getTime())) d = new Date(dateStr); // フォールバック（GMT形式等）
   if (isNaN(d.getTime())) return dateStr;
   const days = ['日', '月', '火', '水', '木', '金', '土'];
-  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日（${days[d.getDay()]}）`;
+  const m   = d.getMonth() + 1;
+  const day = d.getDate();
+  const dow = days[d.getDay()];
+  const hh  = String(d.getHours()).padStart(2, '0');
+  const mm  = String(d.getMinutes()).padStart(2, '0');
+  return `${m}月${day}日（${dow}）${hh}:${mm}`;
 }
 
 // ============================================================

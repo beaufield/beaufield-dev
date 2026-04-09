@@ -10,7 +10,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.2.1';
+const VERSION  = '1.2.2';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -370,8 +370,9 @@ function getReservations(data) {
       operator_id:     String(r[8]),
       operator_name:   String(r[9]),
       delivery_method: String(r[10]),
-      reserved_at:     r[11] ? String(r[11]) : '',
-      updated_at:      r[12] ? String(r[12]) : ''
+      // セル値がDate型になる場合があるためUtilitiesで書式変換（String()はGMT表記になるため使用禁止）
+      reserved_at:     r[11] ? Utilities.formatDate(new Date(r[11]), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm') : '',
+      updated_at:      r[12] ? Utilities.formatDate(new Date(r[12]), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm') : ''
     }));
 
   // 予約No 降順ソート
