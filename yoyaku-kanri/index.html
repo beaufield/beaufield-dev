@@ -67,7 +67,7 @@
     .header-version { font-size: 10px; opacity: 0.55; white-space: nowrap; }
 
     /* コンテンツ */
-    .content { padding: 16px; padding-bottom: 80px; }
+    .content { padding: 10px; padding-bottom: 80px; }
 
     /* ボトムナビ */
     .bottom-nav {
@@ -119,13 +119,13 @@
     .btn-danger  { background: var(--danger);  color: #fff; }
     .btn-warning { background: var(--warning); color: #fff; }
     .btn-gray    { background: #e5e7eb; color: var(--text); }
-    .btn-sm      { padding: 6px 12px; font-size: 12px; }
+    .btn-sm      { padding: 4px 8px; font-size: 11px; }
     .btn-full    { width: 100%; }
 
     /* バッジ */
     .badge {
-      display: inline-block; padding: 2px 8px; border-radius: 12px;
-      font-size: 11px; font-weight: 700;
+      display: inline-block; padding: 1px 5px; border-radius: 12px;
+      font-size: 10px; font-weight: 700;
     }
     .badge-blue  { background: #dbeafe; color: #1d4ed8; }
     .badge-green { background: #dcfce7; color: #15803d; }
@@ -134,36 +134,36 @@
 
     /* 予約カード（2行コンパクト） */
     .reservation-card {
-      background: #fff; border-radius: 8px;
-      padding: 8px 10px 8px 12px; margin-bottom: 6px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.07);
-      border-left: 4px solid var(--border);
+      background: #fff; border-radius: 6px;
+      padding: 5px 8px 5px 10px; margin-bottom: 3px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+      border-left: 3px solid var(--border);
     }
     .reservation-card.status-予約 { border-left-color: var(--primary); }
     .reservation-card.status-確定 { border-left-color: var(--success); }
     /* 1行目: チェック + No. + サロン名 + ステータス + ボタン */
     .rc-row1 {
-      display: flex; align-items: flex-start; gap: 6px;
-      margin-bottom: 3px; flex-wrap: wrap;
+      display: flex; align-items: flex-start; gap: 5px;
+      margin-bottom: 2px; flex-wrap: wrap;
     }
-    .rc-check  { flex-shrink: 0; margin-top: 3px; width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary); }
-    .rc-no     { font-size: 11px; color: #9ca3af; font-weight: 700; white-space: nowrap; flex-shrink: 0; }
-    .rc-salon  { font-size: 14px; font-weight: 700; flex: 1; min-width: 120px;
+    .rc-check  { flex-shrink: 0; margin-top: 2px; width: 14px; height: 14px; cursor: pointer; accent-color: var(--primary); }
+    .rc-no     { font-size: 10px; color: #9ca3af; font-weight: 700; white-space: nowrap; flex-shrink: 0; }
+    .rc-salon  { font-size: 13px; font-weight: 700; flex: 1; min-width: 100px;
                  overflow-wrap: break-word; word-break: break-word; }
-    .rc-actions { display: flex; gap: 4px; flex-shrink: 0; flex-wrap: wrap; }
+    .rc-actions { display: flex; gap: 3px; flex-shrink: 0; flex-wrap: wrap; }
 
     /* 一括操作バー */
     #bulkActionBar {
-      display: none; align-items: center; gap: 8px;
+      display: none; align-items: center; gap: 6px;
       background: #eff6ff; border: 1.5px solid #bfdbfe;
-      border-radius: 8px; padding: 8px 12px; margin-bottom: 8px;
+      border-radius: 7px; padding: 5px 10px; margin-bottom: 5px;
     }
     #bulkActionBar.show { display: flex; }
-    #bulkCount { font-size: 13px; font-weight: 700; color: var(--primary); flex: 1; }
+    #bulkCount { font-size: 12px; font-weight: 700; color: var(--primary); flex: 1; }
     /* 2行目: 商品・担当・発送・日時 */
     .rc-row2 {
-      display: flex; align-items: center; gap: 8px;
-      font-size: 11px; color: #6b7280; flex-wrap: wrap;
+      display: flex; align-items: center; gap: 6px;
+      font-size: 10px; color: #6b7280; flex-wrap: wrap;
     }
     .rc-product { color: var(--text); font-weight: 600; white-space: nowrap; }
     .rc-staff   { white-space: nowrap; }
@@ -171,12 +171,12 @@
 
     /* フィルタ行 */
     .filter-row {
-      display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;
+      display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px;
     }
     .filter-row select {
-      flex: 1; min-width: 100px;
-      padding: 8px 10px; border: 1.5px solid var(--border); border-radius: 8px;
-      font-size: 13px; background: #fff; color: var(--text);
+      flex: 1; min-width: 80px;
+      padding: 6px 8px; border: 1.5px solid var(--border); border-radius: 7px;
+      font-size: 12px; background: #fff; color: var(--text);
       -webkit-appearance: none; appearance: none;
     }
 
@@ -292,7 +292,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.3.0</span>
+  <span class="header-version">v1.3.1</span>
 </header>
 
 <!-- ============================================================ -->
@@ -508,7 +508,8 @@ const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // ============================================================
 let currentUser    = null;  // { user_id, name, is_admin }
 let token          = null;
-let users          = [];    // 営業スタッフ一覧
+let allUsers       = [];    // 全アクティブユーザー（略称ルックアップ用）
+let users          = [];    // 営業スタッフのみ（ドロップダウン用）
 let products       = [];    // 全商品
 let activeProducts = [];    // 受付中商品（予約登録用・ローカル計算）
 let reservations   = [];    // 予約一覧（現在ロード済み）
@@ -545,7 +546,8 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     const d = res.data;
     currentUser  = d.user;
-    users        = d.users;
+    allUsers     = d.users;
+    users        = d.users.filter(u => u.is_sales); // ドロップダウン用（営業のみ）
     products     = d.products;
     reservations = d.reservations;
 
@@ -813,16 +815,14 @@ function renderList() {
       ? `<span class="badge badge-green">確定</span>`
       : `<span class="badge badge-blue">予約</span>`;
 
-    const delivBadge = `<span class="badge badge-gray">${esc(r.delivery_method)}</span>`;
-    const dateStr    = r.reserved_at ? r.reserved_at.substring(0, 16) : '';
+    const delivBadge   = `<span class="badge badge-gray">${esc(r.delivery_method)}</span>`;
+    const dateStr      = formatDateJP(r.reserved_at);
+    const displayName  = getShortName(r.staff_id, r.staff_name);
 
-    // 担当者の略称を users リストから取得（なければ staff_name にフォールバック）
-    const staffUser   = users.find(u => u.user_id === r.staff_id);
-    const displayName = staffUser?.short_name || r.staff_name;
-
-    // 操作者が担当者と異なる場合（代理入力）のみ表示
-    const operatorNote = (currentUser.is_admin && r.operator_name && r.operator_name !== r.staff_name)
-      ? `<br>✏️ 操作者: ${esc(r.operator_name)}` : '';
+    // 操作者が担当者と異なる場合（代理入力）のみ略称で表示
+    const operatorShort = getShortName(r.operator_id, r.operator_name);
+    const operatorNote  = (currentUser.is_admin && r.operator_id && r.operator_id !== r.staff_id)
+      ? ` ✏️${esc(operatorShort)}` : '';
 
     let actions = '';
     if (canEdit) {
@@ -1301,6 +1301,25 @@ async function toggleProduct(productId) {
   } finally {
     hideLoading();
   }
+}
+
+// ============================================================
+// 表示ヘルパー
+// ============================================================
+
+/** user_id から略称を取得（全ユーザー対象、未登録時はフォールバック名） */
+function getShortName(userId, fallbackName) {
+  const u = allUsers.find(x => x.user_id === userId);
+  return u?.short_name || fallbackName;
+}
+
+/** 日付文字列を「2026年4月9日（木）」形式に変換 */
+function formatDateJP(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr.replace(' ', 'T'));
+  if (isNaN(d.getTime())) return dateStr;
+  const days = ['日', '月', '火', '水', '木', '金', '土'];
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日（${days[d.getDay()]}）`;
 }
 
 // ============================================================
