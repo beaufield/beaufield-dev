@@ -304,7 +304,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.3.3</span>
+  <span class="header-version">v1.3.4</span>
 </header>
 
 <!-- ============================================================ -->
@@ -831,7 +831,8 @@ function renderList() {
     : reservations.filter(r => r.status === '予約');
   baseForRank.sort((a, b) => a.reservation_no - b.reservation_no);
   const rankMap = {};
-  baseForRank.forEach((r, i) => { rankMap[r.reservation_no] = i + 1; });
+  let cumQty = 0;
+  baseForRank.forEach(r => { cumQty += r.quantity; rankMap[r.reservation_no] = cumQty; });
 
   container.innerHTML = list.map(r => {
     const canEdit = currentUser.is_admin ||
