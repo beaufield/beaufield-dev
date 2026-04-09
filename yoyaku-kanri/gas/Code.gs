@@ -10,7 +10,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.5.1';
+const VERSION  = '1.6.0';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -23,7 +23,30 @@ const SHEET_PRODUCTS     = 'products';
 const SHEET_RESERVATIONS = 'reservations';
 
 // CacheService キャッシュ時間（秒）
-const CACHE_TTL_AUTH = 300; // セッション検証キャッシュ: 5分
+const CACHE_TTL_AUTH  = 900;  // セッション検証キャッシュ: 15分（増加でシート読み込み頻度削減）
+const CACHE_TTL_USERS = 600;  // ユーザー一覧キャッシュ: 10分（_getUsersFromAuth の二重シート読み込みを防ぐ）
+
+// ============================================================
+// コールドスタート対策 ── Keep-Warm トリガー
+// ============================================================
+// GASは一定時間使われないとスクリプト環境が破棄され、
+// 次回アクセス時に「コールドスタート」（15〜30秒の待ち）が発生する。
+// 対策: この関数を「時間ベーストリガー」で5〜10分ごとに実行するよう設定する。
+//
+// 設定手順（GASエディタ）:
+//   ① 左メニュー「トリガー（時計アイコン）」→「トリガーを追加」
+//   ② 実行する関数: keepWarm
+//   ③ イベントのソース: 時間主導型
+//   ④ 時間ベースのトリガーのタイプ: 分ベースのタイマー → 5分おき
+//   ⑤ 保存
+//
+// ※ GAS実行クォータへの影響: 1回あたり0.1秒以下のため、1日で約30秒消費（問題なし）
+// ============================================================
+function keepWarm() {
+  // スクリプト環境を常にウォーム状態に保つ軽量関数
+  // キャッシュに何も書き込まず、プロパティを1つ読むだけで十分
+  PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
+}
 
 // ============================================================
 // 起動時チェック（プロパティ未設定を早期検知）
@@ -817,6 +840,16 @@ function processArrival(data) {
 //   yoyaku_role: "admin"（事務・担当者非表示）/ "staff"（営業・担当者として表示）
 // ============================================================
 function _getUsersFromAuth() {
+  // ── キャッシュ確認 ──────────────────────────────────────────
+  // validateAndGetUser で AUTH_SHEET_ID を既に開いているため、
+  // ここでキャッシュを利用することで二重シート読み込みを防ぐ
+  const cache    = CacheService.getScriptCache();
+  const cacheKey = 'users_list_' + APP_NAME;
+  const cached   = cache.get(cacheKey);
+  if (cached) {
+    try { return JSON.parse(cached); } catch(e) {}
+  }
+
   try {
     const ss = SpreadsheetApp.openById(AUTH_SHEET_ID);
 
@@ -854,6 +887,8 @@ function _getUsersFromAuth() {
         yoyaku_role: yoyakuRole  // "admin" or "staff"
       });
     }
+    // 結果をキャッシュ（10分）
+    try { cache.put(cacheKey, JSON.stringify(users), CACHE_TTL_USERS); } catch(e) {}
     return users;
   } catch(e) {
     Logger.log('_getUsersFromAuth エラー: ' + e);

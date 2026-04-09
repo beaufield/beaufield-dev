@@ -335,7 +335,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.9.0</span>
+  <span class="header-version">v1.10.0</span>
 </header>
 
 <!-- ============================================================ -->
@@ -626,7 +626,90 @@ let confirmCallback = null;
 let selectedNos    = new Set(); // 一括操作チェック済み予約No
 
 // ============================================================
-// 初期化（GAS 呼び出し: 5回 → 1回）
+// ローカルキャッシュ（localStorage）
+// ── 目的: GASコールドスタート（15〜30秒）を体感ゼロに近づける
+// ── 仕組み: キャッシュがある場合は即表示、バックグラウンドで予約を最新化
+// ── キーにバージョンを含めることで大幅な変更時に古いキャッシュが自動無効化される
+// ============================================================
+const LS_CACHE_KEY = 'bf_yoyaku_v1100';  // バージョン変更時はここも更新
+const LS_CACHE_TTL = 5 * 60 * 1000;     // 5分（商品・ユーザー情報の鮮度を保つ）
+
+function _loadLocalCache(userId) {
+  try {
+    const raw = localStorage.getItem(LS_CACHE_KEY);
+    if (!raw) return null;
+    const c = JSON.parse(raw);
+    // 別ユーザー or 期限切れは無効
+    if (c.user_id !== userId || Date.now() > c.expires) return null;
+    return c.data;
+  } catch(e) { return null; }
+}
+
+function _saveLocalCache(userId, data) {
+  try {
+    localStorage.setItem(LS_CACHE_KEY, JSON.stringify({
+      user_id: userId,
+      expires: Date.now() + LS_CACHE_TTL,
+      data:    data
+    }));
+  } catch(e) {}
+}
+
+/** init データをグローバル変数に適用してUIを描画 */
+function _applyInitData(d) {
+  currentUser  = d.user;
+  allUsers     = d.users;
+  users        = d.users.filter(u => u.yoyaku_role === 'staff');
+  products     = d.products;
+  reservations = d.reservations;
+
+  _refreshProductCounts();
+  document.getElementById('headerUser').textContent = currentUser.name;
+  document.querySelector('.header').style.opacity   = '';
+
+  if (currentUser.yoyaku_role === 'admin') {
+    document.querySelectorAll('.admin-only').forEach(el => el.style.display = '');
+  }
+  _updateUserDropdowns();
+  _updateProductDropdowns();
+  if (currentTab === 'list') renderList();
+}
+
+/**
+ * バックグラウンドで予約データを最新化（キャッシュヒット後に非同期実行）
+ * GASがウォームなら1〜2秒で完了。エラーは無視してUIへの影響を与えない。
+ */
+async function _bgRefreshReservations() {
+  try {
+    const res = await gasGet('getReservations');
+    if (!res.success) {
+      // セッション切れの場合のみポータルへ
+      if (res.error === 'SESSION_INVALID') { location.href = PORTAL_URL; }
+      return;
+    }
+    reservations = res.data;
+    _refreshProductCounts();
+    if (currentTab === 'list')  renderList();
+    if (currentTab === 'stats') renderStats();
+    // キャッシュの予約データだけ差し替えて有効期限を延長
+    try {
+      const raw = localStorage.getItem(LS_CACHE_KEY);
+      if (raw) {
+        const c = JSON.parse(raw);
+        if (c && c.data) {
+          c.data.reservations = reservations;
+          c.expires = Date.now() + LS_CACHE_TTL;
+          localStorage.setItem(LS_CACHE_KEY, JSON.stringify(c));
+        }
+      }
+    } catch(e) {}
+  } catch(e) {
+    // ネットワークエラー等: 既にキャッシュデータが表示されているので無視
+  }
+}
+
+// ============================================================
+// 初期化（キャッシュファースト戦略）
 // ============================================================
 window.addEventListener('DOMContentLoaded', async () => {
   const session = JSON.parse(localStorage.getItem('bf_session') || 'null');
@@ -636,16 +719,23 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
   token = session.token;
 
-  // ① GAS通信前にUIシェルを即表示（コールドスタート中も画面が見える）
   switchTab('register');
-  document.getElementById('regStaff').innerHTML    = '<option value="">読み込み中...</option>';
-  document.getElementById('regProduct').innerHTML  = '<option value="">読み込み中...</option>';
 
-  // ② ローディングをフルスクリーンではなくヘッダー色変化に留める
+  // ① キャッシュがある場合は即座にUIを表示（GAS待ちゼロ）
+  const cached = _loadLocalCache(session.user_id);
+  if (cached) {
+    _applyInitData(cached);
+    // バックグラウンドで予約を最新化（表示済みのため待ちなし）
+    _bgRefreshReservations();
+    return;
+  }
+
+  // ② キャッシュなし: GASから全データを取得（初回 or キャッシュ期限切れ）
+  document.getElementById('regStaff').innerHTML   = '<option value="">読み込み中...</option>';
+  document.getElementById('regProduct').innerHTML = '<option value="">読み込み中...</option>';
   document.querySelector('.header').style.opacity = '0.6';
 
   try {
-    // 1回のリクエストで全初期データを取得（旧: 5回）
     const res = await gasGet('init');
     if (!res.success) {
       if (res.error === 'SESSION_INVALID') { location.href = PORTAL_URL; return; }
@@ -659,33 +749,12 @@ window.addEventListener('DOMContentLoaded', async () => {
       throw new Error(res.error);
     }
 
-    const d = res.data;
-    currentUser  = d.user;
-    allUsers     = d.users;
-    // yoyaku_role="staff" のユーザーのみ担当者ドロップダウンに表示
-    users        = d.users.filter(u => u.yoyaku_role === 'staff');
-    products     = d.products;
-    reservations = d.reservations;
-
-    // GAS側では reserved_total=0 で返すため、ローカルで計算して反映
-    _refreshProductCounts();
-
-    document.getElementById('headerUser').textContent = currentUser.name;
-
-    if (currentUser.yoyaku_role === 'admin') {
-      document.querySelectorAll('.admin-only').forEach(el => el.style.display = '');
-    }
-
-    // ③ ドロップダウンにデータを反映（GAS 呼び出しなし）
-    _updateUserDropdowns();
-    _updateProductDropdowns();
-
-    // 現在のタブを再描画（一覧タブに居る場合は一覧を描画）
-    if (currentTab === 'list') renderList();
+    _applyInitData(res.data);
+    // キャッシュに保存（次回以降は即表示）
+    _saveLocalCache(session.user_id, res.data);
 
   } catch(e) {
     showToast('初期化エラー: ' + e.message, 'error');
-  } finally {
     document.querySelector('.header').style.opacity = '';
   }
 });
@@ -831,6 +900,18 @@ async function loadReservations() {
     // 商品残数もローカルで更新（GAS 追加呼び出し不要）
     _refreshProductCounts();
     renderList();
+    // キャッシュの予約データを最新化（次回ロード時に最新状態が表示される）
+    try {
+      const raw = localStorage.getItem(LS_CACHE_KEY);
+      if (raw) {
+        const c = JSON.parse(raw);
+        if (c && c.data) {
+          c.data.reservations = reservations;
+          c.expires = Date.now() + LS_CACHE_TTL;
+          localStorage.setItem(LS_CACHE_KEY, JSON.stringify(c));
+        }
+      }
+    } catch(e) {}
   } catch(e) {
     showToast('予約データの取得に失敗しました', 'error');
   } finally {
