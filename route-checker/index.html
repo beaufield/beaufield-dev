@@ -713,7 +713,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.14.0';
+const APP_VERSION = 'v1.15.0';
 const START_MONTH = '2026-04'; // 運用開始月（これより前は選択肢に表示しない）
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
@@ -876,6 +876,33 @@ function loadSalonCache(userId) {
 /** サロンキャッシュを削除（ログアウト時・編集後に呼ぶ）*/
 function clearSalonCache() {
   try { localStorage.removeItem(SALON_CACHE_KEY); } catch(e) {}
+}
+
+// ============================================================
+// publicUsersキャッシュ（localStorage / 10分保持）
+// 起動のたびにgetPublicUsersをGASへ取得しに行くのを防ぐ
+// ============================================================
+var PUBLIC_USERS_CACHE_KEY = 'bfc_public_users_v1';
+var PUBLIC_USERS_CACHE_TTL = 10 * 60 * 1000; // 10分
+
+function loadPublicUsersCache() {
+  try {
+    var raw = localStorage.getItem(PUBLIC_USERS_CACHE_KEY);
+    if (!raw) return null;
+    var c = JSON.parse(raw);
+    if (Date.now() - c.saved_at > PUBLIC_USERS_CACHE_TTL) return null;
+    return c.users;
+  } catch(e) { return null; }
+}
+
+function savePublicUsersCache(users) {
+  try {
+    localStorage.setItem(PUBLIC_USERS_CACHE_KEY, JSON.stringify({ saved_at: Date.now(), users: users }));
+  } catch(e) {}
+}
+
+function clearPublicUsersCache() {
+  try { localStorage.removeItem(PUBLIC_USERS_CACHE_KEY); } catch(e) {}
 }
 
 // ============================================================
@@ -1685,6 +1712,7 @@ async function submitUserAdd() {
     adminUsers.push({ user_id: result.user_id, name: name, role: role, team: team, active: true });
     // publicUsers にも追加（履歴フィルタ等で使用）
     publicUsers.push({ user_id: result.user_id, name: name, role: role, team: team });
+    savePublicUsersCache(publicUsers); // キャッシュ更新
     renderApp();
     showToast('「' + name + '」を追加しました ✅');
   } catch(e) {
@@ -1726,6 +1754,7 @@ async function submitUserEdit() {
     if (user) { user.name = name; user.role = role; user.team = team; }
     var pu = publicUsers.find(function(u) { return u.user_id === targetId; });
     if (pu) { pu.name = name; pu.role = role; pu.team = team; }
+    savePublicUsersCache(publicUsers); // キャッシュ更新
     renderApp();
     showToast('保存しました ✅');
   } catch(e) {
@@ -1765,6 +1794,9 @@ async function doDeactivateUser(userId) {
     });
     var user = adminUsers.find(function(u) { return u.user_id === userId; });
     if (user) user.active = false;
+    // 無効化したユーザーをpublicUsersから除去してキャッシュ更新
+    publicUsers = publicUsers.filter(function(u) { return u.user_id !== userId; });
+    savePublicUsersCache(publicUsers);
     renderApp();
     showToast('無効化しました');
   } catch(e) {
@@ -2210,10 +2242,17 @@ async function loadPublicUsers() {
     renderApp();
     return;
   }
+  // キャッシュヒット時はGAS呼び出しをスキップ
+  var cached = loadPublicUsersCache();
+  if (cached) {
+    publicUsers = cached;
+    return;
+  }
   try {
     showLoading();
     var result = await apiGet('getPublicUsers');
     publicUsers = result.users || [];
+    savePublicUsersCache(publicUsers); // 次回のためにキャッシュ保存
   } catch(e) {
     showToast('ユーザー情報の取得に失敗しました', 'error');
     publicUsers = [];
@@ -2298,28 +2337,38 @@ async function loadCheckScreen() {
   var uid          = currentUser.user_id;
   var cachedSalons = loadSalonCache(uid); // localStorageキャッシュを確認
 
-  showLoading();
-  try {
-    if (cachedSalons) {
-      // ── キャッシュヒット：サロン一覧はローカルから、ログのみGASで取得（1回） ──
-      allMySalons  = cachedSalons;
-      todayRoute   = computeRouteForDate(checkDate); // ローカル計算（0秒）
-      var logsResult = await apiGet('getTodayLogs', { user_id: uid, date: checkDate });
-      checkedTimes = buildCheckedTimesFromLogs(logsResult.logs);
-    } else {
-      // ── キャッシュなし：全データを1回のGASコールで取得 ──
+  if (cachedSalons) {
+    // ── キャッシュヒット：即座にUI表示 → バックグラウンドでログ取得 ──
+    allMySalons  = cachedSalons;
+    todayRoute   = computeRouteForDate(checkDate); // ローカル計算（0秒）
+    checkedTimes = new Map();
+    resetTo('check'); // スピナーなしで即座に画面表示
+
+    // バックグラウンドでチェック済みログを取得して再描画
+    apiGet('getTodayLogs', { user_id: uid, date: checkDate })
+      .then(function(logsResult) {
+        checkedTimes = buildCheckedTimesFromLogs(logsResult.logs);
+        renderApp();
+      })
+      .catch(function(e) {
+        showToast('チェック履歴の読み込みに失敗しました: ' + e.message, 'error');
+      });
+  } else {
+    // ── キャッシュなし：全データを1回のGASコールで取得 ──
+    showLoading();
+    try {
       var result   = await apiGet('getCheckScreenData', { user_id: uid, date: checkDate });
       todayRoute   = result.route   || [];
       checkedTimes = buildCheckedTimesFromLogs(result.logs);
       allMySalons  = result.salons  || [];
       saveSalonCache(uid, allMySalons); // 次回のためにキャッシュ保存
+      resetTo('check');
+    } catch(e) {
+      showToast('データ読み込みに失敗しました: ' + e.message, 'error');
+      resetTo('check');
+    } finally {
+      hideLoading();
     }
-    resetTo('check');
-  } catch(e) {
-    showToast('データ読み込みに失敗しました: ' + e.message, 'error');
-    resetTo('check');
-  } finally {
-    hideLoading();
   }
 }
 
@@ -2527,15 +2576,16 @@ document.addEventListener('DOMContentLoaded', async function() {
     return;
   }
 
-  // ユーザー一覧を取得（履歴フィルタ・管理画面用）
-  await loadPublicUsers();
-
   if (session.role && session.team) {
-    // route-checker固有情報あり（過去にログイン済み）→ そのまま利用
+    // ── route-checker固有情報あり（再訪問）：loadPublicUsersとloadCheckScreenを並列実行 ──
     currentUser = { user_id: session.user_id, name: session.name, role: session.role, team: session.team };
-    await loadCheckScreen();
+    await Promise.all([
+      loadPublicUsers(),   // 履歴フィルタ・管理画面用（キャッシュがあれば0秒）
+      loadCheckScreen()    // チェック画面（キャッシュがあれば即座に表示）
+    ]);
   } else {
-    // ポータルから初回アクセス → publicUsersからrole/teamを取得してbf_sessionにマージ
+    // ── ポータルから初回アクセス：publicUsersを先に取得してrole/teamを補完 ──
+    await loadPublicUsers();
     var found = publicUsers.find(function(u) { return u.user_id === session.user_id; });
     if (found) {
       session.role = found.role;
