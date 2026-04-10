@@ -334,6 +334,64 @@
     }
     .history-summary .alert-count { color: var(--danger); font-weight: 700; }
 
+    /* Summary screen (集計タブ) */
+    .summary-section { margin-bottom: 20px; }
+    .summary-section-title {
+      font-size: 14px; font-weight: 700; color: var(--text);
+      margin-bottom: 10px; padding-bottom: 6px;
+      border-bottom: 2px solid var(--border);
+    }
+    .summary-matrix-wrap {
+      overflow-x: auto; border-radius: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+    }
+    .summary-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+    .summary-table th {
+      background: var(--primary); color: #fff;
+      padding: 8px 6px; text-align: center;
+      font-weight: 700; white-space: nowrap;
+    }
+    .summary-table th.s-user-col { background: #374151; text-align: left; min-width: 64px; }
+    .summary-table td {
+      padding: 8px 6px; text-align: center;
+      border-bottom: 1px solid var(--border); vertical-align: middle;
+    }
+    .summary-table td.s-user-name {
+      background: #f9fafb; text-align: left;
+      font-size: 12px; font-weight: 600;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .s-cell-count { font-size: 15px; font-weight: 700; line-height: 1.1; }
+    .s-cell-sub   { font-size: 10px; color: #9ca3af; }
+    .s-legend { font-size: 11px; color: #9ca3af; margin-top: 6px; text-align: right; }
+    /* 未訪問アラートリスト */
+    .alert-list {
+      background: #fff; border-radius: 10px;
+      overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+    }
+    .alert-user-hdr {
+      background: #fef3c7; padding: 8px 12px;
+      font-size: 13px; font-weight: 700; color: #92400e;
+    }
+    .alert-salon-row {
+      padding: 10px 14px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .alert-salon-row:last-child { border-bottom: none; }
+    .alert-salon-name { font-size: 13px; font-weight: 600; }
+    .alert-salon-meta { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+    .alert-weeks-badge {
+      font-size: 11px; font-weight: 700; color: #fff;
+      background: var(--danger); border-radius: 12px;
+      padding: 3px 8px; white-space: nowrap; flex-shrink: 0;
+    }
+    .alert-no-visit-badge {
+      font-size: 11px; font-weight: 700; color: #fff;
+      background: #6b7280; border-radius: 12px;
+      padding: 3px 8px; white-space: nowrap; flex-shrink: 0;
+    }
+
     /* Salon management */
     .day-filter-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
     .day-filter-tab {
@@ -713,7 +771,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.15.0';
+const APP_VERSION = 'v1.16.0';
 const START_MONTH = '2026-04'; // 運用開始月（これより前は選択肢に表示しない）
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
@@ -750,6 +808,10 @@ let checkDate           = '';    // チェック画面の対象日（'YYYY-MM-DD
 let changePinStep    = 0;   // 0=現在PIN入力中, 1=新PIN入力中
 let changePinCurrent = '';  // ステップ0で入力した現在PIN
 let changePinValue   = '';  // 入力中のPIN
+
+// 集計
+let summaryData  = null;  // { matrix, alerts, month } GASから取得したデータ
+let summaryMonth = '';    // 'YYYY-MM'（空=当月）
 
 // 訪問履歴
 let historyData   = null;     // { weeks, rows } GASから取得したデータ
@@ -906,6 +968,28 @@ function clearPublicUsersCache() {
 }
 
 // ============================================================
+// 集計キャッシュ（localStorage / 10分保持）
+// ============================================================
+var SUMMARY_CACHE_PREFIX = 'bfc_summary_v1_';
+var SUMMARY_CACHE_TTL    = 10 * 60 * 1000; // 10分
+
+function loadSummaryCache(month) {
+  try {
+    var raw = localStorage.getItem(SUMMARY_CACHE_PREFIX + month);
+    if (!raw) return null;
+    var c = JSON.parse(raw);
+    if (Date.now() - c.saved_at > SUMMARY_CACHE_TTL) return null;
+    return c.data;
+  } catch(e) { return null; }
+}
+
+function saveSummaryCache(month, data) {
+  try {
+    localStorage.setItem(SUMMARY_CACHE_PREFIX + month, JSON.stringify({ saved_at: Date.now(), data: data }));
+  } catch(e) {}
+}
+
+// ============================================================
 // 履歴キャッシュ（localStorage / 10分保持）
 // フィルタ変更のたびにGASを叩かないよう、組み合わせごとにキャッシュ
 // ============================================================
@@ -987,6 +1071,10 @@ function resetTo(viewName, data) {
   // 履歴タブに切り替えたら自動ロード
   if (viewName === 'history' && currentUser && !historyData) {
     loadHistory();
+  }
+  // 集計タブに切り替えたら自動ロード
+  if (viewName === 'summary' && currentUser && !summaryData) {
+    loadSummary();
   }
   // 設定タブ（admin）に切り替えたら自動ロード
   if (viewName === 'admin' && currentUser && currentUser.role === 'admin' && adminUsers.length === 0) {
@@ -1072,6 +1160,7 @@ function renderApp() {
     case 'login':        app.innerHTML = renderLogin();        break;
     case 'check':        app.innerHTML = renderCheck();        break;
     case 'history':      app.innerHTML = renderHistory(); bindHistoryFilterEvents(); break;
+    case 'summary':      app.innerHTML = renderSummary();      break;
     case 'salons':       app.innerHTML = renderSalons();       break;
     case 'admin':        app.innerHTML = renderAdmin();        break;
     case 'admin-salons': app.innerHTML = renderAdminSalons();  break;
@@ -1190,17 +1279,21 @@ function renderHeader(title, opts) {
 
 // ボトムナビゲーション
 function renderBottomNav() {
-  var role = currentUser ? currentUser.role : '';
-  var sm   = (role === 'sales' || role === 'manager');
+  var role  = currentUser ? currentUser.role : '';
+  var sm    = (role === 'sales' || role === 'manager');
+  var isMgr = (role === 'manager' || role === 'director' || role === 'admin');
   var tabs = [
-    { id: 'check',   icon: '✔️',  label: 'チェック', show: sm   },
-    { id: 'history', icon: '📋',  label: '履歴',     show: true },
-    { id: 'salons',  icon: '🏪',  label: 'サロン',   show: sm   },
-    { id: 'admin',   icon: '⚙️',  label: '設定',     show: true }
+    { id: 'check',   icon: '✔️',  label: 'チェック', show: sm     },
+    { id: 'history', icon: '📋',  label: '履歴',     show: true   },
+    { id: 'summary', icon: '📊',  label: '集計',     show: isMgr  },
+    { id: 'salons',  icon: '🏪',  label: 'サロン',   show: sm     },
+    { id: 'admin',   icon: '⚙️',  label: '設定',     show: true   }
   ].filter(function(t) { return t.show; });
 
   // admin-salons は設定タブの子画面として扱う
   var activeView = (currentView === 'admin-salons') ? 'admin' : currentView;
+  // summary-detail は集計タブの子画面として扱う（将来拡張用）
+  if (activeView === 'summary-detail') activeView = 'summary';
 
   return '<nav class="bottom-nav">' +
     tabs.map(function(t) {
@@ -2080,7 +2173,7 @@ function resolveUserIds() {
   }
 
   // director / admin
-  if (choice === 'all') return publicUsers.map(function(u) { return u.user_id; });
+  if (choice === 'all' || choice === 'self') return publicUsers.map(function(u) { return u.user_id; });
   return [choice]; // 特定ユーザー
 }
 
@@ -2118,6 +2211,189 @@ async function loadHistory() {
     hideLoading();
     renderApp();
   }
+}
+
+// ============================================================
+// 集計（Phase 7）
+// ============================================================
+
+/** 集計データをGASから取得してレンダリング */
+async function loadSummary() {
+  if (!currentUser) return;
+  var today  = new Date();
+  var month  = summaryMonth ||
+    (today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0'));
+
+  // キャッシュ確認
+  var cached = loadSummaryCache(month);
+  if (cached) {
+    summaryData = cached;
+    renderApp();
+    return;
+  }
+
+  showLoading();
+  try {
+    var result = await apiGet('getSummary', {
+      month:   month,
+      user_id: currentUser.user_id
+    });
+    summaryData = result;
+    saveSummaryCache(month, result);
+  } catch(e) {
+    showToast('集計データの取得に失敗しました: ' + e.message, 'error');
+    summaryData = { matrix: [], alerts: [] };
+  } finally {
+    hideLoading();
+    renderApp();
+  }
+}
+
+/** 集計画面のHTML生成 */
+function renderSummary() {
+  var today   = new Date();
+  var curMonth = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
+  var selMonth = summaryMonth || curMonth;
+
+  // 月プルダウン（直近12ヶ月）
+  var monthOpts = '';
+  for (var i = 0; i < 12; i++) {
+    var d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    var val = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    if (val < START_MONTH) break;
+    var lbl = d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + (i === 0 ? '（今月）' : '');
+    var sel = (selMonth === val) ? ' selected' : '';
+    monthOpts += '<option value="' + val + '"' + sel + '>' + escHtml(lbl) + '</option>';
+  }
+  var filterHtml = '<div class="history-filters">' +
+    '<select class="filter-select" id="summary-month" onchange="onSummaryMonthChange()">' +
+    monthOpts + '</select></div>';
+
+  var bodyHtml;
+  if (!summaryData) {
+    bodyHtml = '<div class="empty-state">読み込み中...</div>';
+  } else {
+    bodyHtml = buildSummaryMatrix(summaryData.matrix) + buildSummaryAlerts(summaryData.alerts);
+  }
+
+  return renderHeader('集計') +
+    '<div class="content">' + filterHtml + bodyHtml + '</div>' +
+    renderBottomNav();
+}
+
+/** 月フィルタ変更時 */
+function onSummaryMonthChange() {
+  var el = document.getElementById('summary-month');
+  if (!el) return;
+  summaryMonth = el.value;
+  summaryData  = null;
+  loadSummary();
+}
+
+/** 担当者×曜日 マトリクスのHTML生成 */
+function buildSummaryMatrix(matrix) {
+  if (!matrix || matrix.length === 0) {
+    return '<div class="summary-section">' +
+      '<div class="summary-section-title">📊 担当者×曜日別 訪問件数</div>' +
+      '<div class="empty-state">データがありません</div></div>';
+  }
+
+  var days = ['火', '水', '木', '金', '土'];
+
+  // ヘッダー行
+  var headerCells = days.map(function(d) { return '<th>' + d + '</th>'; }).join('');
+  var header = '<tr><th class="s-user-col">担当者</th>' + headerCells + '<th>月計</th></tr>';
+
+  // データ行（ヒートマップ背景色付き）
+  var bodyRows = matrix.map(function(row) {
+    var cells = days.map(function(d) {
+      var visits  = row.days[d]  || 0;
+      var total   = row.salons[d] || 0;
+      // 訪問率で背景色を決定（緑:高 / 黄:中 / 橙:低 / 白:0件）
+      var rate = total > 0 ? visits / total : 0;
+      var bg = rate >= 0.7 ? '#dcfce7'
+             : rate >= 0.4 ? '#fef9c3'
+             : rate >  0   ? '#ffedd5'
+             : '#ffffff';
+      return '<td style="background:' + bg + '">' +
+        '<div class="s-cell-count">' + visits + '</div>' +
+        (total > 0 ? '<div class="s-cell-sub">/' + total + '</div>' : '') +
+        '</td>';
+    }).join('');
+
+    var totalRate = row.total_salons > 0 ? row.total / row.total_salons : 0;
+    var totalBg = totalRate >= 0.7 ? '#dcfce7' : totalRate >= 0.4 ? '#fef9c3' : totalRate > 0 ? '#ffedd5' : '#fff';
+
+    return '<tr>' +
+      '<td class="s-user-name">' + escHtml(row.user_name) + '</td>' +
+      cells +
+      '<td style="background:' + totalBg + ';font-weight:700">' +
+        '<div class="s-cell-count">' + row.total + '</div>' +
+        (row.total_salons > 0 ? '<div class="s-cell-sub">/' + row.total_salons + '</div>' : '') +
+      '</td></tr>';
+  }).join('');
+
+  return '<div class="summary-section">' +
+    '<div class="summary-section-title">📊 担当者×曜日別 訪問件数</div>' +
+    '<div class="summary-matrix-wrap">' +
+      '<table class="summary-table">' +
+        '<thead>' + header + '</thead>' +
+        '<tbody>' + bodyRows + '</tbody>' +
+      '</table>' +
+    '</div>' +
+    '<div class="s-legend">件数 / 担当サロン数　🟢70%以上 🟡40〜69% 🟠1〜39%</div>' +
+    '</div>';
+}
+
+/** 4週以上未訪問アラート一覧のHTML生成 */
+function buildSummaryAlerts(alerts) {
+  var title = '<div class="summary-section-title">⚠️ 4週以上未訪問サロン' +
+    (alerts && alerts.length > 0 ? '（' + alerts.length + '件）' : '') + '</div>';
+
+  if (!alerts || alerts.length === 0) {
+    return '<div class="summary-section">' + title +
+      '<div class="alert-list"><div class="empty-state">未訪問アラートはありません ✅</div></div>' +
+      '</div>';
+  }
+
+  // ユーザーごとにグループ化
+  var groups = {};
+  var userOrder = [];
+  alerts.forEach(function(a) {
+    if (!groups[a.user_id]) {
+      groups[a.user_id] = { user_name: a.user_name, salons: [] };
+      userOrder.push(a.user_id);
+    }
+    groups[a.user_id].salons.push(a);
+  });
+
+  var listHtml = userOrder.map(function(uid) {
+    var g = groups[uid];
+    var rows = g.salons.map(function(s) {
+      var lastStr = s.last_visit
+        ? s.last_visit.replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$2/$3') + '最終'
+        : '未訪問';
+      var badge, weeksNum = s.weeks_since;
+      if (s.last_visit === null) {
+        badge = '<span class="alert-no-visit-badge">訪問歴なし</span>';
+      } else {
+        badge = '<span class="alert-weeks-badge">' + weeksNum + '週未訪問</span>';
+      }
+      return '<div class="alert-salon-row">' +
+        '<div>' +
+          '<div class="alert-salon-name">' + escHtml(s.salon_name) + '</div>' +
+          '<div class="alert-salon-meta">' + s.visit_day + '曜日　' + lastStr + '</div>' +
+        '</div>' +
+        badge +
+        '</div>';
+    }).join('');
+    return '<div class="alert-user-hdr">' + escHtml(g.user_name) +
+      ' <span style="font-weight:400">（' + g.salons.length + '件）</span></div>' + rows;
+  }).join('');
+
+  return '<div class="summary-section">' + title +
+    '<div class="alert-list">' + listHtml + '</div>' +
+    '</div>';
 }
 
 /** マトリクステーブルのHTML生成 */
