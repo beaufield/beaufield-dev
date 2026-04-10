@@ -771,7 +771,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.16.0';
+const APP_VERSION = 'v1.17.0';
 const START_MONTH = '2026-04'; // 運用開始月（これより前は選択肢に表示しない）
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
@@ -810,8 +810,9 @@ let changePinCurrent = '';  // ステップ0で入力した現在PIN
 let changePinValue   = '';  // 入力中のPIN
 
 // 集計
-let summaryData  = null;  // { matrix, alerts, month } GASから取得したデータ
-let summaryMonth = '';    // 'YYYY-MM'（空=当月）
+let summaryData        = null;  // { matrix, alerts, month } GASから取得したデータ
+let summaryMonth       = '';    // 'YYYY-MM'（空=当月）
+let summaryAlertFilter = 'all'; // アラートのメンバーフィルタ: 'all' | user_id（manager用）
 
 // 訪問履歴
 let historyData   = null;     // { weeks, rows } GASから取得したデータ
@@ -2084,19 +2085,10 @@ function buildHistoryFilters() {
     userFilterHtml = '<select class="filter-select" id="hist-user" onchange="onHistoryFilterChange()">' + opts + '</select>';
   }
 
-  // 曜日フィルタ
-  var days = ['all', '火', '水', '木', '金', '土', '他'];
-  var dayLabels = { all: '全て', '火': '火', '水': '水', '木': '木', '金': '金', '土': '土', '他': '随時' };
-  var dayOpts = days.map(function(d) {
-    var sel = historyFilter.day_of_week === d ? ' selected' : '';
-    return '<option value="' + d + '"' + sel + '>' + dayLabels[d] + '</option>';
-  }).join('');
-  var dayFilterHtml = '<select class="filter-select" id="hist-day" onchange="onHistoryFilterChange()">' + dayOpts + '</select>';
-
   // 月フィルタ
   var monthFilterHtml = '<select class="filter-select" id="hist-month" onchange="onHistoryFilterChange()">' + buildMonthOptions() + '</select>';
 
-  return '<div class="history-filters">' + userFilterHtml + dayFilterHtml + monthFilterHtml + '</div>';
+  return '<div class="history-filters">' + userFilterHtml + monthFilterHtml + '</div>';
 }
 
 /** フィルタ変更時のイベント（renderApp後に再バインド）*/
@@ -2107,7 +2099,6 @@ function bindHistoryFilterEvents() {
 /** フィルタ変更時に状態更新 → 再ロード */
 function onHistoryFilterChange() {
   var userEl  = document.getElementById('hist-user');
-  var dayEl   = document.getElementById('hist-day');
   var monthEl = document.getElementById('hist-month');
   if (userEl) {
     var newChoice = userEl.value;
@@ -2116,11 +2107,31 @@ function onHistoryFilterChange() {
     }
     historyFilter.userChoice = newChoice;
   }
-  if (dayEl)   historyFilter.day_of_week = dayEl.value;
-  if (monthEl) historyFilter.month       = monthEl.value;
+  if (monthEl) historyFilter.month = monthEl.value;
   historyData = null;
   renderApp();
   loadHistory();
+}
+
+/** 曜日ボタン押下時 */
+function setDayFilter(day) {
+  if (historyFilter.day_of_week === day) return; // 変化なしは無視
+  historyFilter.day_of_week = day;
+  historyData = null;
+  renderApp();
+  loadHistory();
+}
+
+/** 曜日フィルタボタン行のHTML生成 */
+function buildDayFilter() {
+  var days      = ['all', '火', '水', '木', '金', '土', '他'];
+  var dayLabels = { all: '全て', '火': '火', '水': '水', '木': '木', '金': '金', '土': '土', '他': '随時' };
+  var btns = days.map(function(d) {
+    var active = historyFilter.day_of_week === d ? ' active' : '';
+    return '<button class="member-tab' + active + '" onclick="setDayFilter(\'' + d + '\')">' +
+           dayLabels[d] + '</button>';
+  }).join('');
+  return '<div class="member-tabs" style="margin-bottom:8px">' + btns + '</div>';
 }
 
 /** メンバータブのHTML生成（manager + チーム全員 時のみ表示）*/
@@ -2129,10 +2140,10 @@ function buildMemberTabs() {
   if (historyFilter.userChoice !== 'team') return '';
   if (!historyData) return '';
 
-  // チームメンバーを resolveUserIds() と同じ条件で取得
+  // チームメンバーを resolveUserIds() と同じ条件で取得（sales/manager かつ同チームのみ）
   var team    = currentUser.team;
   var members = publicUsers.filter(function(u) {
-    return u.team === team || u.team === 'all';
+    return (u.role === 'sales' || u.role === 'manager') && u.team === team;
   });
   if (members.length <= 1) return ''; // 自分1人ならタブ不要
 
@@ -2166,9 +2177,9 @@ function resolveUserIds() {
 
   if (role === 'manager') {
     if (choice === 'self') return [uid];
-    // team: publicUsers からチームメンバーを抽出
+    // team: sales/manager ロールかつ同チームのみ（admin/director の team:'all' は除外）
     return publicUsers
-      .filter(function(u) { return u.team === team || u.team === 'all'; })
+      .filter(function(u) { return (u.role === 'sales' || u.role === 'manager') && u.team === team; })
       .map(function(u) { return u.user_id; });
   }
 
@@ -2273,7 +2284,13 @@ function renderSummary() {
   if (!summaryData) {
     bodyHtml = '<div class="empty-state">読み込み中...</div>';
   } else {
-    bodyHtml = buildSummaryMatrix(summaryData.matrix) + buildSummaryAlerts(summaryData.alerts);
+    // manager は自チームのメンバーフィルタボタンを表示
+    var alertMemberTabsHtml = '';
+    var role = currentUser ? currentUser.role : '';
+    if (role === 'manager' && summaryData.alerts && summaryData.alerts.length > 0) {
+      alertMemberTabsHtml = buildSummaryAlertMemberTabs(summaryData.alerts);
+    }
+    bodyHtml = buildSummaryMatrix(summaryData.matrix) + alertMemberTabsHtml + buildSummaryAlerts(summaryData.alerts);
   }
 
   return renderHeader('集計') +
@@ -2285,9 +2302,16 @@ function renderSummary() {
 function onSummaryMonthChange() {
   var el = document.getElementById('summary-month');
   if (!el) return;
-  summaryMonth = el.value;
-  summaryData  = null;
+  summaryMonth       = el.value;
+  summaryData        = null;
+  summaryAlertFilter = 'all'; // 月変更時はフィルタをリセット
   loadSummary();
+}
+
+/** アラートのメンバーフィルタ切り替え（manager用） */
+function setSummaryAlertFilter(uid) {
+  summaryAlertFilter = uid;
+  renderApp();
 }
 
 /** 担当者×曜日 マトリクスのHTML生成 */
@@ -2345,8 +2369,36 @@ function buildSummaryMatrix(matrix) {
     '</div>';
 }
 
+/** アラートセクション用メンバーフィルタボタン（manager専用）*/
+function buildSummaryAlertMemberTabs(alerts) {
+  // アラートに登場するユーザーを一意に抽出
+  var seen = {};
+  var members = [];
+  alerts.forEach(function(a) {
+    if (!seen[a.user_id]) {
+      seen[a.user_id] = true;
+      members.push({ user_id: a.user_id, user_name: a.user_name });
+    }
+  });
+  if (members.length <= 1) return ''; // 1人以下ならタブ不要
+
+  var allActive = summaryAlertFilter === 'all' ? ' active' : '';
+  var btns = '<button class="member-tab' + allActive + '" onclick="setSummaryAlertFilter(\'all\')">全員</button>' +
+    members.map(function(m) {
+      var active = summaryAlertFilter === m.user_id ? ' active' : '';
+      return '<button class="member-tab' + active +
+             '" onclick="setSummaryAlertFilter(\'' + escHtml(m.user_id) + '\')">' +
+             escHtml(m.user_name) + '</button>';
+    }).join('');
+  return '<div class="member-tabs" style="margin-bottom:12px">' + btns + '</div>';
+}
+
 /** 4週以上未訪問アラート一覧のHTML生成 */
 function buildSummaryAlerts(alerts) {
+  // メンバーフィルタ適用（manager が特定メンバーを選択中）
+  if (summaryAlertFilter !== 'all' && alerts) {
+    alerts = alerts.filter(function(a) { return a.user_id === summaryAlertFilter; });
+  }
   var title = '<div class="summary-section-title">⚠️ 4週以上未訪問サロン' +
     (alerts && alerts.length > 0 ? '（' + alerts.length + '件）' : '') + '</div>';
 
@@ -2503,6 +2555,7 @@ function renderHistory() {
   return renderHeader('訪問履歴') +
     '<div class="content">' +
     filterHtml +
+    buildDayFilter() +
     memberTabsHtml +
     matrixHtml +
     '</div>' +
