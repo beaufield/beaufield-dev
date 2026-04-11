@@ -10,7 +10,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.6.0';
+const VERSION  = '1.7.0';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -213,6 +213,7 @@ function doPost(e) {
       case 'updateStatus':        return _jsonResponse(updateStatus(data));
       case 'bulkDelete':          return _jsonResponse(bulkDelete(data));
       case 'bulkUpdateStatus':    return _jsonResponse(bulkUpdateStatus(data));
+      case 'bulkUpdateDelivery':  return _jsonResponse(bulkUpdateDelivery(data));
       case 'processArrival':      return _jsonResponse(processArrival(data));
       default:                    return _jsonResponse(_err('不明なアクション: ' + action));
     }
@@ -731,6 +732,54 @@ function bulkUpdateStatus(data) {
   }
 
   return _ok({ updated });
+}
+
+/**
+ * 複数予約の発送方法を一括変更
+ * admin: 全件変更可
+ * staff: 自分の「予約」ステータスのみ変更可
+ */
+function bulkUpdateDelivery(data) {
+  const userInfo = data._userInfo;
+  if (!userInfo) return _err('ユーザー情報が取得できません');
+
+  const nos            = data.reservation_nos;
+  const deliveryMethod = String(data.delivery_method || '').trim();
+  const validMethods   = ['発送', '持参', '未定'];
+  if (!validMethods.includes(deliveryMethod))       return _err('無効な発送方法です');
+  if (!Array.isArray(nos) || nos.length === 0)      return _err('対象が指定されていません');
+
+  _checkProps();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const rs = ss.getSheetByName(SHEET_RESERVATIONS);
+  if (!rs || rs.getLastRow() < 2) return _err('予約が見つかりません');
+
+  const rows   = rs.getRange(2, 1, rs.getLastRow() - 1, 7).getValues();
+  const nosSet = new Set(nos.map(Number));
+  const now    = _now();
+  let updated  = 0;
+  const errors = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const no = Number(rows[i][0]);
+    if (!nosSet.has(no)) continue;
+
+    if (userInfo.yoyaku_role !== 'admin') {
+      if (String(rows[i][6]) !== String(data._userId)) {
+        errors.push(`No.${no}: 他の担当者の予約は変更できません`);
+        continue;
+      }
+      if (String(rows[i][5]) !== '予約') {
+        errors.push(`No.${no}: 確定済みの予約は変更できません`);
+        continue;
+      }
+    }
+    rs.getRange(i + 2, 11).setValue(deliveryMethod);  // K列: delivery_method
+    rs.getRange(i + 2, 13).setValue(now);              // M列: updated_at
+    updated++;
+  }
+
+  return _ok({ updated, errors });
 }
 
 // ============================================================
