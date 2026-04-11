@@ -898,7 +898,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.14.4'; // アルペンローゼhyumi専用発注書 出力対応
+const APP_VERSION    = 'v1.14.5'; // アルペンローゼ: 先頭ゼロ欠落対策・日付座標修正
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER      = 'bf_pm';
@@ -1996,8 +1996,10 @@ async function outputAlpenrosePDF() {
   const items = cartItems.filter(i => !i.isHandwritten);
   const matched = [], unmatched = [];
   for (const item of items) {
-    if (item.code && ALPENROSE_COORD_MAP[item.code]) {
-      matched.push({ item, coord: ALPENROSE_COORD_MAP[item.code] });
+    // 先頭ゼロ欠落対策: 5桁にゼロ埋めして照合
+    const aCode = String(item.code || '').padStart(5, '0');
+    if (aCode && ALPENROSE_COORD_MAP[aCode]) {
+      matched.push({ item, coord: ALPENROSE_COORD_MAP[aCode] });
     } else {
       unmatched.push(item);
     }
@@ -2022,9 +2024,9 @@ async function outputAlpenrosePDF() {
     // 「発注日：20　　年　　月　　日」欄
     const [yyyy, mm, dd] = currentOrder.date.split('-').map(Number);
     const yy = yyyy % 100; // 下2桁 (例: 2026 → 26)
-    page.drawText(String(yy), { x:  94, y: 667, size: 10, font, color: black });
-    page.drawText(String(mm), { x: 133, y: 667, size: 10, font, color: black });
-    page.drawText(String(dd), { x: 161, y: 667, size: 10, font, color: black });
+    page.drawText(String(yy), { x:  94, y: 651, size: 10, font, color: black });
+    page.drawText(String(mm), { x: 133, y: 651, size: 10, font, color: black });
+    page.drawText(String(dd), { x: 161, y: 651, size: 10, font, color: black });
 
     // 各商品の発注数を記入
     for (const { item, coord } of matched) {
@@ -2481,8 +2483,9 @@ async function reOutputAlpenrosePDF(orderNo) {
 
   const matched = [], unmatched = [];
   for (const item of items.filter(i => !i.isHandwritten)) {
-    if (item.code && ALPENROSE_COORD_MAP[item.code]) {
-      matched.push({ item, coord: ALPENROSE_COORD_MAP[item.code] });
+    const aCode = String(item.code || '').padStart(5, '0');
+    if (aCode && ALPENROSE_COORD_MAP[aCode]) {
+      matched.push({ item, coord: ALPENROSE_COORD_MAP[aCode] });
     } else {
       unmatched.push(item);
     }
@@ -2507,9 +2510,9 @@ async function reOutputAlpenrosePDF(orderNo) {
     const [yyyy, mm, dd] = (orderInfo.date || '').split('/').map(Number);
     if (yyyy) {
       const yy = yyyy % 100;
-      page.drawText(String(yy), { x:  94, y: 667, size: 10, font, color: black });
-      page.drawText(String(mm), { x: 133, y: 667, size: 10, font, color: black });
-      page.drawText(String(dd), { x: 161, y: 667, size: 10, font, color: black });
+      page.drawText(String(yy), { x:  94, y: 651, size: 10, font, color: black });
+      page.drawText(String(mm), { x: 133, y: 651, size: 10, font, color: black });
+      page.drawText(String(dd), { x: 161, y: 651, size: 10, font, color: black });
     }
     for (const { item, coord } of matched) {
       page.drawText(String(item.qty), { x: coord.x, y: coord.y, size: 9, font, color: rgb(0, 0, 0.7) });
