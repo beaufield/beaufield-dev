@@ -157,12 +157,17 @@
 
     /* 一括操作バー */
     #bulkActionBar {
-      display: none; align-items: center; gap: 6px;
+      display: none; align-items: center; gap: 6px; flex-wrap: wrap;
       background: #eff6ff; border: 1.5px solid #bfdbfe;
       border-radius: 7px; padding: 5px 10px; margin-bottom: 5px;
     }
     #bulkActionBar.show { display: flex; }
-    #bulkCount { font-size: 12px; font-weight: 700; color: var(--primary); flex: 1; }
+    #bulkCount { font-size: 12px; font-weight: 700; color: var(--primary); flex: 1; min-width: 60px; }
+    .bulk-delivery-sel {
+      padding: 3px 6px; border: 1.5px solid var(--border); border-radius: 5px;
+      font-size: 11px; background: #fff; color: var(--text);
+      -webkit-appearance: none; appearance: none;
+    }
     /* 2行目: 商品名・数量（サロン名と同サイズ） */
     .rc-row2 { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
     .rc-product { font-size: 13px; font-weight: 700; color: var(--text); flex: 1;
@@ -335,7 +340,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.10.0</span>
+  <span class="header-version">v1.11.0</span>
 </header>
 
 <!-- ============================================================ -->
@@ -406,6 +411,12 @@
     <span id="bulkCount"></span>
     <button class="btn btn-danger btn-sm" onclick="executeBulkDelete()">削除</button>
     <button class="btn btn-success btn-sm" id="bulkConfirmBtn" style="display:none" onclick="executeBulkConfirm()">確定</button>
+    <select id="bulkDelivery" class="bulk-delivery-sel" title="発送方法を選択">
+      <option value="発送">発送</option>
+      <option value="持参">持参</option>
+      <option value="未定">未定</option>
+    </select>
+    <button class="btn btn-primary btn-sm" onclick="executeBulkDeliveryChange()">発送方法変更</button>
     <button class="btn btn-gray btn-sm" onclick="clearSelection()">解除</button>
   </div>
 
@@ -631,7 +642,7 @@ let selectedNos    = new Set(); // 一括操作チェック済み予約No
 // ── 仕組み: キャッシュがある場合は即表示、バックグラウンドで予約を最新化
 // ── キーにバージョンを含めることで大幅な変更時に古いキャッシュが自動無効化される
 // ============================================================
-const LS_CACHE_KEY = 'bf_yoyaku_v1100';  // バージョン変更時はここも更新
+const LS_CACHE_KEY = 'bf_yoyaku_v1110';  // バージョン変更時はここも更新
 const LS_CACHE_TTL = 5 * 60 * 1000;     // 5分（商品・ユーザー情報の鮮度を保つ）
 
 function _loadLocalCache(userId) {
@@ -1464,6 +1475,36 @@ function executeBulkDelete() {
       }
     },
     'btn-danger'
+  );
+}
+
+function executeBulkDeliveryChange() {
+  if (selectedNos.size === 0) return;
+  const delivery = document.getElementById('bulkDelivery').value;
+  const nos = Array.from(selectedNos);
+  showConfirm(
+    `選択した ${nos.length} 件の発送方法を「${delivery}」に変更しますか？`,
+    '変更する',
+    async () => {
+      showLoading();
+      try {
+        const res = await gasPost('bulkUpdateDelivery', { reservation_nos: nos, delivery_method: delivery });
+        if (!res.success) throw new Error(res.error);
+        const { updated, errors } = res.data;
+        if (errors && errors.length > 0) {
+          showToast(`${updated}件変更（${errors.length}件はスキップ）`, 'warning');
+        } else {
+          showToast(`${updated}件の発送方法を「${delivery}」に変更しました`, 'success');
+        }
+        selectedNos.clear();
+        await loadReservations();
+      } catch(e) {
+        showToast(e.message, 'error');
+      } finally {
+        hideLoading();
+      }
+    },
+    'btn-primary'
   );
 }
 
