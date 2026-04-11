@@ -1994,6 +1994,13 @@ const ALPENROSE_COORD_MAP = {
 
 async function outputAlpenrosePDF() {
   const items = cartItems.filter(i => !i.isHandwritten);
+
+  // 【デバッグ】コード確認用（解決後に削除）
+  if (items.length > 0) {
+    const dbg = items.slice(0,3).map(i => `"${i.code}" / "${i.janCode}"`).join('\n');
+    alert('【デバッグ】code / janCode:\n' + dbg);
+  }
+
   const matched = [], unmatched = [];
   for (const item of items) {
     // 先頭ゼロ欠落対策: 5桁にゼロ埋めして照合
