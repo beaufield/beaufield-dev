@@ -668,7 +668,8 @@
       <button id="btn-pdf"         class="btn btn-outline"   onclick="outputPDF()"        style="margin-bottom:8px">📄 PDF保存</button>
       <button id="btn-text"        class="btn btn-secondary" onclick="outputText()"       style="margin-bottom:8px;display:none">💬 テキスト出力</button>
       <button id="btn-grandex-pdf"  class="btn btn-secondary" onclick="outputGrandexPDF()"  style="margin-bottom:8px;display:none">📋 グランデックス発注書 出力</button>
-      <button id="btn-chiyoda-pdf"  class="btn btn-secondary" onclick="outputChiyodaPDF()"  style="margin-bottom:8px;display:none">📋 千代田化学発注書 出力</button>
+      <button id="btn-chiyoda-pdf"    class="btn btn-secondary" onclick="outputChiyodaPDF()"    style="margin-bottom:8px;display:none">📋 千代田化学発注書 出力</button>
+      <button id="btn-alpenrose-pdf"  class="btn btn-secondary" onclick="outputAlpenrosePDF()"  style="margin-bottom:8px;display:none">📋 アルペンローゼ発注書 出力</button>
     </div>
     <div id="new-order-wrap" style="display:none">
       <button class="btn btn-success" onclick="startNewOrder()">➕ 新しい発注を始める</button>
@@ -897,7 +898,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.14.3'; // グランデックス発注書: 参照PDFと日付座標を修正
+const APP_VERSION    = 'v1.14.4'; // アルペンローゼhyumi専用発注書 出力対応
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER      = 'bf_pm';
@@ -1654,6 +1655,10 @@ function applyOutputButtons() {
   // 千代田化学：メーカーPDF対象の発注先の場合に表示
   show('btn-chiyoda-pdf', methods.includes('メーカーPDF') &&
                           currentOrder.supplierCode === CHIYODA_SUPPLIER_CODE);
+
+  // アルペンローゼ：メーカーPDF対象の発注先の場合に表示
+  show('btn-alpenrose-pdf', methods.includes('メーカーPDF') &&
+                            currentOrder.supplierCode === ALPENROSE_SUPPLIER_CODE);
 }
 
 /* ===================================================
@@ -1960,6 +1965,84 @@ async function outputChiyodaPDF() {
   } finally { hideLoading(); }
 }
 
+/* ===================================================
+   アルペンローゼ メーカー発注書 出力
+=================================================== */
+const ALPENROSE_SUPPLIER_CODE = '57';
+
+// 商品コード → PDF座標（発注数列・pdf-lib座標系: 左下原点）
+// ※座標は実測値。ずれがある場合は x/y を調整する
+const ALPENROSE_COORD_MAP = {
+  "04731": { x: 544, y: 562 },
+  "04732": { x: 544, y: 538 },
+  "04733": { x: 544, y: 514 },
+  "04734": { x: 544, y: 490 },
+  "04735": { x: 544, y: 466 },
+  "04736": { x: 544, y: 442 },
+  "04737": { x: 544, y: 418 },
+  "04738": { x: 544, y: 394 },
+  "04739": { x: 544, y: 370 },
+  "04740": { x: 544, y: 346 },
+  "04741": { x: 544, y: 322 },
+  "04742": { x: 544, y: 298 },
+  "04743": { x: 544, y: 274 },
+  "04744": { x: 544, y: 250 },
+  "04745": { x: 544, y: 226 },
+  "08436": { x: 544, y: 202 },
+  "08437": { x: 544, y: 178 }
+};
+
+async function outputAlpenrosePDF() {
+  const items = cartItems.filter(i => !i.isHandwritten);
+  const matched = [], unmatched = [];
+  for (const item of items) {
+    if (item.code && ALPENROSE_COORD_MAP[item.code]) {
+      matched.push({ item, coord: ALPENROSE_COORD_MAP[item.code] });
+    } else {
+      unmatched.push(item);
+    }
+  }
+  if (unmatched.length > 0) {
+    const names = unmatched.map(i => '・' + i.name).join('\n');
+    if (!confirm(`以下の商品はアルペンローゼ発注書に自動入力できません（手書き対応が必要）：\n\n${names}\n\n続けますか？`)) return;
+  }
+  showLoading('アルペンローゼ発注書を生成中...');
+  try {
+    const { PDFDocument, StandardFonts, rgb } = PDFLib;
+    const pdfBytes = await fetch('./メーカー発注書/アルペンローゼhyumi専用発注書.pdf').then(r => {
+      if (!r.ok) throw new Error('アルペンローゼhyumi専用発注書.pdf の読み込みに失敗しました');
+      return r.arrayBuffer();
+    });
+    const pdfDoc = await PDFDocument.load(pdfBytes);
+    const page   = pdfDoc.getPages()[0];
+    const font   = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const black  = rgb(0, 0, 0);
+
+    // 発注日を記入（西暦下2桁）
+    // 「発注日：20　　年　　月　　日」欄
+    const [yyyy, mm, dd] = currentOrder.date.split('-').map(Number);
+    const yy = yyyy % 100; // 下2桁 (例: 2026 → 26)
+    page.drawText(String(yy), { x:  94, y: 667, size: 10, font, color: black });
+    page.drawText(String(mm), { x: 133, y: 667, size: 10, font, color: black });
+    page.drawText(String(dd), { x: 161, y: 667, size: 10, font, color: black });
+
+    // 各商品の発注数を記入
+    for (const { item, coord } of matched) {
+      page.drawText(String(item.qty), { x: coord.x, y: coord.y, size: 9, font, color: rgb(0, 0, 0.7) });
+    }
+
+    await saveOrderToGAS('メーカー発注書');
+    const pdfBytesOut = await pdfDoc.save();
+    const blob = new Blob([pdfBytesOut], { type: 'application/pdf' });
+    const dateStr = currentOrder.date.replace(/-/g, '');
+    downloadBlob(blob, `アルペンローゼ発注書_${dateStr}.pdf`);
+    showCompleteState();
+    showToast(`アルペンローゼ発注書を出力しました（自動記入: ${matched.length}件）`, 'success');
+  } catch(e) {
+    showToast('PDFエラー: ' + e.message, 'error');
+  } finally { hideLoading(); }
+}
+
 async function outputPDF() {
   showLoading('PDF生成中...');
   try {
@@ -2250,6 +2333,8 @@ function buildHistReOutputBtns(orderNo, supplierCode) {
     btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputText('${esc}');event.stopPropagation()">💬 テキスト再出力</button>`);
   if (methods.includes('メーカーPDF') && supplierCode === GRANDEX_SUPPLIER_CODE)
     btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputGrandexPDF('${esc}');event.stopPropagation()">📋 グランデックス再出力</button>`);
+  if (methods.includes('メーカーPDF') && supplierCode === ALPENROSE_SUPPLIER_CODE)
+    btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputAlpenrosePDF('${esc}');event.stopPropagation()">📋 アルペンローゼ再出力</button>`);
   return `<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">${btns.join('')}</div>`;
 }
 
@@ -2383,6 +2468,57 @@ async function reOutputGrandexPDF(orderNo) {
     const dateStr = (orderInfo.date || '').replace(/\//g, '');
     downloadBlob(blob, `グランデックス発注書_${dateStr}_${orderNo}.pdf`);
     showToast(`グランデックス発注書を再出力しました（自動記入: ${matched.length}件）`, 'success');
+  } catch(e) {
+    showToast('PDFエラー: ' + e.message, 'error');
+  } finally { hideLoading(); }
+}
+
+// 履歴からアルペンローゼ発注書再出力
+async function reOutputAlpenrosePDF(orderNo) {
+  const orderInfo = getHistoryOrderInfo(orderNo);
+  const items     = historyDetailCache[orderNo];
+  if (!items || !orderInfo) { showToast('データが見つかりません', 'error'); return; }
+
+  const matched = [], unmatched = [];
+  for (const item of items.filter(i => !i.isHandwritten)) {
+    if (item.code && ALPENROSE_COORD_MAP[item.code]) {
+      matched.push({ item, coord: ALPENROSE_COORD_MAP[item.code] });
+    } else {
+      unmatched.push(item);
+    }
+  }
+  if (unmatched.length > 0) {
+    const names = unmatched.map(i => '・' + i.name).join('\n');
+    if (!confirm(`以下の商品は自動入力できません（手書き対応が必要）：\n\n${names}\n\n続けますか？`)) return;
+  }
+  showLoading('アルペンローゼ発注書を生成中...');
+  try {
+    const { PDFDocument, StandardFonts, rgb } = PDFLib;
+    const pdfBytes = await fetch('./メーカー発注書/アルペンローゼhyumi専用発注書.pdf').then(r => {
+      if (!r.ok) throw new Error('アルペンローゼhyumi専用発注書.pdf の読み込みに失敗しました');
+      return r.arrayBuffer();
+    });
+    const pdfDoc = await PDFDocument.load(pdfBytes);
+    const page   = pdfDoc.getPages()[0];
+    const font   = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const black  = rgb(0, 0, 0);
+
+    // 発注日（履歴のdate形式は yyyy/MM/dd）
+    const [yyyy, mm, dd] = (orderInfo.date || '').split('/').map(Number);
+    if (yyyy) {
+      const yy = yyyy % 100;
+      page.drawText(String(yy), { x:  94, y: 667, size: 10, font, color: black });
+      page.drawText(String(mm), { x: 133, y: 667, size: 10, font, color: black });
+      page.drawText(String(dd), { x: 161, y: 667, size: 10, font, color: black });
+    }
+    for (const { item, coord } of matched) {
+      page.drawText(String(item.qty), { x: coord.x, y: coord.y, size: 9, font, color: rgb(0, 0, 0.7) });
+    }
+    const pdfBytesOut = await pdfDoc.save();
+    const blob    = new Blob([pdfBytesOut], { type: 'application/pdf' });
+    const dateStr = (orderInfo.date || '').replace(/\//g, '');
+    downloadBlob(blob, `アルペンローゼ発注書_${dateStr}_${orderNo}.pdf`);
+    showToast(`アルペンローゼ発注書を再出力しました（自動記入: ${matched.length}件）`, 'success');
   } catch(e) {
     showToast('PDFエラー: ' + e.message, 'error');
   } finally { hideLoading(); }
