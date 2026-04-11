@@ -898,7 +898,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.14.5'; // アルペンローゼ: 先頭ゼロ欠落対策・日付座標修正
+const APP_VERSION    = 'v1.14.6'; // アルペンローゼ: JANコードベースマッピングに変更
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER      = 'bf_pm';
@@ -1970,8 +1970,25 @@ async function outputChiyodaPDF() {
 =================================================== */
 const ALPENROSE_SUPPLIER_CODE = '57';
 
-// 商品コード → PDF座標（発注数列・pdf-lib座標系: 左下原点）
-// ※座標は実測値。ずれがある場合は x/y を調整する
+// JANコード → アルペンローゼPDFコード（相手商品CD）
+// ※内部コード(12063等)はメーカーコードと別物のためJAN基準で照合
+const ALPENROSE_JAN_TO_CODE = {
+  "4976561747318": "04731",
+  "4976561747325": "04732",
+  "4976561747332": "04733",
+  "4976561747349": "04734",
+  "4976561747356": "04735",
+  "4976561747363": "04736",
+  "4976561747370": "04737",
+  "4976561747387": "04738",
+  "4976561747394": "04739",
+  "4976561747400": "04740",
+  "4976561747431": "04743",
+  "4976561747448": "04744",
+  "4976561747455": "04745"
+};
+
+// PDFコード → 座標（発注数列・pdf-lib座標系: 左下原点）
 const ALPENROSE_COORD_MAP = {
   "04731": { x: 544, y: 562 },
   "04732": { x: 544, y: 538 },
@@ -1994,17 +2011,9 @@ const ALPENROSE_COORD_MAP = {
 
 async function outputAlpenrosePDF() {
   const items = cartItems.filter(i => !i.isHandwritten);
-
-  // 【デバッグ】コード確認用（解決後に削除）
-  if (items.length > 0) {
-    const dbg = items.slice(0,3).map(i => `"${i.code}" / "${i.janCode}"`).join('\n');
-    alert('【デバッグ】code / janCode:\n' + dbg);
-  }
-
   const matched = [], unmatched = [];
   for (const item of items) {
-    // 先頭ゼロ欠落対策: 5桁にゼロ埋めして照合
-    const aCode = String(item.code || '').padStart(5, '0');
+    const aCode = ALPENROSE_JAN_TO_CODE[item.janCode];
     if (aCode && ALPENROSE_COORD_MAP[aCode]) {
       matched.push({ item, coord: ALPENROSE_COORD_MAP[aCode] });
     } else {
@@ -2490,7 +2499,7 @@ async function reOutputAlpenrosePDF(orderNo) {
 
   const matched = [], unmatched = [];
   for (const item of items.filter(i => !i.isHandwritten)) {
-    const aCode = String(item.code || '').padStart(5, '0');
+    const aCode = ALPENROSE_JAN_TO_CODE[item.jan];
     if (aCode && ALPENROSE_COORD_MAP[aCode]) {
       matched.push({ item, coord: ALPENROSE_COORD_MAP[aCode] });
     } else {
