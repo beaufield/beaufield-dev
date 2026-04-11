@@ -897,7 +897,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.14.2'; // 直近注文をlocalStorage永続化・起動時自動取得
+const APP_VERSION    = 'v1.14.3'; // グランデックス発注書: 参照PDFと日付座標を修正
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER      = 'bf_pm';
@@ -1790,8 +1790,8 @@ async function outputGrandexPDF() {
   showLoading('グランデックス発注書を生成中...');
   try {
     const { PDFDocument, StandardFonts, rgb } = PDFLib;
-    const pdfBytes = await fetch('./grandex.pdf').then(r => {
-      if (!r.ok) throw new Error('grandex.pdf の読み込みに失敗しました');
+    const pdfBytes = await fetch('./メーカー発注書/グランデックス.pdf').then(r => {
+      if (!r.ok) throw new Error('グランデックス.pdf の読み込みに失敗しました');
       return r.arrayBuffer();
     });
     const pdfDoc = await PDFDocument.load(pdfBytes);
@@ -1803,9 +1803,9 @@ async function outputGrandexPDF() {
     const [yyyy, mm, dd] = currentOrder.date.split('-').map(Number);
     const reiwaYear = yyyy - 2018; // 令和元年=2019年、令和8年=2026年
     const dateColor = rgb(0, 0, 0);
-    page.drawText(String(reiwaYear), { x: 408, y: 718, size: 10, font, color: dateColor });
-    page.drawText(String(mm),        { x: 458, y: 718, size: 10, font, color: dateColor });
-    page.drawText(String(dd),        { x: 506, y: 718, size: 10, font, color: dateColor });
+    page.drawText(String(reiwaYear), { x: 408, y: 743, size: 10, font, color: dateColor });
+    page.drawText(String(mm),        { x: 458, y: 743, size: 10, font, color: dateColor });
+    page.drawText(String(dd),        { x: 506, y: 743, size: 10, font, color: dateColor });
 
     // 商品数量を記入
     for (const { item, coord } of matched) {
@@ -2360,8 +2360,8 @@ async function reOutputGrandexPDF(orderNo) {
   showLoading('グランデックス発注書を生成中...');
   try {
     const { PDFDocument, StandardFonts, rgb } = PDFLib;
-    const pdfBytes = await fetch('./grandex.pdf').then(r => {
-      if (!r.ok) throw new Error('grandex.pdf の読み込みに失敗しました');
+    const pdfBytes = await fetch('./メーカー発注書/グランデックス.pdf').then(r => {
+      if (!r.ok) throw new Error('グランデックス.pdf の読み込みに失敗しました');
       return r.arrayBuffer();
     });
     const pdfDoc = await PDFDocument.load(pdfBytes);
@@ -2371,9 +2371,9 @@ async function reOutputGrandexPDF(orderNo) {
     const [yyyy, mm, dd] = (orderInfo.date || '').split('/').map(Number);
     if (yyyy) {
       const dc = rgb(0, 0, 0);
-      page.drawText(String(yyyy - 2018), { x: 408, y: 718, size: 10, font, color: dc });
-      page.drawText(String(mm),          { x: 458, y: 718, size: 10, font, color: dc });
-      page.drawText(String(dd),          { x: 506, y: 718, size: 10, font, color: dc });
+      page.drawText(String(yyyy - 2018), { x: 408, y: 743, size: 10, font, color: dc });
+      page.drawText(String(mm),          { x: 458, y: 743, size: 10, font, color: dc });
+      page.drawText(String(dd),          { x: 506, y: 743, size: 10, font, color: dc });
     }
     for (const { item, coord } of matched) {
       page.drawText(String(item.qty), { x: coord.x, y: coord.y, size: 9, font, color: rgb(0, 0, 0.7) });
