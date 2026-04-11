@@ -898,7 +898,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.14.6'; // アルペンローゼ: JANコードベースマッピングに変更
+const APP_VERSION    = 'v1.14.7'; // アルペンローゼ: 日付・数量座標調整
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER      = 'bf_pm';
@@ -1990,23 +1990,23 @@ const ALPENROSE_JAN_TO_CODE = {
 
 // PDFコード → 座標（発注数列・pdf-lib座標系: 左下原点）
 const ALPENROSE_COORD_MAP = {
-  "04731": { x: 544, y: 562 },
-  "04732": { x: 544, y: 538 },
-  "04733": { x: 544, y: 514 },
-  "04734": { x: 544, y: 490 },
-  "04735": { x: 544, y: 466 },
-  "04736": { x: 544, y: 442 },
-  "04737": { x: 544, y: 418 },
-  "04738": { x: 544, y: 394 },
-  "04739": { x: 544, y: 370 },
-  "04740": { x: 544, y: 346 },
-  "04741": { x: 544, y: 322 },
-  "04742": { x: 544, y: 298 },
-  "04743": { x: 544, y: 274 },
-  "04744": { x: 544, y: 250 },
-  "04745": { x: 544, y: 226 },
-  "08436": { x: 544, y: 202 },
-  "08437": { x: 544, y: 178 }
+  "04731": { x: 520, y: 562 },
+  "04732": { x: 520, y: 538 },
+  "04733": { x: 520, y: 514 },
+  "04734": { x: 520, y: 490 },
+  "04735": { x: 520, y: 466 },
+  "04736": { x: 520, y: 442 },
+  "04737": { x: 520, y: 418 },
+  "04738": { x: 520, y: 394 },
+  "04739": { x: 520, y: 370 },
+  "04740": { x: 520, y: 346 },
+  "04741": { x: 520, y: 322 },
+  "04742": { x: 520, y: 298 },
+  "04743": { x: 520, y: 274 },
+  "04744": { x: 520, y: 250 },
+  "04745": { x: 520, y: 226 },
+  "08436": { x: 520, y: 202 },
+  "08437": { x: 520, y: 178 }
 };
 
 async function outputAlpenrosePDF() {
@@ -2042,7 +2042,7 @@ async function outputAlpenrosePDF() {
     const yy = yyyy % 100; // 下2桁 (例: 2026 → 26)
     page.drawText(String(yy), { x:  94, y: 651, size: 10, font, color: black });
     page.drawText(String(mm), { x: 133, y: 651, size: 10, font, color: black });
-    page.drawText(String(dd), { x: 161, y: 651, size: 10, font, color: black });
+    page.drawText(String(dd), { x: 185, y: 651, size: 10, font, color: black });
 
     // 各商品の発注数を記入
     for (const { item, coord } of matched) {
@@ -2528,7 +2528,7 @@ async function reOutputAlpenrosePDF(orderNo) {
       const yy = yyyy % 100;
       page.drawText(String(yy), { x:  94, y: 651, size: 10, font, color: black });
       page.drawText(String(mm), { x: 133, y: 651, size: 10, font, color: black });
-      page.drawText(String(dd), { x: 161, y: 651, size: 10, font, color: black });
+      page.drawText(String(dd), { x: 185, y: 651, size: 10, font, color: black });
     }
     for (const { item, coord } of matched) {
       page.drawText(String(item.qty), { x: coord.x, y: coord.y, size: 9, font, color: rgb(0, 0, 0.7) });
