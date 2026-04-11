@@ -10,7 +10,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.7.0';
+const VERSION  = '1.7.1';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -118,7 +118,7 @@ function validateAndGetUser(token) {
       const arRows = arSh.getDataRange().getValues();
       for (let i = 1; i < arRows.length; i++) {
         if (String(arRows[i][0]) === userId && String(arRows[i][1]) === APP_NAME) {
-          yoyakuRole = String(arRows[i][2]).trim() || null;
+          yoyakuRole = String(arRows[i][2]).trim().toLowerCase() || null;
           break;
         }
       }
@@ -887,18 +887,14 @@ function processArrival(data) {
 // ユーザー一覧
 //   user_app_roles シートで yoyaku-kanri に登録済みのユーザーのみ返す
 //   yoyaku_role: "admin"（事務・担当者非表示）/ "staff"（営業・担当者として表示）
+//
+// ※ CacheService を使わない理由:
+//   user_app_roles に新規スタッフを追加してもキャッシュが10分間残ると
+//   担当者フィルタに反映されないため、毎回シートから読む。
+//   呼び出しは initApp（ページロード時のみ）に限定されるため
+//   フロントの localStorage 5分キャッシュで十分に保護される。
 // ============================================================
 function _getUsersFromAuth() {
-  // ── キャッシュ確認 ──────────────────────────────────────────
-  // validateAndGetUser で AUTH_SHEET_ID を既に開いているため、
-  // ここでキャッシュを利用することで二重シート読み込みを防ぐ
-  const cache    = CacheService.getScriptCache();
-  const cacheKey = 'users_list_' + APP_NAME;
-  const cached   = cache.get(cacheKey);
-  if (cached) {
-    try { return JSON.parse(cached); } catch(e) {}
-  }
-
   try {
     const ss = SpreadsheetApp.openById(AUTH_SHEET_ID);
 
@@ -910,7 +906,7 @@ function _getUsersFromAuth() {
       for (let i = 1; i < arRows.length; i++) {
         if (String(arRows[i][1]) === APP_NAME) {
           const uid  = String(arRows[i][0]);
-          const role = String(arRows[i][2]).trim();
+          const role = String(arRows[i][2]).trim().toLowerCase();  // 大文字小文字を吸収
           if (uid && role) roleMap[uid] = role;
         }
       }
@@ -933,11 +929,9 @@ function _getUsersFromAuth() {
         user_id:     uid,
         name:        String(rows[i][1]),
         short_name:  shortName || String(rows[i][1]),
-        yoyaku_role: yoyakuRole  // "admin" or "staff"
+        yoyaku_role: yoyakuRole  // "admin" or "staff"（常に小文字）
       });
     }
-    // 結果をキャッシュ（10分）
-    try { cache.put(cacheKey, JSON.stringify(users), CACHE_TTL_USERS); } catch(e) {}
     return users;
   } catch(e) {
     Logger.log('_getUsersFromAuth エラー: ' + e);
