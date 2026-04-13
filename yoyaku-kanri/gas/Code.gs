@@ -1,6 +1,6 @@
 // ============================================================
 // Beaufield 予約管理アプリ - Google Apps Script
-// Version: 1.4.0
+// Version: 1.8.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -10,7 +10,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.7.1';
+const VERSION  = '1.8.0';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -289,11 +289,11 @@ function setupSheets() {
   let rs = ss.getSheetByName(SHEET_RESERVATIONS);
   if (!rs) {
     rs = ss.insertSheet(SHEET_RESERVATIONS);
-    rs.getRange(1, 1, 1, 13).setValues([[
+    rs.getRange(1, 1, 1, 14).setValues([[
       'reservation_no', 'salon_name', 'product_id', 'product_name',
       'quantity', 'status', 'staff_id', 'staff_name',
       'operator_id', 'operator_name', 'delivery_method',
-      'reserved_at', 'updated_at'
+      'reserved_at', 'updated_at', 'notes'
     ]]);
     rs.setFrozenRows(1);
     Logger.log('reservationsシート作成完了');
@@ -413,12 +413,14 @@ function toggleProductActive(data) {
 
 /**
  * 内部ヘルパー: 既に開いた ss を受け取って予約一覧を返す
+ * reservations シートは14列（A〜N）。N列 = notes（備考）
  */
 function _getReservationsFromSS(ss) {
   const rs = ss.getSheetByName(SHEET_RESERVATIONS);
   if (!rs || rs.getLastRow() < 2) return [];
 
-  const rows = rs.getRange(2, 1, rs.getLastRow() - 1, 13).getValues();
+  // 14列読み込み（N列=notes が存在しない既存シートでも空文字で返る）
+  const rows = rs.getRange(2, 1, rs.getLastRow() - 1, 14).getValues();
   const list = rows
     .filter(r => r[0] !== '' && r[0] !== null)
     .map(r => ({
@@ -435,7 +437,8 @@ function _getReservationsFromSS(ss) {
       delivery_method: String(r[10]),
       // セル値がDate型になる場合があるためUtilitiesで書式変換（String()はGMT表記になるため使用禁止）
       reserved_at:     r[11] ? Utilities.formatDate(new Date(r[11]), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm') : '',
-      updated_at:      r[12] ? Utilities.formatDate(new Date(r[12]), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm') : ''
+      updated_at:      r[12] ? Utilities.formatDate(new Date(r[12]), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm') : '',
+      notes:           r[13] ? String(r[13]) : ''
     }));
 
   list.sort((a, b) => b.reservation_no - a.reservation_no);
@@ -453,6 +456,7 @@ function getReservations(data) {
 
 /**
  * 予約登録・更新
+ * data.notes（任意）: 備考テキスト
  */
 function saveReservation(data) {
   const userInfo = data._userInfo;
@@ -464,6 +468,7 @@ function saveReservation(data) {
   const staffId        = String(data.staff_id        || '');
   const staffName      = String(data.staff_name      || '');
   const deliveryMethod = String(data.delivery_method || '未定');
+  const notes          = String(data.notes           || '').trim();  // 備考（任意）
 
   if (!salonName)   return _err('サロン名は必須です');
   if (!productId)   return _err('商品を選択してください');
@@ -523,7 +528,7 @@ function saveReservation(data) {
   if (data.reservation_no) {
     // ---- 更新 ----
     if (!rs || rs.getLastRow() < 2) return _err('予約が見つかりません');
-    const rows = rs.getRange(2, 1, rs.getLastRow() - 1, 13).getValues();
+    const rows = rs.getRange(2, 1, rs.getLastRow() - 1, 14).getValues();
     for (let i = 0; i < rows.length; i++) {
       if (Number(rows[i][0]) === Number(data.reservation_no)) {
         if (userInfo.yoyaku_role !== 'admin') {
@@ -543,6 +548,7 @@ function saveReservation(data) {
           deliveryMethod
         ]]);
         rs.getRange(i + 2, 13).setValue(now);
+        rs.getRange(i + 2, 14).setValue(notes);  // N列: 備考
         return _ok({
           reservation_no: Number(data.reservation_no),
           message:        '更新しました',
@@ -562,7 +568,8 @@ function saveReservation(data) {
             reserved_at:     rows[i][11]
               ? Utilities.formatDate(new Date(rows[i][11]), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm')
               : nowFmt,
-            updated_at: nowFmt
+            updated_at: nowFmt,
+            notes:      notes
           }
         });
       }
@@ -579,7 +586,7 @@ function saveReservation(data) {
       newNo, salonName, productId, product.name, quantity, '予約',
       staffId, staffName,
       String(data._userId), userInfo.name,
-      deliveryMethod, now, now
+      deliveryMethod, now, now, notes
     ]);
     return _ok({
       reservation_no: newNo,
@@ -597,7 +604,8 @@ function saveReservation(data) {
         operator_name:   userInfo.name,
         delivery_method: deliveryMethod,
         reserved_at:     nowFmt,
-        updated_at:      nowFmt
+        updated_at:      nowFmt,
+        notes:           notes
       }
     });
   }
@@ -805,7 +813,8 @@ function processArrival(data) {
   const rs = ss.getSheetByName(SHEET_RESERVATIONS);
   if (!rs || rs.getLastRow() < 2) return _err('予約データが見つかりません');
 
-  const rows = rs.getRange(2, 1, rs.getLastRow() - 1, 13).getValues();
+  // 14列読み込み（N列=notes を含む）
+  const rows = rs.getRange(2, 1, rs.getLastRow() - 1, 14).getValues();
   const now  = _now();
 
   // allocations を Map 化（reservation_no → confirm_qty）
@@ -848,7 +857,7 @@ function processArrival(data) {
       rs.getRange(i + 2, 5).setValue(curQty - confirmQty);
       rs.getRange(i + 2, 13).setValue(now);
 
-      // 新行: 確定分を新No で追記
+      // 新行: 確定分を新No で追記（notes もコピー）
       maxNo++;
       newRows.push([
         maxNo,
@@ -863,7 +872,8 @@ function processArrival(data) {
         userInfo.name,            // operator_name
         rows[i][10],             // delivery_method (コピー)
         rows[i][11],             // reserved_at (元の予約日時をコピー)
-        now                      // updated_at
+        now,                     // updated_at
+        rows[i][13]              // notes (コピー)
       ]);
     }
     processed++;
