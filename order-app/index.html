@@ -899,7 +899,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.15.0'; // 修正発注・履歴複製・履歴削除機能追加
+const APP_VERSION    = 'v1.16.0'; // 修正発注自動削除・履歴メーカーフィルター（GAS再取得）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER      = 'bf_pm';
@@ -926,7 +926,8 @@ let currentOrder = {
   staff: '', date: '', outputType: ''
 };
 
-let savedOrderNo  = null;
+let savedOrderNo          = null;
+let revisionBaseOrderNo   = null; // 修正発注時：元の発注No（保存時に削除される）
 let pendingProduct= null;
 let selectedQty   = 1;
 let notFoundJan   = '';
@@ -1037,6 +1038,7 @@ async function loadMasters() {
       renderSupplierDropdown();
       renderStaffDropdown();
       renderSettingsPage();
+      updateHistoryFilterOptions(); // マスター読込後にフィルター選択肢を更新
     } else {
       showToast('マスター取得エラー: ' + (res.error || '不明'), 'error');
     }
@@ -1187,7 +1189,9 @@ function switchScreen(name) {
   document.getElementById('screen-' + name).classList.add('active');
   currentScreen = name;
   if (name === 'history') {
-    loadHistory();
+    // フィルターが選択中であればそのメーカーで再取得、なければキャッシュ優先
+    const activeFilter = document.getElementById('hist-filter-supplier').value;
+    loadHistory(false, activeFilter || undefined);
     document.getElementById('header-sub').textContent = '発注履歴';
   } else if (name === 'settings') {
     renderSettingsPage();
@@ -1267,14 +1271,15 @@ function goToInput() {
 }
 
 function startNewOrder() {
-  cartItems = []; savedOrderNo = null; saveCart();
+  cartItems = []; savedOrderNo = null; revisionBaseOrderNo = null; saveCart();
   showStep('step-select'); updateMasterBadge();
   document.getElementById('header-sub').textContent = '発注先を選んでください';
 }
 
-// 修正発注：カートはそのまま保持し、savedOrderNoだけリセットして再出力可能にする
+// 修正発注：元の発注Noを記憶してリセット。次回出力時に新規保存＋元データ削除が行われる
 function resumeOrderForRevision() {
-  savedOrderNo = null; // 次回出力時に新規の発注Noで保存される
+  revisionBaseOrderNo = savedOrderNo; // 修正前の発注Noを記憶
+  savedOrderNo = null;
   goToInput();
   showToast('修正発注モード：内容を変更後、再度出力してください', 'success');
 }
@@ -1674,14 +1679,29 @@ function applyOutputButtons() {
 =================================================== */
 async function saveOrderToGAS(outputType) {
   if (savedOrderNo) return savedOrderNo;
-  const res = await gasPost({
+  const params = {
     action: 'saveOrder', date: currentOrder.date,
     supplierCode: currentOrder.supplierCode, supplierName: currentOrder.supplierName,
     fax: currentOrder.fax, staff: currentOrder.staff, outputType,
     items: JSON.stringify(cartItems)
-  });
-  if (res.success) { savedOrderNo = res.orderNo; return savedOrderNo; }
-  else { throw new Error(res.error || 'GAS保存に失敗しました'); }
+  };
+  // 修正発注の場合は元の発注Noを渡す（GAS側で新規保存後に削除する）
+  if (revisionBaseOrderNo) params.revisionBaseOrderNo = revisionBaseOrderNo;
+
+  const res = await gasPost(params);
+  if (res.success) {
+    savedOrderNo = res.orderNo;
+    // 修正前の発注をローカルキャッシュからも除去
+    if (revisionBaseOrderNo) {
+      allHistoryOrders = allHistoryOrders.filter(o => o.orderNo !== revisionBaseOrderNo);
+      delete historyDetailCache[revisionBaseOrderNo];
+      sessionStorage.removeItem(SS_HIST_CACHE);
+      revisionBaseOrderNo = null;
+    }
+    return savedOrderNo;
+  } else {
+    throw new Error(res.error || 'GAS保存に失敗しました');
+  }
 }
 
 // テキスト出力（LINE等のメッセージ用）
@@ -2220,37 +2240,45 @@ function formatHistoryDate(str) {
   return str;
 }
 
-async function loadHistory(forceRefresh) {
+// filterSupplierCode を指定するとそのメーカーの直近20件をGASから取得する
+// 指定なし（全件）の場合はセッションキャッシュを活用
+async function loadHistory(forceRefresh, filterSupplierCode) {
   const container = document.getElementById('history-list');
-  if (!forceRefresh) {
+
+  // フィルターなし + forceRefreshなし → セッションキャッシュ優先
+  if (!filterSupplierCode && !forceRefresh) {
     const cached = sessionStorage.getItem(SS_HIST_CACHE);
     if (cached) {
       try {
         const parsed = JSON.parse(cached);
-        // キャッシュ形式: { orders: [...], productHistory: {...} }
         allHistoryOrders = parsed.orders || [];
         productHistory   = parsed.productHistory || {};
         localStorage.setItem(LS_PROD_HIST, JSON.stringify(productHistory));
         updateHistoryFilterOptions();
-        applyHistoryFilter();
+        renderHistoryList(container, allHistoryOrders);
         return;
       } catch(e) {}
     }
   }
+
   container.innerHTML = `<div class="empty-state"><div class="spinner"></div><div style="margin-top:8px">読み込み中...</div></div>`;
   try {
-    const res = await gasGet({ action: 'getOrders' });
+    const params = { action: 'getOrders' };
+    if (filterSupplierCode) params.supplierCode = filterSupplierCode; // メーカー絞り込み
+    const res = await gasGet(params);
     if (res.success) {
       allHistoryOrders = res.orders || [];
       productHistory   = res.productHistory || {};
-      // orders と productHistory を合わせてキャッシュ
-      sessionStorage.setItem(SS_HIST_CACHE, JSON.stringify({
-        orders: allHistoryOrders,
-        productHistory
-      }));
+      // フィルターなしの結果のみキャッシュ保存（フィルター結果はキャッシュしない）
+      if (!filterSupplierCode) {
+        sessionStorage.setItem(SS_HIST_CACHE, JSON.stringify({
+          orders: allHistoryOrders,
+          productHistory
+        }));
+      }
       localStorage.setItem(LS_PROD_HIST, JSON.stringify(productHistory));
       updateHistoryFilterOptions();
-      applyHistoryFilter();
+      renderHistoryList(container, allHistoryOrders);
     } else {
       allHistoryOrders = [];
       productHistory   = {};
@@ -2261,25 +2289,40 @@ async function loadHistory(forceRefresh) {
   }
 }
 
+// フィルター選択肢をマスターの全発注先から構築（コードを値、名前を表示）
 function updateHistoryFilterOptions() {
   const sel = document.getElementById('hist-filter-supplier');
   const current = sel.value;
-  const suppliers = [...new Set(allHistoryOrders.map(o => o.supplierName).filter(Boolean))].sort();
   sel.innerHTML = '<option value="">-- メーカー: 全て --</option>';
-  suppliers.forEach(name => {
+  masters.suppliers.forEach(s => {
     const opt = document.createElement('option');
-    opt.value = name; opt.textContent = name;
+    opt.value = s.code;
+    opt.textContent = s.name;
     sel.appendChild(opt);
   });
-  if (suppliers.includes(current)) sel.value = current;
+  // 現在の選択を復元（コードが一致する場合）
+  if (masters.suppliers.some(s => s.code === current)) sel.value = current;
 }
 
 function applyHistoryFilter() {
-  const filterVal = document.getElementById('hist-filter-supplier').value;
-  const filtered  = filterVal
-    ? allHistoryOrders.filter(o => o.supplierName === filterVal)
-    : allHistoryOrders;
-  renderHistoryList(document.getElementById('history-list'), filtered);
+  const supplierCode = document.getElementById('hist-filter-supplier').value;
+  if (supplierCode) {
+    // メーカー指定時：GASからそのメーカーの直近20件を取得
+    loadHistory(true, supplierCode);
+  } else {
+    // 全件表示：セッションキャッシュ優先
+    const cached = sessionStorage.getItem(SS_HIST_CACHE);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        allHistoryOrders = parsed.orders || [];
+        productHistory   = parsed.productHistory || {};
+        renderHistoryList(document.getElementById('history-list'), allHistoryOrders);
+        return;
+      } catch(e) {}
+    }
+    loadHistory(true);
+  }
 }
 
 function renderHistoryList(container, orders) {
