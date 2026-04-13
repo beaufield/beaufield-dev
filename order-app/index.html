@@ -672,6 +672,7 @@
       <button id="btn-alpenrose-pdf"  class="btn btn-secondary" onclick="outputAlpenrosePDF()"  style="margin-bottom:8px;display:none">📋 アルペンローゼ発注書 出力</button>
     </div>
     <div id="new-order-wrap" style="display:none">
+      <button class="btn btn-outline" onclick="resumeOrderForRevision()" style="margin-bottom:8px">✏️ 修正発注（内容を変えて再発注）</button>
       <button class="btn btn-success" onclick="startNewOrder()">➕ 新しい発注を始める</button>
     </div>
     <button class="btn btn-ghost" onclick="goToInput()" style="margin-top:8px">← 商品入力に戻る</button>
@@ -898,7 +899,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.14.9'; // アルペンローゼ: 発注数y座標を7pt下に修正
+const APP_VERSION    = 'v1.15.0'; // 修正発注・履歴複製・履歴削除機能追加
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER      = 'bf_pm';
@@ -945,7 +946,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     location.replace(PORTAL_URL);
     return;
   }
-  currentUser = { user_id: session.user_id, name: session.name };
+  currentUser = { user_id: session.user_id, name: session.name, is_admin: session.is_admin === true };
   const nameEl = document.getElementById('settings-user-name');
   if (nameEl) nameEl.textContent = 'ログイン中: ' + session.name;
   // ────────────────────────────────────────────────────────────
@@ -1269,6 +1270,13 @@ function startNewOrder() {
   cartItems = []; savedOrderNo = null; saveCart();
   showStep('step-select'); updateMasterBadge();
   document.getElementById('header-sub').textContent = '発注先を選んでください';
+}
+
+// 修正発注：カートはそのまま保持し、savedOrderNoだけリセットして再出力可能にする
+function resumeOrderForRevision() {
+  savedOrderNo = null; // 次回出力時に新規の発注Noで保存される
+  goToInput();
+  showToast('修正発注モード：内容を変更後、再度出力してください', 'success');
 }
 
 /* ===================================================
@@ -2355,6 +2363,12 @@ function buildHistReOutputBtns(orderNo, supplierCode) {
     btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputGrandexPDF('${esc}');event.stopPropagation()">📋 グランデックス再出力</button>`);
   if (methods.includes('メーカーPDF') && supplierCode === ALPENROSE_SUPPLIER_CODE)
     btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputAlpenrosePDF('${esc}');event.stopPropagation()">📋 アルペンローゼ再出力</button>`);
+  // 複製して発注（常に表示）
+  btns.push(`<button class="btn btn-primary btn-sm" onclick="copyOrderFromHistory('${esc}');event.stopPropagation()">📋 複製して発注</button>`);
+  // 削除（管理者のみ表示）
+  if (currentUser && currentUser.is_admin) {
+    btns.push(`<button class="btn btn-danger btn-sm" onclick="deleteOrderHistory('${esc}');event.stopPropagation()">🗑️ 削除</button>`);
+  }
   return `<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">${btns.join('')}</div>`;
 }
 
@@ -2542,6 +2556,104 @@ async function reOutputAlpenrosePDF(orderNo) {
     showToast(`アルペンローゼ発注書を再出力しました（自動記入: ${matched.length}件）`, 'success');
   } catch(e) {
     showToast('PDFエラー: ' + e.message, 'error');
+  } finally { hideLoading(); }
+}
+
+// 履歴から複製して発注開始
+// 発注先・商品を今日の日付でカートに復元し、発注画面に移動する
+async function copyOrderFromHistory(orderNo) {
+  const orderInfo = getHistoryOrderInfo(orderNo);
+  if (!orderInfo) { showToast('データが見つかりません', 'error'); return; }
+
+  // 明細がキャッシュにない場合はGASから取得
+  if (!historyDetailCache[orderNo]) {
+    showLoading('データを取得中...');
+    try {
+      const res = await gasGet({ action: 'getOrderDetail', orderNo });
+      if (res.success) {
+        historyDetailCache[orderNo] = res.items;
+      } else {
+        showToast('取得エラー: ' + (res.error || '不明'), 'error'); return;
+      }
+    } catch(e) {
+      showToast('通信エラー', 'error'); return;
+    } finally { hideLoading(); }
+  }
+
+  const items = historyDetailCache[orderNo];
+  if (!items || items.length === 0) { showToast('明細データがありません', 'error'); return; }
+
+  // カートに商品がある場合は上書き確認
+  if (cartItems.length > 0) {
+    if (!confirm(
+      `現在のカートに${cartItems.length}件の商品が入っています。\n` +
+      `上書きして「${orderInfo.supplierName}」の発注内容を複製しますか？`
+    )) return;
+  }
+
+  // 発注先マスターからFAX等を補完
+  const sup = masters.suppliers.find(s => s.code === orderInfo.supplierCode);
+
+  // 今日の日付で currentOrder を設定
+  currentOrder = {
+    supplierCode: orderInfo.supplierCode,
+    supplierName: orderInfo.supplierName,
+    fax:          sup ? (sup.fax || '') : (orderInfo.fax || ''),
+    staff:        currentUser.name,
+    date:         getTodayStr(),
+    outputType:   ''
+  };
+
+  // 履歴の明細をカート形式に変換（janCode / code の名前変換に注意）
+  cartItems = items.map(item => ({
+    janCode:       item.jan           || '',
+    code:          item.code          || '',
+    name:          item.name          || '',
+    qty:           item.qty           || 1,
+    unit:          item.unit          || '',
+    memo:          item.memo          || '',
+    isHandwritten: item.isHandwritten || false,
+    supplierCD:    orderInfo.supplierCode || '',
+    purchasePrice: 0  // 履歴には仕入単価を保存していないため0
+  }));
+
+  savedOrderNo = null;
+  saveCart();
+
+  // 発注先ドロップダウンと発注日を画面に反映
+  const supSel = document.getElementById('sel-supplier');
+  if (supSel) supSel.value = currentOrder.supplierCode;
+  const dateIn = document.getElementById('input-date');
+  if (dateIn) dateIn.value = currentOrder.date;
+
+  // 発注画面・商品入力ステップへ移動
+  switchScreen('order');
+  showStep('step-input');
+  updateInputHeader();
+  renderItemList();
+  showToast(`「${orderInfo.supplierName}」の発注内容を複製しました`, 'success');
+  setTimeout(() => focusScanInput(), 150);
+}
+
+// 履歴削除（管理者のみ）
+async function deleteOrderHistory(orderNo) {
+  if (!confirm(`発注No: ${orderNo} を削除しますか？\nこの操作は取り消せません。`)) return;
+  showLoading('削除中...');
+  try {
+    const res = await gasPost({ action: 'deleteOrder', orderNo });
+    if (res.success) {
+      // ローカルキャッシュからも削除
+      allHistoryOrders = allHistoryOrders.filter(o => o.orderNo !== orderNo);
+      delete historyDetailCache[orderNo];
+      sessionStorage.removeItem(SS_HIST_CACHE); // セッションキャッシュを無効化
+      updateHistoryFilterOptions();
+      applyHistoryFilter();
+      showToast('削除しました', 'success');
+    } else {
+      showToast('エラー: ' + (res.error || '不明'), 'error');
+    }
+  } catch(e) {
+    showToast('通信エラー', 'error');
   } finally { hideLoading(); }
 }
 
