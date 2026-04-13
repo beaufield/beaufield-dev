@@ -312,6 +312,30 @@
     .modal-actions { display: flex; gap: 10px; margin-top: 16px; }
     .modal-actions .btn { flex: 1; }
 
+    /* 備考表示（カード内） */
+    .rc-notes {
+      font-size: 11px; color: #6b7280; margin-top: 3px;
+      padding: 2px 6px; background: #f9fafb; border-radius: 4px;
+      font-style: italic; word-break: break-all;
+    }
+
+    /* 出荷一覧テーブル */
+    .shipping-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .shipping-table th, .shipping-table td {
+      padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left;
+    }
+    .shipping-table th { background: #f9fafb; font-weight: 700; font-size: 11px; color: #6b7280; }
+    .shipping-table .num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
+    .shipping-table .subtotal-delivery td {
+      background: #f0f9ff; font-size: 11px; color: #1d4ed8; border-bottom: 1px solid #bfdbfe;
+    }
+    .shipping-table .subtotal-staff td {
+      background: #e0f2fe; font-weight: 700; color: #0369a1; border-bottom: 2px solid #7dd3fc;
+    }
+    .shipping-table .grand-total td {
+      background: #dcfce7; font-weight: 700; color: #15803d; font-size: 13px; border-top: 2px solid #86efac;
+    }
+
     /* 確認ダイアログ */
     .confirm-overlay {
       display: none; position: fixed; inset: 0;
@@ -340,7 +364,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.11.0</span>
+  <span class="header-version">v1.12.0</span>
 </header>
 
 <!-- ============================================================ -->
@@ -379,6 +403,10 @@
       </select>
       <div id="regStaffFixed" style="display:none; padding:8px 10px; background:#f3f4f6; border:1.5px solid #e5e7eb; border-radius:7px; font-size:14px; color:#374151;"></div>
     </div>
+    <div class="form-group">
+      <label class="form-label">備考（任意）</label>
+      <textarea id="regNotes" class="form-control" rows="2" placeholder="メモがあれば入力" style="resize:vertical"></textarea>
+    </div>
     <button class="btn btn-primary btn-full" onclick="registerReservation()">📝 予約を登録する</button>
   </div>
 </div>
@@ -401,6 +429,7 @@
     </select>
     <button class="btn-print" onclick="printReservations()" title="現在のフィルタ条件で印刷（PDF出力）">🖨️ 印刷</button>
     <button class="btn-print admin-only" id="arrivalBtn" style="display:none" onclick="openArrivalModal()" title="入荷処理（事務専用）">📦 入荷処理</button>
+    <button class="btn-print admin-only" id="shippingBtn" style="display:none" onclick="openShippingModal()" title="出荷一覧（事務専用）">🚚 出荷一覧</button>
   </div>
 
   <!-- 商品別サマリー（商品フィルタ選択時に表示） -->
@@ -513,6 +542,10 @@
       </select>
       <div id="editStaffFixed" style="display:none; padding:8px 10px; background:#f3f4f6; border:1.5px solid #e5e7eb; border-radius:7px; font-size:14px; color:#374151;"></div>
     </div>
+    <div class="form-group">
+      <label class="form-label">備考（任意）</label>
+      <textarea id="editNotes" class="form-control" rows="2" style="resize:vertical"></textarea>
+    </div>
     <div class="modal-actions">
       <button class="btn btn-gray"    onclick="closeModal('editModal')">キャンセル</button>
       <button class="btn btn-primary" onclick="saveEditReservation()">保存する</button>
@@ -603,6 +636,31 @@
 </div>
 
 <!-- ============================================================ -->
+<!-- 出荷一覧モーダル（事務専用）                                  -->
+<!-- ============================================================ -->
+<div id="shippingModal" class="modal-overlay">
+  <div class="modal-sheet">
+    <div class="modal-title">🚚 出荷一覧</div>
+    <div class="filter-row" style="margin-bottom:10px">
+      <select id="shippingProduct" class="form-control" onchange="renderShippingList()" style="flex:2;min-width:120px">
+        <option value="">商品を選択...</option>
+      </select>
+      <select id="shippingPeriod" class="form-control" onchange="renderShippingList()" style="flex:1;min-width:80px">
+        <option value="all">全期間</option>
+        <option value="today">今日</option>
+        <option value="week" selected>今週</option>
+        <option value="month">今月</option>
+      </select>
+      <button class="btn-print" onclick="printShipping()">🖨️ 印刷</button>
+    </div>
+    <div id="shippingListContainer" style="overflow-x:auto;max-height:55vh;overflow-y:auto"></div>
+    <div class="modal-actions" style="margin-top:14px">
+      <button class="btn btn-gray btn-full" onclick="closeModal('shippingModal')">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
 <!-- 確認ダイアログ                                                -->
 <!-- ============================================================ -->
 <div id="confirmDialog" class="confirm-overlay">
@@ -642,7 +700,7 @@ let selectedNos    = new Set(); // 一括操作チェック済み予約No
 // ── 仕組み: キャッシュがある場合は即表示、バックグラウンドで予約を最新化
 // ── キーにバージョンを含めることで大幅な変更時に古いキャッシュが自動無効化される
 // ============================================================
-const LS_CACHE_KEY = 'bf_yoyaku_v1110';  // バージョン変更時はここも更新
+const LS_CACHE_KEY = 'bf_yoyaku_v1120';  // バージョン変更時はここも更新
 const LS_CACHE_TTL = 5 * 60 * 1000;     // 5分（商品・ユーザー情報の鮮度を保つ）
 
 function _loadLocalCache(userId) {
@@ -994,7 +1052,8 @@ async function registerReservation() {
       quantity:        qty,
       staff_id:        staffId,
       staff_name:      staffName,
-      delivery_method: delivery
+      delivery_method: delivery,
+      notes:           document.getElementById('regNotes').value.trim()
     });
     if (!res.success) throw new Error(res.error);
 
@@ -1004,6 +1063,7 @@ async function registerReservation() {
     document.getElementById('regSalon').value   = '';
     document.getElementById('regProduct').value = '';
     document.getElementById('regQty').value     = '1';
+    document.getElementById('regNotes').value   = '';
     document.getElementById('stockInfo').style.display = 'none';
 
     // 予約一覧を再取得（残数もローカルで自動更新）
@@ -1104,6 +1164,9 @@ function renderList() {
     const cardClick = canEdit ? `onclick="openEditModal(${r.reservation_no})"` : '';
     const cardEditable = canEdit ? 'editable' : '';
 
+    const notesRow = r.notes
+      ? `<div class="rc-notes">📝 ${esc(r.notes)}</div>` : '';
+
     return `
       <div class="reservation-card status-${esc(r.status)} ${cardEditable}" ${cardClick}>
         <div class="rc-row1">
@@ -1122,6 +1185,7 @@ function renderList() {
           ${delivBadge}
           <span class="rc-date">${dateStr}</span>
         </div>
+        ${notesRow}
       </div>`;
   }).join('');
 }
@@ -1173,6 +1237,7 @@ function printReservations() {
       <td>${e(r.delivery_method)}</td>
       <td class="nowrap">${e(dateStr)}</td>
       <td><span class="badge ${statClass}">${e(r.status)}</span></td>
+      <td style="font-size:9px;color:#555">${e(r.notes || '')}</td>
     </tr>`;
   }).join('');
 
@@ -1189,14 +1254,15 @@ function printReservations() {
     .meta { font-size: 9px; color: #555; margin-bottom: 8px; display: flex; gap: 18px; flex-wrap: wrap; }
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     col.c-no    { width: 36px; }
-    col.c-salon { width: 118px; }
-    col.c-prod  { width: 118px; }
+    col.c-salon { width: 108px; }
+    col.c-prod  { width: 108px; }
     col.c-qty   { width: 36px; }
     col.c-cum   { width: 42px; }
-    col.c-staff { width: 54px; }
-    col.c-deliv { width: 62px; }
-    col.c-date  { width: 104px; }
-    col.c-stat  { width: 44px; }
+    col.c-staff { width: 50px; }
+    col.c-deliv { width: 56px; }
+    col.c-date  { width: 96px; }
+    col.c-stat  { width: 40px; }
+    col.c-notes { width: auto; }
     thead th {
       background: #f3f4f6; font-size: 9px; font-weight: 700;
       padding: 5px 6px; border: 1px solid #c8ccd4;
@@ -1229,7 +1295,7 @@ function printReservations() {
     <colgroup>
       <col class="c-no"><col class="c-salon"><col class="c-prod">
       <col class="c-qty"><col class="c-cum"><col class="c-staff">
-      <col class="c-deliv"><col class="c-date"><col class="c-stat">
+      <col class="c-deliv"><col class="c-date"><col class="c-stat"><col class="c-notes">
     </colgroup>
     <thead>
       <tr>
@@ -1242,6 +1308,7 @@ function printReservations() {
         <th>発送方法</th>
         <th>予約日時</th>
         <th>ステータス</th>
+        <th>備考</th>
       </tr>
     </thead>
     <tbody>${rows}</tbody>
@@ -1249,7 +1316,7 @@ function printReservations() {
       <tr>
         <td colspan="3" class="bold">合計 ${list.length}件</td>
         <td class="num bold">${totalQty}</td>
-        <td colspan="5"></td>
+        <td colspan="6"></td>
       </tr>
     </tfoot>
   </table>
@@ -1312,6 +1379,7 @@ function openEditModal(reservationNo) {
   document.getElementById('editQty').max        = r.quantity;  // 数量増加を入力レベルで制限
   document.getElementById('editQtyHint').textContent = `（上限 ${r.quantity}個・増量不可）`;
   document.getElementById('editDelivery').value = r.delivery_method;
+  document.getElementById('editNotes').value    = r.notes || '';
 
   // ドロップダウンは遅延セット（options が生成されてから）
   setTimeout(() => {
@@ -1354,7 +1422,8 @@ async function saveEditReservation() {
       quantity:        qty,
       staff_id:        staffId,
       staff_name:      staffName,
-      delivery_method: delivery
+      delivery_method: delivery,
+      notes:           document.getElementById('editNotes').value.trim()
     });
     if (!res.success) throw new Error(res.error);
 
@@ -1722,6 +1791,306 @@ async function executeArrival() {
   } finally {
     hideLoading();
   }
+}
+
+// ============================================================
+// 出荷一覧（adminのみ）
+// ============================================================
+
+/** 出荷一覧モーダルを開く */
+function openShippingModal() {
+  if (currentUser?.yoyaku_role !== 'admin') return;
+
+  // 確定ステータスがある商品のみセレクトに表示
+  const confirmedPids = new Set(
+    reservations.filter(r => r.status === '確定').map(r => r.product_id)
+  );
+  const sel = document.getElementById('shippingProduct');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">商品を選択...</option>';
+  products
+    .filter(p => confirmedPids.has(p.product_id))
+    .forEach(p => {
+      sel.innerHTML += `<option value="${p.product_id}">${esc(p.name)}</option>`;
+    });
+  if (cur) sel.value = cur;
+
+  renderShippingList();
+  openModal('shippingModal');
+}
+
+/** 期間フィルタの日付範囲を返す（null = 全期間） */
+function _getShippingPeriodRange(period) {
+  const now   = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (period === 'today') {
+    return { from: today, to: new Date(today.getTime() + 86400000 - 1) };
+  }
+  if (period === 'week') {
+    const dow    = (now.getDay() + 6) % 7; // 月=0
+    const monday = new Date(today.getTime() - dow * 86400000);
+    return { from: monday, to: new Date(monday.getTime() + 7 * 86400000 - 1) };
+  }
+  if (period === 'month') {
+    return {
+      from: new Date(now.getFullYear(), now.getMonth(), 1),
+      to:   new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59)
+    };
+  }
+  return null; // 全期間
+}
+
+/**
+ * 出荷一覧データを集計して返す
+ * 集計キー: staff × delivery_method × salon_name
+ * ソート: 担当者名 → 発送方法（発送→持参→未定）→ サロン名
+ */
+function _buildShippingData(productId, period) {
+  const DELIVERY_ORDER = { '発送': 0, '持参': 1, '未定': 2 };
+  const DELIVERY_LIST  = ['発送', '持参', '未定'];
+
+  const range = _getShippingPeriodRange(period);
+  let list = reservations.filter(r => r.product_id === productId && r.status === '確定');
+  if (range) {
+    list = list.filter(r => {
+      if (!r.updated_at) return false;
+      const d = new Date(r.updated_at.replace(' ', 'T'));
+      return d >= range.from && d <= range.to;
+    });
+  }
+  if (list.length === 0) return null;
+
+  // グルーピング
+  const groups = {};
+  list.forEach(r => {
+    const key = `${r.staff_id}||${r.delivery_method}||${r.salon_name}`;
+    if (!groups[key]) {
+      groups[key] = {
+        staff_name:      getShortName(r.staff_id, r.staff_name),
+        delivery_method: r.delivery_method,
+        salon_name:      r.salon_name,
+        quantity:        0,
+        notes_list:      []
+      };
+    }
+    groups[key].quantity += r.quantity;
+    if (r.notes) groups[key].notes_list.push(r.notes);
+  });
+
+  // ソート
+  const sorted = Object.values(groups).sort((a, b) => {
+    const sn = a.staff_name.localeCompare(b.staff_name, 'ja');
+    if (sn !== 0) return sn;
+    const da = DELIVERY_ORDER[a.delivery_method] ?? 99;
+    const db = DELIVERY_ORDER[b.delivery_method] ?? 99;
+    if (da !== db) return da - db;
+    return a.salon_name.localeCompare(b.salon_name, 'ja');
+  });
+
+  // 階層構造: staff → delivery → salon行
+  const staffNames = [...new Set(sorted.map(r => r.staff_name))];
+  const staffData  = staffNames.map(staffName => {
+    const delivRows = {};
+    sorted.filter(r => r.staff_name === staffName).forEach(r => {
+      if (!delivRows[r.delivery_method]) delivRows[r.delivery_method] = [];
+      delivRows[r.delivery_method].push(r);
+    });
+    const delivData = DELIVERY_LIST
+      .filter(d => delivRows[d])
+      .map(dm => ({
+        method:   dm,
+        rows:     delivRows[dm],
+        subtotal: delivRows[dm].reduce((s, r) => s + r.quantity, 0)
+      }));
+    return {
+      staff_name: staffName,
+      delivData,
+      total: delivData.reduce((s, d) => s + d.subtotal, 0)
+    };
+  });
+
+  return {
+    staffData,
+    grandTotal: staffData.reduce((s, s2) => s + s2.total, 0)
+  };
+}
+
+/** 出荷一覧テーブルを画面に描画 */
+function renderShippingList() {
+  const productId = document.getElementById('shippingProduct').value;
+  const period    = document.getElementById('shippingPeriod').value;
+  const container = document.getElementById('shippingListContainer');
+
+  if (!productId) {
+    container.innerHTML = '<p style="color:#9ca3af;padding:20px;text-align:center">商品を選択してください</p>';
+    return;
+  }
+
+  const productName = products.find(p => p.product_id === productId)?.name || '';
+  const data = _buildShippingData(productId, period);
+
+  if (!data) {
+    container.innerHTML = '<p style="color:#9ca3af;padding:20px;text-align:center">該当する確定予約がありません</p>';
+    return;
+  }
+
+  let html = `
+    <div style="font-weight:700;margin-bottom:8px;font-size:13px;color:#1f2937;padding:6px 8px;background:#f0fdf4;border-radius:6px">
+      【商品名: ${esc(productName)}】
+    </div>
+    <table class="shipping-table">
+      <thead>
+        <tr>
+          <th style="width:64px">担当者</th>
+          <th style="width:58px">発送方法</th>
+          <th>サロン名</th>
+          <th style="width:52px" class="num">数量</th>
+          <th style="min-width:80px">備考</th>
+        </tr>
+      </thead>
+      <tbody>`;
+
+  data.staffData.forEach(staff => {
+    let isFirstStaff = true;
+    staff.delivData.forEach(deliv => {
+      deliv.rows.forEach((row, rowIdx) => {
+        const notes = [...new Set(row.notes_list.filter(Boolean))].join(' / ');
+        html += `<tr>
+          <td style="font-weight:700">${isFirstStaff ? esc(staff.staff_name) : ''}</td>
+          <td style="font-size:12px;color:#374151">${rowIdx === 0 ? esc(deliv.method) : ''}</td>
+          <td>${esc(row.salon_name)}</td>
+          <td class="num">${row.quantity}</td>
+          <td style="font-size:11px;color:#6b7280">${esc(notes)}</td>
+        </tr>`;
+        isFirstStaff = false;
+      });
+      // 発送方法小計
+      html += `<tr class="subtotal-delivery">
+        <td></td>
+        <td colspan="2" style="text-align:right">▶ ${esc(deliv.method)} 小計</td>
+        <td class="num">${deliv.subtotal}</td>
+        <td></td>
+      </tr>`;
+    });
+    // 担当者合計
+    html += `<tr class="subtotal-staff">
+      <td colspan="3" style="text-align:right">▶▶ ${esc(staff.staff_name)} 合計</td>
+      <td class="num">${staff.total}</td>
+      <td></td>
+    </tr>`;
+  });
+
+  html += `<tr class="grand-total">
+    <td colspan="3" style="text-align:right">■ 総合計</td>
+    <td class="num">${data.grandTotal}</td>
+    <td></td>
+  </tr></tbody></table>`;
+
+  container.innerHTML = html;
+}
+
+/** 出荷一覧を印刷（新ウィンドウ） */
+function printShipping() {
+  const productId = document.getElementById('shippingProduct').value;
+  const period    = document.getElementById('shippingPeriod').value;
+
+  if (!productId) { showToast('商品を選択してください', 'error'); return; }
+
+  const productName  = products.find(p => p.product_id === productId)?.name || '';
+  const periodLabels = { all: '全期間', today: '今日', week: '今週', month: '今月' };
+  const data = _buildShippingData(productId, period);
+
+  if (!data) { showToast('印刷対象がありません', 'warning'); return; }
+
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const printDate = `${now.getFullYear()}/${pad(now.getMonth()+1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const e = str => String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  let rows = '';
+  data.staffData.forEach(staff => {
+    let isFirstStaff = true;
+    staff.delivData.forEach(deliv => {
+      deliv.rows.forEach((row, rowIdx) => {
+        const notes = [...new Set(row.notes_list.filter(Boolean))].join(' / ');
+        rows += `<tr>
+          <td style="font-weight:700">${isFirstStaff ? e(staff.staff_name) : ''}</td>
+          <td>${rowIdx === 0 ? e(deliv.method) : ''}</td>
+          <td>${e(row.salon_name)}</td>
+          <td class="num">${row.quantity}</td>
+          <td style="color:#555">${e(notes)}</td>
+        </tr>`;
+        isFirstStaff = false;
+      });
+      rows += `<tr class="subtotal-delivery">
+        <td></td><td colspan="2" class="right">▶ ${e(deliv.method)} 小計</td>
+        <td class="num">${deliv.subtotal}</td><td></td>
+      </tr>`;
+    });
+    rows += `<tr class="subtotal-staff">
+      <td colspan="3" class="right">▶▶ ${e(staff.staff_name)} 合計</td>
+      <td class="num">${staff.total}</td><td></td>
+    </tr>`;
+  });
+  rows += `<tr class="grand-total">
+    <td colspan="3" class="right">■ 総合計</td>
+    <td class="num">${data.grandTotal}</td><td></td>
+  </tr>`;
+
+  const html = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Beaufield 出荷一覧</title>
+  <style>
+    @page { size: A4 landscape; margin: 14mm 12mm; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, 'Hiragino Sans', 'Yu Gothic UI', sans-serif; font-size: 10px; color: #111; }
+    h1 { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+    .meta { font-size: 9px; color: #555; margin-bottom: 10px; display: flex; gap: 18px; flex-wrap: wrap; }
+    table { width: 100%; border-collapse: collapse; }
+    thead th { background: #f3f4f6; font-size: 9px; font-weight: 700; padding: 5px 6px; border: 1px solid #c8ccd4; text-align: left; white-space: nowrap; }
+    tbody td { padding: 5px 6px; border: 1px solid #d1d5db; font-size: 10px; vertical-align: top; }
+    .num   { text-align: right; font-weight: 700; }
+    .right { text-align: right; }
+    .subtotal-delivery td { background: #f0f9ff; color: #1d4ed8; font-size: 9px; }
+    .subtotal-staff td    { background: #e0f2fe; font-weight: 700; color: #0369a1; border-bottom: 2px solid #7dd3fc; }
+    .grand-total td       { background: #dcfce7; font-weight: 700; color: #15803d; border-top: 2px solid #86efac; }
+    .footer { margin-top: 6px; font-size: 8px; color: #aaa; text-align: right; }
+  </style>
+</head>
+<body>
+  <h1>Beaufield 出荷一覧</h1>
+  <div class="meta">
+    <span>商品: <b>${e(productName)}</b></span>
+    <span>期間: ${e(periodLabels[period] || period)}</span>
+    <span>総合計: ${data.grandTotal}個</span>
+    <span>出力日時: ${printDate}</span>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:64px">担当者</th>
+        <th style="width:58px">発送方法</th>
+        <th>サロン名</th>
+        <th style="width:50px" class="num">数量</th>
+        <th>備考</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <div class="footer">Beaufield 予約管理システム　${printDate} 出力</div>
+  <script>window.onload = function() { window.print(); };<\/script>
+</body>
+</html>`;
+
+  const w = window.open('', '_blank');
+  if (!w) {
+    alert('ポップアップがブロックされました。\nブラウザのアドレスバー右側のポップアップブロック解除アイコンをクリックしてください。');
+    return;
+  }
+  w.document.write(html);
+  w.document.close();
 }
 
 // ============================================================

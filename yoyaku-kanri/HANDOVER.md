@@ -12,12 +12,12 @@
 
 ---
 
-## バージョン状況（2026-04-09時点）
+## バージョン状況（2026-04-13時点）
 
 | ファイル | バージョン | 状態 |
 |----------|-----------|------|
-| gas/Code.gs | **v1.6.0** | ✅ GASデプロイ済み（keepWarmトリガー設定済み） |
-| index.html | **v1.10.0** | ✅ GitHub Pages反映済み |
+| gas/Code.gs | **v1.8.0** | ⬜ GASデプロイ待ち |
+| index.html | **v1.12.0** | ⬜ GitHub Pages push待ち |
 
 ---
 
@@ -127,6 +127,27 @@ https://script.google.com/macros/s/AKfycbxvWbUf17DVe6dpW8cHEqrCuA3BbqF49EXqU3JXk
 
 ---
 
+## 出荷一覧機能（v1.12.0〜）
+
+### 概要
+- admin限定。予約一覧の 🚚 出荷一覧 ボタンからモーダルで表示
+- 対象: ステータス「確定」のみ
+- フィルタ: 商品（必須）+ 期間（今日/今週/今月/全期間、updated_at基準）
+- 集計キー: 担当者 × 発送方法 × サロン名（同一組み合わせを合算）
+- ソート: 担当者名 → 発送方法（発送→持参→未定）→ サロン名
+- 小計: 発送方法ごと + 担当者ごと + 総合計
+- 印刷: A4横PDF（新ウィンドウ）
+
+## 備考機能（v1.12.0〜）
+
+- reservationsシート N列（14列目）に `notes` を追加
+- 予約登録・編集フォームに備考テキストエリアを追加（任意入力）
+- 予約カード: 備考入力がある場合のみ小さく表示（📝マーク付き）
+- 予約一覧の印刷にも備考列を追加
+- 出荷一覧にも備考列を表示
+- 入荷処理スプリット時に備考をコピー
+- **既存シートへの追加**: N列がないシートでも読み込み時に空文字で返るため後方互換性あり
+
 ## データ構造
 
 ### products シート（商品マスター）
@@ -157,6 +178,7 @@ https://script.google.com/macros/s/AKfycbxvWbUf17DVe6dpW8cHEqrCuA3BbqF49EXqU3JXk
 | K | delivery_method | 発送 / 持参 / 未定 |
 | L | reserved_at | 予約日時 |
 | M | updated_at | 更新日時 |
+| N | notes | 備考（任意・v1.12.0追加） |
 
 ---
 
@@ -176,6 +198,7 @@ https://script.google.com/macros/s/AKfycbxvWbUf17DVe6dpW8cHEqrCuA3BbqF49EXqU3JXk
 | index v1.8.0 / Code v1.5.0 | **入荷処理機能**（2ステップモーダル・スプリット処理） |
 | index v1.9.0 / Code v1.5.1 | カードタップ編集・数量増加禁止・確定ボタンadmin限定明示 |
 | index v1.10.0 / Code v1.6.0 | **速度改善**（keepWarm・CacheService・localStorageキャッシュ） |
+| index v1.12.0 / Code v1.8.0 | **備考機能**（登録・編集・カード表示・印刷対応） + **🚚 出荷一覧**（担当者・発送方法別集計・小計・印刷） |
 
 ---
 
