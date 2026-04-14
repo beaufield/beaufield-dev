@@ -236,6 +236,30 @@
     }
     .stats-table th { background: #f9fafb; font-weight: 700; font-size: 12px; color: #6b7280; }
     .stats-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    /* 商品行クリック選択 */
+    .stats-table tbody tr.product-row {
+      cursor: pointer; transition: background 0.15s;
+    }
+    .stats-table tbody tr.product-row:hover { background: #eff6ff; }
+    .stats-table tbody tr.product-row.selected {
+      background: #dbeafe; font-weight: 600;
+    }
+    /* 商品フィルタバナー */
+    #statsProductFilter {
+      display: none; align-items: center; gap: 8px;
+      background: #dbeafe; border: 1.5px solid #93c5fd;
+      border-radius: 8px; padding: 7px 12px; margin-bottom: 10px;
+      font-size: 13px; font-weight: 600; color: #1d4ed8;
+    }
+    #statsProductFilter.show { display: flex; }
+    #statsProductFilter span { flex: 1; }
+    #statsProductFilter button {
+      background: none; border: none; font-size: 12px;
+      color: #1d4ed8; cursor: pointer; padding: 2px 6px;
+      border-radius: 4px; white-space: nowrap;
+      border: 1px solid #93c5fd;
+    }
+    #statsProductFilter button:hover { background: #bfdbfe; }
 
     /* バーグラフ */
     .bar-row   { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
@@ -364,7 +388,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.12.0</span>
+  <span class="header-version">v1.13.0</span>
 </header>
 
 <!-- ============================================================ -->
@@ -459,6 +483,11 @@
   <div class="section-title">📦 商品別予約数</div>
   <div class="card" id="statsProduct"></div>
 
+  <div id="statsProductFilter">
+    <span id="statsProductFilterLabel"></span>
+    <button onclick="clearStatsProductFilter()">✕ 解除</button>
+  </div>
+
   <div class="section-title">👤 担当別予約数</div>
   <div class="card" id="statsStaff"></div>
 
@@ -467,11 +496,6 @@
 
   <div class="section-title">📊 クロス集計（担当 × サロン）</div>
   <div class="card">
-    <div class="form-group" style="margin-bottom:12px">
-      <select id="crossProductFilter" class="form-control" onchange="renderStats()">
-        <option value="">すべての商品</option>
-      </select>
-    </div>
     <div class="cross-table" id="statsCross"></div>
   </div>
 </div>
@@ -937,13 +961,6 @@ function _updateProductDropdowns() {
   });
   fp.value = fpVal;
 
-  const cp = document.getElementById('crossProductFilter');
-  const cpVal = cp.value;
-  cp.innerHTML = '<option value="">すべての商品</option>';
-  products.forEach(p => {
-    cp.innerHTML += `<option value="${p.product_id}">${esc(p.name)}</option>`;
-  });
-  cp.value = cpVal;
 }
 
 // ============================================================
@@ -2096,12 +2113,45 @@ function printShipping() {
 // ============================================================
 // ③ 集計：GAS呼び出し廃止 → reservations/products のローカルデータから計算
 // ============================================================
+
+// 商品フィルタ状態（product_id | ''）
+let statsProductFilter = '';
+
+function selectStatsProduct(pid, name) {
+  // 同じ行を再クリックで解除
+  if (statsProductFilter === pid) {
+    statsProductFilter = '';
+  } else {
+    statsProductFilter = pid;
+  }
+  renderStats();
+}
+
+function clearStatsProductFilter() {
+  statsProductFilter = '';
+  renderStats();
+}
+
 function renderStats() {
   if (currentTab !== 'stats') return;
 
-  const filterPid = document.getElementById('crossProductFilter').value;
+  const filterPid = statsProductFilter;
 
-  // ---- 商品別集計 ----
+  // フィルタバナーの表示制御
+  const banner = document.getElementById('statsProductFilter');
+  const label  = document.getElementById('statsProductFilterLabel');
+  if (filterPid) {
+    const pName = reservations.find(r => r.product_id === filterPid)?.product_name || filterPid;
+    label.textContent = '🔍 ' + pName + ' でフィルタ中';
+    banner.classList.add('show');
+  } else {
+    banner.classList.remove('show');
+  }
+
+  // フィルタ適用済みデータ
+  const filteredRows = filterPid ? reservations.filter(r => r.product_id === filterPid) : reservations;
+
+  // ---- 商品別集計（全件・フィルタなし） ----
   const productMap = {};
   reservations.forEach(r => {
     const pid = r.product_id;
@@ -2121,28 +2171,27 @@ function renderStats() {
   });
   const byProduct = Object.values(productMap).sort((a, b) => b.total - a.total);
 
-  // ---- 担当別集計 ----
+  // ---- 担当別集計（フィルタ適用） ----
   const staffMap = {};
-  reservations.forEach(r => {
+  filteredRows.forEach(r => {
     if (!staffMap[r.staff_id]) staffMap[r.staff_id] = { staff_id: r.staff_id, staff_name: r.staff_name, total: 0 };
     staffMap[r.staff_id].total += r.quantity;
   });
   const byStaff = Object.values(staffMap).sort((a, b) => b.total - a.total);
 
-  // ---- サロン別集計 ----
+  // ---- サロン別集計（フィルタ適用） ----
   const salonMap = {};
-  reservations.forEach(r => {
+  filteredRows.forEach(r => {
     if (!salonMap[r.salon_name]) salonMap[r.salon_name] = { salon_name: r.salon_name, total: 0 };
     salonMap[r.salon_name].total += r.quantity;
   });
   const bySalon = Object.values(salonMap).sort((a, b) => b.total - a.total);
 
-  // ---- クロス集計 ----
-  const crossRows = filterPid ? reservations.filter(r => r.product_id === filterPid) : reservations;
+  // ---- クロス集計（フィルタ適用） ----
   const crossData = {};
   const staffNamesMap = {};
   const salonNamesSet = {};
-  crossRows.forEach(r => {
+  filteredRows.forEach(r => {
     staffNamesMap[r.staff_id] = r.staff_name;
     salonNamesSet[r.salon_name] = true;
     if (!crossData[r.staff_id]) crossData[r.staff_id] = {};
@@ -2152,30 +2201,35 @@ function renderStats() {
   const salonList = Object.keys(salonNamesSet).sort();
 
   // ---- 描画 ----
-  // 商品別
+  // 商品別（クリックで選択・解除）
   const prodEl = document.getElementById('statsProduct');
   if (!byProduct.length) {
     prodEl.innerHTML = '<p style="color:#9ca3af;font-size:13px">データなし</p>';
   } else {
     prodEl.innerHTML = `
       <table class="stats-table">
-        <tr>
-          <th>商品名</th>
-          <th class="num">予約数</th>
-          <th class="num">確定数</th>
-          <th class="num">上限</th>
-          <th class="num">残数</th>
-        </tr>
-        ${byProduct.map(p => `
+        <thead>
           <tr>
-            <td>${esc(p.product_name)}</td>
-            <td class="num">${p.total}</td>
-            <td class="num">${p.confirmed}</td>
-            <td class="num">${p.stock_limit > 0 ? p.stock_limit : '—'}</td>
-            <td class="num" style="color:${p.remaining !== null && p.remaining <= 5 ? 'var(--danger)' : 'inherit'}">
-              ${p.remaining !== null ? p.remaining : '—'}
-            </td>
-          </tr>`).join('')}
+            <th>商品名</th>
+            <th class="num">予約数</th>
+            <th class="num">確定数</th>
+            <th class="num">上限</th>
+            <th class="num">残数</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${byProduct.map(p => `
+            <tr class="product-row${filterPid === p.product_id ? ' selected' : ''}"
+                onclick="selectStatsProduct('${esc(p.product_id)}', '${esc(p.product_name).replace(/'/g, "\\'")}')">
+              <td>${esc(p.product_name)}</td>
+              <td class="num">${p.total}</td>
+              <td class="num">${p.confirmed}</td>
+              <td class="num">${p.stock_limit > 0 ? p.stock_limit : '—'}</td>
+              <td class="num" style="color:${p.remaining !== null && p.remaining <= 5 ? 'var(--danger)' : 'inherit'}">
+                ${p.remaining !== null ? p.remaining : '—'}
+              </td>
+            </tr>`).join('')}
+        </tbody>
       </table>`;
   }
 
