@@ -401,7 +401,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.14.0</span>
+  <span class="header-version">v1.14.1</span>
 </header>
 
 <!-- ============================================================ -->
@@ -954,13 +954,19 @@ function _updateUserDropdowns() {
 }
 
 /** 担当フィルタを「実際に予約が存在するstaffのみ」で更新 */
-function _updateStaffFilter() {
+/** 担当フィルタを更新。productId を渡すとその商品の予約を持つ担当者のみ表示 */
+function _updateStaffFilter(productId) {
   const fs = document.getElementById('filterStaff');
   const currentVal = fs.value;
 
-  // reservations から存在するstaffを抽出（重複除去）
+  // 商品フィルタが指定されている場合はその商品の予約のみを対象にする
+  const baseRows = productId
+    ? reservations.filter(r => r.product_id === productId)
+    : reservations;
+
+  // 対象の予約に存在するstaffを抽出（重複除去）
   const staffMap = {};
-  reservations.forEach(r => {
+  baseRows.forEach(r => {
     if (r.staff_id && r.staff_name) staffMap[r.staff_id] = r.staff_name;
   });
 
@@ -1145,7 +1151,11 @@ function renderList() {
   selectedNos.clear();
   updateBulkBar();
 
-  const fpid   = document.getElementById('filterProduct').value;
+  const fpid = document.getElementById('filterProduct').value;
+
+  // 商品フィルタに応じて担当ドロップダウンを先に更新（fstaff はその後で読む）
+  _updateStaffFilter(fpid);
+
   const fstaff = document.getElementById('filterStaff').value;
   const fst    = document.getElementById('filterStatus').value;
 
