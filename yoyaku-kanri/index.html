@@ -228,6 +228,19 @@
     .arrival-remaining          { color: var(--success); font-weight: 700; }
     .arrival-remaining.over     { color: var(--danger);  font-weight: 700; }
 
+    /* 全選択コントロール */
+    #listControl {
+      display: flex; align-items: center; gap: 8px;
+      padding: 2px 0 6px;
+    }
+    .btn-select-all {
+      font-size: 12px; padding: 3px 11px;
+      background: #fff; border: 1.5px solid var(--border);
+      border-radius: 6px; cursor: pointer; color: #374151;
+      white-space: nowrap;
+    }
+    .btn-select-all:active { background: #f3f4f6; }
+
     /* 集計テーブル */
     .stats-table { width: 100%; border-collapse: collapse; font-size: 13px; }
     .stats-table th, .stats-table td {
@@ -388,7 +401,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.13.1</span>
+  <span class="header-version">v1.14.0</span>
 </header>
 
 <!-- ============================================================ -->
@@ -471,6 +484,10 @@
     </select>
     <button class="btn btn-primary btn-sm" onclick="executeBulkDeliveryChange()">発送方法変更</button>
     <button class="btn btn-gray btn-sm" onclick="clearSelection()">解除</button>
+  </div>
+
+  <div id="listControl" style="display:none">
+    <button class="btn-select-all" id="selectAllBtn" onclick="toggleSelectAll()">全選択</button>
   </div>
 
   <div id="reservationList"></div>
@@ -765,6 +782,7 @@ function _applyInitData(d) {
   }
   _updateUserDropdowns();
   _updateProductDropdowns();
+  _updateStaffFilter();
   if (currentTab === 'list') renderList();
 }
 
@@ -932,12 +950,37 @@ function _updateUserDropdowns() {
   editSel.style.display   = '';
   buildStaffOptions(editSel, true);
 
-  // フィルタドロップダウン（staffユーザーのみ・その他は含めない）
+  // 担当フィルタは予約データから動的生成（_updateStaffFilter で管理）
+}
+
+/** 担当フィルタを「実際に予約が存在するstaffのみ」で更新 */
+function _updateStaffFilter() {
   const fs = document.getElementById('filterStaff');
-  fs.innerHTML = '<option value="">すべての担当</option>';
-  users.forEach(u => {
-    fs.innerHTML += `<option value="${u.user_id}">${esc(u.name)}</option>`;
+  const currentVal = fs.value;
+
+  // reservations から存在するstaffを抽出（重複除去）
+  const staffMap = {};
+  reservations.forEach(r => {
+    if (r.staff_id && r.staff_name) staffMap[r.staff_id] = r.staff_name;
   });
+
+  // allUsers の並び順に合わせてソート（マスター順 → 名前順）
+  const sorted = Object.entries(staffMap).sort((a, b) => {
+    const ia = allUsers.findIndex(u => u.user_id === a[0]);
+    const ib = allUsers.findIndex(u => u.user_id === b[0]);
+    if (ia === -1 && ib === -1) return a[1].localeCompare(b[1], 'ja');
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+
+  fs.innerHTML = '<option value="">すべての担当</option>';
+  sorted.forEach(([id, name]) => {
+    fs.innerHTML += `<option value="${esc(id)}">${esc(name)}</option>`;
+  });
+
+  // 選択中の値が引き続き存在すれば維持
+  fs.value = staffMap[currentVal] ? currentVal : '';
 }
 
 /** 商品ドロップダウンを更新 */
@@ -985,6 +1028,7 @@ async function loadReservations() {
     reservations = res.data;
     // 商品残数もローカルで更新（GAS 追加呼び出し不要）
     _refreshProductCounts();
+    _updateStaffFilter();
     renderList();
     // キャッシュの予約データを最新化（次回ロード時に最新状態が表示される）
     try {
@@ -1120,6 +1164,7 @@ function renderList() {
         <div class="empty-icon">📭</div>
         <div class="empty-text">該当する予約がありません</div>
       </div>`;
+    document.getElementById('listControl').style.display = 'none';
     return;
   }
 
@@ -1132,6 +1177,14 @@ function renderList() {
   const rankMap = {};
   let cumQty = 0;
   baseForRank.forEach(r => { cumQty += r.quantity; rankMap[r.reservation_no] = cumQty; });
+
+  // チェック可能件数をカウントして全選択ボタンを表示
+  const checkableCount = list.filter(r =>
+    currentUser.yoyaku_role === 'admin' ||
+    (r.staff_id === currentUser.user_id && r.status === '予約')
+  ).length;
+  const lcEl = document.getElementById('listControl');
+  lcEl.style.display = checkableCount > 0 ? '' : 'none';
 
   container.innerHTML = list.map(r => {
     const canEdit = currentUser.yoyaku_role === 'admin' ||
@@ -1205,6 +1258,9 @@ function renderList() {
         ${notesRow}
       </div>`;
   }).join('');
+
+  // 全選択ボタン状態を更新
+  updateSelectAllBtn();
 }
 
 /** 予約一覧をA4横PDF用に印刷（新ウィンドウで開いてブラウザ印刷ダイアログを起動） */
@@ -1513,6 +1569,7 @@ function onCheckChange(el) {
   if (el.checked) selectedNos.add(no);
   else            selectedNos.delete(no);
   updateBulkBar();
+  updateSelectAllBtn();
 }
 
 function updateBulkBar() {
@@ -1533,6 +1590,37 @@ function clearSelection() {
   selectedNos.clear();
   document.querySelectorAll('.rc-check').forEach(cb => cb.checked = false);
   updateBulkBar();
+  updateSelectAllBtn();
+}
+
+/** 全選択 / 全解除トグル */
+function toggleSelectAll() {
+  const checkboxes = Array.from(document.querySelectorAll('.rc-check'));
+  if (checkboxes.length === 0) return;
+  const allChecked = checkboxes.every(cb => cb.checked);
+  if (allChecked) {
+    // 全解除
+    selectedNos.clear();
+    checkboxes.forEach(cb => { cb.checked = false; });
+  } else {
+    // 全選択
+    checkboxes.forEach(cb => {
+      cb.checked = true;
+      selectedNos.add(Number(cb.dataset.no));
+    });
+  }
+  updateBulkBar();
+  updateSelectAllBtn();
+}
+
+/** 全選択ボタンのラベルを現在の選択状態に合わせて更新 */
+function updateSelectAllBtn() {
+  const btn = document.getElementById('selectAllBtn');
+  if (!btn) return;
+  const checkboxes = Array.from(document.querySelectorAll('.rc-check'));
+  if (checkboxes.length === 0) return;
+  const allChecked = checkboxes.every(cb => cb.checked);
+  btn.textContent = allChecked ? '全解除' : '全選択';
 }
 
 function executeBulkDelete() {
