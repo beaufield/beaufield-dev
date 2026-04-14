@@ -754,7 +754,7 @@
   </div>
 </nav>
 
-<div class="version-label" id="version-label">v1.10.9</div>
+<div class="version-label" id="version-label">v1.17.0</div>
 
 <!-- ==============================
      モーダル: 数量入力
@@ -830,6 +830,33 @@
   </div>
 </div>
 
+<!-- モーダル: 重複商品確認 -->
+<div class="modal-overlay" id="modal-dup">
+  <div class="modal">
+    <div class="modal-title">⚠️ 同じ商品が既にあります</div>
+    <div id="dup-name" style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:14px;padding:9px 12px;background:var(--bg);border-radius:8px;line-height:1.4;"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;text-align:center">
+      <div style="background:#FFF0F0;border:1px solid #FFBBBB;border-radius:8px;padding:10px 6px">
+        <div style="font-size:11px;color:var(--text-light);margin-bottom:4px">現在の数量</div>
+        <div style="font-size:22px;font-weight:700;color:var(--danger)" id="dup-existing-qty"></div>
+      </div>
+      <div style="background:#F0F8FF;border:1px solid #90CAF9;border-radius:8px;padding:10px 6px">
+        <div style="font-size:11px;color:var(--text-light);margin-bottom:4px">今回追加</div>
+        <div style="font-size:22px;font-weight:700;color:#1976D2" id="dup-new-qty"></div>
+      </div>
+    </div>
+    <div style="text-align:center;margin-bottom:16px;padding:10px;background:#F0FFF4;border:1px solid #A8E6C0;border-radius:8px">
+      <div style="font-size:11px;color:var(--text-light);margin-bottom:4px">合算すると</div>
+      <div style="font-size:26px;font-weight:700;color:var(--success)" id="dup-merged-qty"></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <button class="btn btn-success" onclick="dupMerge()">✅ 合算する（1行にまとめる）</button>
+      <button class="btn btn-outline"  onclick="dupAddSeparate()">➕ 別行として追加する</button>
+      <button class="btn btn-ghost"   onclick="closeDupModal()">キャンセル（追加しない）</button>
+    </div>
+  </div>
+</div>
+
 <!-- モーダル: 発注先追加 -->
 <div class="modal-overlay" id="modal-add-supplier">
   <div class="modal">
@@ -899,7 +926,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.16.0'; // 修正発注自動削除・履歴メーカーフィルター（GAS再取得）
+const APP_VERSION    = 'v1.17.0'; // 重複商品検知・合算確認モーダル追加
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER      = 'bf_pm';
@@ -929,6 +956,7 @@ let currentOrder = {
 let savedOrderNo          = null;
 let revisionBaseOrderNo   = null; // 修正発注時：元の発注No（保存時に削除される）
 let pendingProduct= null;
+let pendingDupInfo= null; // 重複確認中のデータ { item, dupIndex, isHandwrite }
 let selectedQty   = 1;
 let notFoundJan   = '';
 let currentTab    = 'scan';
@@ -1521,9 +1549,79 @@ function confirmQty() {
     supplierCD:    pendingProduct.supplierCD    || '',
     purchasePrice: pendingProduct.purchasePrice || 0
   };
+  const dupIdx = findDupIndex(item);
+  if (dupIdx !== -1) {
+    closeModal('modal-qty');
+    openDupModal(item, dupIdx, false);
+  } else {
+    cartItems.push(item); saveCart(); renderItemList();
+    closeModal('modal-qty');
+    showToast(`「${item.name}」を追加しました`, 'success');
+    if (currentTab === 'scan') setTimeout(focusScanInput, 150);
+  }
+}
+
+/* ===================================================
+   重複商品チェック・合算モーダル
+=================================================== */
+function findDupIndex(item) {
+  if (item.isHandwritten) {
+    // 手書きは商品名で重複判定
+    return cartItems.findIndex(i => i.isHandwritten && i.name === item.name);
+  }
+  // 通常商品はJANコードまたは商品コードで重複判定
+  return cartItems.findIndex(i => {
+    if (i.isHandwritten) return false;
+    if (item.janCode && i.janCode && item.janCode === i.janCode) return true;
+    if (item.code    && i.code    && item.code    === i.code)    return true;
+    return false;
+  });
+}
+
+function openDupModal(item, dupIndex, isHandwrite) {
+  pendingDupInfo = { item, dupIndex, isHandwrite: !!isHandwrite };
+  const existing = cartItems[dupIndex];
+  const unit = existing.unit || item.unit || '';
+  document.getElementById('dup-name').textContent         = item.name;
+  document.getElementById('dup-existing-qty').textContent = existing.qty + (unit ? ' ' + unit : '');
+  document.getElementById('dup-new-qty').textContent      = item.qty     + (unit ? ' ' + unit : '');
+  document.getElementById('dup-merged-qty').textContent   = (existing.qty + item.qty) + (unit ? ' ' + unit : '');
+  document.getElementById('modal-dup').classList.add('open');
+}
+
+function dupMerge() {
+  if (!pendingDupInfo) return;
+  const { item, dupIndex, isHandwrite } = pendingDupInfo;
+  cartItems[dupIndex].qty += item.qty;
+  saveCart(); renderItemList();
+  document.getElementById('modal-dup').classList.remove('open');
+  pendingDupInfo = null;
+  const merged = cartItems[dupIndex];
+  showToast(`「${item.name}」を合算しました（合計: ${merged.qty}${merged.unit ? merged.unit : ''}）`, 'success');
+  if (isHandwrite) {
+    ['hw-name','hw-qty','hw-unit','hw-memo'].forEach(id => { document.getElementById(id).value = ''; });
+  } else if (currentTab === 'scan') {
+    setTimeout(focusScanInput, 150);
+  }
+}
+
+function dupAddSeparate() {
+  if (!pendingDupInfo) return;
+  const { item, isHandwrite } = pendingDupInfo;
   cartItems.push(item); saveCart(); renderItemList();
-  closeModal('modal-qty');
-  showToast(`「${item.name}」を追加しました`, 'success');
+  document.getElementById('modal-dup').classList.remove('open');
+  pendingDupInfo = null;
+  showToast(`「${item.name}」を別行で追加しました`, 'success');
+  if (isHandwrite) {
+    ['hw-name','hw-qty','hw-unit','hw-memo'].forEach(id => { document.getElementById(id).value = ''; });
+  } else if (currentTab === 'scan') {
+    setTimeout(focusScanInput, 150);
+  }
+}
+
+function closeDupModal() {
+  document.getElementById('modal-dup').classList.remove('open');
+  pendingDupInfo = null;
   if (currentTab === 'scan') setTimeout(focusScanInput, 150);
 }
 
@@ -1537,11 +1635,16 @@ function addHandwrite() {
   const memo = document.getElementById('hw-memo').value.trim();
   if (!name) { showToast('商品名を入力してください', 'error'); return; }
   if (!qty || qty < 1) { showToast('数量を入力してください', 'error'); return; }
-  cartItems.push({ janCode: '', code: '', name: '※ ' + name, qty, unit, memo,
-    isHandwritten: true, supplierCD: '', purchasePrice: 0 });
-  saveCart(); renderItemList();
-  ['hw-name','hw-qty','hw-unit','hw-memo'].forEach(id => { document.getElementById(id).value = ''; });
-  showToast('手書き商品を追加しました', 'success');
+  const hwItem = { janCode: '', code: '', name: '※ ' + name, qty, unit, memo,
+    isHandwritten: true, supplierCD: '', purchasePrice: 0 };
+  const dupIdx = findDupIndex(hwItem);
+  if (dupIdx !== -1) {
+    openDupModal(hwItem, dupIdx, true);
+  } else {
+    cartItems.push(hwItem); saveCart(); renderItemList();
+    ['hw-name','hw-qty','hw-unit','hw-memo'].forEach(id => { document.getElementById(id).value = ''; });
+    showToast('手書き商品を追加しました', 'success');
+  }
 }
 
 /* ===================================================
