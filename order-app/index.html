@@ -754,7 +754,7 @@
   </div>
 </nav>
 
-<div class="version-label" id="version-label">v1.17.0</div>
+<div class="version-label" id="version-label">v1.17.1</div>
 
 <!-- ==============================
      モーダル: 数量入力
@@ -810,7 +810,7 @@
       <input type="text" id="qty-memo" placeholder="備考" list="memo-history">
     </div>
     <div class="btn-row">
-      <button class="btn btn-secondary" onclick="closeModal('modal-qty')">キャンセル</button>
+      <button class="btn btn-secondary" onclick="closeModal('modal-qty');if(currentTab==='scan')setTimeout(focusScanInput,150);">キャンセル</button>
       <button class="btn btn-primary" onclick="confirmQty()">追加</button>
     </div>
   </div>
@@ -926,7 +926,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.17.0'; // 重複商品検知・合算確認モーダル追加
+const APP_VERSION    = 'v1.17.1'; // JANフォーカス復元・テキスト出力iOS hangup修正
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER      = 'bf_pm';
@@ -1817,8 +1817,10 @@ async function outputText() {
   // クリップボードコピー（ボタンクリック直後 = ユーザー操作コンテキスト内）
   let copied = false;
   try {
-    await navigator.clipboard.writeText(text);
-    copied = true;
+    await Promise.race([
+      navigator.clipboard.writeText(text).then(() => { copied = true; }),
+      new Promise(resolve => setTimeout(resolve, 1500)) // タイムアウト（iOS hangup対策）
+    ]);
   } catch(e) { /* 権限なし等の場合は無視してダウンロードのみ実行 */ }
 
   showLoading('保存・出力中...');
