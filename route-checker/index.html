@@ -365,6 +365,15 @@
     .s-cell-count { font-size: 15px; font-weight: 700; line-height: 1.1; }
     .s-cell-sub   { font-size: 10px; color: #9ca3af; }
     .s-legend { font-size: 11px; color: #9ca3af; margin-top: 6px; text-align: right; }
+    /* 集計 週/月モード切替 */
+    .summary-mode-tabs { display: flex; gap: 0; border-radius: 8px; overflow: hidden; border: 1.5px solid var(--primary); flex-shrink: 0; }
+    .summary-mode-btn {
+      padding: 6px 18px; font-size: 13px; font-weight: 600;
+      background: #fff; color: var(--primary);
+      border: none; cursor: pointer; transition: background 0.15s, color 0.15s;
+    }
+    .summary-mode-btn.active { background: var(--primary); color: #fff; }
+    .summary-mode-btn:first-child { border-right: 1.5px solid var(--primary); }
     /* 未訪問アラートリスト */
     .alert-list {
       background: #fff; border-radius: 10px;
@@ -771,7 +780,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.17.1';
+const APP_VERSION = 'v1.18.0';
 const START_MONTH = '2026-04'; // 運用開始月（これより前は選択肢に表示しない）
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
@@ -810,9 +819,11 @@ let changePinCurrent = '';  // ステップ0で入力した現在PIN
 let changePinValue   = '';  // 入力中のPIN
 
 // 集計
-let summaryData        = null;  // { matrix, alerts, month } GASから取得したデータ
-let summaryMonth       = '';    // 'YYYY-MM'（空=当月）
+let summaryData        = null;  // { matrix, alerts } GASから取得したデータ
+let summaryMonth       = '';    // 'YYYY-MM'（空=当月）、月モード用
 let summaryAlertFilter = 'all'; // アラートのメンバーフィルタ: 'all' | user_id（manager用）
+let summaryPeriodMode  = 'week'; // 'month' | 'week'（デフォルト=週）
+let summaryWeekStart   = '';    // 'YYYY-MM-DD'（空=今週の月曜日）、週モード用
 
 // 訪問履歴
 let historyData   = null;     // { weeks, rows } GASから取得したデータ
@@ -974,12 +985,13 @@ function clearPublicUsersCache() {
 // ============================================================
 // 集計キャッシュ（localStorage / 10分保持）
 // ============================================================
-var SUMMARY_CACHE_PREFIX = 'bfc_summary_v1_';
-var SUMMARY_CACHE_TTL    = 10 * 60 * 1000; // 10分
+var SUMMARY_CACHE_PREFIX      = 'bfc_summary_v1_';
+var SUMMARY_WEEK_CACHE_PREFIX = 'bfc_summary_week_v1_';
+var SUMMARY_CACHE_TTL         = 10 * 60 * 1000; // 10分
 
-function loadSummaryCache(month) {
+function loadSummaryCache(cacheKey) {
   try {
-    var raw = localStorage.getItem(SUMMARY_CACHE_PREFIX + month);
+    var raw = localStorage.getItem(cacheKey);
     if (!raw) return null;
     var c = JSON.parse(raw);
     if (Date.now() - c.saved_at > SUMMARY_CACHE_TTL) return null;
@@ -987,10 +999,30 @@ function loadSummaryCache(month) {
   } catch(e) { return null; }
 }
 
-function saveSummaryCache(month, data) {
+function saveSummaryCache(cacheKey, data) {
   try {
-    localStorage.setItem(SUMMARY_CACHE_PREFIX + month, JSON.stringify({ saved_at: Date.now(), data: data }));
+    localStorage.setItem(cacheKey, JSON.stringify({ saved_at: Date.now(), data: data }));
   } catch(e) {}
+}
+
+/** 指定日（またはデフォルト=今日）を含む週の月曜日を 'YYYY-MM-DD' で返す */
+function getMondayOfWeek(date) {
+  var d   = date ? new Date(date) : new Date();
+  var day = d.getDay(); // 0=日, 1=月, ..., 6=土
+  var diff = (day === 0) ? -6 : 1 - day; // 月曜日へのオフセット
+  d.setDate(d.getDate() + diff);
+  var y = d.getFullYear();
+  var m = String(d.getMonth() + 1).padStart(2, '0');
+  var dd = String(d.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + dd;
+}
+
+/** 'YYYY-MM-DD' の日付を 'M/D（曜）' 形式に変換 */
+function formatWeekLabel(dateStr) {
+  var parts = dateStr.split('-');
+  var d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+  var dayNames = ['日', '月', '火', '水', '木', '金', '土'];
+  return (d.getMonth() + 1) + '/' + d.getDate() + '（' + dayNames[d.getDay()] + '）';
 }
 
 // ============================================================
@@ -2234,12 +2266,28 @@ async function loadHistory() {
 /** 集計データをGASから取得してレンダリング */
 async function loadSummary() {
   if (!currentUser) return;
-  var today  = new Date();
-  var month  = summaryMonth ||
-    (today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0'));
+  var today = new Date();
+
+  var params = { user_id: currentUser.user_id };
+  var cacheKey;
+
+  if (summaryPeriodMode === 'week') {
+    // 週モード
+    var weekStart = summaryWeekStart || getMondayOfWeek(today);
+    if (!summaryWeekStart) summaryWeekStart = weekStart; // 初回のみセット
+    params.week_start = weekStart;
+    cacheKey = SUMMARY_WEEK_CACHE_PREFIX + weekStart;
+  } else {
+    // 月モード
+    var month = summaryMonth ||
+      (today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0'));
+    if (!summaryMonth) summaryMonth = month; // 初回のみセット
+    params.month = month;
+    cacheKey = SUMMARY_CACHE_PREFIX + month;
+  }
 
   // キャッシュ確認
-  var cached = loadSummaryCache(month);
+  var cached = loadSummaryCache(cacheKey);
   if (cached) {
     summaryData = cached;
     renderApp();
@@ -2248,12 +2296,9 @@ async function loadSummary() {
 
   showLoading();
   try {
-    var result = await apiGet('getSummary', {
-      month:   month,
-      user_id: currentUser.user_id
-    });
+    var result = await apiGet('getSummary', params);
     summaryData = result;
-    saveSummaryCache(month, result);
+    saveSummaryCache(cacheKey, result);
   } catch(e) {
     showToast('集計データの取得に失敗しました: ' + e.message, 'error');
     summaryData = { matrix: [], alerts: [] };
@@ -2265,29 +2310,60 @@ async function loadSummary() {
 
 /** 集計画面のHTML生成 */
 function renderSummary() {
-  var today   = new Date();
-  var curMonth = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
-  var selMonth = summaryMonth || curMonth;
+  var today = new Date();
 
-  // 月プルダウン（直近12ヶ月）
-  var monthOpts = '';
-  for (var i = 0; i < 12; i++) {
-    var d = new Date(today.getFullYear(), today.getMonth() - i, 1);
-    var val = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
-    if (val < START_MONTH) break;
-    var lbl = d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + (i === 0 ? '（今月）' : '');
-    var sel = (selMonth === val) ? ' selected' : '';
-    monthOpts += '<option value="' + val + '"' + sel + '>' + escHtml(lbl) + '</option>';
+  // ── モード切替ボタン ──
+  var modeTabsHtml =
+    '<div class="summary-mode-tabs">' +
+      '<button class="summary-mode-btn' + (summaryPeriodMode === 'week'  ? ' active' : '') +
+        '" onclick="onSummaryPeriodModeChange(\'week\')">週</button>' +
+      '<button class="summary-mode-btn' + (summaryPeriodMode === 'month' ? ' active' : '') +
+        '" onclick="onSummaryPeriodModeChange(\'month\')">月</button>' +
+    '</div>';
+
+  var selectorHtml;
+  if (summaryPeriodMode === 'week') {
+    // 週セレクター（今週〜8週前）
+    var currentMonday = getMondayOfWeek(today);
+    var selWeek = summaryWeekStart || currentMonday;
+    var weekOpts = '';
+    for (var i = 0; i < 9; i++) {
+      var monDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      // 今週の月曜日から i 週前
+      var thisMon = getMondayOfWeek(monDate);
+      var monParts = thisMon.split('-').map(Number);
+      var mon = new Date(monParts[0], monParts[1] - 1, monParts[2] - i * 7);
+      var sat = new Date(mon.getTime()); sat.setDate(sat.getDate() + 5);
+      var monStr = mon.getFullYear() + '-' + String(mon.getMonth() + 1).padStart(2, '0') + '-' + String(mon.getDate()).padStart(2, '0');
+      if (monStr < START_MONTH) break;
+      var lbl = formatWeekLabel(monStr) + ' 〜 ' + (sat.getMonth() + 1) + '/' + sat.getDate() + '（土）' + (i === 0 ? '（今週）' : '');
+      var sel = (selWeek === monStr) ? ' selected' : '';
+      weekOpts += '<option value="' + monStr + '"' + sel + '>' + escHtml(lbl) + '</option>';
+    }
+    selectorHtml = '<select class="filter-select" id="summary-week" onchange="onSummaryWeekChange()">' + weekOpts + '</select>';
+  } else {
+    // 月セレクター（直近12ヶ月）
+    var curMonth = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
+    var selMonth = summaryMonth || curMonth;
+    var monthOpts = '';
+    for (var j = 0; j < 12; j++) {
+      var d = new Date(today.getFullYear(), today.getMonth() - j, 1);
+      var val = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+      if (val < START_MONTH) break;
+      var mLbl = d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + (j === 0 ? '（今月）' : '');
+      var mSel = (selMonth === val) ? ' selected' : '';
+      monthOpts += '<option value="' + val + '"' + mSel + '>' + escHtml(mLbl) + '</option>';
+    }
+    selectorHtml = '<select class="filter-select" id="summary-month" onchange="onSummaryMonthChange()">' + monthOpts + '</select>';
   }
-  var filterHtml = '<div class="history-filters">' +
-    '<select class="filter-select" id="summary-month" onchange="onSummaryMonthChange()">' +
-    monthOpts + '</select></div>';
+
+  var filterHtml = '<div class="history-filters" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+    modeTabsHtml + selectorHtml + '</div>';
 
   var bodyHtml;
   if (!summaryData) {
     bodyHtml = '<div class="empty-state">読み込み中...</div>';
   } else {
-    // manager は自チームのメンバーフィルタボタンを表示
     var alertMemberTabsHtml = '';
     var role = currentUser ? currentUser.role : '';
     if (role === 'manager' && summaryData.alerts && summaryData.alerts.length > 0) {
@@ -2301,13 +2377,32 @@ function renderSummary() {
     renderBottomNav();
 }
 
+/** 期間モード切替（週 / 月） */
+function onSummaryPeriodModeChange(mode) {
+  if (summaryPeriodMode === mode) return;
+  summaryPeriodMode  = mode;
+  summaryData        = null;
+  summaryAlertFilter = 'all';
+  loadSummary();
+}
+
+/** 週セレクター変更時 */
+function onSummaryWeekChange() {
+  var el = document.getElementById('summary-week');
+  if (!el) return;
+  summaryWeekStart   = el.value;
+  summaryData        = null;
+  summaryAlertFilter = 'all';
+  loadSummary();
+}
+
 /** 月フィルタ変更時 */
 function onSummaryMonthChange() {
   var el = document.getElementById('summary-month');
   if (!el) return;
   summaryMonth       = el.value;
   summaryData        = null;
-  summaryAlertFilter = 'all'; // 月変更時はフィルタをリセット
+  summaryAlertFilter = 'all';
   loadSummary();
 }
 
@@ -2328,8 +2423,9 @@ function buildSummaryMatrix(matrix) {
   var days = ['火', '水', '木', '金', '土'];
 
   // ヘッダー行
+  var totalLabel = (summaryPeriodMode === 'week') ? '週計' : '月計';
   var headerCells = days.map(function(d) { return '<th>' + d + '</th>'; }).join('');
-  var header = '<tr><th class="s-user-col">担当者</th>' + headerCells + '<th>月計</th></tr>';
+  var header = '<tr><th class="s-user-col">担当者</th>' + headerCells + '<th>' + totalLabel + '</th></tr>';
 
   // データ行（ヒートマップ背景色付き）
   var bodyRows = matrix.map(function(row) {
