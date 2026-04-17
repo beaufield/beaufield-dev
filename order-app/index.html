@@ -960,7 +960,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.19.1'; // 商品マスター読み込み中バグ修正
+const APP_VERSION    = 'v1.19.2'; // 商品マスターバッジ表示修正・発注開始チェック修正
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm';
@@ -1248,7 +1248,7 @@ async function loadProductMasterFromGAS() {
       if (res.updatedAt) localStorage.setItem(LS_MASTER_GAS_DATE, res.updatedAt);
     }
   } catch(e) {
-    // バックグラウンド取得失敗は無視（手動CSVアップロードで対応可能）
+    console.error('[loadProductMasterFromGAS] 失敗:', e);
   } finally {
     productMasterLoading = false;
     updateMasterBadge();
@@ -1273,6 +1273,10 @@ function updateMasterBadge() {
     badge.className = 'master-badge green';
     badge.querySelector('.master-badge-title').textContent = `✅ ${count.toLocaleString()}件（本日更新済）`;
     badge.querySelector('.master-badge-sub').textContent   = `更新日: ${pmDate}${subSuffix}`;
+  } else if (!pmDate) {
+    badge.className = 'master-badge green';
+    badge.querySelector('.master-badge-title').textContent = `✅ ${count.toLocaleString()}件（読込済）`;
+    badge.querySelector('.master-badge-sub').textContent   = `更新日: GAS取得中または旧キャッシュ${subSuffix}`;
   } else {
     badge.className = 'master-badge orange';
     badge.querySelector('.master-badge-title').textContent = `⚠️ ${count.toLocaleString()}件（更新が必要）`;
@@ -1324,7 +1328,7 @@ async function startOrder() {
     showToast('商品マスター読み込み中です。しばらくお待ちください', 'error'); return;
   } else if (productMaster.length === 0) {
     if (!confirm('商品マスターが未読込です。\nスキャン・検索機能は使えませんが、このまま続けますか？')) return;
-  } else if (pmDate !== today) {
+  } else if (pmDate && pmDate !== today) {
     if (!confirm(`商品マスターの更新が必要です（前回: ${pmDate}）。\nこのまま続けますか？`)) return;
   }
 
