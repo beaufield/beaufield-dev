@@ -356,6 +356,14 @@
     .history-meta     { font-size: 12px; color: var(--text-light); }
     .hist-filter-wrap { margin-bottom: 10px; }
     .hist-filter-wrap select { padding: 9px 12px; font-size: 14px; }
+    .inv-sale-btn {
+      flex: 1; padding: 5px 2px; font-size: 12px; border-radius: 6px;
+      border: 1px solid var(--border); background: var(--surface);
+      color: var(--text-light); cursor: pointer; white-space: nowrap;
+    }
+    .inv-sale-btn.inv-sale-active {
+      background: var(--primary); color: #fff; border-color: var(--primary);
+    }
 
     /* 設定 */
     .setting-row {
@@ -746,7 +754,7 @@
 ============================== -->
 <div class="screen" id="screen-inventory">
   <div class="card" style="padding:12px 14px">
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
       <select id="inv-filter-supplier" onchange="renderInventoryList()" style="flex:1;min-width:120px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text)">
         <option value="">全発注先</option>
       </select>
@@ -756,13 +764,13 @@
         <option value="5">5以下</option>
         <option value="10">10以下</option>
       </select>
-      <select id="inv-filter-sale" onchange="renderInventoryList()" style="width:120px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text)">
-        <option value="yesterday">前日のみ</option>
-        <option value="recent">前日・前々日のみ</option>
-        <option value="week">1週間</option>
-        <option value="month">1ヶ月</option>
-        <option value="all">全て</option>
-      </select>
+    </div>
+    <div style="display:flex;gap:4px">
+      <button class="inv-sale-btn inv-sale-active" data-val="yesterday" onclick="setInvSaleFilter('yesterday')">前日</button>
+      <button class="inv-sale-btn" data-val="recent"    onclick="setInvSaleFilter('recent')">前々日まで</button>
+      <button class="inv-sale-btn" data-val="week"      onclick="setInvSaleFilter('week')">1週間</button>
+      <button class="inv-sale-btn" data-val="month"     onclick="setInvSaleFilter('month')">1ヶ月</button>
+      <button class="inv-sale-btn" data-val="all"       onclick="setInvSaleFilter('all')">全て</button>
     </div>
   </div>
   <div id="inv-list-header" style="padding:0 14px 4px;font-size:12px;color:var(--text-light)"></div>
@@ -963,7 +971,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.19.3'; // 在庫一覧：最終売上日フィルターを5段階に拡張
+const APP_VERSION    = 'v1.19.4'; // 在庫一覧：最終売上日フィルターをボタン式に変更
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm';
@@ -3064,10 +3072,20 @@ function renderInventorySupplierFilter() {
   if (cur) sel.value = cur;
 }
 
+let invSaleFilter = 'yesterday';
+
+function setInvSaleFilter(val) {
+  invSaleFilter = val;
+  document.querySelectorAll('.inv-sale-btn').forEach(b => {
+    b.classList.toggle('inv-sale-active', b.dataset.val === val);
+  });
+  renderInventoryList();
+}
+
 function renderInventoryList() {
   const supplierFilter = document.getElementById('inv-filter-supplier').value;
   const stockThreshold = parseInt(document.getElementById('inv-filter-stock').value, 10);
-  const saleFilter     = document.getElementById('inv-filter-sale').value;
+  const saleFilter     = invSaleFilter;
 
   const toYMD = d => `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
   const today     = new Date();
