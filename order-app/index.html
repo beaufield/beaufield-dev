@@ -971,7 +971,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.19.4'; // 在庫一覧：最終売上日フィルターをボタン式に変更
+const APP_VERSION    = 'v1.19.5'; // 在庫一覧：最終発注日・発注数を表示
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm';
@@ -3149,6 +3149,10 @@ function renderInventoryList() {
   const rows = filtered.map((p, idx) => {
     const stock    = parseFloat(p.stock) || 0;
     const stockCls = stock <= 0 ? 'color:var(--danger);font-weight:bold' : '';
+    const hist     = productHistory[p.code] || productHistory[p.jan] || null;
+    const lastOrder = hist && hist.date
+      ? `<div style="font-size:11px;color:var(--primary);margin-top:1px">🛒 ${fmtDate(hist.date)} × ${hist.qty}${hist.unit||''}</div>`
+      : '';
     return `<div class="history-item" style="display:flex;align-items:center" onclick="openInventoryQtyModal(${idx})">
       <div style="flex:1;min-width:0">
         <div style="font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</div>
@@ -3157,6 +3161,7 @@ function renderInventoryList() {
       <div style="text-align:right;flex-shrink:0;margin-left:8px">
         <div style="font-size:15px;${stockCls}">${stock}</div>
         <div style="font-size:11px;color:var(--text-light)">${fmtDate(p.lastSaleDate)}</div>
+        ${lastOrder}
       </div>
     </div>`;
   }).join('');
