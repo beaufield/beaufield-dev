@@ -926,11 +926,12 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.17.1'; // JANフォーカス復元・テキスト出力iOS hangup修正
+const APP_VERSION    = 'v1.18.0'; // 商品マスター自動更新（GAS→Sheets連携）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
-const LS_MASTER      = 'bf_pm';
-const LS_MASTER_DATE = 'bf_pm_date';
+const LS_MASTER          = 'bf_pm';
+const LS_MASTER_DATE     = 'bf_pm_date';
+const LS_MASTER_GAS_DATE = 'bf_pm_gas_date'; // GASによる最終更新日時
 const LS_PROD_HIST   = 'bf_prod_hist'; // 商品別直近注文（localStorage永続）
 const SS_CART        = 'bf_cart';
 const LS_MEMO_HIST   = 'bf_memo_h';
@@ -990,6 +991,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   loadProductMasterFromCache();
   updateMasterBadge();
+  // キャッシュが当日でない場合はバックグラウンドでGASから最新取得（await しない）
+  if (localStorage.getItem(LS_MASTER_DATE) !== getTodayStr()) {
+    loadProductMasterFromGAS();
+  }
   updateMemoDatalist();
 
   // 直近注文履歴をlocalStorageから即座に復元
@@ -1187,23 +1192,40 @@ function loadProductMasterFromCache() {
   } catch(e) {}
   return false;
 }
+
+async function loadProductMasterFromGAS() {
+  try {
+    const res = await gasGet({ action: 'getProductMaster' });
+    if (res.success && res.products && res.products.length > 0) {
+      productMaster = res.products;
+      localStorage.setItem(LS_MASTER,          JSON.stringify(res.products));
+      localStorage.setItem(LS_MASTER_DATE,     getTodayStr());
+      if (res.updatedAt) localStorage.setItem(LS_MASTER_GAS_DATE, res.updatedAt);
+      updateMasterBadge();
+    }
+  } catch(e) {
+    // バックグラウンド取得失敗は無視（手動CSVアップロードで対応可能）
+  }
+}
 function updateMasterBadge() {
-  const badge  = document.getElementById('master-badge');
-  const pmDate = localStorage.getItem(LS_MASTER_DATE);
-  const today  = getTodayStr();
-  const count  = productMaster.length;
+  const badge      = document.getElementById('master-badge');
+  const pmDate     = localStorage.getItem(LS_MASTER_DATE);
+  const gasDate    = localStorage.getItem(LS_MASTER_GAS_DATE);
+  const today      = getTodayStr();
+  const count      = productMaster.length;
+  const subSuffix  = gasDate ? `（GAS更新: ${gasDate}）` : '';
   if (!pmDate || count === 0) {
     badge.className = 'master-badge red';
     badge.querySelector('.master-badge-title').textContent = '❌ 商品マスター未読込';
     badge.querySelector('.master-badge-sub').textContent   = '読込ボタンを押してください';
   } else if (pmDate === today) {
     badge.className = 'master-badge green';
-    badge.querySelector('.master-badge-title').textContent = `✅ ${count.toLocaleString()}件（本日読込済）`;
-    badge.querySelector('.master-badge-sub').textContent   = `読込日: ${pmDate}`;
+    badge.querySelector('.master-badge-title').textContent = `✅ ${count.toLocaleString()}件（本日更新済）`;
+    badge.querySelector('.master-badge-sub').textContent   = `更新日: ${pmDate}${subSuffix}`;
   } else {
     badge.className = 'master-badge orange';
     badge.querySelector('.master-badge-title').textContent = `⚠️ ${count.toLocaleString()}件（更新が必要）`;
-    badge.querySelector('.master-badge-sub').textContent   = `前回読込: ${pmDate}`;
+    badge.querySelector('.master-badge-sub').textContent   = `前回更新: ${pmDate}${subSuffix}`;
   }
 }
 
@@ -2954,7 +2976,7 @@ function checkSupplierCodes() {
 
 function clearMasterCache() {
   if (!confirm('商品マスターのキャッシュを削除しますか？\n次回CSVの再読込が必要になります。')) return;
-  localStorage.removeItem(LS_MASTER); localStorage.removeItem(LS_MASTER_DATE);
+  localStorage.removeItem(LS_MASTER); localStorage.removeItem(LS_MASTER_DATE); localStorage.removeItem(LS_MASTER_GAS_DATE);
   productMaster = []; updateMasterBadge();
   document.getElementById('csv-filename').textContent = '';
   showToast('キャッシュを削除しました', 'success');
