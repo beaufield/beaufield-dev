@@ -757,7 +757,10 @@
         <option value="10">10以下</option>
       </select>
       <select id="inv-filter-sale" onchange="renderInventoryList()" style="width:120px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text)">
+        <option value="yesterday">前日のみ</option>
         <option value="recent">前日・前々日のみ</option>
+        <option value="week">1週間</option>
+        <option value="month">1ヶ月</option>
         <option value="all">全て</option>
       </select>
     </div>
@@ -960,7 +963,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.19.2'; // 商品マスターバッジ表示修正・発注開始チェック修正
+const APP_VERSION    = 'v1.19.3'; // 在庫一覧：最終売上日フィルターを5段階に拡張
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm';
@@ -3066,11 +3069,12 @@ function renderInventoryList() {
   const stockThreshold = parseInt(document.getElementById('inv-filter-stock').value, 10);
   const saleFilter     = document.getElementById('inv-filter-sale').value;
 
-  // 前日・前々日の日付文字列（YYYYMMDD形式で比較）
   const toYMD = d => `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
   const today     = new Date();
   const yesterday = toYMD(new Date(today - 86400000));
   const dayBefore = toYMD(new Date(today - 172800000));
+  const weekAgo   = toYMD(new Date(today - 7  * 86400000));
+  const monthAgo  = toYMD(new Date(today - 30 * 86400000));
 
   // 発注先マスターに登録済みのコードセット
   const registeredCodes = new Set(masters.suppliers.map(s => s.code));
@@ -3089,9 +3093,17 @@ function renderInventoryList() {
     const stock = parseFloat(p.stock) || 0;
     if (stock > stockThreshold) return false;
     // 最終売上日フィルター
-    if (saleFilter === 'recent') {
+    if (saleFilter !== 'all') {
       const d = p.lastSaleDate.replace(/\//g, '').replace(/-/g, '').trim();
-      if (d !== yesterday && d !== dayBefore) return false;
+      if (saleFilter === 'yesterday') {
+        if (d !== yesterday) return false;
+      } else if (saleFilter === 'recent') {
+        if (d !== yesterday && d !== dayBefore) return false;
+      } else if (saleFilter === 'week') {
+        if (d < weekAgo) return false;
+      } else if (saleFilter === 'month') {
+        if (d < monthAgo) return false;
+      }
     }
     return true;
   });
