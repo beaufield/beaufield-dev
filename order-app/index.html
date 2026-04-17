@@ -741,13 +741,47 @@
   </div>
 </div>
 
+<!-- ==============================
+     在庫一覧画面
+============================== -->
+<div class="screen" id="screen-inventory">
+  <div class="card" style="padding:12px 14px">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <select id="inv-filter-supplier" onchange="renderInventoryList()" style="flex:1;min-width:120px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text)">
+        <option value="">全発注先</option>
+      </select>
+      <select id="inv-filter-stock" onchange="renderInventoryList()" style="width:90px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text)">
+        <option value="0">0以下</option>
+        <option value="3">3以下</option>
+        <option value="5">5以下</option>
+        <option value="10">10以下</option>
+      </select>
+      <select id="inv-filter-sale" onchange="renderInventoryList()" style="width:120px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text)">
+        <option value="recent">前日・前々日のみ</option>
+        <option value="all">全て</option>
+      </select>
+    </div>
+  </div>
+  <div id="inv-list-header" style="padding:0 14px 4px;font-size:12px;color:var(--text-light)"></div>
+  <div id="inv-list"></div>
+  <!-- カートへ移動ボタン（カートに商品がある時だけ表示） -->
+  <div id="inv-cart-btn" style="display:none;position:sticky;bottom:64px;padding:8px 14px">
+    <button class="btn btn-primary" style="width:100%" onclick="switchScreen('order');showStep('step-input')">
+      🛒 発注画面へ（カート <span id="inv-cart-count">0</span>件）
+    </button>
+  </div>
+</div>
+
 <!-- ボトムナビ -->
 <nav class="bottom-nav">
   <div class="nav-item active" id="nav-order" onclick="switchScreen('order')">
-    <span class="nav-icon">📦</span><span>発注</span>
+    <span class="nav-icon">🛒</span><span>発注</span>
   </div>
   <div class="nav-item" id="nav-history" onclick="switchScreen('history')">
     <span class="nav-icon">📋</span><span>履歴</span>
+  </div>
+  <div class="nav-item" id="nav-inventory" onclick="switchScreen('inventory')">
+    <span class="nav-icon">📦</span><span>在庫</span>
   </div>
   <div class="nav-item" id="nav-settings" onclick="switchScreen('settings')">
     <span class="nav-icon">⚙️</span><span>設定</span>
@@ -926,7 +960,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.18.0'; // 商品マスター自動更新（GAS→Sheets連携）
+const APP_VERSION    = 'v1.19.0'; // 在庫一覧タブ追加・発注連携
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm';
@@ -1118,40 +1152,48 @@ function parseProductCSV(text, fileName) {
 
     const headers = splitCSVLine(lines[0]).map(h => h.trim().replace(/"/g, '').replace(/\r/g, ''));
     const colMap = {
-      code:          findColIdx(headers, 'コード'),
-      name:          findColIdx(headers, '商品名'),
-      kana:          findColIdx(headers, 'かな'),
-      unit:          findColIdx(headers, '単位名'),
-      supplierCD:    findColIdx(headers, '仕入先CD'),
-      jan:           findColIdx(headers, 'JANCD'),
-      purchasePrice: findColIdx(headers, '仕入単価'),
-      discontinued:  findColIdx(headers, '廃番'),
-      stock:         findColIdx(headers, '在庫数')
+      code:            findColIdx(headers, 'コード'),
+      name:            findColIdx(headers, '商品名'),
+      kana:            findColIdx(headers, 'かな'),
+      unit:            findColIdx(headers, '単位名'),
+      supplierCD:      findColIdx(headers, '仕入先CD'),
+      supplierName:    findColIdx(headers, '仕入先名'),
+      jan:             findColIdx(headers, 'JANCD'),
+      purchasePrice:   findColIdx(headers, '仕入単価'),
+      discontinued:    findColIdx(headers, '廃番'),
+      stockManagement: findColIdx(headers, '在庫有無'),
+      lastSaleDate:    findColIdx(headers, '最終売上日'),
+      stock:           findColIdx(headers, '在庫数')
     };
 
     const requiredCols = ['code','name','kana','unit','supplierCD','jan'];
     const missing = requiredCols.filter(k => colMap[k] === -1);
     if (missing.length > 0) { showToast('必要な列が見つかりません: ' + missing.join(', '), 'error'); return; }
 
-    const hasPriceCol = colMap.purchasePrice !== -1;
-    const hasDisconCol = colMap.discontinued !== -1;
-    const hasStockCol  = colMap.stock !== -1;
+    const hasPriceCol  = colMap.purchasePrice   !== -1;
+    const hasDisconCol = colMap.discontinued    !== -1;
+    const hasStockCol  = colMap.stock           !== -1;
+    const hasStockMgmt = colMap.stockManagement !== -1;
+    const hasLastSale  = colMap.lastSaleDate    !== -1;
+    const hasSupName   = colMap.supplierName    !== -1;
 
     const products = [];
     for (let i = 1; i < lines.length; i++) {
       const cols = splitCSVLine(lines[i]);
       if (cols.length <= 1) continue;
       const p = {
-        code:          cleanCell(cols[colMap.code]),
-        name:          cleanCell(cols[colMap.name]),
-        kana:          cleanCell(cols[colMap.kana]),
-        unit:          cleanCell(cols[colMap.unit]),
-        supplierCD:    cleanCell(cols[colMap.supplierCD]),
-        jan:           cleanCell(cols[colMap.jan]),
-        purchasePrice: hasPriceCol
-          ? parseFloat(cleanCell(cols[colMap.purchasePrice]).replace(/,/g, '')) || 0 : 0,
-        discontinued: hasDisconCol ? cleanCell(cols[colMap.discontinued]) : '',
-        stock:        hasStockCol  ? cleanCell(cols[colMap.stock]) : ''
+        code:            cleanCell(cols[colMap.code]),
+        name:            cleanCell(cols[colMap.name]),
+        kana:            cleanCell(cols[colMap.kana]),
+        unit:            cleanCell(cols[colMap.unit]),
+        supplierCD:      cleanCell(cols[colMap.supplierCD]),
+        supplierName:    hasSupName  ? cleanCell(cols[colMap.supplierName])    : '',
+        jan:             cleanCell(cols[colMap.jan]),
+        purchasePrice:   hasPriceCol ? parseFloat(cleanCell(cols[colMap.purchasePrice]).replace(/,/g, '')) || 0 : 0,
+        discontinued:    hasDisconCol ? cleanCell(cols[colMap.discontinued])   : '',
+        stockManagement: hasStockMgmt ? cleanCell(cols[colMap.stockManagement]): '',
+        lastSaleDate:    hasLastSale  ? cleanCell(cols[colMap.lastSaleDate])   : '',
+        stock:           hasStockCol  ? cleanCell(cols[colMap.stock])          : ''
       };
       if (p.name) products.push(p);
     }
@@ -1246,6 +1288,10 @@ function switchScreen(name) {
   } else if (name === 'settings') {
     renderSettingsPage();
     document.getElementById('header-sub').textContent = '設定';
+  } else if (name === 'inventory') {
+    renderInventorySupplierFilter();
+    renderInventoryList();
+    document.getElementById('header-sub').textContent = '在庫一覧';
   }
 }
 function showStep(id) {
@@ -1580,6 +1626,7 @@ function confirmQty() {
     closeModal('modal-qty');
     showToast(`「${item.name}」を追加しました`, 'success');
     if (currentTab === 'scan') setTimeout(focusScanInput, 150);
+    updateInventoryCartBtn();
   }
 }
 
@@ -2980,6 +3027,140 @@ function clearMasterCache() {
   productMaster = []; updateMasterBadge();
   document.getElementById('csv-filename').textContent = '';
   showToast('キャッシュを削除しました', 'success');
+}
+
+/* ===================================================
+   在庫一覧
+=================================================== */
+
+// 発注先マスターに登録済みの仕入先のみ選択肢に表示
+function renderInventorySupplierFilter() {
+  const sel = document.getElementById('inv-filter-supplier');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">全発注先</option>';
+  masters.suppliers.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.code; opt.textContent = s.name;
+    sel.appendChild(opt);
+  });
+  if (cur) sel.value = cur;
+}
+
+function renderInventoryList() {
+  const supplierFilter = document.getElementById('inv-filter-supplier').value;
+  const stockThreshold = parseInt(document.getElementById('inv-filter-stock').value, 10);
+  const saleFilter     = document.getElementById('inv-filter-sale').value;
+
+  // 前日・前々日の日付文字列（YYYYMMDD形式で比較）
+  const toYMD = d => `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+  const today     = new Date();
+  const yesterday = toYMD(new Date(today - 86400000));
+  const dayBefore = toYMD(new Date(today - 172800000));
+
+  // 発注先マスターに登録済みのコードセット
+  const registeredCodes = new Set(masters.suppliers.map(s => s.code));
+
+  const filtered = productMaster.filter(p => {
+    // 対象外除外（在庫管理しない・廃番）
+    if (p.stockManagement !== 'する') return false;
+    if (p.discontinued === '廃番') return false;
+    // 発注先マスター未登録の仕入先は除外
+    if (!registeredCodes.has(p.supplierCD)) return false;
+    // 最終売上日が空（未売上）は除外（フィルター設定に関わらず常に除外）
+    if (!p.lastSaleDate || !p.lastSaleDate.trim()) return false;
+    // 発注先フィルター
+    if (supplierFilter && p.supplierCD !== supplierFilter) return false;
+    // 在庫数フィルター
+    const stock = parseFloat(p.stock) || 0;
+    if (stock > stockThreshold) return false;
+    // 最終売上日フィルター
+    if (saleFilter === 'recent') {
+      const d = p.lastSaleDate.replace(/\//g, '').replace(/-/g, '').trim();
+      if (d !== yesterday && d !== dayBefore) return false;
+    }
+    return true;
+  });
+
+  // 在庫数の昇順（マイナスが上）
+  filtered.sort((a, b) => (parseFloat(a.stock)||0) - (parseFloat(b.stock)||0));
+
+  const header = document.getElementById('inv-list-header');
+  const list   = document.getElementById('inv-list');
+  header.textContent = `${filtered.length}件`;
+
+  if (filtered.length === 0) {
+    list.innerHTML = '<div class="card"><div style="padding:16px 0;text-align:center;color:var(--text-light);font-size:14px">条件に合う商品はありません</div></div>';
+    updateInventoryCartBtn();
+    return;
+  }
+
+  const fmtDate = s => {
+    if (!s) return '—';
+    const clean = String(s).replace(/\//g,'').replace(/-/g,'').trim();
+    if (clean.length === 8) return `${clean.slice(4,6)}/${clean.slice(6,8)}`;
+    return s;
+  };
+
+  const rows = filtered.map((p, idx) => {
+    const stock    = parseFloat(p.stock) || 0;
+    const stockCls = stock <= 0 ? 'color:var(--danger);font-weight:bold' : '';
+    return `<div class="history-item" style="display:flex;align-items:center" onclick="openInventoryQtyModal(${idx})">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</div>
+        <div style="font-size:11px;color:var(--text-light);margin-top:2px">${p.supplierName || p.supplierCD}</div>
+      </div>
+      <div style="text-align:right;flex-shrink:0;margin-left:8px">
+        <div style="font-size:15px;${stockCls}">${stock}</div>
+        <div style="font-size:11px;color:var(--text-light)">${fmtDate(p.lastSaleDate)}</div>
+      </div>
+    </div>`;
+  }).join('');
+  list.innerHTML = `<div class="card" style="padding:0 14px">${rows}</div>`;
+
+  // クリックイベントをデータで渡す代わりに filtered を保持
+  window._invFiltered = filtered;
+  updateInventoryCartBtn();
+}
+
+function openInventoryQtyModal(idx) {
+  const p = window._invFiltered && window._invFiltered[idx];
+  if (!p) return;
+
+  // 発注先マスターから仕入先情報を取得
+  const supplier = masters.suppliers.find(s => s.code === p.supplierCD);
+  if (!supplier) { showToast('発注先マスターに未登録の仕入先です', 'error'); return; }
+
+  // カートに別発注先の商品がある場合は確認
+  if (cartItems.length > 0 && currentOrder.supplierCode && currentOrder.supplierCode !== p.supplierCD) {
+    if (!confirm(`現在「${currentOrder.supplierName}」の発注中です。\n「${supplier.name}」に切り替えますか？\n※カートの内容はクリアされます`)) return;
+    cartItems = []; saveCart();
+  }
+
+  // currentOrder を自動設定
+  if (!currentOrder.supplierCode || currentOrder.supplierCode !== p.supplierCD) {
+    currentOrder = {
+      supplierCode: supplier.code,
+      supplierName: supplier.name,
+      fax:          supplier.fax || '',
+      staff:        currentUser ? currentUser.name : '',
+      date:         getTodayStr(),
+      outputType:   ''
+    };
+    savedOrderNo = null;
+  }
+
+  openQtyModal(p, false);
+}
+
+function updateInventoryCartBtn() {
+  const btn   = document.getElementById('inv-cart-btn');
+  const count = document.getElementById('inv-cart-count');
+  if (cartItems.length > 0 && currentOrder.supplierCode) {
+    btn.style.display = 'block';
+    count.textContent = cartItems.length;
+  } else {
+    btn.style.display = 'none';
+  }
 }
 
 /* ===================================================
