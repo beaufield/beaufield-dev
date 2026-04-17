@@ -780,7 +780,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.18.0';
+const APP_VERSION = 'v1.18.1';
 const START_MONTH = '2026-04'; // 運用開始月（これより前は選択肢に表示しない）
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
@@ -1080,6 +1080,17 @@ function computeRouteForDate(dateStr) {
   return allMySalons
     .filter(function(s) { return s.visit_day === dayName; })
     .sort(function(a, b) { return Number(a.sort_order) - Number(b.sort_order); });
+}
+
+/** チェック済みログのうち todayRoute にないサロンを曜日外として末尾に補完する
+ *  日付変更・再描画時に曜日外チェック済みサロンが消えるのを防ぐ */
+function addCheckedIrregularsToRoute(logs) {
+  (logs || []).forEach(function(l) {
+    if (!todayRoute.some(function(r) { return r.salon_id === l.salon_id; })) {
+      var salon = allMySalons.find(function(s) { return s.salon_id === l.salon_id; });
+      if (salon) todayRoute.push(salon);
+    }
+  });
 }
 
 // ============================================================
@@ -2776,6 +2787,7 @@ async function loadCheckScreen() {
     apiGet('getTodayLogs', { user_id: uid, date: checkDate })
       .then(function(logsResult) {
         checkedTimes = buildCheckedTimesFromLogs(logsResult.logs);
+        addCheckedIrregularsToRoute(logsResult.logs);
         renderApp();
       })
       .catch(function(e) {
@@ -2789,6 +2801,7 @@ async function loadCheckScreen() {
       todayRoute   = result.route   || [];
       checkedTimes = buildCheckedTimesFromLogs(result.logs);
       allMySalons  = result.salons  || [];
+      addCheckedIrregularsToRoute(result.logs); // allMySalons設定後に曜日外補完
       saveSalonCache(uid, allMySalons); // 次回のためにキャッシュ保存
       resetTo('check');
     } catch(e) {
@@ -2813,6 +2826,7 @@ async function changeCheckDate(dateStr) {
   try {
     var result = await apiGet('getTodayLogs', { user_id: currentUser.user_id, date: checkDate });
     checkedTimes = buildCheckedTimesFromLogs(result.logs);
+    addCheckedIrregularsToRoute(result.logs);
     renderApp();
   } catch(e) {
     showToast('チェック履歴の読み込みに失敗しました: ' + e.message, 'error');
