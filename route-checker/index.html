@@ -780,7 +780,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.18.1';
+const APP_VERSION = 'v1.19.0';
 const START_MONTH = '2026-04'; // 運用開始月（これより前は選択肢に表示しない）
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
@@ -1328,7 +1328,7 @@ function renderHeader(title, opts) {
 function renderBottomNav() {
   var role  = currentUser ? currentUser.role : '';
   var sm    = (role === 'sales' || role === 'manager');
-  var isMgr = (role === 'manager' || role === 'director' || role === 'admin');
+  var isMgr = (role === 'sales' || role === 'manager' || role === 'director' || role === 'admin');
   var tabs = [
     { id: 'check',   icon: '✔️',  label: 'チェック', show: sm     },
     { id: 'history', icon: '📋',  label: '履歴',     show: true   },
