@@ -960,7 +960,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.19.0'; // 在庫一覧タブ追加・発注連携
+const APP_VERSION    = 'v1.19.1'; // 商品マスター読み込み中バグ修正
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm';
@@ -999,6 +999,7 @@ let scanTimer     = null;
 let scanProcessed = false;
 let toastTimer    = null;
 let currentScreen = 'order';
+let productMasterLoading = false;
 
 /* ===================================================
    初期化
@@ -1236,6 +1237,8 @@ function loadProductMasterFromCache() {
 }
 
 async function loadProductMasterFromGAS() {
+  productMasterLoading = true;
+  updateMasterBadge();
   try {
     const res = await gasGet({ action: 'getProductMaster' });
     if (res.success && res.products && res.products.length > 0) {
@@ -1243,10 +1246,12 @@ async function loadProductMasterFromGAS() {
       localStorage.setItem(LS_MASTER,          JSON.stringify(res.products));
       localStorage.setItem(LS_MASTER_DATE,     getTodayStr());
       if (res.updatedAt) localStorage.setItem(LS_MASTER_GAS_DATE, res.updatedAt);
-      updateMasterBadge();
     }
   } catch(e) {
     // バックグラウンド取得失敗は無視（手動CSVアップロードで対応可能）
+  } finally {
+    productMasterLoading = false;
+    updateMasterBadge();
   }
 }
 function updateMasterBadge() {
@@ -1256,7 +1261,11 @@ function updateMasterBadge() {
   const today      = getTodayStr();
   const count      = productMaster.length;
   const subSuffix  = gasDate ? `（GAS更新: ${gasDate}）` : '';
-  if (!pmDate || count === 0) {
+  if (productMasterLoading) {
+    badge.className = 'master-badge orange';
+    badge.querySelector('.master-badge-title').textContent = '⏳ 商品マスター読み込み中...';
+    badge.querySelector('.master-badge-sub').textContent   = 'しばらくお待ちください';
+  } else if (count === 0) {
     badge.className = 'master-badge red';
     badge.querySelector('.master-badge-title').textContent = '❌ 商品マスター未読込';
     badge.querySelector('.master-badge-sub').textContent   = '読込ボタンを押してください';
@@ -1311,7 +1320,9 @@ async function startOrder() {
 
   const pmDate = localStorage.getItem(LS_MASTER_DATE);
   const today  = getTodayStr();
-  if (!pmDate || productMaster.length === 0) {
+  if (productMasterLoading) {
+    showToast('商品マスター読み込み中です。しばらくお待ちください', 'error'); return;
+  } else if (productMaster.length === 0) {
     if (!confirm('商品マスターが未読込です。\nスキャン・検索機能は使えませんが、このまま続けますか？')) return;
   } else if (pmDate !== today) {
     if (!confirm(`商品マスターの更新が必要です（前回: ${pmDate}）。\nこのまま続けますか？`)) return;
