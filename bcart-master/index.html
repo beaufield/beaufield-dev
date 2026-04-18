@@ -101,14 +101,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.0.0</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.0.1</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v1.0.0</span>
+    <span class="version">HTML v1.0.1</span>
   </div>
 
   <div class="tabs">
@@ -579,13 +579,25 @@ function runDebug() {
   showToast('デバッグ中（数秒かかります）...');
   gasPost({ action: 'debugData' }, function(res) {
     if (!res.ok) { alert('デバッグエラー: ' + JSON.stringify(res)); return; }
+
+    console.log('[DEBUG] Full result:', JSON.stringify(res, null, 2));
+
+    const csvH = res.csv || {};
+    const bcH  = res.bcart || {};
+
     const msg =
       '=== CSV ===\n' +
-      'CSV件数: ' + (res.csv.totalRows || 0) + '\n' +
-      'コード(先頭5件): ' + (res.csv.sampleCodes || []).join(', ') + '\n\n' +
+      '件数: ' + (csvH.totalRows || 0) + '\n' +
+      '列名: ' + (csvH.headers || []).join(' / ') + '\n' +
+      'コード先頭5件: ' + (csvH.sampleCodes || []).join(', ') + '\n' +
+      'ゼロ除去後: ' + (csvH.sampleCodesStripped || []).join(', ') + '\n\n' +
       '=== BCART product_sets ===\n' +
-      'BCART件数: ' + (res.bcart.total || 0) + '\n' +
-      'product_no(先頭5件): ' + (res.bcart.sampleProductNos || []).join(', ');
+      '件数: ' + (bcH.total || 0) + '\n' +
+      'product_no先頭5件: ' + (bcH.sampleProductNos || []).join(', ') + '\n' +
+      'ゼロ除去後マッチ数: ' + (bcH.matchCountWithStrip !== undefined ? bcH.matchCountWithStrip : '（GAS未更新）') + '\n\n' +
+      '=== BCART 1件目フルJSON ===\n' +
+      JSON.stringify(bcH.sample1Full, null, 2);
+
     alert(msg);
   });
 }
