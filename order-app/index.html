@@ -972,7 +972,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.19.6'; // 在庫一覧：「ナプラ以外」フィルターをデフォルト追加
+const APP_VERSION    = 'v1.19.7'; // 在庫一覧：「ナプラ以外」フィルター動的生成に対応
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm';
@@ -3063,14 +3063,14 @@ function clearMasterCache() {
 // 発注先マスターに登録済みの仕入先のみ選択肢に表示
 function renderInventorySupplierFilter() {
   const sel = document.getElementById('inv-filter-supplier');
-  const cur = sel.value;
-  sel.innerHTML = '<option value="">全発注先</option>';
+  const cur = sel.value || 'except_67'; // 初回デフォルト: ナプラ以外
+  sel.innerHTML = '<option value="">全発注先</option><option value="except_67">ナプラ以外</option>';
   masters.suppliers.forEach(s => {
     const opt = document.createElement('option');
     opt.value = s.code; opt.textContent = s.name;
     sel.appendChild(opt);
   });
-  if (cur) sel.value = cur;
+  sel.value = cur;
 }
 
 let invSaleFilter = 'yesterday';
