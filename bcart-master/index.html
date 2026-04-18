@@ -101,14 +101,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.0.2</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.0.3</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v1.0.2</span>
+    <span class="version">HTML v1.0.3</span>
   </div>
 
   <div class="tabs">
@@ -248,6 +248,16 @@ function loadData() {
 
   gasPost({ action: 'loadData' }, function(res) {
     if (!res.ok) { showToast('データ読み込みエラー: ' + res.error, true); return; }
+
+    // CSV・BCART件数を表示してデータ読み込みを確認
+    const csvMsg = 'CSV: ' + (res.totalCsv || 0) + '件 / BCART: ' + (res.totalBcart || 0) + '件';
+    if (res.totalCsv === 0 || res.totalBcart === 0) {
+      showToast(csvMsg + ' ⚠️ データが0件です', true);
+      console.log('[DIAG] headers:', res.csvHeaders, 'sample:', res.csvSample);
+    } else {
+      showToast(csvMsg + ' 読み込み完了');
+      console.log('[DIAG] sample:', res.csvSample, 'headers:', res.csvHeaders);
+    }
 
     allDiffs = res.diffs || [];
 
