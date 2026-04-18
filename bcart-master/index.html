@@ -140,6 +140,10 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
         <button class="btn btn-primary btn-sm" style="margin-left:auto;" onclick="loadData()">🔄 再読み込み</button>
         <button class="btn btn-gray btn-sm" onclick="runDebug()">🔍 デバッグ</button>
       </div>
+      <div class="filter-bar" id="supplierFilterBar" style="display:none;">
+        <span style="font-size:13px;color:#6b7280;">仕入先:</span>
+        <button class="filter-btn active" onclick="setSupplierFilter('',this)">すべて</button>
+      </div>
 
       <div class="bulk-bar">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
@@ -266,16 +270,39 @@ function updateSummary() {
 }
 
 // ===================== フィルター =====================
+let currentSupplier = '';
+
 function setFilter(filter, btn) {
   currentFilter = filter;
-  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('#tab-diff > .content > .filter-bar:first-of-type .filter-btn, .filter-bar:first-of-type .filter-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   renderDiffs();
+}
+
+function setSupplierFilter(supplier, btn) {
+  currentSupplier = supplier;
+  document.querySelectorAll('#supplierFilterBar .filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderDiffs();
+}
+
+function buildSupplierFilter() {
+  const bar = document.getElementById('supplierFilterBar');
+  const suppliers = [...new Set(allDiffs.map(d => d.supplier).filter(s => s))].sort();
+  if (suppliers.length === 0) { bar.style.display = 'none'; return; }
+
+  bar.style.display = 'flex';
+  bar.innerHTML = '<span style="font-size:13px;color:#6b7280;white-space:nowrap;">仕入先:</span>' +
+    '<button class="filter-btn active" onclick="setSupplierFilter(\'\',this)">すべて</button>' +
+    suppliers.map(s =>
+      '<button class="filter-btn" onclick="setSupplierFilter(\'' + esc(s) + '\',this)">' + esc(s) + '</button>'
+    ).join('');
 }
 
 function getFilteredDiffs() {
   return allDiffs.filter(d => {
     if (d.isIgnored && currentFilter !== 'ignored') return false;
+    if (currentSupplier && d.supplier !== currentSupplier) return false;
     if (currentFilter === 'all' || currentFilter === 'ignored') return true;
     if (currentFilter === 'price') return d.issues && d.issues.some(i => i.type === 'price');
     if (currentFilter === 'discontinued') return d.issues && d.issues.some(i => i.type === 'discontinued');
@@ -286,6 +313,7 @@ function getFilteredDiffs() {
 
 // ===================== 差異リスト描画 =====================
 function renderDiffs() {
+  buildSupplierFilter();
   const filtered = getFilteredDiffs();
   const container = document.getElementById('diffList');
 
