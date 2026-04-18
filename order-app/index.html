@@ -972,7 +972,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.19.7'; // 在庫一覧：「ナプラ以外」フィルター動的生成に対応
+const APP_VERSION    = 'v1.19.8'; // 在庫一覧：マスター読込完了後に再描画（初回0件バグ修正）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm';
@@ -1119,6 +1119,11 @@ async function loadMasters() {
       renderStaffDropdown();
       renderSettingsPage();
       updateHistoryFilterOptions(); // マスター読込後にフィルター選択肢を更新
+      // 在庫画面が開いている場合は再描画（初期表示時にsuppliersが空だったケアを含む）
+      if (currentScreen === 'inventory') {
+        renderInventorySupplierFilter();
+        renderInventoryList();
+      }
     } else {
       showToast('マスター取得エラー: ' + (res.error || '不明'), 'error');
     }
