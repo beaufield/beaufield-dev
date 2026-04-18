@@ -557,9 +557,9 @@ function runDebug() {
       'ヘッダー: ' + (res.csv.headers || []).join(', ') + '\n' +
       '件数: ' + (res.csv.totalRows || 0) + '\n' +
       'サンプル1行目: ' + JSON.stringify(res.csv.sample && res.csv.sample[0]) + '\n\n' +
-      '=== BCART product_sets ===\n' +
-      '件数: ' + (res.bcartSets.total || 0) + '\n' +
-      'サンプル: ' + JSON.stringify(res.bcartSets.sample);
+      '=== BCART API raw ===\n' +
+      'ステータス: ' + (res.bcartRaw && res.bcartRaw.status) + '\n' +
+      'レスポンス: ' + (res.bcartRaw && (res.bcartRaw.body || res.bcartRaw.error));
     alert(msg);
   });
 }
