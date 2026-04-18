@@ -138,6 +138,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
         <button class="filter-btn" onclick="setFilter('unregistered',this)">❌ 未登録</button>
         <button class="filter-btn" onclick="setFilter('ignored',this)">対応不要も表示</button>
         <button class="btn btn-primary btn-sm" style="margin-left:auto;" onclick="loadData()">🔄 再読み込み</button>
+        <button class="btn btn-gray btn-sm" onclick="runDebug()">🔍 デバッグ</button>
       </div>
 
       <div class="bulk-bar">
@@ -543,6 +544,23 @@ function setStock(productNo, stock, btn) {
     btn.disabled = false;
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
     showToast(productNo + ' を ' + label + ' に設定しました');
+  });
+}
+
+// ===================== デバッグ =====================
+function runDebug() {
+  showToast('デバッグ中...');
+  gasPost({ action: 'debugData' }, function(res) {
+    if (!res.ok) { alert('デバッグエラー: ' + JSON.stringify(res)); return; }
+    const msg =
+      '=== CSV ===\n' +
+      'ヘッダー: ' + (res.csv.headers || []).join(', ') + '\n' +
+      '件数: ' + (res.csv.totalRows || 0) + '\n' +
+      'サンプル1行目: ' + JSON.stringify(res.csv.sample && res.csv.sample[0]) + '\n\n' +
+      '=== BCART product_sets ===\n' +
+      '件数: ' + (res.bcartSets.total || 0) + '\n' +
+      'サンプル: ' + JSON.stringify(res.bcartSets.sample);
+    alert(msg);
   });
 }
 
