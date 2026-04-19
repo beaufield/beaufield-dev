@@ -27,6 +27,8 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .badge-unreg { background: #ede9fe; color: #7c3aed; }
 .badge-ignore { background: #f3f4f6; color: #9ca3af; }
 .badge-wip { background: #dbeafe; color: #1d4ed8; }
+.badge-jodai { background: #fdf4ff; color: #9333ea; }
+.badge-jan { background: #f0fdf4; color: #16a34a; }
 
 .btn { display: inline-flex; align-items: center; gap: 4px; padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: opacity 0.15s; }
 .btn:hover { opacity: 0.85; }
@@ -120,14 +122,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.0.5</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.0.6</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v1.0.5</span>
+    <span class="version">HTML v1.0.6</span>
   </div>
 
   <div class="tabs">
@@ -181,7 +183,8 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
           <input type="checkbox" id="selectAll" onchange="toggleSelectAll(this)"> すべて選択
         </label>
-        <button class="btn btn-success btn-sm" id="bulkBtn" onclick="bulkUpdate()" disabled>✅ 選択項目を一括更新</button>
+        <button class="btn btn-success btn-sm" id="bulkBtn" onclick="bulkUpdate()" disabled>✅ 一括更新</button>
+        <button class="btn btn-gray btn-sm" id="bulkIgnoreBtn" onclick="openBulkIgnoreModal()" disabled>🚫 一括対応不要</button>
       </div>
 
       <div id="diffList">
@@ -211,6 +214,19 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
       </div>
     </div>
 
+  </div>
+</div>
+
+<!-- 一括対応不要モーダル -->
+<div class="modal-overlay" id="bulkIgnoreModal">
+  <div class="modal">
+    <h3>一括対応不要にする</h3>
+    <div style="margin-bottom:8px;font-size:13px;color:#6b7280;">選択した <strong id="bulkIgnoreCount">0</strong> 件をまとめて対応不要にします。</div>
+    <textarea id="bulkIgnoreReason" placeholder="理由を入力（全件に同じ理由が登録されます・任意）"></textarea>
+    <div class="actions">
+      <button class="btn btn-gray" onclick="closeModal('bulkIgnoreModal')">キャンセル</button>
+      <button class="btn btn-primary" onclick="confirmBulkIgnore()">対応不要にする</button>
+    </div>
   </div>
 </div>
 
@@ -417,13 +433,15 @@ function renderDiffItem(d) {
       actionBtns += '<button class="btn btn-gray btn-sm" onclick="markWip(\'' + esc(d.code) + '\',\'' + esc(d.name) + '\')">' + (isWip ? '✏️ 作業中' : '📝 作業中にする') + '</button>';
     }
   } else if (d.issues) {
+    let updatableIssues = [];
     d.issues.forEach(issue => {
       if (issue.type === 'price') {
         badges += '<span class="badge badge-price">💰 価格差異</span>';
         details += '<div class="diff-detail"><div class="row"><span class="lbl">売上単価</span><span class="old">' + issue.bcartPrice.toLocaleString() + '円</span> → <span class="new">' + issue.csvPrice.toLocaleString() + '円</span></div></div>';
         if (!isIgnored) {
-          checkboxes += '<input type="checkbox" class="diff-check" data-code="' + esc(d.code) + '" data-type="price" data-set-id="' + d.bcartSetId + '" data-price="' + issue.csvPrice + '" onchange="updateBulkBtn()">';
-          actionBtns += '<button class="btn btn-success btn-sm" onclick="updatePrice(\'' + d.bcartSetId + '\',\'' + esc(d.code) + '\',' + issue.csvPrice + ')">💰 価格更新</button>';
+          checkboxes += '<input type="checkbox" class="diff-check" data-code="' + esc(d.code) + '" data-type="price" data-set-id="' + d.bcartSetId + '" data-price="' + issue.csvPrice + '" data-csv-kouri="' + (d.csvKouri||0) + '" data-csv-shiire="' + (d.csvShiire||0) + '" onchange="updateBulkBtn()">';
+          actionBtns += '<button class="btn btn-success btn-sm" onclick="updatePrice(\'' + d.bcartSetId + '\',\'' + esc(d.code) + '\',' + issue.csvPrice + ',' + (d.csvKouri||0) + ',' + (d.csvShiire||0) + ')">💰 売価更新</button>';
+          updatableIssues.push({ type: 'price', price: issue.csvPrice });
         }
       }
       if (issue.type === 'discontinued') {
@@ -434,7 +452,37 @@ function renderDiffItem(d) {
           actionBtns += '<button class="btn btn-danger btn-sm" onclick="hideProduct(\'' + d.bcartProductId + '\',\'' + esc(d.code) + '\')">🚫 非表示にする</button>';
         }
       }
+      if (issue.type === 'jodai') {
+        badges += '<span class="badge badge-jodai">💴 上代差異</span>';
+        details += '<div class="diff-detail"><div class="row"><span class="lbl">上代</span><span class="old">' + issue.bcartJodai.toLocaleString() + '円</span> → <span class="new">' + issue.csvJodai.toLocaleString() + '円</span></div></div>';
+        if (!isIgnored) {
+          checkboxes += '<input type="checkbox" class="diff-check" data-code="' + esc(d.code) + '" data-type="jodai" data-set-id="' + d.bcartSetId + '" data-jodai="' + issue.csvJodai + '" onchange="updateBulkBtn()">';
+          actionBtns += '<button class="btn btn-sm" style="background:#f3e8ff;color:#9333ea;" onclick="updateJodai(\'' + d.bcartSetId + '\',\'' + esc(d.code) + '\',' + issue.csvJodai + ')">💴 上代更新</button>';
+          updatableIssues.push({ type: 'jodai', jodai: issue.csvJodai });
+        }
+      }
+      if (issue.type === 'jan') {
+        badges += '<span class="badge badge-jan">🔖 JAN差異</span>';
+        details += '<div class="diff-detail"><div class="row"><span class="lbl">JAN</span><span class="old">' + esc(issue.bcartJan || '（なし）') + '</span> → <span class="new">' + esc(issue.csvJan) + '</span></div></div>';
+        if (!isIgnored) {
+          checkboxes += '<input type="checkbox" class="diff-check" data-code="' + esc(d.code) + '" data-type="jan" data-set-id="' + d.bcartSetId + '" data-jan="' + esc(issue.csvJan) + '" onchange="updateBulkBtn()">';
+          actionBtns += '<button class="btn btn-sm" style="background:#f0fdf4;color:#16a34a;" onclick="updateJan(\'' + d.bcartSetId + '\',\'' + esc(d.code) + '\',\'' + esc(issue.csvJan) + '\')">🔖 JAN更新</button>';
+          updatableIssues.push({ type: 'jan', janCode: issue.csvJan });
+        }
+      }
     });
+    // まとめて更新ボタン（2種類以上の差異がある場合）
+    if (!isIgnored && updatableIssues.length >= 2) {
+      const priceIssue = updatableIssues.find(i => i.type === 'price');
+      const jodaiIssue = updatableIssues.find(i => i.type === 'jodai');
+      const janIssue   = updatableIssues.find(i => i.type === 'jan');
+      actionBtns += '<button class="btn btn-primary btn-sm" onclick="updateAll(\'' + d.bcartSetId + '\',\'' + esc(d.code) + '\',' +
+        (priceIssue ? priceIssue.price : 'null') + ',' +
+        (jodaiIssue ? jodaiIssue.jodai : 'null') + ',\'' +
+        (janIssue ? esc(janIssue.janCode) : '') + '\',' +
+        (d.csvKouri||0) + ',' + (d.csvShiire||0) +
+        ')">▶ まとめて更新</button>';
+    }
   }
 
   if (isIgnored) badges += '<span class="badge badge-ignore">対応不要</span>';
@@ -468,8 +516,11 @@ function toggleSelectAll(cb) {
 function updateBulkBtn() {
   const count = document.querySelectorAll('.diff-check:checked').length;
   const btn = document.getElementById('bulkBtn');
+  const ignBtn = document.getElementById('bulkIgnoreBtn');
   btn.disabled = count === 0;
-  btn.textContent = count > 0 ? '✅ 選択した ' + count + ' 件を一括更新' : '✅ 選択項目を一括更新';
+  ignBtn.disabled = count === 0;
+  btn.textContent = count > 0 ? '✅ ' + count + '件を一括更新' : '✅ 一括更新';
+  ignBtn.textContent = count > 0 ? '🚫 ' + count + '件を対応不要' : '🚫 一括対応不要';
 }
 
 function bulkUpdate() {
@@ -480,8 +531,15 @@ function bulkUpdate() {
   const items = [];
   checked.forEach(c => {
     const item = { code: c.dataset.code, type: c.dataset.type };
-    if (c.dataset.type === 'price') { item.bcartSetId = c.dataset.setId; item.price = parseFloat(c.dataset.price); }
+    if (c.dataset.type === 'price') {
+      item.bcartSetId = c.dataset.setId;
+      item.price = parseFloat(c.dataset.price);
+      item.csvKouri  = parseFloat(c.dataset.csvKouri  || 0);
+      item.csvShiire = parseFloat(c.dataset.csvShiire || 0);
+    }
     if (c.dataset.type === 'discontinued') { item.bcartProductId = c.dataset.productId; }
+    if (c.dataset.type === 'jodai') { item.bcartSetId = c.dataset.setId; item.jodai = parseFloat(c.dataset.jodai); }
+    if (c.dataset.type === 'jan')   { item.bcartSetId = c.dataset.setId; item.janCode = c.dataset.jan; }
     items.push(item);
   });
 
@@ -498,13 +556,58 @@ function bulkUpdate() {
 }
 
 // ===================== 個別更新 =====================
-function updatePrice(bcartSetId, code, price) {
-  if (!confirm(code + ' の価格を ' + Number(price).toLocaleString() + '円 に更新しますか？')) return;
-  gasPost({ action: 'updatePrice', bcartSetId: bcartSetId, price: price }, function(res) {
+function updatePrice(bcartSetId, code, price, csvKouri, csvShiire) {
+  if (!confirm(code + ' の売価を ' + Number(price).toLocaleString() + '円 に更新しますか？\n（グループ価格1・10も同時更新されます）')) return;
+  gasPost({ action: 'updatePrice', bcartSetId: bcartSetId, price: price, csvKouri: csvKouri||0, csvShiire: csvShiire||0 }, function(res) {
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
-    showToast('価格を更新しました');
+    showToast('売価を更新しました');
+    removeIssue(code, 'price');
+  });
+}
+
+function updateJodai(bcartSetId, code, jodai) {
+  if (!confirm(code + ' の上代を ' + Number(jodai).toLocaleString() + '円 に更新しますか？')) return;
+  gasPost({ action: 'updateJodai', bcartSetId: bcartSetId, jodai: jodai }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    showToast('上代を更新しました');
+    removeIssue(code, 'jodai');
+  });
+}
+
+function updateJan(bcartSetId, code, janCode) {
+  if (!confirm(code + ' のJANコードを「' + janCode + '」に更新しますか？')) return;
+  gasPost({ action: 'updateJan', bcartSetId: bcartSetId, janCode: janCode }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    showToast('JANコードを更新しました');
+    removeIssue(code, 'jan');
+  });
+}
+
+function updateAll(bcartSetId, code, price, jodai, janCode, csvKouri, csvShiire) {
+  const items = [];
+  if (price !== null) items.push('売価: ' + Number(price).toLocaleString() + '円');
+  if (jodai !== null) items.push('上代: ' + Number(jodai).toLocaleString() + '円');
+  if (janCode) items.push('JAN: ' + janCode);
+  if (!confirm(code + ' をまとめて更新します。\n' + items.join('\n') + '\n\nよろしいですか？')) return;
+  const params = { action: 'updateAll', bcartSetId: bcartSetId };
+  if (price  !== null) { params.price  = price;   params.csvKouri = csvKouri||0; params.csvShiire = csvShiire||0; }
+  if (jodai  !== null)   params.jodai   = jodai;
+  if (janCode)           params.janCode  = janCode;
+  gasPost(params, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    showToast('まとめて更新しました');
     removeDiff(code);
   });
+}
+
+function removeIssue(code, issueType) {
+  const d = allDiffs.find(x => x.code === code);
+  if (d && d.issues) {
+    d.issues = d.issues.filter(i => i.type !== issueType);
+    if (d.issues.length === 0) allDiffs = allDiffs.filter(x => x.code !== code);
+  }
+  updateSummary();
+  renderDiffs();
 }
 
 function hideProduct(bcartProductId, code) {
@@ -567,6 +670,46 @@ function markWip(code, name) {
     showToast('作業中にしました');
     const d = allDiffs.find(x => x.code === code);
     if (d) d.isWip = true;
+    renderDiffs();
+  });
+}
+
+// ===================== 一括対応不要 =====================
+function openBulkIgnoreModal() {
+  const count = document.querySelectorAll('.diff-check:checked').length;
+  if (count === 0) return;
+  document.getElementById('bulkIgnoreCount').textContent = count;
+  document.getElementById('bulkIgnoreReason').value = '';
+  document.getElementById('bulkIgnoreModal').classList.add('open');
+}
+
+function confirmBulkIgnore() {
+  const reason = document.getElementById('bulkIgnoreReason').value.trim();
+  const checked = document.querySelectorAll('.diff-check:checked');
+  const items = [];
+  const codes = new Set();
+  checked.forEach(c => {
+    if (!codes.has(c.dataset.code)) {
+      codes.add(c.dataset.code);
+      const d = allDiffs.find(x => x.code === c.dataset.code);
+      items.push({ code: c.dataset.code, name: d ? d.name : '' });
+    }
+  });
+  closeModal('bulkIgnoreModal');
+  showToast('対応不要に登録中...');
+  gasPost({ action: 'bulkIgnore', items: items, reason: reason }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    const failed = (res.results || []).filter(r => !r.ok);
+    showToast(failed.length > 0
+      ? (items.length - failed.length) + '件登録、' + failed.length + '件失敗'
+      : items.length + '件を対応不要にしました'
+    , failed.length > 0);
+    codes.forEach(code => {
+      const d = allDiffs.find(x => x.code === code);
+      if (d) { d.isIgnored = true; d.ignoreReason = reason; }
+    });
+    document.getElementById('selectAll').checked = false;
+    updateSummary();
     renderDiffs();
   });
 }
