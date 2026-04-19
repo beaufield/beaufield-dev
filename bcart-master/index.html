@@ -122,14 +122,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.0.6</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.0.7</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v1.0.6</span>
+    <span class="version">HTML v1.0.7</span>
   </div>
 
   <div class="tabs">
@@ -424,7 +424,6 @@ function renderDiffItem(d) {
   let badges = '';
   let details = '';
   let actionBtns = '';
-  let checkboxes = '';
 
   if (d.type === 'unregistered') {
     badges += '<span class="badge badge-unreg">❌ 未登録</span>';
@@ -439,7 +438,6 @@ function renderDiffItem(d) {
         badges += '<span class="badge badge-price">💰 価格差異</span>';
         details += '<div class="diff-detail"><div class="row"><span class="lbl">売上単価</span><span class="old">' + issue.bcartPrice.toLocaleString() + '円</span> → <span class="new">' + issue.csvPrice.toLocaleString() + '円</span></div></div>';
         if (!isIgnored) {
-          checkboxes += '<input type="checkbox" class="diff-check" data-code="' + esc(d.code) + '" data-type="price" data-set-id="' + d.bcartSetId + '" data-price="' + issue.csvPrice + '" data-csv-kouri="' + (d.csvKouri||0) + '" data-csv-shiire="' + (d.csvShiire||0) + '" onchange="updateBulkBtn()">';
           actionBtns += '<button class="btn btn-success btn-sm" onclick="updatePrice(\'' + d.bcartSetId + '\',\'' + esc(d.code) + '\',' + issue.csvPrice + ',' + (d.csvKouri||0) + ',' + (d.csvShiire||0) + ')">💰 売価更新</button>';
           updatableIssues.push({ type: 'price', price: issue.csvPrice });
         }
@@ -448,7 +446,6 @@ function renderDiffItem(d) {
         badges += '<span class="badge badge-disc">🚫 廃番</span>';
         details += '<div class="diff-detail"><div class="row"><span class="lbl">状態</span><span>BCARTで非表示にする必要があります</span></div></div>';
         if (!isIgnored) {
-          checkboxes += '<input type="checkbox" class="diff-check" data-code="' + esc(d.code) + '" data-type="discontinued" data-product-id="' + d.bcartProductId + '" onchange="updateBulkBtn()">';
           actionBtns += '<button class="btn btn-danger btn-sm" onclick="hideProduct(\'' + d.bcartProductId + '\',\'' + esc(d.code) + '\')">🚫 非表示にする</button>';
         }
       }
@@ -456,7 +453,6 @@ function renderDiffItem(d) {
         badges += '<span class="badge badge-jodai">💴 上代差異</span>';
         details += '<div class="diff-detail"><div class="row"><span class="lbl">上代</span><span class="old">' + issue.bcartJodai.toLocaleString() + '円</span> → <span class="new">' + issue.csvJodai.toLocaleString() + '円</span></div></div>';
         if (!isIgnored) {
-          checkboxes += '<input type="checkbox" class="diff-check" data-code="' + esc(d.code) + '" data-type="jodai" data-set-id="' + d.bcartSetId + '" data-jodai="' + issue.csvJodai + '" onchange="updateBulkBtn()">';
           actionBtns += '<button class="btn btn-sm" style="background:#f3e8ff;color:#9333ea;" onclick="updateJodai(\'' + d.bcartSetId + '\',\'' + esc(d.code) + '\',' + issue.csvJodai + ')">💴 上代更新</button>';
           updatableIssues.push({ type: 'jodai', jodai: issue.csvJodai });
         }
@@ -465,7 +461,6 @@ function renderDiffItem(d) {
         badges += '<span class="badge badge-jan">🔖 JAN差異</span>';
         details += '<div class="diff-detail"><div class="row"><span class="lbl">JAN</span><span class="old">' + esc(issue.bcartJan || '（なし）') + '</span> → <span class="new">' + esc(issue.csvJan) + '</span></div></div>';
         if (!isIgnored) {
-          checkboxes += '<input type="checkbox" class="diff-check" data-code="' + esc(d.code) + '" data-type="jan" data-set-id="' + d.bcartSetId + '" data-jan="' + esc(issue.csvJan) + '" onchange="updateBulkBtn()">';
           actionBtns += '<button class="btn btn-sm" style="background:#f0fdf4;color:#16a34a;" onclick="updateJan(\'' + d.bcartSetId + '\',\'' + esc(d.code) + '\',\'' + esc(issue.csvJan) + '\')">🔖 JAN更新</button>';
           updatableIssues.push({ type: 'jan', janCode: issue.csvJan });
         }
@@ -488,6 +483,11 @@ function renderDiffItem(d) {
   if (isIgnored) badges += '<span class="badge badge-ignore">対応不要</span>';
   if (isWip) badges += '<span class="badge badge-wip">作業中</span>';
 
+  // チェックボックスは1商品につき1つ（対応不要・未登録も含む全アイテム）
+  const checkbox = !isIgnored
+    ? '<input type="checkbox" class="diff-check" data-code="' + esc(d.code) + '" onchange="updateBulkBtn()" style="margin-right:4px;">'
+    : '';
+
   const ignoreBtn = isIgnored
     ? '<button class="btn btn-gray btn-sm" onclick="unmarkIgnore(\'' + esc(d.code) + '\')">解除</button>'
     : '<button class="btn btn-gray btn-sm" onclick="openIgnoreModal(\'' + esc(d.code) + '\',\'' + esc(d.name) + '\')">対応不要</button>';
@@ -501,7 +501,7 @@ function renderDiffItem(d) {
     '</div>' +
     details +
     '<div class="diff-actions">' +
-    checkboxes + actionBtns +
+    checkbox + actionBtns +
     '<div style="margin-left:auto;">' + ignoreBtn + '</div>' +
     '</div>' +
     '</div>';
@@ -526,22 +526,22 @@ function updateBulkBtn() {
 function bulkUpdate() {
   const checked = document.querySelectorAll('.diff-check:checked');
   if (checked.length === 0) return;
-  if (!confirm(checked.length + '件をBCARTに反映します。よろしいですか？')) return;
 
+  // チェックされた商品コードから allDiffs を参照して全差異を収集
   const items = [];
   checked.forEach(c => {
-    const item = { code: c.dataset.code, type: c.dataset.type };
-    if (c.dataset.type === 'price') {
-      item.bcartSetId = c.dataset.setId;
-      item.price = parseFloat(c.dataset.price);
-      item.csvKouri  = parseFloat(c.dataset.csvKouri  || 0);
-      item.csvShiire = parseFloat(c.dataset.csvShiire || 0);
-    }
-    if (c.dataset.type === 'discontinued') { item.bcartProductId = c.dataset.productId; }
-    if (c.dataset.type === 'jodai') { item.bcartSetId = c.dataset.setId; item.jodai = parseFloat(c.dataset.jodai); }
-    if (c.dataset.type === 'jan')   { item.bcartSetId = c.dataset.setId; item.janCode = c.dataset.jan; }
-    items.push(item);
+    const d = allDiffs.find(x => x.code === c.dataset.code);
+    if (!d || !d.issues) return;
+    d.issues.forEach(issue => {
+      if (issue.type === 'price')        items.push({ code: d.code, type: 'price',        bcartSetId: d.bcartSetId,     price: issue.csvPrice, csvKouri: d.csvKouri||0, csvShiire: d.csvShiire||0 });
+      if (issue.type === 'discontinued') items.push({ code: d.code, type: 'discontinued', bcartProductId: d.bcartProductId });
+      if (issue.type === 'jodai')        items.push({ code: d.code, type: 'jodai',        bcartSetId: d.bcartSetId,     jodai: issue.csvJodai });
+      if (issue.type === 'jan')          items.push({ code: d.code, type: 'jan',           bcartSetId: d.bcartSetId,     janCode: issue.csvJan });
+    });
   });
+
+  if (items.length === 0) return;
+  if (!confirm(checked.length + '商品（処理数: ' + items.length + '件）をBCARTに反映します。よろしいですか？')) return;
 
   showToast('更新中...');
   gasPost({ action: 'bulkUpdate', items: items }, function(res) {
@@ -549,7 +549,7 @@ function bulkUpdate() {
     const failed = res.results.filter(r => !r.ok);
     showToast(failed.length > 0
       ? (items.length - failed.length) + '件成功、' + failed.length + '件失敗'
-      : items.length + '件を更新しました'
+      : checked.length + '商品を更新しました'
     , failed.length > 0);
     loadData();
   });
