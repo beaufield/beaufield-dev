@@ -1,0 +1,837 @@
+// BCARTマスター管理ツール - バックエンド
+// Version: v1.2.0
+
+const VERSION = 'v1.2.0';
+
+// ===================== 設定 =====================
+const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
+const CSV_FOLDER_ID = '12QedyGwHcpXF-lEQBgJo5sIC_i3Iv42P';
+const CSV_FILENAME = '商品.CSV';
+
+// 認証（beaufield-auth GAS）
+const AUTH_GAS_URL = 'https://script.google.com/macros/s/AKfycbzNVW7AaPUTuwneE-M40DTN1clO5VT2yLCHq7cjYvaHqfMfXgVi38UAOsDZQbmmN3wOzw/exec';
+
+// シート名
+const SHEET_IGNORE = '対応不要';
+const SHEET_WIP = '作業中';
+
+// ===================== エントリポイント =====================
+function doPost(e) {
+  try {
+    const params = JSON.parse(e.postData.contents);
+    const action = params.action;
+
+    const noAuthActions = ['getVersion'];
+    if (!noAuthActions.includes(action)) {
+      const authResult = validateSession(params.session);
+      if (!authResult.ok) return jsonResponse({ ok: false, error: 'UNAUTHORIZED' });
+    }
+
+    switch (action) {
+      case 'getVersion':      return jsonResponse({ ok: true, version: VERSION });
+      case 'loadData':        return jsonResponse(loadData());
+      case 'updatePrice':     return jsonResponse(updatePrice(params));
+      case 'updateJodai':     return jsonResponse(updateJodai(params));
+      case 'updateJan':       return jsonResponse(updateJan(params));
+      case 'updateAll':       return jsonResponse(updateAll(params));
+      case 'hideProduct':     return jsonResponse(hideProduct(params));
+      case 'setStock':        return jsonResponse(setStock(params));
+      case 'markIgnore':      return jsonResponse(markIgnore(params));
+      case 'unmarkIgnore':    return jsonResponse(unmarkIgnore(params));
+      case 'getIgnoreList':   return jsonResponse(getIgnoreList());
+      case 'markWip':         return jsonResponse(markWip(params));
+      case 'unmarkWip':       return jsonResponse(unmarkWip(params));
+      case 'bulkUpdate':      return jsonResponse(bulkUpdate(params));
+      case 'bulkIgnore':      return jsonResponse(bulkIgnore(params));
+      case 'bulkMarkWip':     return jsonResponse(bulkMarkWip(params));
+      case 'searchProducts':  return jsonResponse(searchProducts(params));
+      case 'getSpecials':     return jsonResponse(getSpecials());
+      case 'updateProduct':   return jsonResponse(updateProductAction(params));
+      case 'deleteProduct':   return jsonResponse(deleteProduct(params));
+      case 'debugData':       return jsonResponse(debugData());
+      case 'debugCode':       return jsonResponse(debugCode(params));
+      case 'debugProduct':    return jsonResponse(debugProduct());
+      default:                return jsonResponse({ ok: false, error: 'UNKNOWN_ACTION' });
+    }
+  } catch (err) {
+    return jsonResponse({ ok: false, error: err.message });
+  }
+}
+
+function doGet(e) {
+  return jsonResponse({ ok: true, version: VERSION });
+}
+
+function jsonResponse(data) {
+  return ContentService.createTextOutput(JSON.stringify(data))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+// ===================== セッション検証 =====================
+function validateSession(session) {
+  if (!session || !session.token) return { ok: false };
+  try {
+    const res = UrlFetchApp.fetch(AUTH_GAS_URL, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({ action: 'validateSession', token: session.token }),
+      muteHttpExceptions: true
+    });
+    const data = JSON.parse(res.getContentText());
+    return data.ok ? { ok: true, user: data.user } : { ok: false };
+  } catch (e) {
+    return { ok: false };
+  }
+}
+
+// ===================== メインデータ読み込み =====================
+function loadData() {
+  const csvData = loadCsvFromDrive();
+  if (!csvData.ok) return csvData;
+
+  const bcartProducts = bcartGetAll('/products');
+  if (!bcartProducts.ok) return bcartProducts;
+
+  const bcartSets = bcartGetAll('/product_sets');
+  if (!bcartSets.ok) return bcartSets;
+
+  const ignoreMap = getIgnoreMap();
+  const wipMap = getWipMap();
+
+  const diffs = calcDiffs(csvData.rows, bcartProducts.data, bcartSets.data, ignoreMap, wipMap);
+
+  const csvHeaders = csvData.rows.length > 0 ? Object.keys(csvData.rows[0]) : [];
+  const csvSample = csvData.rows.length > 0 ? {
+    コード: csvData.rows[0]['コード'],
+    売上単価: csvData.rows[0]['売上単価'],
+    廃番: csvData.rows[0]['廃番']
+  } : {};
+
+  // CSVから仕入先マップを作成（対応不要タブの仕入先補完用）
+  const supplierMap = {};
+  csvData.rows.forEach(row => {
+    if (row['コード'] && row['仕入先名']) {
+      const key = String(parseInt(row['コード'], 10) || row['コード']);
+      if (!supplierMap[key]) supplierMap[key] = row['仕入先名'];
+    }
+  });
+
+  return {
+    ok: true,
+    diffs: diffs,
+    supplierMap: supplierMap,
+    csvUpdatedAt: csvData.updatedAt,
+    isOld: csvData.isOld,
+    totalCsv: csvData.rows.length,
+    totalBcart: bcartSets.data.length,
+    csvHeaders: csvHeaders,
+    csvSample: csvSample
+  };
+}
+
+// ===================== デバッグ =====================
+function debugData() {
+  const csvResult = loadCsvFromDrive();
+  let csvDebug;
+  if (csvResult.ok && csvResult.rows.length > 0) {
+    const sample5 = csvResult.rows.slice(0, 5);
+    csvDebug = {
+      totalRows: csvResult.rows.length,
+      headers: Object.keys(csvResult.rows[0]),
+      sampleCodes: sample5.map(r => r['コード']),
+      sampleCodesStripped: sample5.map(r => String(parseInt(r['コード'], 10) || r['コード'])),
+      sample1Full: csvResult.rows[0]
+    };
+  } else {
+    csvDebug = { error: csvResult.error };
+  }
+
+  const setsResult = bcartGetAll('/product_sets');
+  let bcartDebug;
+  if (setsResult.ok) {
+    const data = setsResult.data;
+    let matchCount = 0;
+    if (csvResult.ok) {
+      const bcartSetMap = {};
+      data.forEach(s => { bcartSetMap[s.product_no] = true; });
+      csvResult.rows.forEach(r => {
+        const stripped = String(parseInt(r['コード'], 10) || r['コード']);
+        const raw = r['コード'];
+        if (bcartSetMap[stripped] || bcartSetMap[raw]) matchCount++;
+      });
+    }
+    bcartDebug = {
+      total: data.length,
+      sampleProductNos: data.slice(0, 5).map(s => s.product_no),
+      sample1Full: data[0],
+      matchCountWithStrip: matchCount
+    };
+  } else {
+    bcartDebug = { error: setsResult.error };
+  }
+
+  return { ok: true, csv: csvDebug, bcart: bcartDebug };
+}
+
+function debugCode(params) {
+  const targetCode = String(params.code || '153');
+  const csvResult = loadCsvFromDrive();
+  if (!csvResult.ok) return csvResult;
+
+  const matches = csvResult.rows.filter(r => {
+    const key = String(parseInt(r['コード'], 10) || r['コード']);
+    return key === targetCode || r['コード'] === targetCode;
+  });
+
+  const setsResult = bcartGetAll('/product_sets');
+  const bcartMatch = setsResult.ok ? setsResult.data.find(s => s.product_no === targetCode) : null;
+
+  return {
+    ok: true,
+    targetCode: targetCode,
+    csv: {
+      matchCount: matches.length,
+      rows: matches.map(r => ({
+        コード: r['コード'],
+        商品名: r['商品名'],
+        売上単価: r['売上単価'],
+        仕入単価: r['仕入単価'],
+        廃番: r['廃番'],
+        仕入先名: r['仕入先名']
+      }))
+    },
+    bcart: bcartMatch ? {
+      id: bcartMatch.id,
+      product_no: bcartMatch.product_no,
+      name: bcartMatch.name,
+      unit_price: bcartMatch.unit_price
+    } : null
+  };
+}
+
+// ===================== CSV読み込み =====================
+function loadCsvFromDrive() {
+  try {
+    const folder = DriveApp.getFolderById(CSV_FOLDER_ID);
+    const files = folder.getFilesByName(CSV_FILENAME);
+    if (!files.hasNext()) return { ok: false, error: 'CSV_NOT_FOUND' };
+
+    const file = files.next();
+    const updatedAt = file.getLastUpdated().toLocaleString('ja-JP');
+    const daysDiff = (new Date() - file.getLastUpdated()) / (1000 * 60 * 60 * 24);
+    const isOld = daysDiff > 3;
+
+    const content = file.getBlob().getDataAsString('Shift_JIS');
+    const rows = parseCsv(content);
+
+    return { ok: true, rows: rows, updatedAt: updatedAt, isOld: isOld };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+function parseCsv(content) {
+  const lines = content.split('\n').filter(l => l.trim());
+  if (lines.length < 2) return [];
+
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+  const rows = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const values = splitCsvLine(lines[i]);
+    if (values.length < headers.length) continue;
+    const row = {};
+    headers.forEach((h, idx) => row[h] = (values[idx] || '').trim().replace(/^"|"$/g, ''));
+    rows.push(row);
+  }
+  return rows;
+}
+
+function splitCsvLine(line) {
+  const result = [];
+  let current = '';
+  let inQuote = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') { inQuote = !inQuote; }
+    else if (ch === ',' && !inQuote) { result.push(current); current = ''; }
+    else { current += ch; }
+  }
+  result.push(current);
+  return result;
+}
+
+// ===================== 突合処理 =====================
+function calcDiffs(csvRows, bcartProducts, bcartSets, ignoreMap, wipMap) {
+  const bcartSetMap = {};
+  bcartSets.forEach(s => { bcartSetMap[s.product_no] = s; });
+
+  const bcartProductMap = {};
+  bcartProducts.forEach(p => { bcartProductMap[p.id] = p; });
+
+  const diffs = [];
+
+  csvRows.forEach(row => {
+    const code = row['コード'];
+    if (!code) return;
+
+    const codeKey = String(parseInt(code, 10) || code);
+
+    const isIgnored = !!ignoreMap[codeKey];
+    const isWip = !!wipMap[codeKey];
+    const bcartSet = bcartSetMap[codeKey];
+
+    if (!bcartSet) {
+      const isAlsoDiscontinued = row['廃番'] === '1' || row['廃番'] === 'TRUE' || row['廃番'] === '廃番';
+      if (isAlsoDiscontinued) return;
+      const unregPrice = parseFloat(String(row['売上単価'] || '').replace(/,/g, '')) || 0;
+      if (!unregPrice) return;
+      diffs.push({
+        type: 'unregistered',
+        code: codeKey,
+        name: row['商品名'] || row['略称'] || '',
+        supplier: row['仕入先名'] || '',
+        csvPrice: unregPrice,
+        stockManagement: row['在庫有無'] || '',
+        isIgnored: isIgnored,
+        isWip: isWip,
+        ignoreReason: ignoreMap[codeKey] || '',
+        bcartSetId: null,
+        bcartProductId: null
+      });
+      return;
+    }
+
+    const bcartProduct = bcartProductMap[bcartSet.product_id] || {};
+    const csvPrice  = parseFloat(String(row['売上単価'] || '').replace(/,/g, '')) || 0;
+    const csvKouri  = parseFloat(String(row['定価１']   || '').replace(/,/g, '')) || 0;
+    const csvShiire = parseFloat(String(row['仕入単価'] || '').replace(/,/g, '')) || 0;
+    const bcartPrice = parseFloat(bcartSet.unit_price) || 0;
+    const bcartJodai = parseFloat(bcartSet.jodai) || 0;
+    const bcartJan   = (bcartSet.jan_code || '').trim();
+    const csvJan     = (row['JANCD'] || '').trim();
+    const isDiscontinued = row['廃番'] === '1' || row['廃番'] === 'TRUE' || row['廃番'] === '廃番';
+    const bcartVisible = bcartProduct.flag !== '非表示';
+
+    const issues = [];
+
+    if (csvPrice > 0 && Math.abs(csvPrice - bcartPrice) > 0) {
+      issues.push({ type: 'price', csvPrice: csvPrice, bcartPrice: bcartPrice });
+    }
+    if (isDiscontinued && bcartVisible) {
+      issues.push({ type: 'discontinued' });
+    }
+    if (csvKouri > 0 && Math.abs(csvKouri - bcartJodai) > 0) {
+      issues.push({ type: 'jodai', csvJodai: csvKouri, bcartJodai: bcartJodai });
+    }
+    if (csvJan && csvJan !== bcartJan) {
+      issues.push({ type: 'jan', csvJan: csvJan, bcartJan: bcartJan });
+    }
+
+    if (issues.length > 0) {
+      diffs.push({
+        type: 'diff',
+        code: codeKey,
+        name: row['商品名'] || row['略称'] || '',
+        supplier: row['仕入先名'] || '',
+        issues: issues,
+        stockManagement: row['在庫有無'] || '',
+        csvKouri: csvKouri,
+        csvShiire: csvShiire,
+        isIgnored: isIgnored,
+        isWip: isWip,
+        ignoreReason: ignoreMap[codeKey] || '',
+        bcartSetId: bcartSet.id,
+        bcartProductId: bcartSet.product_id
+      });
+    }
+  });
+
+  return diffs;
+}
+
+// ===================== BCART API =====================
+function getBcartToken() {
+  const token = PropertiesService.getScriptProperties().getProperty('BCART_TOKEN');
+  if (!token) throw new Error('BCARTトークンが設定されていません（スクリプトプロパティ: BCART_TOKEN）');
+  return token;
+}
+
+function bcartGetAll(path) {
+  try {
+    const token = getBcartToken();
+    const allData = [];
+    const limit = 100;
+    let offset = 0;
+
+    while (true) {
+      const url = BCART_BASE_URL + path + '?limit=' + limit + '&offset=' + offset;
+      let res;
+      // 429レート制限時は3秒待ってリトライ（最大2回）
+      for (let retry = 0; retry <= 2; retry++) {
+        res = UrlFetchApp.fetch(url, {
+          method: 'get',
+          headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
+          muteHttpExceptions: true
+        });
+        if (res.getResponseCode() === 429) {
+          if (retry < 2) { Utilities.sleep(3000); continue; }
+          return { ok: false, error: 'BCART_API_ERROR: 429 レート制限（しばらく待ってから再読み込みしてください）' };
+        }
+        break;
+      }
+      if (res.getResponseCode() !== 200) {
+        return { ok: false, error: 'BCART_API_ERROR: ' + res.getResponseCode() };
+      }
+      const parsed = JSON.parse(res.getContentText());
+      const page = parsed.data || parsed.product_sets || parsed.products || parsed.specials || parsed.product_stock || parsed;
+      if (!Array.isArray(page) || page.length === 0) break;
+      allData.push(...page);
+      if (page.length < limit) break;
+      offset += limit;
+      // ページ間に間隔を入れてレート制限を回避
+      if (offset > 0) Utilities.sleep(300);
+    }
+
+    return { ok: true, data: allData };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+function bcartGet(path, params) {
+  try {
+    const token = getBcartToken();
+    let url = BCART_BASE_URL + path;
+    if (params) {
+      const qs = Object.entries(params).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+      url += '?' + qs;
+    }
+    const res = UrlFetchApp.fetch(url, {
+      method: 'get',
+      headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
+      muteHttpExceptions: true
+    });
+    if (res.getResponseCode() !== 200) return { ok: false, error: 'BCART_API_ERROR: ' + res.getResponseCode() };
+    const data = JSON.parse(res.getContentText());
+    return { ok: true, data: data.data || data };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+function bcartPatch(path, body) {
+  try {
+    const token = getBcartToken();
+    const res = UrlFetchApp.fetch(BCART_BASE_URL + path, {
+      method: 'patch',
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      payload: JSON.stringify(body),
+      muteHttpExceptions: true
+    });
+    const code = res.getResponseCode();
+    if (code !== 200 && code !== 204) return { ok: false, error: 'BCART_API_ERROR: ' + code + ' ' + res.getContentText() };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+function bcartDelete(path) {
+  try {
+    const token = getBcartToken();
+    const res = UrlFetchApp.fetch(BCART_BASE_URL + path, {
+      method: 'delete',
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Accept': 'application/json'
+      },
+      muteHttpExceptions: true
+    });
+    const code = res.getResponseCode();
+    if (code !== 200 && code !== 204) return { ok: false, error: 'BCART_API_ERROR: ' + code + ' ' + res.getContentText() };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+// ===================== 更新処理 =====================
+function updatePrice(params) {
+  const body = { unit_price: params.price };
+  if (params.csvKouri || params.csvShiire) {
+    body.group_price = {};
+    if (params.csvKouri)  body.group_price['1']  = { fixed_price: params.csvKouri };
+    if (params.csvShiire) body.group_price['10'] = { fixed_price: params.csvShiire };
+  }
+  return bcartPatch('/product_sets/' + params.bcartSetId, body);
+}
+
+function updateJodai(params) {
+  return bcartPatch('/product_sets/' + params.bcartSetId, { jodai: params.jodai });
+}
+
+function updateJan(params) {
+  return bcartPatch('/product_sets/' + params.bcartSetId, { jan_code: params.janCode });
+}
+
+function updateAll(params) {
+  const body = {};
+  if (params.price  !== undefined) body.unit_price = params.price;
+  if (params.jodai  !== undefined) body.jodai = params.jodai;
+  if (params.janCode !== undefined) body.jan_code = params.janCode;
+  if (params.csvKouri || params.csvShiire) {
+    body.group_price = {};
+    if (params.csvKouri)  body.group_price['1']  = { fixed_price: params.csvKouri };
+    if (params.csvShiire) body.group_price['10'] = { fixed_price: params.csvShiire };
+  }
+  return bcartPatch('/product_sets/' + params.bcartSetId, body);
+}
+
+function hideProduct(params) {
+  return bcartPatch('/products/' + params.bcartProductId, { flag: '非表示' });
+}
+
+function setStock(params) {
+  return bcartPatch('/product_stock', [{ product_no: params.productNo, stock: String(params.stock) }]);
+}
+
+function bulkUpdate(params) {
+  const results = [];
+  params.items.forEach(item => {
+    let res;
+    if (item.type === 'price') {
+      const body = { unit_price: item.price };
+      if (item.csvKouri || item.csvShiire) {
+        body.group_price = {};
+        if (item.csvKouri)  body.group_price['1']  = { fixed_price: item.csvKouri };
+        if (item.csvShiire) body.group_price['10'] = { fixed_price: item.csvShiire };
+      }
+      res = bcartPatch('/product_sets/' + item.bcartSetId, body);
+    } else if (item.type === 'discontinued') {
+      res = bcartPatch('/products/' + item.bcartProductId, { flag: '非表示' });
+    } else if (item.type === 'jodai') {
+      res = bcartPatch('/product_sets/' + item.bcartSetId, { jodai: item.jodai });
+    } else if (item.type === 'jan') {
+      res = bcartPatch('/product_sets/' + item.bcartSetId, { jan_code: item.janCode });
+    }
+    results.push({ code: item.code, ok: res ? res.ok : false, error: res ? res.error : '' });
+  });
+  return { ok: true, results: results };
+}
+
+function bulkIgnore(params) {
+  const results = [];
+  (params.items || []).forEach(item => {
+    const res = markIgnore({ code: item.code, name: item.name, reason: params.reason || '', supplier: item.supplier || '' });
+    results.push({ code: item.code, ok: res.ok });
+  });
+  return { ok: true, results: results };
+}
+
+// ⑤ 未登録商品を一括作業中にする
+function bulkMarkWip(params) {
+  const results = [];
+  (params.items || []).forEach(item => {
+    const res = markWip({ code: item.code, name: item.name });
+    results.push({ code: item.code, ok: res.ok });
+  });
+  return { ok: true, results: results };
+}
+
+// ===================== 商品検索（新機能）=====================
+function searchProducts(params) {
+  const products = bcartGetAll('/products');
+  if (!products.ok) return products;
+
+  const sets = bcartGetAll('/product_sets');
+  if (!sets.ok) return sets;
+
+  // product_id → product_set マッピング
+  const setByProductId = {};
+  sets.data.forEach(s => {
+    if (!setByProductId[s.product_id]) setByProductId[s.product_id] = s;
+  });
+
+  const now = new Date();
+  let filtered = products.data;
+
+  // キーワード検索（商品コード・商品名）
+  if (params.keyword) {
+    const kw = params.keyword.toLowerCase();
+    filtered = filtered.filter(p =>
+      (p.name || '').toLowerCase().includes(kw) ||
+      (p.product_no || '').toLowerCase().includes(kw)
+    );
+  }
+
+  // 表示期限切れ（BCARTフィールド名: hanbai_end）
+  const getDisplayEnd = p => p.hanbai_end || '';
+  if (params.expired) {
+    filtered = filtered.filter(p => {
+      const de = getDisplayEnd(p);
+      if (!de) return false;
+      try { return new Date(de) < now; } catch(e) { return false; }
+    });
+  }
+
+  // 公開状態（flag = "表示" or "非表示"）
+  if (params.status === '公開') {
+    filtered = filtered.filter(p => p.flag === '表示');
+  } else if (params.status === '非表示') {
+    filtered = filtered.filter(p => p.flag === '非表示');
+  }
+
+  // 在庫0
+  if (params.stockZero) {
+    filtered = filtered.filter(p => {
+      const s = setByProductId[p.id];
+      if (!s) return false;
+      const stock = s.stock !== undefined ? s.stock : s.inventory;
+      return stock !== undefined && (parseInt(stock) === 0 || String(stock) === '0');
+    });
+  }
+
+  // 特集（feature_id1 / feature_id2 / feature_id3 のいずれかが一致）
+  if (params.specialId) {
+    const fid = String(params.specialId);
+    filtered = filtered.filter(p =>
+      String(p.feature_id1 || '') === fid ||
+      String(p.feature_id2 || '') === fid ||
+      String(p.feature_id3 || '') === fid
+    );
+  }
+
+  const result = filtered.map(p => {
+    const s = setByProductId[p.id] || {};
+    return {
+      id: p.id,
+      product_no: p.product_no || p.main_no || '',
+      name: p.name || '',
+      flag: p.flag || '',
+      display_start: p.hanbai_start || '',
+      display_end: getDisplayEnd(p),
+      unit_price: s.unit_price || '',
+      stock: s.stock !== undefined ? s.stock : (s.inventory !== undefined ? s.inventory : ''),
+      set_id: s.id || ''
+    };
+  });
+
+  return { ok: true, products: result, total: result.length };
+}
+
+// 特集一覧取得（/features エンドポイント、失敗時は商品のfeature_id1/2/3から収集）
+function getSpecials() {
+  // /features エンドポイントを試みる
+  try {
+    const featResult = bcartGetAll('/features');
+    if (featResult.ok && featResult.data && featResult.data.length > 0) {
+      return {
+        ok: true,
+        specials: featResult.data.map(f => ({
+          id: f.id,
+          name: f.name || f.title || f.feature_name || String(f.id)
+        }))
+      };
+    }
+  } catch(e) {}
+
+  // フォールバック: 商品一覧からfeature_idを収集
+  try {
+    const products = bcartGetAll('/products');
+    if (!products.ok) return { ok: true, specials: [] };
+    const featureIds = new Set();
+    products.data.forEach(p => {
+      if (p.feature_id1) featureIds.add(p.feature_id1);
+      if (p.feature_id2) featureIds.add(p.feature_id2);
+      if (p.feature_id3) featureIds.add(p.feature_id3);
+    });
+    return {
+      ok: true,
+      specials: [...featureIds].sort((a, b) => a - b).map(id => ({ id: id, name: '特集 ' + id }))
+    };
+  } catch(e) {
+    return { ok: true, specials: [] };
+  }
+}
+
+// 商品フィールド確認（表示期限フィールド名特定用）
+function debugProduct() {
+  const products = bcartGetAll('/products');
+  if (!products.ok) return products;
+  const sample = products.data.length > 0 ? products.data[0] : null;
+  return {
+    ok: true,
+    total: products.data.length,
+    fields: sample ? Object.keys(sample) : [],
+    sample: sample
+  };
+}
+
+// 商品更新（価格・表示期限・公開状態）
+function updateProductAction(params) {
+  const results = [];
+  if (params.productId && params.productFields) {
+    const res = bcartPatch('/products/' + params.productId, params.productFields);
+    results.push({ target: 'product', ok: res.ok, error: res.error || '' });
+  }
+  if (params.setId && params.setFields) {
+    const res = bcartPatch('/product_sets/' + params.setId, params.setFields);
+    results.push({ target: 'set', ok: res.ok, error: res.error || '' });
+  }
+  const allOk = results.length > 0 && results.every(r => r.ok);
+  return { ok: allOk, results: results };
+}
+
+// 商品完全削除
+function deleteProduct(params) {
+  return bcartDelete('/products/' + params.productId);
+}
+
+// ===================== 対応不要・作業中シート =====================
+function getOrCreateSheet(sheetName) {
+  const props = PropertiesService.getScriptProperties();
+  let ssId = props.getProperty('MASTER_TOOL_SS_ID');
+  let ss;
+  if (ssId) {
+    try { ss = SpreadsheetApp.openById(ssId); } catch (e) { ssId = null; }
+  }
+  if (!ssId) {
+    ss = SpreadsheetApp.create('BCARTマスター管理ツール_データ');
+    props.setProperty('MASTER_TOOL_SS_ID', ss.getId());
+  }
+
+  let sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+    if (sheetName === SHEET_IGNORE) {
+      sheet.appendRow(['商品コード', '商品名', '理由', '登録日時', '仕入先名']);
+    } else if (sheetName === SHEET_WIP) {
+      sheet.appendRow(['商品コード', '商品名', '登録日時']);
+    }
+  } else if (sheetName === SHEET_IGNORE) {
+    // ② 仕入先名列が欠けている場合は追加（古いシートへの対応）
+    const lastCol = sheet.getLastColumn();
+    if (lastCol < 5) {
+      sheet.getRange(1, 5).setValue('仕入先名');
+    } else {
+      const headerVal = sheet.getRange(1, 5).getValue();
+      if (!headerVal) sheet.getRange(1, 5).setValue('仕入先名');
+    }
+  }
+  return sheet;
+}
+
+function getIgnoreMap() {
+  const sheet = getOrCreateSheet(SHEET_IGNORE);
+  const rows = sheet.getDataRange().getValues();
+  const map = {};
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0]) map[rows[i][0]] = rows[i][2] || '';
+  }
+  return map;
+}
+
+function getWipMap() {
+  const sheet = getOrCreateSheet(SHEET_WIP);
+  const rows = sheet.getDataRange().getValues();
+  const map = {};
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0]) map[rows[i][0]] = true;
+  }
+  return map;
+}
+
+function markIgnore(params) {
+  const sheet = getOrCreateSheet(SHEET_IGNORE);
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] === params.code) {
+      sheet.getRange(i + 1, 3).setValue(params.reason);
+      if (params.supplier) sheet.getRange(i + 1, 5).setValue(params.supplier);
+      return { ok: true };
+    }
+  }
+  sheet.appendRow([params.code, params.name, params.reason, new Date().toLocaleString('ja-JP'), params.supplier || '']);
+  return { ok: true };
+}
+
+function unmarkIgnore(params) {
+  const sheet = getOrCreateSheet(SHEET_IGNORE);
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] === params.code) { sheet.deleteRow(i + 1); return { ok: true }; }
+  }
+  return { ok: true };
+}
+
+function getIgnoreList() {
+  const sheet = getOrCreateSheet(SHEET_IGNORE);
+  const lastCol = sheet.getLastColumn();
+  const rows = sheet.getDataRange().getValues();
+  const list = [];
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0]) {
+      list.push({
+        code: rows[i][0],
+        name: rows[i][1],
+        reason: rows[i][2],
+        registeredAt: rows[i][3],
+        supplier: lastCol >= 5 ? (rows[i][4] || '') : ''
+      });
+    }
+  }
+  return { ok: true, list: list };
+}
+
+function markWip(params) {
+  const sheet = getOrCreateSheet(SHEET_WIP);
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] === params.code) return { ok: true };
+  }
+  sheet.appendRow([params.code, params.name, new Date().toLocaleString('ja-JP')]);
+  return { ok: true };
+}
+
+function unmarkWip(params) {
+  const sheet = getOrCreateSheet(SHEET_WIP);
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] === params.code) { sheet.deleteRow(i + 1); return { ok: true }; }
+  }
+  return { ok: true };
+}
+
+// ===================== LINE WORKS通知（週次タイマー用） =====================
+function weeklyCheck() {
+  const result = loadData();
+  if (!result.ok) return;
+
+  const activeDiffs = result.diffs.filter(d => !d.isIgnored);
+  if (activeDiffs.length === 0) return;
+
+  const priceCount = activeDiffs.filter(d => d.issues && d.issues.some(i => i.type === 'price')).length;
+  const discCount  = activeDiffs.filter(d => d.issues && d.issues.some(i => i.type === 'discontinued')).length;
+  const unregCount = activeDiffs.filter(d => d.type === 'unregistered').length;
+
+  const msg = `【BCARTマスター管理】差異が${activeDiffs.length}件あります\n💰 価格差異: ${priceCount}件\n🚫 廃番未処理: ${discCount}件\n❌ 未登録: ${unregCount}件\n\nBCARTマスター管理ツールで確認してください。`;
+
+  const webhook = PropertiesService.getScriptProperties().getProperty('LINEWORKS_WEBHOOK');
+  if (!webhook) return;
+
+  try {
+    UrlFetchApp.fetch(webhook, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({ content: msg }),
+      muteHttpExceptions: true
+    });
+  } catch (e) {
+    Logger.log('LINE WORKS通知エラー: ' + e);
+  }
+}
