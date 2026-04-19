@@ -340,6 +340,7 @@ const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WV
 // ===================== 状態 =====================
 let session = null;
 let allDiffs = [];
+let csvSupplierMap = {};
 let currentFilter = 'all';
 let currentSupplier = '';
 let stockFilter = 'する';
@@ -390,6 +391,7 @@ function loadData() {
     }
 
     allDiffs = res.diffs || [];
+    csvSupplierMap = res.supplierMap || {};
 
     const warnEl = document.getElementById('csvWarn');
     if (res.isOld) {
@@ -885,11 +887,11 @@ function loadIgnoreList() {
   document.getElementById('ignoreList').innerHTML = '<div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>';
   gasPost({ action: 'getIgnoreList' }, function(res) {
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
-    // シートに仕入先が未保存の古いレコードをallDiffsから補完
+    // シートに仕入先が未保存の古いレコードをCSV仕入先マップから補完
     ignoreListCache = (res.list || []).map(item => {
       if (!item.supplier) {
-        const d = allDiffs.find(x => x.code === item.code);
-        if (d && d.supplier) item.supplier = d.supplier;
+        const normalCode = String(parseInt(item.code, 10) || item.code);
+        item.supplier = csvSupplierMap[normalCode] || csvSupplierMap[item.code] || '';
       }
       return item;
     });
