@@ -281,7 +281,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
         <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <button class="btn btn-primary" onclick="doSearchProducts()">🔍 検索する</button>
           <span id="searchProductCount" style="font-size:12px;color:#6b7280;"></span>
-          <span style="font-size:12px;color:#9ca3af;">※ キーワードまたはいずれかの条件を選択してください</span>
+          <button class="btn btn-gray btn-sm" onclick="runDebugProduct()" style="margin-left:auto;">🔍 フィールド確認</button>
         </div>
       </div>
       <div id="searchProductList"></div>
@@ -885,7 +885,14 @@ function loadIgnoreList() {
   document.getElementById('ignoreList').innerHTML = '<div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>';
   gasPost({ action: 'getIgnoreList' }, function(res) {
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
-    ignoreListCache = res.list || [];
+    // シートに仕入先が未保存の古いレコードをallDiffsから補完
+    ignoreListCache = (res.list || []).map(item => {
+      if (!item.supplier) {
+        const d = allDiffs.find(x => x.code === item.code);
+        if (d && d.supplier) item.supplier = d.supplier;
+      }
+      return item;
+    });
     const sel = document.getElementById('ignoreSupplierSelect');
     const suppliers = [...new Set(ignoreListCache.map(i => i.supplier).filter(s => s))].sort();
     const current = sel.value;
@@ -1072,6 +1079,20 @@ function hideSearchProduct(productId, btn) {
     const p = searchProductCache.find(x => x.id === productId);
     if (p) p.flag = '非表示';
     renderSearchProducts();
+  });
+}
+
+function runDebugProduct() {
+  showToast('商品フィールドを確認中...');
+  gasPost({ action: 'debugProduct' }, function(res) {
+    if (!res.ok) { openDebugModal('エラー', JSON.stringify(res, null, 2)); return; }
+    const msg =
+      '=== BCART 商品フィールド一覧 ===\n' +
+      '総件数: ' + res.total + '\n\n' +
+      'フィールド名:\n' + (res.fields || []).join('\n') + '\n\n' +
+      '=== 1件目のフルデータ ===\n' +
+      JSON.stringify(res.sample, null, 2);
+    openDebugModal('商品フィールド確認', msg);
   });
 }
 
