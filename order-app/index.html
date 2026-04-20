@@ -997,7 +997,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.20.0'; // 発注点表示・要発注警告・在庫画面フィルタ追加
+const APP_VERSION    = 'v1.20.1'; // クリップボードコピーのフォールバック修正
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm';
@@ -1983,6 +1983,31 @@ async function saveOrderToGAS(outputType) {
   }
 }
 
+// クリップボードコピー共通ヘルパー
+// Clipboard API が使えない場合は execCommand フォールバックを使う
+async function copyToClipboard(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch(e) {}
+  }
+  // フォールバック: textarea + execCommand（iOS Safari・古いブラウザ対応）
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch(e) {
+    return false;
+  }
+}
+
 // テキスト出力（LINE等のメッセージ用）
 // 手書き商品も含め「商品名 × 数量単位」形式で出力
 // クリップボードコピー + .txtダウンロードの両方を実行
@@ -1990,14 +2015,7 @@ async function outputText() {
   const lines = cartItems.map(i => `${i.name} × ${i.qty}${i.unit || ''}`);
   const text  = lines.join('\n');
 
-  // クリップボードコピー（ボタンクリック直後 = ユーザー操作コンテキスト内）
-  let copied = false;
-  try {
-    await Promise.race([
-      navigator.clipboard.writeText(text).then(() => { copied = true; }),
-      new Promise(resolve => setTimeout(resolve, 1500)) // タイムアウト（iOS hangup対策）
-    ]);
-  } catch(e) { /* 権限なし等の場合は無視してダウンロードのみ実行 */ }
+  const copied = await copyToClipboard(text);
 
   showLoading('保存・出力中...');
   try {
@@ -2771,8 +2789,7 @@ async function reOutputText(orderNo) {
 
   const text = items.map(i => `${i.name} × ${i.qty}${i.unit || ''}`).join('\n');
 
-  let copied = false;
-  try { await navigator.clipboard.writeText(text); copied = true; } catch(e) {}
+  const copied = await copyToClipboard(text);
 
   const bom  = new Uint8Array([0xEF, 0xBB, 0xBF]);
   const blob = new Blob([bom, text], { type: 'text/plain;charset=utf-8' });
