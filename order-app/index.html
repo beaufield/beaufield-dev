@@ -430,6 +430,27 @@
     }
     .qty-stock.show { display: block; }
 
+    /* 発注点バッジ（数量モーダル内） */
+    .qty-reorder {
+      display: none;
+      border-radius: 6px;
+      padding: 5px 10px;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .qty-reorder.show { display: block; }
+    .qty-reorder.warning {
+      background: #FFF0F0;
+      border: 1px solid #FFBBBB;
+      color: #CC0000;
+      font-weight: bold;
+    }
+    .qty-reorder.normal {
+      background: #F5F5F5;
+      border: 1px solid #DDDDDD;
+      color: #888888;
+    }
+
     /* 直近注文バッジ（数量モーダル内） */
     .qty-last-order {
       display: none;
@@ -764,7 +785,9 @@
         <option value="3">3以下</option>
         <option value="5">5以下</option>
         <option value="10">10以下</option>
+        <option value="999">全て</option>
       </select>
+      <button id="inv-filter-reorder-btn" onclick="toggleReorderFilter()" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);white-space:nowrap">⚠️ 要発注</button>
     </div>
     <div style="display:flex;gap:4px">
       <button class="inv-sale-btn inv-sale-active" data-val="yesterday" onclick="setInvSaleFilter('yesterday')">前日</button>
@@ -792,8 +815,9 @@
   <div class="nav-item" id="nav-history" onclick="switchScreen('history')">
     <span class="nav-icon">📋</span><span>履歴</span>
   </div>
-  <div class="nav-item" id="nav-inventory" onclick="switchScreen('inventory')">
+  <div class="nav-item" id="nav-inventory" onclick="switchScreen('inventory')" style="position:relative">
     <span class="nav-icon">📦</span><span>在庫</span>
+    <span id="inv-alert-badge" style="display:none;position:absolute;top:6px;right:6px;background:var(--danger);color:#fff;font-size:10px;font-weight:bold;border-radius:10px;padding:1px 5px;min-width:16px;text-align:center;line-height:1.4"></span>
   </div>
   <div class="nav-item" id="nav-settings" onclick="switchScreen('settings')">
     <span class="nav-icon">⚙️</span><span>設定</span>
@@ -810,9 +834,10 @@
     <div class="modal-title" id="qty-title">数量を選択</div>
     <div class="modal-sub" id="qty-sub"></div>
 
-    <!-- 在庫数・直近注文 横並び -->
+    <!-- 在庫数・発注点・直近注文 横並び -->
     <div class="qty-info-row" id="qty-info-row">
       <div class="qty-stock" id="qty-stock"></div>
+      <div class="qty-reorder" id="qty-reorder"></div>
       <div class="qty-last-order" id="qty-last-order"></div>
     </div>
 
@@ -972,7 +997,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.19.8'; // 在庫一覧：マスター読込完了後に再描画（初回0件バグ修正）
+const APP_VERSION    = 'v1.20.0'; // 発注点表示・要発注警告・在庫画面フィルタ追加
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm';
@@ -1038,6 +1063,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   loadProductMasterFromCache();
   updateMasterBadge();
+  updateInventoryBadge();
   // キャッシュが当日でない場合はバックグラウンドでGASから最新取得（await しない）
   if (localStorage.getItem(LS_MASTER_DATE) !== getTodayStr()) {
     loadProductMasterFromGAS();
@@ -1216,10 +1242,28 @@ function parseProductCSV(text, fileName) {
       if (p.name) products.push(p);
     }
 
+    // GASから取得済みのreorderPointを引き継ぐ（CSV再読込で消えないよう）
+    const prevReorderMap = {};
+    productMaster.forEach(p => {
+      if (p.reorderPoint !== null && p.reorderPoint !== undefined) {
+        prevReorderMap[p.code] = { reorderPoint: p.reorderPoint, reorderUpdatedAt: p.reorderUpdatedAt || '' };
+      }
+    });
+    products.forEach(p => {
+      if (prevReorderMap[p.code]) {
+        p.reorderPoint      = prevReorderMap[p.code].reorderPoint;
+        p.reorderUpdatedAt  = prevReorderMap[p.code].reorderUpdatedAt;
+      } else {
+        p.reorderPoint     = null;
+        p.reorderUpdatedAt = '';
+      }
+    });
+
     localStorage.setItem(LS_MASTER,      JSON.stringify(products));
     localStorage.setItem(LS_MASTER_DATE, getTodayStr());
     productMaster = products;
     updateMasterBadge();
+    updateInventoryBadge();
     showToast(`✅ ${products.length}件の商品を読み込みました\n設定画面で仕入先CDの確認をお勧めします`, 'success');
   } catch(e) {
     showToast('CSV読み込みエラー: ' + e.message, 'error');
@@ -1269,6 +1313,8 @@ async function loadProductMasterFromGAS() {
   } finally {
     productMasterLoading = false;
     updateMasterBadge();
+    updateInventoryBadge();
+    if (currentScreen === 'inventory') renderInventoryList();
   }
 }
 function updateMasterBadge() {
@@ -1298,6 +1344,23 @@ function updateMasterBadge() {
     badge.className = 'master-badge orange';
     badge.querySelector('.master-badge-title').textContent = `⚠️ ${count.toLocaleString()}件（更新が必要）`;
     badge.querySelector('.master-badge-sub').textContent   = `前回更新: ${pmDate}${subSuffix}`;
+  }
+}
+
+function updateInventoryBadge() {
+  const badge = document.getElementById('inv-alert-badge');
+  if (!badge) return;
+  const count = productMaster.filter(p =>
+    p.stockManagement === 'する' &&
+    p.discontinued !== '廃番' &&
+    p.reorderPoint !== null && p.reorderPoint !== undefined &&
+    (parseFloat(p.stock) || 0) < p.reorderPoint
+  ).length;
+  if (count > 0) {
+    badge.textContent  = count;
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
   }
 }
 
@@ -1573,6 +1636,18 @@ function openQtyModal(product, isHandwritten) {
     stockEl.classList.remove('show');
   }
 
+  // 発注点バッジ
+  const reorderEl = document.getElementById('qty-reorder');
+  const hasReorder = !isHandwritten && product.reorderPoint !== null && product.reorderPoint !== undefined;
+  if (hasReorder) {
+    const stockNum = parseFloat(product.stock) || 0;
+    const isBelow  = stockNum < product.reorderPoint;
+    reorderEl.textContent = `${isBelow ? '⚠️ ' : ''}発注点: ${product.reorderPoint}`;
+    reorderEl.className   = `qty-reorder show ${isBelow ? 'warning' : 'normal'}`;
+  } else {
+    reorderEl.className = 'qty-reorder';
+  }
+
   let hasLastOrder = false;
   if (!isHandwritten) {
     const hist = productHistory[product.code] || productHistory[product.jan] || null;
@@ -1587,7 +1662,7 @@ function openQtyModal(product, isHandwritten) {
     lastOrderEl.classList.remove('show');
   }
 
-  if (hasStock || hasLastOrder) {
+  if (hasStock || hasReorder || hasLastOrder) {
     infoRowEl.classList.add('show');
   } else {
     infoRowEl.classList.remove('show');
@@ -3088,6 +3163,23 @@ function setInvSaleFilter(val) {
   renderInventoryList();
 }
 
+let invReorderFilterActive = false;
+
+function toggleReorderFilter() {
+  invReorderFilterActive = !invReorderFilterActive;
+  const btn = document.getElementById('inv-filter-reorder-btn');
+  if (invReorderFilterActive) {
+    btn.style.background = 'var(--danger)';
+    btn.style.color      = '#fff';
+    btn.style.borderColor = 'var(--danger)';
+  } else {
+    btn.style.background  = 'var(--surface)';
+    btn.style.color       = 'var(--text)';
+    btn.style.borderColor = 'var(--border)';
+  }
+  renderInventoryList();
+}
+
 function renderInventoryList() {
   const supplierFilter = document.getElementById('inv-filter-supplier').value;
   const stockThreshold = parseInt(document.getElementById('inv-filter-stock').value, 10);
@@ -3117,9 +3209,14 @@ function renderInventoryList() {
     } else if (supplierFilter && p.supplierCD !== supplierFilter) {
       return false;
     }
-    // 在庫数フィルター
+    // 在庫数フィルター（要発注フィルターON時は在庫数フィルター無効）
     const stock = parseFloat(p.stock) || 0;
-    if (stock > stockThreshold) return false;
+    if (!invReorderFilterActive && stock > stockThreshold) return false;
+    // 要発注フィルター（在庫 < 発注点）
+    if (invReorderFilterActive) {
+      if (p.reorderPoint === null || p.reorderPoint === undefined) return false;
+      if (stock >= p.reorderPoint) return false;
+    }
     // 最終売上日フィルター
     if (saleFilter !== 'all') {
       const d = p.lastSaleDate.replace(/\//g, '').replace(/-/g, '').trim();
@@ -3139,9 +3236,15 @@ function renderInventoryList() {
   // 在庫数の昇順（マイナスが上）
   filtered.sort((a, b) => (parseFloat(a.stock)||0) - (parseFloat(b.stock)||0));
 
+  // 発注点更新日時を取得（データがある最初の商品から）
+  const reorderDateSample = productMaster.find(p => p.reorderUpdatedAt)?.reorderUpdatedAt || '';
+  const reorderDateLabel  = reorderDateSample
+    ? `<span style="color:var(--text-light);font-size:11px;margin-left:8px">発注点 ${reorderDateSample}更新</span>`
+    : '';
+
   const header = document.getElementById('inv-list-header');
   const list   = document.getElementById('inv-list');
-  header.textContent = `${filtered.length}件`;
+  header.innerHTML = `${filtered.length}件${reorderDateLabel}`;
 
   if (filtered.length === 0) {
     list.innerHTML = '<div class="card"><div style="padding:16px 0;text-align:center;color:var(--text-light);font-size:14px">条件に合う商品はありません</div></div>';
@@ -3157,19 +3260,26 @@ function renderInventoryList() {
   };
 
   const rows = filtered.map((p, idx) => {
-    const stock    = parseFloat(p.stock) || 0;
-    const stockCls = stock <= 0 ? 'color:var(--danger);font-weight:bold' : '';
-    const hist     = productHistory[p.code] || productHistory[p.jan] || null;
-    const lastOrder = hist && hist.date
+    const stock       = parseFloat(p.stock) || 0;
+    const hasReorder  = p.reorderPoint !== null && p.reorderPoint !== undefined;
+    const isBelow     = hasReorder && stock < p.reorderPoint;
+    const stockCls    = stock <= 0 ? 'color:var(--danger);font-weight:bold' : (isBelow ? 'color:#CC6600;font-weight:bold' : '');
+    const rowBorder   = isBelow ? 'border-left:3px solid var(--danger);padding-left:8px;' : '';
+    const reorderBadge = hasReorder
+      ? `<div style="font-size:11px;${isBelow ? 'color:var(--danger);font-weight:bold' : 'color:var(--text-light)'}">発注点:${p.reorderPoint}</div>`
+      : '';
+    const hist        = productHistory[p.code] || productHistory[p.jan] || null;
+    const lastOrder   = hist && hist.date
       ? `<div style="font-size:11px;color:var(--primary);margin-top:1px">🛒 ${fmtDate(hist.date)} × ${hist.qty}${hist.unit||''}</div>`
       : '';
-    return `<div class="history-item" style="display:flex;align-items:center" onclick="openInventoryQtyModal(${idx})">
+    return `<div class="history-item" style="display:flex;align-items:center;${rowBorder}" onclick="openInventoryQtyModal(${idx})">
       <div style="flex:1;min-width:0">
-        <div style="font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</div>
+        <div style="font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isBelow ? '⚠️ ' : ''}${p.name}</div>
         <div style="font-size:11px;color:var(--text-light);margin-top:2px">${p.supplierName || p.supplierCD}</div>
       </div>
       <div style="text-align:right;flex-shrink:0;margin-left:8px">
         <div style="font-size:15px;${stockCls}">${stock}</div>
+        ${reorderBadge}
         <div style="font-size:11px;color:var(--text-light)">${fmtDate(p.lastSaleDate)}</div>
         ${lastOrder}
       </div>

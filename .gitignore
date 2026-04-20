@@ -12,6 +12,10 @@ secrets.json
 .env
 *.env
 
+# 発注点スクリプト設定ファイル（APIキー・メールパスワード含む）
+order-app/tools/config.json
+order-app/tools/logs/
+
 # ログ
 *.log
 
