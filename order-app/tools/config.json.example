@@ -1,0 +1,8 @@
+{
+  "csv_path": "C:\\Users\\ユーザー名\\OneDrive\\売上データ明細表.CSV",
+  "gas_url": "https://script.google.com/macros/s/【GAS WebApp URL】/exec",
+  "api_key": "【スクリプトプロパティ REORDER_API_KEY に設定したキー】",
+  "email_from": "送信元Gmailアドレス@gmail.com",
+  "email_to": "tak.maejima@gmail.com",
+  "email_app_password": "【GmailアプリパスワードXXXX-XXXX-XXXX-XXXX】"
+}
