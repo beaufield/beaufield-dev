@@ -1,12 +1,13 @@
 // ============================================================
 // Beaufield 発注アプリ - Google Apps Script バックエンド
-// Version: v1.7.1
+// Version: v1.8.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
 // GASエディタ → 「プロジェクトの設定」→「スクリプトプロパティ」→「プロパティを追加」
-//   SPREADSHEET_ID : 発注管理データのスプレッドシートID
-//   AUTH_SHEET_ID  : beaufield-auth スプレッドシートID（共通）
+//   SPREADSHEET_ID  : 発注管理データのスプレッドシートID
+//   AUTH_SHEET_ID   : beaufield-auth スプレッドシートID（共通）
+//   REORDER_API_KEY : 発注点更新用APIキー（Pythonスクリプトと共有）
 //
 // ============================================================
 
@@ -14,7 +15,7 @@
 const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
-const VERSION         = 'v1.7.1';
+const VERSION         = 'v1.8.0';
 
 // Google Drive上の商品マスターCSVファイル名
 // ※ 同名ファイルが複数ある場合はファイルIDで指定（下記コメント参照）
@@ -30,6 +31,7 @@ const SHEET_ITEMS     = '発注明細';
 const SHEET_SUPPLIERS = '発注先マスター';
 const SHEET_STAFF     = '担当者マスター';
 const SHEET_PRODUCTS  = '商品マスター';
+const SHEET_REORDER   = '発注点マスター';
 
 // ============================================================
 // セッション検証
@@ -128,6 +130,20 @@ function doPost(e) {
     }
   }
 
+  // updateReorderPoints: APIキー認証（Pythonスクリプト用・セッション不要）
+  if (action === 'updateReorderPoints') {
+    const apiKey = p.api_key || '';
+    if (!apiKey || apiKey !== _PROPS.getProperty('REORDER_API_KEY')) {
+      return jsonResponse({ success: false, error: 'UNAUTHORIZED' });
+    }
+    try {
+      const products = p.products || [];
+      return jsonResponse(updateReorderPoints(products));
+    } catch(err) {
+      return jsonResponse({ success: false, error: err.toString() });
+    }
+  }
+
   // 通常のセッション検証
   const token = p.session_token || '';
   const auth = validateSession(token);
@@ -217,6 +233,7 @@ function getMasters() {
 // ============================================================
 // GET: 商品マスター取得
 // Google Sheetsの「商品マスター」シートから読み込んで返す
+// 「発注点マスター」シートのデータをJOINして reorderPoint フィールドを付与する
 // レスポンス: { success: true, products: [...], updatedAt: '...' }
 // ============================================================
 function getProductMaster() {
@@ -261,12 +278,70 @@ function getProductMaster() {
       discontinued:    colMap.discontinued !== -1    ? String(r[colMap.discontinued]    || '').trim()                                        : '',
       stockManagement: colMap.stockManagement !== -1 ? String(r[colMap.stockManagement] || '').trim()                                        : '',
       lastSaleDate:    colMap.lastSaleDate !== -1    ? String(r[colMap.lastSaleDate]    || '').trim()                                        : '',
-      stock:           colMap.stock !== -1           ? String(r[colMap.stock]           || '').trim()                                        : ''
+      stock:           colMap.stock !== -1           ? String(r[colMap.stock]           || '').trim()                                        : '',
+      reorderPoint:    null,
+      reorderUpdatedAt: ''
     });
+  }
+
+  // 発注点マスターをJOIN
+  try {
+    const rsh = ss.getSheetByName(SHEET_REORDER);
+    if (rsh && rsh.getLastRow() > 1) {
+      const rdata = rsh.getDataRange().getValues();
+      // ヘッダー: [0]=商品コード [1]=月平均出荷数 [2]=更新日時
+      const reorderMap = {};
+      for (let i = 1; i < rdata.length; i++) {
+        const code = String(rdata[i][0] || '').trim();
+        if (code) {
+          reorderMap[code] = {
+            reorderPoint:     parseFloat(rdata[i][1]) || 0,
+            reorderUpdatedAt: cellToStr(rdata[i][2], 'yyyy/MM/dd')
+          };
+        }
+      }
+      products.forEach(p => {
+        if (p.code && reorderMap[p.code]) {
+          p.reorderPoint     = reorderMap[p.code].reorderPoint;
+          p.reorderUpdatedAt = reorderMap[p.code].reorderUpdatedAt;
+        }
+      });
+    }
+  } catch(e) {
+    Logger.log('発注点マスター読込エラー（無視）: ' + e);
   }
 
   const updatedAt = PropertiesService.getScriptProperties().getProperty('PM_UPDATED_AT') || '';
   return { success: true, products, updatedAt };
+}
+
+// ============================================================
+// POST: 発注点マスター更新（Pythonスクリプトからの自動実行用）
+// APIキー認証のみ（セッション不要）
+// リクエスト: { action: 'updateReorderPoints', api_key: '...', products: [{code, reorderPoint, updatedAt}] }
+// レスポンス: { success: true, count: N }
+// ============================================================
+function updateReorderPoints(products) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  let sh = ss.getSheetByName(SHEET_REORDER);
+  if (!sh) sh = ss.insertSheet(SHEET_REORDER);
+
+  sh.clearContents();
+  sh.getRange(1, 1, 1, 3).setValues([['商品コード', '月平均出荷数', '更新日時']]);
+
+  if (!products || products.length === 0) {
+    return { success: true, count: 0 };
+  }
+
+  const rows = products.map(p => [
+    String(p.code       || '').trim(),
+    parseFloat(p.reorderPoint) || 0,
+    String(p.updatedAt  || '')
+  ]);
+  sh.getRange(2, 1, rows.length, 3).setValues(rows);
+
+  Logger.log('✅ 発注点マスター更新完了: ' + rows.length + '件');
+  return { success: true, count: rows.length };
 }
 
 // ============================================================
@@ -721,8 +796,9 @@ function initializeSheets() {
     return sh;
   }
 
-  ensureSheet(SHEET_HISTORY, ['発注No','発注日','発注先コード','発注先名','FAX番号','担当者','品目数','出力方法','登録日時','user_id']);
-  ensureSheet(SHEET_ITEMS,   ['発注No','JANコード','Beaufieldコード','商品名','数量','単位','備考','手書きフラグ','登録日時']);
+  ensureSheet(SHEET_HISTORY,  ['発注No','発注日','発注先コード','発注先名','FAX番号','担当者','品目数','出力方法','登録日時','user_id']);
+  ensureSheet(SHEET_ITEMS,    ['発注No','JANコード','Beaufieldコード','商品名','数量','単位','備考','手書きフラグ','登録日時']);
+  ensureSheet(SHEET_REORDER,  ['商品コード','月平均出荷数','更新日時']);
 
   const suppSh = ensureSheet(SHEET_SUPPLIERS, ['コード','名称','FAX','更新日時','発注方法']);
   if (suppSh.getLastRow() <= 1) {
