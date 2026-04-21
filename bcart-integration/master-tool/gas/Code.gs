@@ -1,7 +1,7 @@
 // BCARTマスター管理ツール - バックエンド
-// Version: v1.3.0
+// Version: v1.5.0
 
-const VERSION = 'v1.3.1';
+const VERSION = 'v1.5.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -12,9 +12,12 @@ const CSV_FILENAME = '商品.CSV';
 const AUTH_GAS_URL = 'https://script.google.com/macros/s/AKfycbzNVW7AaPUTuwneE-M40DTN1clO5VT2yLCHq7cjYvaHqfMfXgVi38UAOsDZQbmmN3wOzw/exec';
 
 // シート名
-const SHEET_IGNORE  = '対応不要';
-const SHEET_WIP     = '作業中';
-const SHEET_HISTORY = '更新履歴';
+const SHEET_IGNORE      = '対応不要';
+const SHEET_WIP         = '作業中';
+const SHEET_HISTORY     = '更新履歴';
+const SHEET_SP_GROUPS   = '特別価格_顧客グループ';
+const SHEET_SP_SERIES   = '特別価格_シリーズ';
+const SHEET_SP_SETTINGS = '特別価格_設定';
 
 // ===================== エントリポイント =====================
 function doPost(e) {
@@ -34,31 +37,46 @@ function doPost(e) {
     params._userName = userName;
 
     switch (action) {
-      case 'getVersion':      return jsonResponse({ ok: true, version: VERSION });
-      case 'loadData':        return jsonResponse(loadData());
-      case 'updatePrice':     return jsonResponse(updatePrice(params));
-      case 'updateJodai':     return jsonResponse(updateJodai(params));
-      case 'updateJan':       return jsonResponse(updateJan(params));
-      case 'updateAll':       return jsonResponse(updateAll(params));
-      case 'hideProductSet':  return jsonResponse(hideProductSet(params));
-      case 'setStock':        return jsonResponse(setStock(params));
-      case 'markIgnore':      return jsonResponse(markIgnore(params));
-      case 'unmarkIgnore':    return jsonResponse(unmarkIgnore(params));
-      case 'getIgnoreList':   return jsonResponse(getIgnoreList());
-      case 'markWip':         return jsonResponse(markWip(params));
-      case 'unmarkWip':       return jsonResponse(unmarkWip(params));
-      case 'bulkUpdate':      return jsonResponse(bulkUpdate(params));
-      case 'bulkIgnore':      return jsonResponse(bulkIgnore(params));
-      case 'bulkMarkWip':     return jsonResponse(bulkMarkWip(params));
-      case 'searchProducts':  return jsonResponse(searchProducts(params));
-      case 'getSpecials':     return jsonResponse(getSpecials());
-      case 'updateProduct':   return jsonResponse(updateProductAction(params));
-      case 'deleteProduct':   return jsonResponse(deleteProduct(params));
-      case 'getHistory':      return jsonResponse(getHistory());
-      case 'debugData':       return jsonResponse(debugData());
-      case 'debugCode':       return jsonResponse(debugCode(params));
-      case 'debugProduct':    return jsonResponse(debugProduct());
-      default:                return jsonResponse({ ok: false, error: 'UNKNOWN_ACTION' });
+      case 'getVersion':           return jsonResponse({ ok: true, version: VERSION });
+      case 'loadData':             return jsonResponse(loadData());
+      case 'updatePrice':          return jsonResponse(updatePrice(params));
+      case 'updateJodai':          return jsonResponse(updateJodai(params));
+      case 'updateJan':            return jsonResponse(updateJan(params));
+      case 'updateAll':            return jsonResponse(updateAll(params));
+      case 'hideProductSet':       return jsonResponse(hideProductSet(params));
+      case 'setStock':             return jsonResponse(setStock(params));
+      case 'markIgnore':           return jsonResponse(markIgnore(params));
+      case 'unmarkIgnore':         return jsonResponse(unmarkIgnore(params));
+      case 'getIgnoreList':        return jsonResponse(getIgnoreList());
+      case 'markWip':              return jsonResponse(markWip(params));
+      case 'unmarkWip':            return jsonResponse(unmarkWip(params));
+      case 'bulkUpdate':           return jsonResponse(bulkUpdate(params));
+      case 'bulkIgnore':           return jsonResponse(bulkIgnore(params));
+      case 'bulkMarkWip':          return jsonResponse(bulkMarkWip(params));
+      case 'searchProducts':       return jsonResponse(searchProducts(params));
+      case 'getSpecials':          return jsonResponse(getSpecials());
+      case 'updateProduct':        return jsonResponse(updateProductAction(params));
+      case 'deleteProduct':        return jsonResponse(deleteProduct(params));
+      case 'getHistory':           return jsonResponse(getHistory());
+      case 'debugData':            return jsonResponse(debugData());
+      case 'debugCode':            return jsonResponse(debugCode(params));
+      case 'debugProduct':         return jsonResponse(debugProduct());
+      // 機能A: 新規登録
+      case 'getCategories':        return jsonResponse(getCategories());
+      case 'getFeatures':          return jsonResponse(getSpecials());
+      case 'registerProduct':      return jsonResponse(registerProduct(params));
+      // 機能B: 特別価格管理
+      case 'getSpecialPriceData':  return jsonResponse(getSpecialPriceData());
+      case 'saveCustomerGroup':    return jsonResponse(saveCustomerGroup(params));
+      case 'deleteCustomerGroup':  return jsonResponse(deleteCustomerGroup(params));
+      case 'saveSpecialSeries':    return jsonResponse(saveSpecialSeries(params));
+      case 'updateSeriesProducts': return jsonResponse(updateSeriesProducts(params));
+      case 'deleteSpecialSeries':  return jsonResponse(deleteSpecialSeries(params));
+      case 'savePriceSetting':     return jsonResponse(savePriceSetting(params));
+      case 'deletePriceSetting':   return jsonResponse(deletePriceSetting(params));
+      case 'getBcartSpecialPrices':return jsonResponse(getBcartSpecialPrices(params));
+      case 'applySpecialPrices':   return jsonResponse(applySpecialPrices(params));
+      default:                     return jsonResponse({ ok: false, error: 'UNKNOWN_ACTION' });
     }
   } catch (err) {
     return jsonResponse({ ok: false, error: err.message });
@@ -298,7 +316,11 @@ function calcDiffs(csvRows, bcartProducts, bcartSets, ignoreMap, wipMap) {
         code: codeKey,
         name: row['商品名'] || row['略称'] || '',
         supplier: row['仕入先名'] || '',
-        csvPrice: unregPrice,
+        csvPrice:  unregPrice,
+        csvKouri:  parseFloat(String(row['定価1'] || '').replace(/,/g, '')) || 0,
+        csvShiire: parseFloat(String(row['仕入単価'] || '').replace(/,/g, '')) || 0,
+        csvJan:    (row['JANCD'] || '').trim(),
+        csvUnit:   (row['単位名'] || '').trim(),
         stockManagement: row['在庫有無'] || '',
         isIgnored: isIgnored,
         isWip: isWip,
@@ -311,7 +333,7 @@ function calcDiffs(csvRows, bcartProducts, bcartSets, ignoreMap, wipMap) {
 
     const bcartProduct = bcartProductMap[bcartSet.product_id] || {};
     const csvPrice  = parseFloat(String(row['売上単価'] || '').replace(/,/g, '')) || 0;
-    const csvKouri  = parseFloat(String(row['定価１']   || '').replace(/,/g, '')) || 0;
+    const csvKouri  = parseFloat(String(row['定価１']   || row['定価1'] || '').replace(/,/g, '')) || 0;
     const csvShiire = parseFloat(String(row['仕入単価'] || '').replace(/,/g, '')) || 0;
     const bcartPrice = parseFloat(bcartSet.unit_price) || 0;
     const bcartJodai = parseFloat(bcartSet.jodai) || 0;
@@ -390,7 +412,7 @@ function bcartGetAll(path) {
         return { ok: false, error: 'BCART_API_ERROR: ' + res.getResponseCode() };
       }
       const parsed = JSON.parse(res.getContentText());
-      const page = parsed.data || parsed.product_sets || parsed.products || parsed.specials || parsed.product_stock || parsed;
+      const page = parsed.data || parsed.product_sets || parsed.products || parsed.specials || parsed.product_stock || parsed.categories || parsed;
       if (!Array.isArray(page) || page.length === 0) break;
       allData.push(...page);
       if (page.length < limit) break;
@@ -460,6 +482,29 @@ function bcartDelete(path) {
     const code = res.getResponseCode();
     if (code !== 200 && code !== 204) return { ok: false, error: 'BCART_API_ERROR: ' + code + ' ' + res.getContentText() };
     return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+function bcartPost(path, body) {
+  try {
+    const token = getBcartToken();
+    const res = UrlFetchApp.fetch(BCART_BASE_URL + path, {
+      method: 'post',
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      payload: JSON.stringify(body),
+      muteHttpExceptions: true
+    });
+    const code = res.getResponseCode();
+    if (code !== 200 && code !== 201) {
+      return { ok: false, error: 'BCART_API_ERROR: ' + code + ' ' + res.getContentText() };
+    }
+    return { ok: true, data: JSON.parse(res.getContentText()) };
   } catch (e) {
     return { ok: false, error: e.message };
   }
@@ -537,7 +582,6 @@ function updateAll(params) {
   return res;
 }
 
-// 廃番商品のセット単位非表示（set_flag を使用）
 function hideProductSet(params) {
   const res = bcartPatch('/product_sets/' + params.bcartSetId, { set_flag: '非表示' });
   addHistory({
@@ -763,6 +807,584 @@ function deleteProduct(params) {
   return bcartDelete('/products/' + params.productId);
 }
 
+// ===================== 機能A: 新規登録 =====================
+function getCategories() {
+  const result = bcartGetAll('/categories');
+  if (!result.ok) return result;
+  return {
+    ok: true,
+    categories: result.data.map(c => ({ id: c.id, name: c.name || String(c.id) }))
+  };
+}
+
+function registerProduct(params) {
+  const productBody = {
+    products: [{
+      name:        params.productName,
+      category_id: params.categoryId,
+      flag:        params.productFlag || '非表示',
+      feature_id1: params.featureId1 || null,
+      feature_id2: params.featureId2 || null,
+      feature_id3: params.featureId3 || null
+    }]
+  };
+
+  const step1 = bcartPost('/products', productBody);
+  if (!step1.ok) {
+    addHistory({
+      userName: params._userName,
+      code: params.code || '',
+      name: params.productName || '',
+      type: '新規登録（商品作成失敗）',
+      before: '', after: '',
+      result: '失敗: ' + step1.error
+    });
+    return step1;
+  }
+
+  const createdProductId = step1.data && step1.data.products && step1.data.products[0]
+    ? step1.data.products[0].id : null;
+  if (!createdProductId) {
+    return { ok: false, error: '商品IDが取得できませんでした（レスポンス: ' + JSON.stringify(step1.data) + '）' };
+  }
+
+  const setBody = {
+    product_sets: [{
+      product_id:  createdProductId,
+      product_no:  params.code,
+      name:        params.setName,
+      jan_code:    params.janCode || '',
+      unit_price:  params.csvPrice,
+      jodai:       params.csvKouri || 0,
+      group_price: {
+        '1':  { fixed_price: params.csvKouri || 0 },
+        '10': { fixed_price: params.csvShiire || 0 }
+      },
+      unit:        params.csvUnit || '',
+      min_order:   1,
+      stock_flag:  1,
+      tax_type_id: params.taxTypeId || 1,
+      set_flag:    params.setFlag || '非表示'
+    }]
+  };
+
+  const step2 = bcartPost('/product_sets', setBody);
+  if (!step2.ok) {
+    addHistory({
+      userName: params._userName,
+      code: params.code || '',
+      name: params.productName || '',
+      type: '新規登録（セット作成失敗・孤立商品ID: ' + createdProductId + '）',
+      before: '', after: '商品ID: ' + createdProductId,
+      result: '失敗: ' + step2.error
+    });
+    return { ok: false, error: step2.error, orphanProductId: createdProductId };
+  }
+
+  const createdSetId = step2.data && step2.data.product_sets && step2.data.product_sets[0]
+    ? step2.data.product_sets[0].id : null;
+
+  unmarkWip({ code: params.code });
+
+  addHistory({
+    userName: params._userName,
+    code: params.code || '',
+    name: params.productName || '',
+    type: '新規登録',
+    before: '',
+    after: '商品ID: ' + createdProductId + ' / セットID: ' + createdSetId,
+    result: '成功'
+  });
+
+  return { ok: true, productId: createdProductId, setId: createdSetId };
+}
+
+// ===================== 機能B: 特別価格管理 =====================
+
+function getSpecialPriceData() {
+  const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
+  const groupRows = groupSheet.getDataRange().getValues();
+  const groups = [];
+  for (let i = 1; i < groupRows.length; i++) {
+    if (groupRows[i][0]) {
+      groups.push({
+        group_id:   groupRows[i][0],
+        group_name: groupRows[i][1],
+        member_ids: groupRows[i][2],
+        created_at: String(groupRows[i][3]),
+        note:       groupRows[i][4] || ''
+      });
+    }
+  }
+
+  const seriesSheet = getOrCreateSheet(SHEET_SP_SERIES);
+  const seriesRows = seriesSheet.getDataRange().getValues();
+  const seriesList = [];
+  for (let i = 1; i < seriesRows.length; i++) {
+    if (seriesRows[i][0]) {
+      let productSetIds = [];
+      try { productSetIds = JSON.parse(seriesRows[i][4] || '[]'); } catch(e) {}
+      seriesList.push({
+        series_id:       seriesRows[i][0],
+        series_name:     seriesRows[i][1],
+        feature_id:      seriesRows[i][2],
+        feature_name:    seriesRows[i][3],
+        product_set_ids: productSetIds,
+        product_count:   seriesRows[i][5],
+        last_checked_at: String(seriesRows[i][6])
+      });
+    }
+  }
+
+  const settingsSheet = getOrCreateSheet(SHEET_SP_SETTINGS);
+  const settingsRows = settingsSheet.getDataRange().getValues();
+  const settings = [];
+  for (let i = 1; i < settingsRows.length; i++) {
+    if (settingsRows[i][0]) {
+      settings.push({
+        setting_id: settingsRows[i][0],
+        series_id:  settingsRows[i][1],
+        group_id:   settingsRows[i][2],
+        unit_price: settingsRows[i][3],
+        updated_at: String(settingsRows[i][4]),
+        note:       settingsRows[i][5] || ''
+      });
+    }
+  }
+
+  // 新規商品検知（各シリーズのproduct_set_ids数とBCART現在の数を比較）
+  const newProductAlerts = [];
+  if (seriesList.length > 0) {
+    const allSets = bcartGetAll('/product_sets');
+    const allProducts = bcartGetAll('/products');
+    if (allSets.ok && allProducts.ok) {
+      const setByProductId = {};
+      allSets.data.forEach(s => {
+        if (!setByProductId[s.product_id]) setByProductId[s.product_id] = [];
+        setByProductId[s.product_id].push(s.id);
+      });
+      seriesList.forEach(series => {
+        if (!series.feature_id) return;
+        const fid = String(series.feature_id);
+        const currentProducts = allProducts.data.filter(p =>
+          String(p.feature_id1||'') === fid ||
+          String(p.feature_id2||'') === fid ||
+          String(p.feature_id3||'') === fid
+        );
+        const currentSetIds = [];
+        currentProducts.forEach(p => {
+          (setByProductId[p.id] || []).forEach(sid => currentSetIds.push(sid));
+        });
+        if (currentSetIds.length > series.product_set_ids.length) {
+          newProductAlerts.push({
+            series_id:     series.series_id,
+            series_name:   series.series_name,
+            saved_count:   series.product_set_ids.length,
+            current_count: currentSetIds.length
+          });
+        }
+      });
+    }
+  }
+
+  return { ok: true, groups: groups, series: seriesList, settings: settings, newProductAlerts: newProductAlerts };
+}
+
+function saveCustomerGroup(params) {
+  const sheet = getOrCreateSheet(SHEET_SP_GROUPS);
+  const rows = sheet.getDataRange().getValues();
+
+  if (params.group_id) {
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i][0] === params.group_id) {
+        sheet.getRange(i + 1, 2).setValue(params.group_name);
+        sheet.getRange(i + 1, 3).setValue(params.member_ids);
+        sheet.getRange(i + 1, 5).setValue(params.note || '');
+        return { ok: true, group_id: params.group_id };
+      }
+    }
+  }
+
+  const newId = 'G' + new Date().getTime().toString(36).toUpperCase();
+  sheet.appendRow([newId, params.group_name, params.member_ids, new Date().toLocaleString('ja-JP'), params.note || '']);
+  return { ok: true, group_id: newId };
+}
+
+function deleteCustomerGroup(params) {
+  const settingsSheet = getOrCreateSheet(SHEET_SP_SETTINGS);
+  const settingsRows = settingsSheet.getDataRange().getValues();
+  const relatedSettings = [];
+  const rowsToDelete = [];
+
+  for (let i = 1; i < settingsRows.length; i++) {
+    if (settingsRows[i][2] === params.group_id) {
+      relatedSettings.push({ series_id: settingsRows[i][1] });
+      rowsToDelete.push(i + 1);
+    }
+  }
+
+  const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
+  const groupRows = groupSheet.getDataRange().getValues();
+  let memberIds = [];
+  let groupRowIdx = -1;
+  for (let i = 1; i < groupRows.length; i++) {
+    if (groupRows[i][0] === params.group_id) {
+      memberIds = String(groupRows[i][2] || '').split(',').map(s => s.trim()).filter(s => s);
+      groupRowIdx = i + 1;
+      break;
+    }
+  }
+
+  if (memberIds.length > 0 && relatedSettings.length > 0) {
+    const seriesSheet = getOrCreateSheet(SHEET_SP_SERIES);
+    const seriesRows = seriesSheet.getDataRange().getValues();
+    const allSets = bcartGetAll('/product_sets');
+
+    if (allSets.ok) {
+      relatedSettings.forEach(setting => {
+        const series = seriesRows.slice(1).find(r => r[0] === setting.series_id);
+        if (!series) return;
+        let productSetIds = [];
+        try { productSetIds = JSON.parse(series[4] || '[]'); } catch(e) {}
+
+        productSetIds.forEach(setId => {
+          const bcartSet = allSets.data.find(s => s.id == setId);
+          if (!bcartSet) return;
+          const newSp = Object.assign({}, bcartSet.special_price || {});
+          memberIds.forEach(mid => { delete newSp[String(mid)]; });
+          bcartPatch('/product_sets/' + setId, { special_price: newSp });
+          Utilities.sleep(100);
+        });
+      });
+    }
+  }
+
+  rowsToDelete.sort((a, b) => b - a).forEach(rowIdx => settingsSheet.deleteRow(rowIdx));
+  if (groupRowIdx > 0) groupSheet.deleteRow(groupRowIdx);
+
+  addHistory({
+    userName: params._userName,
+    code: '', name: params.group_id,
+    type: '顧客グループ削除', before: '', after: '', result: '成功'
+  });
+  return { ok: true };
+}
+
+function saveSpecialSeries(params) {
+  const fid = String(params.feature_id);
+  const allProducts = bcartGetAll('/products');
+  const allSets = bcartGetAll('/product_sets');
+  if (!allProducts.ok) return allProducts;
+  if (!allSets.ok) return allSets;
+
+  const setByProductId = {};
+  allSets.data.forEach(s => {
+    if (!setByProductId[s.product_id]) setByProductId[s.product_id] = [];
+    setByProductId[s.product_id].push(s.id);
+  });
+
+  const matchedProducts = allProducts.data.filter(p =>
+    String(p.feature_id1||'') === fid ||
+    String(p.feature_id2||'') === fid ||
+    String(p.feature_id3||'') === fid
+  );
+
+  const productSetIds = [];
+  matchedProducts.forEach(p => {
+    (setByProductId[p.id] || []).forEach(sid => productSetIds.push(sid));
+  });
+
+  const sheet = getOrCreateSheet(SHEET_SP_SERIES);
+  const rows = sheet.getDataRange().getValues();
+  const now = new Date().toLocaleString('ja-JP');
+
+  if (params.series_id) {
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i][0] === params.series_id) {
+        sheet.getRange(i + 1, 2).setValue(params.series_name);
+        sheet.getRange(i + 1, 3).setValue(params.feature_id);
+        sheet.getRange(i + 1, 4).setValue(params.feature_name || ('特集 ' + fid));
+        sheet.getRange(i + 1, 5).setValue(JSON.stringify(productSetIds));
+        sheet.getRange(i + 1, 6).setValue(productSetIds.length);
+        sheet.getRange(i + 1, 7).setValue(now);
+        return { ok: true, series_id: params.series_id, product_count: productSetIds.length };
+      }
+    }
+  }
+
+  const newId = 'S' + new Date().getTime().toString(36).toUpperCase();
+  sheet.appendRow([newId, params.series_name, params.feature_id, params.feature_name || ('特集 ' + fid), JSON.stringify(productSetIds), productSetIds.length, now]);
+  return { ok: true, series_id: newId, product_count: productSetIds.length };
+}
+
+function updateSeriesProducts(params) {
+  const sheet = getOrCreateSheet(SHEET_SP_SERIES);
+  const rows = sheet.getDataRange().getValues();
+
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] === params.series_id) {
+      const fid = String(rows[i][2]);
+      const allProducts = bcartGetAll('/products');
+      const allSets = bcartGetAll('/product_sets');
+      if (!allProducts.ok) return allProducts;
+      if (!allSets.ok) return allSets;
+
+      const setByProductId = {};
+      allSets.data.forEach(s => {
+        if (!setByProductId[s.product_id]) setByProductId[s.product_id] = [];
+        setByProductId[s.product_id].push(s.id);
+      });
+
+      const matchedProducts = allProducts.data.filter(p =>
+        String(p.feature_id1||'') === fid ||
+        String(p.feature_id2||'') === fid ||
+        String(p.feature_id3||'') === fid
+      );
+
+      const productSetIds = [];
+      matchedProducts.forEach(p => {
+        (setByProductId[p.id] || []).forEach(sid => productSetIds.push(sid));
+      });
+
+      const now = new Date().toLocaleString('ja-JP');
+      sheet.getRange(i + 1, 5).setValue(JSON.stringify(productSetIds));
+      sheet.getRange(i + 1, 6).setValue(productSetIds.length);
+      sheet.getRange(i + 1, 7).setValue(now);
+      return { ok: true, product_count: productSetIds.length };
+    }
+  }
+  return { ok: false, error: 'シリーズが見つかりません' };
+}
+
+function deleteSpecialSeries(params) {
+  const settingsSheet = getOrCreateSheet(SHEET_SP_SETTINGS);
+  const settingsRows = settingsSheet.getDataRange().getValues();
+  const rowsToDelete = [];
+  for (let i = 1; i < settingsRows.length; i++) {
+    if (settingsRows[i][1] === params.series_id) rowsToDelete.push(i + 1);
+  }
+  rowsToDelete.sort((a, b) => b - a).forEach(rowIdx => settingsSheet.deleteRow(rowIdx));
+
+  const seriesSheet = getOrCreateSheet(SHEET_SP_SERIES);
+  const seriesRows = seriesSheet.getDataRange().getValues();
+  for (let i = 1; i < seriesRows.length; i++) {
+    if (seriesRows[i][0] === params.series_id) {
+      seriesSheet.deleteRow(i + 1);
+      return { ok: true };
+    }
+  }
+  return { ok: true };
+}
+
+function savePriceSetting(params) {
+  const sheet = getOrCreateSheet(SHEET_SP_SETTINGS);
+  const rows = sheet.getDataRange().getValues();
+  const now = new Date().toLocaleString('ja-JP');
+
+  if (params.setting_id) {
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i][0] === params.setting_id) {
+        sheet.getRange(i + 1, 2).setValue(params.series_id);
+        sheet.getRange(i + 1, 3).setValue(params.group_id);
+        sheet.getRange(i + 1, 4).setValue(params.unit_price);
+        sheet.getRange(i + 1, 5).setValue(now);
+        sheet.getRange(i + 1, 6).setValue(params.note || '');
+        return { ok: true, setting_id: params.setting_id };
+      }
+    }
+  }
+
+  const newId = 'P' + new Date().getTime().toString(36).toUpperCase();
+  sheet.appendRow([newId, params.series_id, params.group_id, params.unit_price, now, params.note || '']);
+  return { ok: true, setting_id: newId };
+}
+
+function deletePriceSetting(params) {
+  const settingsSheet = getOrCreateSheet(SHEET_SP_SETTINGS);
+  const settingsRows = settingsSheet.getDataRange().getValues();
+  let setting = null;
+  let settingRowIdx = -1;
+
+  for (let i = 1; i < settingsRows.length; i++) {
+    if (settingsRows[i][0] === params.setting_id) {
+      setting = { series_id: settingsRows[i][1], group_id: settingsRows[i][2] };
+      settingRowIdx = i + 1;
+      break;
+    }
+  }
+  if (!setting) return { ok: false, error: '設定が見つかりません' };
+
+  const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
+  const groupRows = groupSheet.getDataRange().getValues();
+  let memberIds = [];
+  for (let i = 1; i < groupRows.length; i++) {
+    if (groupRows[i][0] === setting.group_id) {
+      memberIds = String(groupRows[i][2] || '').split(',').map(s => s.trim()).filter(s => s);
+      break;
+    }
+  }
+
+  const seriesSheet = getOrCreateSheet(SHEET_SP_SERIES);
+  const seriesRows = seriesSheet.getDataRange().getValues();
+  let productSetIds = [];
+  for (let i = 1; i < seriesRows.length; i++) {
+    if (seriesRows[i][0] === setting.series_id) {
+      try { productSetIds = JSON.parse(seriesRows[i][4] || '[]'); } catch(e) {}
+      break;
+    }
+  }
+
+  if (memberIds.length > 0 && productSetIds.length > 0) {
+    const allSets = bcartGetAll('/product_sets');
+    if (allSets.ok) {
+      productSetIds.forEach(setId => {
+        const bcartSet = allSets.data.find(s => s.id == setId);
+        if (!bcartSet) return;
+        const newSp = Object.assign({}, bcartSet.special_price || {});
+        memberIds.forEach(mid => { delete newSp[String(mid)]; });
+        bcartPatch('/product_sets/' + setId, { special_price: newSp });
+        Utilities.sleep(100);
+      });
+    }
+  }
+
+  settingsSheet.deleteRow(settingRowIdx);
+
+  addHistory({
+    userName: params._userName,
+    code: '', name: params.setting_id,
+    type: '特別価格設定削除', before: '', after: '', result: '成功'
+  });
+  return { ok: true };
+}
+
+function getBcartSpecialPrices(params) {
+  const seriesSheet = getOrCreateSheet(SHEET_SP_SERIES);
+  const seriesRows = seriesSheet.getDataRange().getValues();
+  let productSetIds = [];
+
+  for (let i = 1; i < seriesRows.length; i++) {
+    if (seriesRows[i][0] === params.series_id) {
+      try { productSetIds = JSON.parse(seriesRows[i][4] || '[]'); } catch(e) {}
+      break;
+    }
+  }
+  if (productSetIds.length === 0) return { ok: true, items: [] };
+
+  const allSets = bcartGetAll('/product_sets');
+  if (!allSets.ok) return allSets;
+
+  const items = productSetIds.map(setId => {
+    const bcartSet = allSets.data.find(s => s.id == setId);
+    return {
+      set_id:       setId,
+      product_no:   bcartSet ? bcartSet.product_no : '???',
+      name:         bcartSet ? bcartSet.name : '???',
+      unit_price:   bcartSet ? bcartSet.unit_price : 0,
+      special_price: bcartSet ? (bcartSet.special_price || {}) : {}
+    };
+  });
+
+  return { ok: true, items: items };
+}
+
+function applySpecialPrices(params) {
+  const settingsSheet = getOrCreateSheet(SHEET_SP_SETTINGS);
+  const settingsRows = settingsSheet.getDataRange().getValues();
+
+  let targets = [];
+  if (params.setting_id) {
+    for (let i = 1; i < settingsRows.length; i++) {
+      if (settingsRows[i][0] === params.setting_id) {
+        targets.push({
+          setting_id: settingsRows[i][0],
+          series_id:  settingsRows[i][1],
+          group_id:   settingsRows[i][2],
+          unit_price: parseFloat(settingsRows[i][3]) || 0
+        });
+        break;
+      }
+    }
+  } else if (params.apply_all) {
+    for (let i = 1; i < settingsRows.length; i++) {
+      if (settingsRows[i][0]) {
+        targets.push({
+          setting_id: settingsRows[i][0],
+          series_id:  settingsRows[i][1],
+          group_id:   settingsRows[i][2],
+          unit_price: parseFloat(settingsRows[i][3]) || 0
+        });
+      }
+    }
+  }
+
+  if (targets.length === 0) return { ok: false, error: '対象の設定が見つかりません' };
+
+  const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
+  const groupRows = groupSheet.getDataRange().getValues();
+  const groupMap = {};
+  for (let i = 1; i < groupRows.length; i++) {
+    if (groupRows[i][0]) {
+      groupMap[groupRows[i][0]] = String(groupRows[i][2] || '').split(',').map(s => s.trim()).filter(s => s);
+    }
+  }
+
+  const seriesSheet = getOrCreateSheet(SHEET_SP_SERIES);
+  const seriesRows = seriesSheet.getDataRange().getValues();
+  const seriesMap = {};
+  for (let i = 1; i < seriesRows.length; i++) {
+    if (seriesRows[i][0]) {
+      let ids = [];
+      try { ids = JSON.parse(seriesRows[i][4] || '[]'); } catch(e) {}
+      seriesMap[seriesRows[i][0]] = ids;
+    }
+  }
+
+  const allSets = bcartGetAll('/product_sets');
+  if (!allSets.ok) return allSets;
+
+  const setMap = {};
+  allSets.data.forEach(s => { setMap[s.id] = s; });
+
+  let successCount = 0, failCount = 0;
+  const errors = [];
+
+  targets.forEach(target => {
+    const memberIds    = groupMap[target.group_id] || [];
+    const productSetIds = seriesMap[target.series_id] || [];
+    if (memberIds.length === 0 || productSetIds.length === 0) return;
+
+    productSetIds.forEach(setId => {
+      const bcartSet = setMap[setId];
+      if (!bcartSet) return;
+
+      const newSp = Object.assign({}, bcartSet.special_price || {});
+      memberIds.forEach(mid => { newSp[String(mid)] = { unit_price: target.unit_price }; });
+
+      const res = bcartPatch('/product_sets/' + setId, { special_price: newSp });
+      if (res.ok) {
+        successCount++;
+        setMap[setId] = Object.assign({}, bcartSet, { special_price: newSp });
+      } else {
+        failCount++;
+        errors.push('setId ' + setId + ': ' + res.error);
+      }
+      Utilities.sleep(150);
+    });
+  });
+
+  addHistory({
+    userName: params._userName,
+    code: '', name: params.setting_id || '一括適用',
+    type: '特別価格適用',
+    before: '',
+    after: '成功: ' + successCount + '件 / 失敗: ' + failCount + '件',
+    result: failCount > 0 ? '一部失敗' : '成功'
+  });
+
+  return { ok: true, successCount: successCount, failCount: failCount, errors: errors };
+}
+
 // ===================== 更新履歴 =====================
 function addHistory(entry) {
   try {
@@ -789,21 +1411,21 @@ function getHistory() {
   for (let i = rows.length - 1; i >= 1 && list.length < 200; i--) {
     if (rows[i][0]) {
       list.push({
-        date: String(rows[i][0]),
+        date:     String(rows[i][0]),
         userName: rows[i][1],
-        code: rows[i][2],
-        name: rows[i][3],
-        type: rows[i][4],
-        before: rows[i][5],
-        after: rows[i][6],
-        result: rows[i][7]
+        code:     rows[i][2],
+        name:     rows[i][3],
+        type:     rows[i][4],
+        before:   rows[i][5],
+        after:    rows[i][6],
+        result:   rows[i][7]
       });
     }
   }
   return { ok: true, list: list };
 }
 
-// ===================== 対応不要・作業中・履歴シート管理 =====================
+// ===================== 対応不要・作業中・特別価格シート管理 =====================
 function getOrCreateSheet(sheetName) {
   const props = PropertiesService.getScriptProperties();
   let ssId = props.getProperty('MASTER_TOOL_SS_ID');
@@ -827,6 +1449,18 @@ function getOrCreateSheet(sheetName) {
       sheet.appendRow(['日時', '操作者', '商品コード', '商品名', '操作種別', '変更前', '変更後', '結果']);
       sheet.setFrozenRows(1);
       sheet.getRange(1, 1, 1, 8).setFontWeight('bold').setBackground('#f3f4f6');
+    } else if (sheetName === SHEET_SP_GROUPS) {
+      sheet.appendRow(['group_id', 'group_name', 'member_ids', 'created_at', 'note']);
+      sheet.setFrozenRows(1);
+      sheet.getRange(1, 1, 1, 5).setFontWeight('bold').setBackground('#f3f4f6');
+    } else if (sheetName === SHEET_SP_SERIES) {
+      sheet.appendRow(['series_id', 'series_name', 'feature_id', 'feature_name', 'product_set_ids', 'product_count', 'last_checked_at']);
+      sheet.setFrozenRows(1);
+      sheet.getRange(1, 1, 1, 7).setFontWeight('bold').setBackground('#f3f4f6');
+    } else if (sheetName === SHEET_SP_SETTINGS) {
+      sheet.appendRow(['setting_id', 'series_id', 'group_id', 'unit_price', 'updated_at', 'note']);
+      sheet.setFrozenRows(1);
+      sheet.getRange(1, 1, 1, 6).setFontWeight('bold').setBackground('#f3f4f6');
     }
   } else if (sheetName === SHEET_IGNORE) {
     const lastCol = sheet.getLastColumn();
@@ -891,11 +1525,11 @@ function getIgnoreList() {
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][0]) {
       list.push({
-        code: rows[i][0],
-        name: rows[i][1],
-        reason: rows[i][2],
+        code:         rows[i][0],
+        name:         rows[i][1],
+        reason:       rows[i][2],
         registeredAt: rows[i][3],
-        supplier: lastCol >= 5 ? (rows[i][4] || '') : ''
+        supplier:     lastCol >= 5 ? (rows[i][4] || '') : ''
       });
     }
   }
