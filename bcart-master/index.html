@@ -72,8 +72,8 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 
 /* BCARTリンク */
 .bcart-ids { font-size: 11px; color: #9ca3af; display: flex; gap: 14px; flex-wrap: wrap; }
-.bcart-ids a { color: #1a56db; text-decoration: none; }
-.bcart-ids a:hover { text-decoration: underline; }
+.bcart-ids a { color: #1a56db; text-decoration: underline; }
+.bcart-ids a:hover { opacity: 0.75; }
 
 /* 一括操作バー */
 .bulk-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
@@ -193,7 +193,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
       <div id="csvWarn" class="warn-bar" style="display:none;"></div>
 
       <div class="summary-bar">
-        <div class="summary-item" id="card-price" onclick="setFilterByType('price')"><div class="label">💰 価格差異</div><div class="value value-price" id="cnt-price">-</div></div>
+        <div class="summary-item" id="card-price" onclick="setFilterByType('price')"><div class="label">💰 価格・上代差異</div><div class="value value-price" id="cnt-price">-</div></div>
         <div class="summary-item" id="card-disc"  onclick="setFilterByType('discontinued')"><div class="label">🚫 廃番未処理</div><div class="value value-disc" id="cnt-disc">-</div></div>
         <div class="summary-item" id="card-unreg" onclick="setFilterByType('unregistered')"><div class="label">❌ 未登録</div><div class="value value-unreg" id="cnt-unreg">-</div></div>
         <div class="summary-item" id="card-ignore" onclick="setFilterByType('ignored')"><div class="label">📋 対応不要</div><div class="value" id="cnt-ignore">-</div></div>
@@ -202,9 +202,11 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
       <div class="filter-bar">
         <span style="font-size:13px;color:#6b7280;">絞り込み:</span>
         <button class="filter-btn type-filter-btn active" data-filter="all"         onclick="setFilter('all',this)">すべて</button>
-        <button class="filter-btn type-filter-btn"        data-filter="price"        onclick="setFilter('price',this)">💰 価格差異</button>
+        <button class="filter-btn type-filter-btn"        data-filter="price"        onclick="setFilter('price',this)">💰 価格・上代</button>
+        <button class="filter-btn type-filter-btn"        data-filter="jan"          onclick="setFilter('jan',this)">🔖 JAN差異</button>
         <button class="filter-btn type-filter-btn"        data-filter="discontinued" onclick="setFilter('discontinued',this)">🚫 廃番</button>
         <button class="filter-btn type-filter-btn"        data-filter="unregistered" onclick="setFilter('unregistered',this)">❌ 未登録</button>
+        <button class="filter-btn type-filter-btn"        data-filter="wip"          onclick="setFilter('wip',this)">✏️ 作業中</button>
         <button class="filter-btn type-filter-btn"        data-filter="ignored"      onclick="setFilter('ignored',this)">対応不要も表示</button>
         <div style="margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
           <button class="btn btn-primary btn-sm" onclick="loadData()">🔄 再読み込み</button>
@@ -458,7 +460,7 @@ function loadData() {
 
 function updateSummary() {
   const active = allDiffs.filter(d => !d.isIgnored);
-  document.getElementById('cnt-price').textContent = active.filter(d => d.issues && d.issues.some(i => i.type === 'price')).length;
+  document.getElementById('cnt-price').textContent = active.filter(d => d.issues && d.issues.some(i => i.type === 'price' || i.type === 'jodai')).length;
   document.getElementById('cnt-disc').textContent  = active.filter(d => d.issues && d.issues.some(i => i.type === 'discontinued')).length;
   document.getElementById('cnt-unreg').textContent = active.filter(d => d.type === 'unregistered').length;
   document.getElementById('cnt-ignore').textContent = allDiffs.filter(d => d.isIgnored).length;
@@ -522,9 +524,11 @@ function buildSupplierFilter() {
     if (!applyStockFilter(d)) return false;
     if (d.isIgnored && currentFilter !== 'ignored') return false;
     if (currentFilter === 'all' || currentFilter === 'ignored') return true;
-    if (currentFilter === 'price') return d.issues && d.issues.some(i => i.type === 'price');
+    if (currentFilter === 'price') return d.issues && d.issues.some(i => i.type === 'price' || i.type === 'jodai');
+    if (currentFilter === 'jan') return d.issues && d.issues.some(i => i.type === 'jan');
     if (currentFilter === 'discontinued') return d.issues && d.issues.some(i => i.type === 'discontinued');
     if (currentFilter === 'unregistered') return d.type === 'unregistered';
+    if (currentFilter === 'wip') return d.isWip;
     return true;
   });
   const suppliers = [...new Set(typeFiltered.map(d => d.supplier).filter(s => s))].sort();
@@ -543,9 +547,11 @@ function getFilteredDiffs() {
     if (d.isIgnored && currentFilter !== 'ignored') return false;
     if (currentSupplier && d.supplier !== currentSupplier) return false;
     if (currentFilter === 'all' || currentFilter === 'ignored') return true;
-    if (currentFilter === 'price') return d.issues && d.issues.some(i => i.type === 'price');
+    if (currentFilter === 'price') return d.issues && d.issues.some(i => i.type === 'price' || i.type === 'jodai');
+    if (currentFilter === 'jan') return d.issues && d.issues.some(i => i.type === 'jan');
     if (currentFilter === 'discontinued') return d.issues && d.issues.some(i => i.type === 'discontinued');
     if (currentFilter === 'unregistered') return d.type === 'unregistered';
+    if (currentFilter === 'wip') return d.isWip;
     return true;
   });
 }
@@ -685,7 +691,7 @@ function updateBulkBtn() {
   const allBtn   = document.getElementById('bulkAllBtn');
   const wipBtn   = document.getElementById('bulkWipBtn');
 
-  if (currentFilter === 'unregistered') {
+  if (currentFilter === 'unregistered' || currentFilter === 'wip') {
     priceBtn.style.display = 'none';
     jodaiBtn.style.display = 'none';
     allBtn.style.display   = 'none';
@@ -872,7 +878,7 @@ function updateAll(bcartSetId, code, price, jodai, janCode, csvKouri, csvShiire)
 }
 
 function hideProductSet(bcartSetId, code, name) {
-  if (!confirm(code + ' のセットをBCARTで非表示にしますか？')) return;
+  if (!confirm('BCARTのセットID ' + bcartSetId + ' を非表示にしますか？\n（商品コード: ' + code + '　' + name + '）')) return;
   gasPost({ action: 'hideProductSet', bcartSetId: bcartSetId, code: code, name: name || '' }, function(res) {
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
     showToast('非表示にしました');
