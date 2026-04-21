@@ -516,13 +516,12 @@
     .empty-icon  { font-size: 44px; margin-bottom: 8px; }
 
     .version-label {
-      position: fixed;
-      bottom: 62px;
-      right: 8px;
-      font-size: 10px;
-      color: rgba(0,0,0,0.22);
+      position: absolute;
+      bottom: 2px;
+      right: 4px;
+      font-size: 9px;
+      color: rgba(255,255,255,0.35);
       pointer-events: none;
-      z-index: 50;
     }
 
     #pdf-wrap { position: fixed; left: -9999px; top: 0; z-index: -1; }
@@ -823,9 +822,8 @@
   <div class="nav-item" id="nav-settings" onclick="switchScreen('settings')">
     <span class="nav-icon">⚙️</span><span>設定</span>
   </div>
+  <div class="version-label" id="version-label">v1.21.6</div>
 </nav>
-
-<div class="version-label" id="version-label">v1.21.5</div>
 
 <!-- ==============================
      モーダル: 数量入力
