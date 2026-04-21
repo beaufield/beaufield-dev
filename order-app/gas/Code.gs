@@ -15,7 +15,7 @@
 const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
-const VERSION         = 'v1.8.0';
+const VERSION         = 'v1.8.1';
 
 // Google Drive上の商品マスターCSVファイル名
 // ※ 同名ファイルが複数ある場合はファイルIDで指定（下記コメント参照）
@@ -253,6 +253,7 @@ function getProductMaster() {
     unit:            findColIdxGAS(headers, '単位名'),
     supplierCD:      findColIdxGAS(headers, '仕入先CD'),
     supplierName:    findColIdxGAS(headers, '仕入先名'),
+    makerCode:       findColIdxGAS(headers, '相手商品CD'),
     jan:             findColIdxGAS(headers, 'JANCD'),
     purchasePrice:   findColIdxGAS(headers, '仕入単価'),
     discontinued:    findColIdxGAS(headers, '廃番'),
@@ -273,6 +274,7 @@ function getProductMaster() {
       unit:            colMap.unit !== -1            ? String(r[colMap.unit]            || '').trim()                                        : '',
       supplierCD:      colMap.supplierCD !== -1      ? String(r[colMap.supplierCD]      || '').trim()                                        : '',
       supplierName:    colMap.supplierName !== -1    ? String(r[colMap.supplierName]    || '').trim()                                        : '',
+      makerCode:       colMap.makerCode !== -1       ? String(r[colMap.makerCode]       || '').trim()                                        : '',
       jan:             colMap.jan !== -1             ? String(r[colMap.jan]             || '').trim()                                        : '',
       purchasePrice:   colMap.purchasePrice !== -1   ? (parseFloat(String(r[colMap.purchasePrice] || '0').replace(/,/g, '')) || 0)          : 0,
       discontinued:    colMap.discontinued !== -1    ? String(r[colMap.discontinued]    || '').trim()                                        : '',
