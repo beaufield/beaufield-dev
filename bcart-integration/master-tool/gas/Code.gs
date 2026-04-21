@@ -1,7 +1,7 @@
 // BCARTマスター管理ツール - バックエンド
 // Version: v1.3.0
 
-const VERSION = 'v1.3.0';
+const VERSION = 'v1.3.1';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -85,7 +85,8 @@ function validateSession(session) {
       muteHttpExceptions: true
     });
     const data = JSON.parse(res.getContentText());
-    return data.ok ? { ok: true, user: data.user } : { ok: false };
+    if (!data.ok) return { ok: false };
+    return { ok: true, user: { user_id: data.user_id, name: data.name || data.user_id || '不明' } };
   } catch (e) {
     return { ok: false };
   }
