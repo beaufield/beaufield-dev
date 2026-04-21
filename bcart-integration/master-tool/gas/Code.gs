@@ -1,7 +1,7 @@
 // BCARTマスター管理ツール - バックエンド
-// Version: v1.5.0
+// Version: v1.6.0
 
-const VERSION = 'v1.5.4';
+const VERSION = 'v1.6.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -16,8 +16,7 @@ const SHEET_IGNORE      = '対応不要';
 const SHEET_WIP         = '作業中';
 const SHEET_HISTORY     = '更新履歴';
 const SHEET_SP_GROUPS   = '特別価格_顧客グループ';
-const SHEET_SP_SERIES   = '特別価格_シリーズ';
-const SHEET_SP_SETTINGS = '特別価格_設定';
+const SHEET_SP_DETAILS  = '特別価格_明細';
 
 // ===================== エントリポイント =====================
 function doPost(e) {
@@ -66,18 +65,12 @@ function doPost(e) {
       case 'getFeatures':          return jsonResponse(getSpecials());
       case 'registerProduct':      return jsonResponse(registerProduct(params));
       // 機能B: 特別価格管理
-      case 'getSpecialPriceData':  return jsonResponse(getSpecialPriceData());
-      case 'saveCustomerGroup':    return jsonResponse(saveCustomerGroup(params));
-      case 'deleteCustomerGroup':  return jsonResponse(deleteCustomerGroup(params));
-      case 'saveSpecialSeries':    return jsonResponse(saveSpecialSeries(params));
-      case 'updateSeriesProducts': return jsonResponse(updateSeriesProducts(params));
-      case 'deleteSpecialSeries':  return jsonResponse(deleteSpecialSeries(params));
-      case 'savePriceSetting':     return jsonResponse(savePriceSetting(params));
-      case 'deletePriceSetting':   return jsonResponse(deletePriceSetting(params));
-      case 'getBcartSpecialPrices':    return jsonResponse(getBcartSpecialPrices(params));
-      case 'applySpecialPrices':       return jsonResponse(applySpecialPrices(params));
-      case 'getProductSetsByFeature':  return jsonResponse(getProductSetsByFeature(params));
-      case 'debugSpecials':            return jsonResponse(debugSpecials());
+      case 'getSpecialPriceData':      return jsonResponse(getSpecialPriceData());
+      case 'saveCustomerGroup':        return jsonResponse(saveCustomerGroup(params));
+      case 'deleteCustomerGroup':      return jsonResponse(deleteCustomerGroup(params));
+      case 'getProductSetsForFeature': return jsonResponse(getProductSetsForFeature(params));
+      case 'applyGroupPrices':         return jsonResponse(applyGroupPrices(params));
+      case 'deleteSpecialPriceDetail': return jsonResponse(deleteSpecialPriceDetail(params));
       default:                         return jsonResponse({ ok: false, error: 'UNKNOWN_ACTION' });
     }
   } catch (err) {
@@ -475,14 +468,11 @@ function bcartDelete(path) {
     const token = getBcartToken();
     const res = UrlFetchApp.fetch(BCART_BASE_URL + path, {
       method: 'delete',
-      headers: {
-        'Authorization': 'Bearer ' + token,
-        'Accept': 'application/json'
-      },
+      headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
       muteHttpExceptions: true
     });
     const code = res.getResponseCode();
-    if (code !== 200 && code !== 204) return { ok: false, error: 'BCART_API_ERROR: ' + code + ' ' + res.getContentText() };
+    if (code !== 200 && code !== 204) return { ok: false, error: 'BCART_API_ERROR: ' + code };
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -925,77 +915,24 @@ function getSpecialPriceData() {
     }
   }
 
-  const seriesSheet = getOrCreateSheet(SHEET_SP_SERIES);
-  const seriesRows = seriesSheet.getDataRange().getValues();
-  const seriesList = [];
-  for (let i = 1; i < seriesRows.length; i++) {
-    if (seriesRows[i][0]) {
-      let productSetIds = [];
-      try { productSetIds = JSON.parse(seriesRows[i][4] || '[]'); } catch(e) {}
-      seriesList.push({
-        series_id:       seriesRows[i][0],
-        series_name:     seriesRows[i][1],
-        feature_id:      seriesRows[i][2],
-        feature_name:    seriesRows[i][3],
-        product_set_ids: productSetIds,
-        product_count:   seriesRows[i][5],
-        last_checked_at: String(seriesRows[i][6])
+  const detailSheet = getOrCreateSheet(SHEET_SP_DETAILS);
+  const detailRows = detailSheet.getDataRange().getValues();
+  const details = [];
+  for (let i = 1; i < detailRows.length; i++) {
+    if (detailRows[i][0]) {
+      details.push({
+        detail_id:        String(detailRows[i][0]),
+        group_id:         String(detailRows[i][1]),
+        product_set_id:   detailRows[i][2],
+        product_no:       String(detailRows[i][3]),
+        product_set_name: String(detailRows[i][4]),
+        unit_price:       detailRows[i][5],
+        updated_at:       String(detailRows[i][6])
       });
     }
   }
 
-  const settingsSheet = getOrCreateSheet(SHEET_SP_SETTINGS);
-  const settingsRows = settingsSheet.getDataRange().getValues();
-  const settings = [];
-  for (let i = 1; i < settingsRows.length; i++) {
-    if (settingsRows[i][0]) {
-      settings.push({
-        setting_id: settingsRows[i][0],
-        series_id:  settingsRows[i][1],
-        group_id:   settingsRows[i][2],
-        unit_price: settingsRows[i][3],
-        updated_at: String(settingsRows[i][4]),
-        note:       settingsRows[i][5] || ''
-      });
-    }
-  }
-
-  // 新規商品検知（各シリーズのproduct_set_ids数とBCART現在の数を比較）
-  const newProductAlerts = [];
-  if (seriesList.length > 0) {
-    const allSets = bcartGetAll('/product_sets');
-    const allProducts = bcartGetAll('/products');
-    if (allSets.ok && allProducts.ok) {
-      const setByProductId = {};
-      allSets.data.forEach(s => {
-        if (!setByProductId[s.product_id]) setByProductId[s.product_id] = [];
-        setByProductId[s.product_id].push(s.id);
-      });
-      seriesList.forEach(series => {
-        if (!series.feature_id) return;
-        const fid = String(series.feature_id);
-        const currentProducts = allProducts.data.filter(p =>
-          String(p.feature_id1||'') === fid ||
-          String(p.feature_id2||'') === fid ||
-          String(p.feature_id3||'') === fid
-        );
-        const currentSetIds = [];
-        currentProducts.forEach(p => {
-          (setByProductId[p.id] || []).forEach(sid => currentSetIds.push(sid));
-        });
-        if (currentSetIds.length > series.product_set_ids.length) {
-          newProductAlerts.push({
-            series_id:     series.series_id,
-            series_name:   series.series_name,
-            saved_count:   series.product_set_ids.length,
-            current_count: currentSetIds.length
-          });
-        }
-      });
-    }
-  }
-
-  return { ok: true, groups: groups, series: seriesList, settings: settings, newProductAlerts: newProductAlerts };
+  return { ok: true, groups: groups, details: details };
 }
 
 function saveCustomerGroup(params) {
@@ -1004,7 +941,7 @@ function saveCustomerGroup(params) {
 
   if (params.group_id) {
     for (let i = 1; i < rows.length; i++) {
-      if (rows[i][0] === params.group_id) {
+      if (String(rows[i][0]) === params.group_id) {
         sheet.getRange(i + 1, 2).setValue(params.group_name);
         sheet.getRange(i + 1, 3).setValue(params.member_ids);
         sheet.getRange(i + 1, 5).setValue(params.note || '');
@@ -1019,226 +956,26 @@ function saveCustomerGroup(params) {
 }
 
 function deleteCustomerGroup(params) {
-  const settingsSheet = getOrCreateSheet(SHEET_SP_SETTINGS);
-  const settingsRows = settingsSheet.getDataRange().getValues();
-  const relatedSettings = [];
-  const rowsToDelete = [];
-
-  for (let i = 1; i < settingsRows.length; i++) {
-    if (settingsRows[i][2] === params.group_id) {
-      relatedSettings.push({ series_id: settingsRows[i][1] });
-      rowsToDelete.push(i + 1);
-    }
-  }
-
   const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
   const groupRows = groupSheet.getDataRange().getValues();
   let memberIds = [];
   let groupRowIdx = -1;
   for (let i = 1; i < groupRows.length; i++) {
-    if (groupRows[i][0] === params.group_id) {
+    if (String(groupRows[i][0]) === params.group_id) {
       memberIds = String(groupRows[i][2] || '').split(',').map(s => s.trim()).filter(s => s);
       groupRowIdx = i + 1;
       break;
     }
   }
 
-  if (memberIds.length > 0 && relatedSettings.length > 0) {
-    const seriesSheet = getOrCreateSheet(SHEET_SP_SERIES);
-    const seriesRows = seriesSheet.getDataRange().getValues();
-    const allSets = bcartGetAll('/product_sets');
-
-    if (allSets.ok) {
-      relatedSettings.forEach(setting => {
-        const series = seriesRows.slice(1).find(r => r[0] === setting.series_id);
-        if (!series) return;
-        let productSetIds = [];
-        try { productSetIds = JSON.parse(series[4] || '[]'); } catch(e) {}
-
-        productSetIds.forEach(setId => {
-          const bcartSet = allSets.data.find(s => s.id == setId);
-          if (!bcartSet) return;
-          const newSp = Object.assign({}, bcartSet.special_price || {});
-          memberIds.forEach(mid => { delete newSp[String(mid)]; });
-          bcartPatch('/product_sets/' + setId, { special_price: newSp });
-          Utilities.sleep(100);
-        });
-      });
-    }
-  }
-
-  rowsToDelete.sort((a, b) => b - a).forEach(rowIdx => settingsSheet.deleteRow(rowIdx));
-  if (groupRowIdx > 0) groupSheet.deleteRow(groupRowIdx);
-
-  addHistory({
-    userName: params._userName,
-    code: '', name: params.group_id,
-    type: '顧客グループ削除', before: '', after: '', result: '成功'
-  });
-  return { ok: true };
-}
-
-function saveSpecialSeries(params) {
-  const fid = String(params.feature_id);
-  const allProducts = bcartGetAll('/products');
-  const allSets = bcartGetAll('/product_sets');
-  if (!allProducts.ok) return allProducts;
-  if (!allSets.ok) return allSets;
-
-  const setByProductId = {};
-  allSets.data.forEach(s => {
-    if (!setByProductId[s.product_id]) setByProductId[s.product_id] = [];
-    setByProductId[s.product_id].push(s.id);
-  });
-
-  const matchedProducts = allProducts.data.filter(p =>
-    String(p.feature_id1||'') === fid ||
-    String(p.feature_id2||'') === fid ||
-    String(p.feature_id3||'') === fid
-  );
-
+  const detailSheet = getOrCreateSheet(SHEET_SP_DETAILS);
+  const detailRows = detailSheet.getDataRange().getValues();
+  const detailRowsToDelete = [];
   const productSetIds = [];
-  matchedProducts.forEach(p => {
-    (setByProductId[p.id] || []).forEach(sid => productSetIds.push(sid));
-  });
-
-  const sheet = getOrCreateSheet(SHEET_SP_SERIES);
-  const rows = sheet.getDataRange().getValues();
-  const now = new Date().toLocaleString('ja-JP');
-
-  if (params.series_id) {
-    for (let i = 1; i < rows.length; i++) {
-      if (rows[i][0] === params.series_id) {
-        sheet.getRange(i + 1, 2).setValue(params.series_name);
-        sheet.getRange(i + 1, 3).setValue(params.feature_id);
-        sheet.getRange(i + 1, 4).setValue(params.feature_name || ('特集 ' + fid));
-        sheet.getRange(i + 1, 5).setValue(JSON.stringify(productSetIds));
-        sheet.getRange(i + 1, 6).setValue(productSetIds.length);
-        sheet.getRange(i + 1, 7).setValue(now);
-        return { ok: true, series_id: params.series_id, product_count: productSetIds.length };
-      }
-    }
-  }
-
-  const newId = 'S' + new Date().getTime().toString(36).toUpperCase();
-  sheet.appendRow([newId, params.series_name, params.feature_id, params.feature_name || ('特集 ' + fid), JSON.stringify(productSetIds), productSetIds.length, now]);
-  return { ok: true, series_id: newId, product_count: productSetIds.length };
-}
-
-function updateSeriesProducts(params) {
-  const sheet = getOrCreateSheet(SHEET_SP_SERIES);
-  const rows = sheet.getDataRange().getValues();
-
-  for (let i = 1; i < rows.length; i++) {
-    if (rows[i][0] === params.series_id) {
-      const fid = String(rows[i][2]);
-      const allProducts = bcartGetAll('/products');
-      const allSets = bcartGetAll('/product_sets');
-      if (!allProducts.ok) return allProducts;
-      if (!allSets.ok) return allSets;
-
-      const setByProductId = {};
-      allSets.data.forEach(s => {
-        if (!setByProductId[s.product_id]) setByProductId[s.product_id] = [];
-        setByProductId[s.product_id].push(s.id);
-      });
-
-      const matchedProducts = allProducts.data.filter(p =>
-        String(p.feature_id1||'') === fid ||
-        String(p.feature_id2||'') === fid ||
-        String(p.feature_id3||'') === fid
-      );
-
-      const productSetIds = [];
-      matchedProducts.forEach(p => {
-        (setByProductId[p.id] || []).forEach(sid => productSetIds.push(sid));
-      });
-
-      const now = new Date().toLocaleString('ja-JP');
-      sheet.getRange(i + 1, 5).setValue(JSON.stringify(productSetIds));
-      sheet.getRange(i + 1, 6).setValue(productSetIds.length);
-      sheet.getRange(i + 1, 7).setValue(now);
-      return { ok: true, product_count: productSetIds.length };
-    }
-  }
-  return { ok: false, error: 'シリーズが見つかりません' };
-}
-
-function deleteSpecialSeries(params) {
-  const settingsSheet = getOrCreateSheet(SHEET_SP_SETTINGS);
-  const settingsRows = settingsSheet.getDataRange().getValues();
-  const rowsToDelete = [];
-  for (let i = 1; i < settingsRows.length; i++) {
-    if (settingsRows[i][1] === params.series_id) rowsToDelete.push(i + 1);
-  }
-  rowsToDelete.sort((a, b) => b - a).forEach(rowIdx => settingsSheet.deleteRow(rowIdx));
-
-  const seriesSheet = getOrCreateSheet(SHEET_SP_SERIES);
-  const seriesRows = seriesSheet.getDataRange().getValues();
-  for (let i = 1; i < seriesRows.length; i++) {
-    if (seriesRows[i][0] === params.series_id) {
-      seriesSheet.deleteRow(i + 1);
-      return { ok: true };
-    }
-  }
-  return { ok: true };
-}
-
-function savePriceSetting(params) {
-  const sheet = getOrCreateSheet(SHEET_SP_SETTINGS);
-  const rows = sheet.getDataRange().getValues();
-  const now = new Date().toLocaleString('ja-JP');
-
-  if (params.setting_id) {
-    for (let i = 1; i < rows.length; i++) {
-      if (rows[i][0] === params.setting_id) {
-        sheet.getRange(i + 1, 2).setValue(params.series_id);
-        sheet.getRange(i + 1, 3).setValue(params.group_id);
-        sheet.getRange(i + 1, 4).setValue(params.unit_price);
-        sheet.getRange(i + 1, 5).setValue(now);
-        sheet.getRange(i + 1, 6).setValue(params.note || '');
-        return { ok: true, setting_id: params.setting_id };
-      }
-    }
-  }
-
-  const newId = 'P' + new Date().getTime().toString(36).toUpperCase();
-  sheet.appendRow([newId, params.series_id, params.group_id, params.unit_price, now, params.note || '']);
-  return { ok: true, setting_id: newId };
-}
-
-function deletePriceSetting(params) {
-  const settingsSheet = getOrCreateSheet(SHEET_SP_SETTINGS);
-  const settingsRows = settingsSheet.getDataRange().getValues();
-  let setting = null;
-  let settingRowIdx = -1;
-
-  for (let i = 1; i < settingsRows.length; i++) {
-    if (settingsRows[i][0] === params.setting_id) {
-      setting = { series_id: settingsRows[i][1], group_id: settingsRows[i][2] };
-      settingRowIdx = i + 1;
-      break;
-    }
-  }
-  if (!setting) return { ok: false, error: '設定が見つかりません' };
-
-  const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
-  const groupRows = groupSheet.getDataRange().getValues();
-  let memberIds = [];
-  for (let i = 1; i < groupRows.length; i++) {
-    if (groupRows[i][0] === setting.group_id) {
-      memberIds = String(groupRows[i][2] || '').split(',').map(s => s.trim()).filter(s => s);
-      break;
-    }
-  }
-
-  const seriesSheet = getOrCreateSheet(SHEET_SP_SERIES);
-  const seriesRows = seriesSheet.getDataRange().getValues();
-  let productSetIds = [];
-  for (let i = 1; i < seriesRows.length; i++) {
-    if (seriesRows[i][0] === setting.series_id) {
-      try { productSetIds = JSON.parse(seriesRows[i][4] || '[]'); } catch(e) {}
-      break;
+  for (let i = 1; i < detailRows.length; i++) {
+    if (String(detailRows[i][1]) === params.group_id) {
+      detailRowsToDelete.push(i + 1);
+      productSetIds.push(detailRows[i][2]);
     }
   }
 
@@ -1256,134 +993,117 @@ function deletePriceSetting(params) {
     }
   }
 
-  settingsSheet.deleteRow(settingRowIdx);
+  detailRowsToDelete.sort((a, b) => b - a).forEach(rowIdx => detailSheet.deleteRow(rowIdx));
+  if (groupRowIdx > 0) groupSheet.deleteRow(groupRowIdx);
 
   addHistory({
     userName: params._userName,
-    code: '', name: params.setting_id,
-    type: '特別価格設定削除', before: '', after: '', result: '成功'
+    code: '', name: params.group_id,
+    type: '顧客グループ削除', before: '', after: '', result: '成功'
   });
   return { ok: true };
 }
 
-function getBcartSpecialPrices(params) {
-  const seriesSheet = getOrCreateSheet(SHEET_SP_SERIES);
-  const seriesRows = seriesSheet.getDataRange().getValues();
-  let productSetIds = [];
+function getProductSetsForFeature(params) {
+  const featureId = String(params.featureId);
+  const products = bcartGetAll('/products');
+  if (!products.ok) return products;
+  const allSets = bcartGetAll('/product_sets');
+  if (!allSets.ok) return allSets;
 
-  for (let i = 1; i < seriesRows.length; i++) {
-    if (seriesRows[i][0] === params.series_id) {
-      try { productSetIds = JSON.parse(seriesRows[i][4] || '[]'); } catch(e) {}
+  const setByProductId = {};
+  allSets.data.forEach(s => {
+    if (!setByProductId[s.product_id]) setByProductId[s.product_id] = [];
+    setByProductId[s.product_id].push(s);
+  });
+
+  const matchProducts = products.data.filter(p =>
+    String(p.feature_id1 || '') === featureId ||
+    String(p.feature_id2 || '') === featureId ||
+    String(p.feature_id3 || '') === featureId
+  );
+
+  const sets = [];
+  matchProducts.forEach(p => {
+    (setByProductId[p.id] || []).forEach(s => {
+      sets.push({
+        id:            s.id,
+        product_no:    s.product_no || '',
+        name:          s.name || p.name || '',
+        unit_price:    s.unit_price || 0,
+        special_price: s.special_price || {}
+      });
+    });
+  });
+
+  sets.sort((a, b) => String(a.product_no).localeCompare(String(b.product_no)));
+  return { ok: true, sets: sets };
+}
+
+function applyGroupPrices(params) {
+  const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
+  const groupRows = groupSheet.getDataRange().getValues();
+  let memberIds = [];
+  for (let i = 1; i < groupRows.length; i++) {
+    if (String(groupRows[i][0]) === params.group_id) {
+      memberIds = String(groupRows[i][2] || '').split(',').map(s => s.trim()).filter(s => s);
       break;
     }
   }
-  if (productSetIds.length === 0) return { ok: true, items: [] };
+  if (memberIds.length === 0) return { ok: false, error: 'グループの会員IDが設定されていません' };
+
+  const detailSheet = getOrCreateSheet(SHEET_SP_DETAILS);
+  let detailRows = detailSheet.getDataRange().getValues();
 
   const allSets = bcartGetAll('/product_sets');
   if (!allSets.ok) return allSets;
-
-  const items = productSetIds.map(setId => {
-    const bcartSet = allSets.data.find(s => s.id == setId);
-    return {
-      set_id:       setId,
-      product_no:   bcartSet ? bcartSet.product_no : '???',
-      name:         bcartSet ? bcartSet.name : '???',
-      unit_price:   bcartSet ? bcartSet.unit_price : 0,
-      special_price: bcartSet ? (bcartSet.special_price || {}) : {}
-    };
-  });
-
-  return { ok: true, items: items };
-}
-
-function applySpecialPrices(params) {
-  const settingsSheet = getOrCreateSheet(SHEET_SP_SETTINGS);
-  const settingsRows = settingsSheet.getDataRange().getValues();
-
-  let targets = [];
-  if (params.setting_id) {
-    for (let i = 1; i < settingsRows.length; i++) {
-      if (settingsRows[i][0] === params.setting_id) {
-        targets.push({
-          setting_id: settingsRows[i][0],
-          series_id:  settingsRows[i][1],
-          group_id:   settingsRows[i][2],
-          unit_price: parseFloat(settingsRows[i][3]) || 0
-        });
-        break;
-      }
-    }
-  } else if (params.apply_all) {
-    for (let i = 1; i < settingsRows.length; i++) {
-      if (settingsRows[i][0]) {
-        targets.push({
-          setting_id: settingsRows[i][0],
-          series_id:  settingsRows[i][1],
-          group_id:   settingsRows[i][2],
-          unit_price: parseFloat(settingsRows[i][3]) || 0
-        });
-      }
-    }
-  }
-
-  if (targets.length === 0) return { ok: false, error: '対象の設定が見つかりません' };
-
-  const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
-  const groupRows = groupSheet.getDataRange().getValues();
-  const groupMap = {};
-  for (let i = 1; i < groupRows.length; i++) {
-    if (groupRows[i][0]) {
-      groupMap[groupRows[i][0]] = String(groupRows[i][2] || '').split(',').map(s => s.trim()).filter(s => s);
-    }
-  }
-
-  const seriesSheet = getOrCreateSheet(SHEET_SP_SERIES);
-  const seriesRows = seriesSheet.getDataRange().getValues();
-  const seriesMap = {};
-  for (let i = 1; i < seriesRows.length; i++) {
-    if (seriesRows[i][0]) {
-      let ids = [];
-      try { ids = JSON.parse(seriesRows[i][4] || '[]'); } catch(e) {}
-      seriesMap[seriesRows[i][0]] = ids;
-    }
-  }
-
-  const allSets = bcartGetAll('/product_sets');
-  if (!allSets.ok) return allSets;
-
   const setMap = {};
   allSets.data.forEach(s => { setMap[s.id] = s; });
 
   let successCount = 0, failCount = 0;
   const errors = [];
 
-  targets.forEach(target => {
-    const memberIds    = groupMap[target.group_id] || [];
-    const productSetIds = seriesMap[target.series_id] || [];
-    if (memberIds.length === 0 || productSetIds.length === 0) return;
+  params.items.forEach(item => {
+    const bcartSet = setMap[item.product_set_id];
+    if (!bcartSet) {
+      failCount++;
+      errors.push('setId ' + item.product_set_id + ': 商品セットが見つかりません');
+      return;
+    }
 
-    productSetIds.forEach(setId => {
-      const bcartSet = setMap[setId];
-      if (!bcartSet) return;
+    const newSp = Object.assign({}, bcartSet.special_price || {});
+    memberIds.forEach(mid => { newSp[String(mid)] = { unit_price: item.unit_price }; });
 
-      const newSp = Object.assign({}, bcartSet.special_price || {});
-      memberIds.forEach(mid => { newSp[String(mid)] = { unit_price: target.unit_price }; });
-
-      const res = bcartPatch('/product_sets/' + setId, { special_price: newSp });
-      if (res.ok) {
-        successCount++;
-        setMap[setId] = Object.assign({}, bcartSet, { special_price: newSp });
-      } else {
-        failCount++;
-        errors.push('setId ' + setId + ': ' + res.error);
+    const res = bcartPatch('/product_sets/' + item.product_set_id, { special_price: newSp });
+    if (res.ok) {
+      successCount++;
+      let found = false;
+      for (let i = 1; i < detailRows.length; i++) {
+        if (String(detailRows[i][1]) === params.group_id && detailRows[i][2] == item.product_set_id) {
+          detailSheet.getRange(i + 1, 5).setValue(item.product_set_name || '');
+          detailSheet.getRange(i + 1, 6).setValue(item.unit_price);
+          detailSheet.getRange(i + 1, 7).setValue(new Date().toLocaleString('ja-JP'));
+          detailRows[i][5] = item.unit_price;
+          found = true;
+          break;
+        }
       }
-      Utilities.sleep(150);
-    });
+      if (!found) {
+        const newId = 'D' + new Date().getTime().toString(36).toUpperCase();
+        const newRow = [newId, params.group_id, item.product_set_id, item.product_no || '', item.product_set_name || '', item.unit_price, new Date().toLocaleString('ja-JP')];
+        detailSheet.appendRow(newRow);
+        detailRows.push(newRow);
+      }
+    } else {
+      failCount++;
+      errors.push('setId ' + item.product_set_id + ': ' + res.error);
+    }
+    Utilities.sleep(150);
   });
 
   addHistory({
     userName: params._userName,
-    code: '', name: params.setting_id || '一括適用',
+    code: '', name: params.group_id,
     type: '特別価格適用',
     before: '',
     after: '成功: ' + successCount + '件 / 失敗: ' + failCount + '件',
@@ -1393,36 +1113,44 @@ function applySpecialPrices(params) {
   return { ok: true, successCount: successCount, failCount: failCount, errors: errors };
 }
 
-function getProductSetsByFeature(params) {
-  const featureId = String(params.featureId);
-  const products  = bcartGetAll('/products');
-  if (!products.ok) return products;
-  const allSets = bcartGetAll('/product_sets');
-  if (!allSets.ok) return allSets;
-  const setByProductId = {};
-  allSets.data.forEach(s => {
-    if (!setByProductId[s.product_id]) setByProductId[s.product_id] = [];
-    setByProductId[s.product_id].push(s.id);
-  });
-  const matchProducts = products.data.filter(p =>
-    String(p.feature_id1||'') === featureId ||
-    String(p.feature_id2||'') === featureId ||
-    String(p.feature_id3||'') === featureId
-  );
-  const setIds = [];
-  matchProducts.forEach(p => (setByProductId[p.id] || []).forEach(sid => setIds.push(sid)));
-  return { ok: true, count: setIds.length, productSetIds: setIds };
-}
+function deleteSpecialPriceDetail(params) {
+  const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
+  const groupRows = groupSheet.getDataRange().getValues();
+  let memberIds = [];
+  for (let i = 1; i < groupRows.length; i++) {
+    if (String(groupRows[i][0]) === params.group_id) {
+      memberIds = String(groupRows[i][2] || '').split(',').map(s => s.trim()).filter(s => s);
+      break;
+    }
+  }
 
-function debugSpecials() {
-  const res = bcartGet('/features');
-  const rawText = res.ok ? JSON.stringify(res.data, null, 2) : 'ERROR: ' + res.error;
-  const first = res.ok && res.data ? (
-    res.data.features ? JSON.stringify(res.data.features[0], null, 2) :
-    res.data.data      ? JSON.stringify(res.data.data[0], null, 2) :
-    JSON.stringify(res.data, null, 2)
-  ) : '';
-  return { ok: true, rawText: rawText, firstItem: first };
+  if (memberIds.length > 0 && params.product_set_id) {
+    const allSets = bcartGetAll('/product_sets');
+    if (allSets.ok) {
+      const bcartSet = allSets.data.find(s => s.id == params.product_set_id);
+      if (bcartSet) {
+        const newSp = Object.assign({}, bcartSet.special_price || {});
+        memberIds.forEach(mid => { delete newSp[String(mid)]; });
+        bcartPatch('/product_sets/' + params.product_set_id, { special_price: newSp });
+      }
+    }
+  }
+
+  const detailSheet = getOrCreateSheet(SHEET_SP_DETAILS);
+  const detailRows = detailSheet.getDataRange().getValues();
+  for (let i = 1; i < detailRows.length; i++) {
+    if (String(detailRows[i][0]) === params.detail_id) {
+      detailSheet.deleteRow(i + 1);
+      break;
+    }
+  }
+
+  addHistory({
+    userName: params._userName,
+    code: '', name: 'group:' + params.group_id + ' / set:' + params.product_set_id,
+    type: '特別価格削除', before: '', after: '', result: '成功'
+  });
+  return { ok: true };
 }
 
 // ===================== 更新履歴 =====================
@@ -1465,7 +1193,7 @@ function getHistory() {
   return { ok: true, list: list };
 }
 
-// ===================== 対応不要・作業中・特別価格シート管理 =====================
+// ===================== シート管理 =====================
 function getOrCreateSheet(sheetName) {
   const props = PropertiesService.getScriptProperties();
   let ssId = props.getProperty('MASTER_TOOL_SS_ID');
@@ -1493,14 +1221,10 @@ function getOrCreateSheet(sheetName) {
       sheet.appendRow(['group_id', 'group_name', 'member_ids', 'created_at', 'note']);
       sheet.setFrozenRows(1);
       sheet.getRange(1, 1, 1, 5).setFontWeight('bold').setBackground('#f3f4f6');
-    } else if (sheetName === SHEET_SP_SERIES) {
-      sheet.appendRow(['series_id', 'series_name', 'feature_id', 'feature_name', 'product_set_ids', 'product_count', 'last_checked_at']);
+    } else if (sheetName === SHEET_SP_DETAILS) {
+      sheet.appendRow(['detail_id', 'group_id', 'product_set_id', 'product_no', 'product_set_name', 'unit_price', 'updated_at']);
       sheet.setFrozenRows(1);
       sheet.getRange(1, 1, 1, 7).setFontWeight('bold').setBackground('#f3f4f6');
-    } else if (sheetName === SHEET_SP_SETTINGS) {
-      sheet.appendRow(['setting_id', 'series_id', 'group_id', 'unit_price', 'updated_at', 'note']);
-      sheet.setFrozenRows(1);
-      sheet.getRange(1, 1, 1, 6).setFontWeight('bold').setBackground('#f3f4f6');
     }
   } else if (sheetName === SHEET_IGNORE) {
     const lastCol = sheet.getLastColumn();
