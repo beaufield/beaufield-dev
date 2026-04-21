@@ -1,7 +1,7 @@
 // BCARTマスター管理ツール - バックエンド
 // Version: v1.5.0
 
-const VERSION = 'v1.5.1';
+const VERSION = 'v1.5.2';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -412,7 +412,7 @@ function bcartGetAll(path) {
         return { ok: false, error: 'BCART_API_ERROR: ' + res.getResponseCode() };
       }
       const parsed = JSON.parse(res.getContentText());
-      const page = parsed.data || parsed.product_sets || parsed.products || parsed.specials || parsed.features || parsed.product_stock || parsed.categories || parsed;
+      const page = parsed.data || parsed.product_sets || parsed.products || parsed.specials || parsed.product_stock || parsed.categories || parsed;
       if (!Array.isArray(page) || page.length === 0) break;
       allData.push(...page);
       if (page.length < limit) break;
@@ -747,15 +747,17 @@ function searchProducts(params) {
 
 function getSpecials() {
   try {
-    const featResult = bcartGetAll('/features');
-    if (featResult.ok && featResult.data && featResult.data.length > 0) {
-      return {
-        ok: true,
-        specials: featResult.data.map(f => ({
-          id: f.id,
-          name: f.name || f.title || f.feature_name || String(f.id)
-        }))
-      };
+    const res = bcartGet('/features');
+    if (res.ok && res.data) {
+      const raw = res.data;
+      const list = raw.features || raw.data || (Array.isArray(raw) ? raw : []);
+      if (list.length > 0) {
+        const specials = list.map(f => ({
+          id:   f.id         || f.feature_id   || f.featureId,
+          name: f.name       || f.feature_name || f.title || f.featureName || String(f.id || f.feature_id || '')
+        })).filter(f => f.id);
+        if (specials.length > 0) return { ok: true, specials: specials };
+      }
     }
   } catch(e) {}
 
