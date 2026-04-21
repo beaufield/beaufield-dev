@@ -738,20 +738,23 @@ function searchProducts(params) {
 }
 
 function getSpecials() {
-  try {
-    const res = bcartGet('/features');
-    if (res.ok && res.data) {
-      const raw = res.data;
-      const list = raw.features || raw.data || (Array.isArray(raw) ? raw : []);
-      if (list.length > 0) {
-        const specials = list.map(f => ({
-          id:   f.id         || f.feature_id   || f.featureId,
-          name: f.name       || f.feature_name || f.title || f.featureName || String(f.id || f.feature_id || '')
-        })).filter(f => f.id);
-        if (specials.length > 0) return { ok: true, specials: specials };
+  const endpoints = ['/product_features', '/features'];
+  for (const ep of endpoints) {
+    try {
+      const res = bcartGet(ep);
+      if (res.ok && res.data) {
+        const raw = res.data;
+        const list = raw.product_features || raw.features || raw.data || (Array.isArray(raw) ? raw : []);
+        if (list.length > 0) {
+          const specials = list.map(f => ({
+            id:   f.id         || f.feature_id   || f.featureId,
+            name: f.name       || f.feature_name || f.title || f.featureName || String(f.id || f.feature_id || '')
+          })).filter(f => f.id);
+          if (specials.length > 0) return { ok: true, specials: specials };
+        }
       }
-    }
-  } catch(e) {}
+    } catch(e) {}
+  }
 
   try {
     const products = bcartGetAll('/products');
