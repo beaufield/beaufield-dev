@@ -699,6 +699,7 @@
       <button id="btn-grandex-pdf"  class="btn btn-secondary" onclick="outputGrandexPDF()"  style="margin-bottom:8px;display:none">📋 グランデックス発注書 出力</button>
       <button id="btn-chiyoda-pdf"    class="btn btn-secondary" onclick="outputChiyodaPDF()"    style="margin-bottom:8px;display:none">📋 千代田化学発注書 出力</button>
       <button id="btn-alpenrose-pdf"  class="btn btn-secondary" onclick="outputAlpenrosePDF()"  style="margin-bottom:8px;display:none">📋 アルペンローゼ発注書 出力</button>
+      <button id="btn-melos-pdf"      class="btn btn-secondary" onclick="outputMelosPDF()"      style="margin-bottom:8px;display:none">📋 メロス発注書 出力</button>
     </div>
     <div id="new-order-wrap" style="display:none">
       <button class="btn btn-outline" onclick="resumeOrderForRevision()" style="margin-bottom:8px">✏️ 修正発注（内容を変えて再発注）</button>
@@ -824,7 +825,7 @@
   </div>
 </nav>
 
-<div class="version-label" id="version-label">v1.17.1</div>
+<div class="version-label" id="version-label">v1.21.0</div>
 
 <!-- ==============================
      モーダル: 数量入力
@@ -997,7 +998,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.20.1'; // クリップボードコピーのフォールバック修正
+const APP_VERSION    = 'v1.21.0'; // メロス発注書PDF出力追加
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm';
@@ -1951,6 +1952,10 @@ function applyOutputButtons() {
   // アルペンローゼ：メーカーPDF対象の発注先の場合に表示
   show('btn-alpenrose-pdf', methods.includes('メーカーPDF') &&
                             currentOrder.supplierCode === ALPENROSE_SUPPLIER_CODE);
+
+  // メロス：メーカーPDF対象の発注先の場合に表示
+  show('btn-melos-pdf', methods.includes('メーカーPDF') &&
+                        currentOrder.supplierCode === MELOS_SUPPLIER_CODE);
 }
 
 /* ===================================================
@@ -2295,6 +2300,47 @@ async function outputChiyodaPDF() {
 /* ===================================================
    アルペンローゼ メーカー発注書 出力
 =================================================== */
+const MELOS_SUPPLIER_CODE = '2';
+
+// 商品コード（4桁） → 座標（数量欄・pdf-lib座標系: 左下原点）
+// PDF: メロス発注書2026年4月～.pdf (593.28 × 844.32 pt、スキャン画像)
+// ⚠️ 座標は目視推定値。初回出力後に実物と照合して±数ptの微調整が必要
+// 左テーブル 数量列 x=258、右テーブル 数量列 x=558
+const MELOS_COORD_MAP = {
+  // ■ヘアカラーファンデーション / プロキサイド（左）
+  '2354': {x:258, y:658}, '2355': {x:258, y:645}, '2356': {x:258, y:633},
+  '2357': {x:258, y:620}, '2363': {x:258, y:608}, '2383': {x:258, y:595},
+  '2384': {x:258, y:583}, '2385': {x:258, y:570}, '2386': {x:258, y:558},
+  '2387': {x:258, y:545}, '2388': {x:258, y:533}, '2393': {x:258, y:520},
+  '2394': {x:258, y:508}, '2396': {x:258, y:495}, '2397': {x:258, y:483},
+  '2398': {x:258, y:470}, '1561': {x:258, y:458}, '1565': {x:258, y:445},
+  '1562': {x:258, y:433}, '1566': {x:258, y:420},
+  // ■パーマ剤（左）
+  '1007': {x:258, y:396}, '1006': {x:258, y:384}, '1009': {x:258, y:371},
+  '1010': {x:258, y:359}, '1097': {x:258, y:346}, '1098': {x:258, y:334},
+  '1295': {x:258, y:321},
+  // ■IDケア（左）
+  '1805': {x:258, y:287}, '1806': {x:258, y:274}, '1807': {x:258, y:262},
+  '1808': {x:258, y:249}, '1809': {x:258, y:237}, '1479': {x:258, y:224},
+  '1416': {x:258, y:212}, '1363': {x:258, y:199},
+  // ■ルフェイル（右）
+  '1070': {x:558, y:658}, '1072': {x:558, y:645}, '4263': {x:558, y:633},
+  // ■バサル（右）
+  '2352': {x:558, y:574}, '2340': {x:558, y:561}, '2344': {x:558, y:549},
+  '2350': {x:558, y:536}, '2351': {x:558, y:524},
+  // ■ファンデーションジェル / カロット（右）
+  '1374': {x:558, y:481}, '1594': {x:558, y:468}, '1396': {x:558, y:456},
+  // ■ヘアカバーファンデーション（スプレー）（右）
+  '1000': {x:558, y:422}, '1001': {x:558, y:409},
+  // ■スキンケア（右）
+  '6012': {x:558, y:380}, '6013': {x:558, y:367}, '6010': {x:558, y:355},
+  // ■ギフト（右）
+  '1793': {x:558, y:304},
+  // ■ゼフリィエンス（右）
+  '7940': {x:558, y:262}, '7942': {x:558, y:249},
+  '7943': {x:558, y:237}, '7944': {x:558, y:224},
+};
+
 const ALPENROSE_SUPPLIER_CODE = '57';
 
 // JANコード → アルペンローゼPDFコード（相手商品CD）
@@ -2385,6 +2431,53 @@ async function outputAlpenrosePDF() {
     downloadBlob(blob, `アルペンローゼ発注書_${dateStr}.pdf`);
     showCompleteState();
     showToast(`アルペンローゼ発注書を出力しました（自動記入: ${matched.length}件）`, 'success');
+  } catch(e) {
+    showToast('PDFエラー: ' + e.message, 'error');
+  } finally { hideLoading(); }
+}
+
+async function outputMelosPDF() {
+  const items = cartItems.filter(i => !i.isHandwritten);
+  const matched = [], unmatched = [];
+  for (const item of items) {
+    const code = String(parseInt(item.code, 10) || item.code);
+    if (MELOS_COORD_MAP[code]) {
+      matched.push({ item, coord: MELOS_COORD_MAP[code] });
+    } else {
+      unmatched.push(item);
+    }
+  }
+  if (unmatched.length > 0) {
+    const names = unmatched.map(i => '・' + i.name).join('\n');
+    if (!confirm(`以下の商品はメロス発注書に自動入力できません（手書き対応が必要）：\n\n${names}\n\n続けますか？`)) return;
+  }
+  showLoading('メロス発注書を生成中...');
+  try {
+    const { PDFDocument, StandardFonts, rgb } = PDFLib;
+    const pdfBytes = await fetch('./メーカー発注書/メロス発注書2026年4月～.pdf').then(r => {
+      if (!r.ok) throw new Error('メロス発注書2026年4月～.pdf の読み込みに失敗しました');
+      return r.arrayBuffer();
+    });
+    const pdfDoc = await PDFDocument.load(pdfBytes);
+    const page   = pdfDoc.getPages()[0];
+    const font   = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const blue   = rgb(0, 0, 0.7);
+
+    const [yyyy, mm, dd] = currentOrder.date.split('-').map(Number);
+    page.drawText(String(mm), { x: 457, y: 796, size: 9, font, color: blue });
+    page.drawText(String(dd), { x: 503, y: 796, size: 9, font, color: blue });
+
+    for (const { item, coord } of matched) {
+      page.drawText(String(item.qty), { x: coord.x, y: coord.y, size: 9, font, color: blue });
+    }
+
+    await saveOrderToGAS('メーカー発注書');
+    const pdfBytesOut = await pdfDoc.save();
+    const blob = new Blob([pdfBytesOut], { type: 'application/pdf' });
+    const dateStr = currentOrder.date.replace(/-/g, '');
+    downloadBlob(blob, `メロス発注書_${dateStr}.pdf`);
+    showCompleteState();
+    showToast(`メロス発注書を出力しました（自動記入: ${matched.length}件）`, 'success');
   } catch(e) {
     showToast('PDFエラー: ' + e.message, 'error');
   } finally { hideLoading(); }
@@ -2705,6 +2798,8 @@ function buildHistReOutputBtns(orderNo, supplierCode) {
     btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputGrandexPDF('${esc}');event.stopPropagation()">📋 グランデックス再出力</button>`);
   if (methods.includes('メーカーPDF') && supplierCode === ALPENROSE_SUPPLIER_CODE)
     btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputAlpenrosePDF('${esc}');event.stopPropagation()">📋 アルペンローゼ再出力</button>`);
+  if (methods.includes('メーカーPDF') && supplierCode === MELOS_SUPPLIER_CODE)
+    btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputMelosPDF('${esc}');event.stopPropagation()">📋 メロス再出力</button>`);
   // 複製して発注（常に表示）
   btns.push(`<button class="btn btn-primary btn-sm" onclick="copyOrderFromHistory('${esc}');event.stopPropagation()">📋 複製して発注</button>`);
   // 削除（管理者のみ表示）
@@ -2895,6 +2990,55 @@ async function reOutputAlpenrosePDF(orderNo) {
     const dateStr = (orderInfo.date || '').replace(/\//g, '');
     downloadBlob(blob, `アルペンローゼ発注書_${dateStr}_${orderNo}.pdf`);
     showToast(`アルペンローゼ発注書を再出力しました（自動記入: ${matched.length}件）`, 'success');
+  } catch(e) {
+    showToast('PDFエラー: ' + e.message, 'error');
+  } finally { hideLoading(); }
+}
+
+// 履歴からメロス発注書再出力
+async function reOutputMelosPDF(orderNo) {
+  const orderInfo = getHistoryOrderInfo(orderNo);
+  const items     = historyDetailCache[orderNo];
+  if (!items || !orderInfo) { showToast('データが見つかりません', 'error'); return; }
+
+  const matched = [], unmatched = [];
+  for (const item of items.filter(i => !i.isHandwritten)) {
+    const code = String(parseInt(item.code, 10) || item.code);
+    if (MELOS_COORD_MAP[code]) {
+      matched.push({ item, coord: MELOS_COORD_MAP[code] });
+    } else {
+      unmatched.push(item);
+    }
+  }
+  if (unmatched.length > 0) {
+    const names = unmatched.map(i => '・' + i.name).join('\n');
+    if (!confirm(`以下の商品は自動入力できません（手書き対応が必要）：\n\n${names}\n\n続けますか？`)) return;
+  }
+  showLoading('メロス発注書を生成中...');
+  try {
+    const { PDFDocument, StandardFonts, rgb } = PDFLib;
+    const pdfBytes = await fetch('./メーカー発注書/メロス発注書2026年4月～.pdf').then(r => {
+      if (!r.ok) throw new Error('メロス発注書2026年4月～.pdf の読み込みに失敗しました');
+      return r.arrayBuffer();
+    });
+    const pdfDoc = await PDFDocument.load(pdfBytes);
+    const page   = pdfDoc.getPages()[0];
+    const font   = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const blue   = rgb(0, 0, 0.7);
+
+    const [yyyy, mm, dd] = (orderInfo.date || '').split('/').map(Number);
+    if (yyyy) {
+      page.drawText(String(mm), { x: 457, y: 796, size: 9, font, color: blue });
+      page.drawText(String(dd), { x: 503, y: 796, size: 9, font, color: blue });
+    }
+    for (const { item, coord } of matched) {
+      page.drawText(String(item.qty), { x: coord.x, y: coord.y, size: 9, font, color: blue });
+    }
+    const pdfBytesOut = await pdfDoc.save();
+    const blob = new Blob([pdfBytesOut], { type: 'application/pdf' });
+    const dateStr = (orderInfo.date || '').replace(/\//g, '');
+    downloadBlob(blob, `メロス発注書_${dateStr}_${orderNo}.pdf`);
+    showToast(`メロス発注書を再出力しました（自動記入: ${matched.length}件）`, 'success');
   } catch(e) {
     showToast('PDFエラー: ' + e.message, 'error');
   } finally { hideLoading(); }
