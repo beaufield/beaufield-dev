@@ -62,6 +62,10 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .diff-detail .old { color: #9ca3af; text-decoration: line-through; }
 .diff-detail .new { color: #059669; font-weight: 600; }
 
+.bcart-ids { font-size: 11px; color: #9ca3af; display: flex; gap: 14px; width: 100%; margin-top: 3px; }
+.bcart-ids a { color: #1a56db; text-decoration: none; }
+.bcart-ids a:hover { text-decoration: underline; }
+
 .bulk-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
 
 .stock-search { display: flex; gap: 8px; margin-bottom: 16px; }
@@ -71,6 +75,26 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .ignore-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 6px; }
 .ignore-item .info { flex: 1; }
 .ignore-item .reason { font-size: 12px; color: #6b7280; margin-top: 2px; }
+
+/* 進捗オーバーレイ */
+#progressOverlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; align-items: center; justify-content: center; }
+#progressOverlay.open { display: flex; }
+.progress-card { background: #fff; border-radius: 12px; padding: 32px 40px; width: 400px; text-align: center; }
+.progress-card h3 { font-size: 16px; margin-bottom: 8px; }
+.progress-count { font-size: 36px; font-weight: 700; color: #1a56db; margin: 12px 0; }
+.progress-bar-wrap { background: #e5e7eb; border-radius: 8px; height: 10px; margin-bottom: 12px; overflow: hidden; }
+.progress-bar-fill { background: #1a56db; height: 10px; border-radius: 8px; width: 0%; transition: width 0.25s; }
+.progress-detail { font-size: 12px; color: #9ca3af; min-height: 18px; }
+.progress-result { margin-top: 16px; font-size: 13px; }
+
+/* 履歴テーブル */
+.history-table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; border-radius: 8px; overflow: hidden; border: 1px solid #e5e7eb; }
+.history-table th { background: #f9fafb; padding: 9px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #e5e7eb; white-space: nowrap; }
+.history-table td { padding: 8px 12px; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
+.history-table tr:last-child td { border-bottom: none; }
+.history-table tr:hover td { background: #f9fafb; }
+.result-ok { color: #059669; font-weight: 600; }
+.result-ng { color: #dc2626; font-size: 11px; }
 
 #toast { position: fixed; bottom: 20px; right: 20px; background: #1f2937; color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 13px; display: none; z-index: 1000; }
 #toast.error { background: #dc2626; }
@@ -101,20 +125,21 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.0.1</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.1.0</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v1.0.1</span>
+    <span class="version">HTML v1.1.0</span>
   </div>
 
   <div class="tabs">
-    <div class="tab active" onclick="switchTab('diff')">差異一覧</div>
-    <div class="tab" onclick="switchTab('ignore')">対応不要</div>
-    <div class="tab" onclick="switchTab('stock')">欠品設定</div>
+    <div class="tab active" onclick="switchTab('diff',this)">差異一覧</div>
+    <div class="tab" onclick="switchTab('ignore',this)">対応不要</div>
+    <div class="tab" onclick="switchTab('stock',this)">欠品設定</div>
+    <div class="tab" onclick="switchTab('history',this)">📋 更新履歴</div>
   </div>
 
   <div class="content">
@@ -181,6 +206,17 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
       </div>
     </div>
 
+    <!-- タブ4: 更新履歴 -->
+    <div class="tab-panel" id="tab-history">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <span style="font-size:13px;color:#6b7280;">BCARTへの変更操作履歴（最新200件）</span>
+        <button class="btn btn-gray btn-sm" onclick="loadHistory()">🔄 更新</button>
+      </div>
+      <div id="historyList">
+        <div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -199,17 +235,32 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
   </div>
 </div>
 
+<!-- 進捗オーバーレイ -->
+<div id="progressOverlay">
+  <div class="progress-card">
+    <h3>BCARTに反映中...</h3>
+    <div class="progress-count" id="progressCount">0 / 0</div>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar-fill" id="progressBarFill"></div>
+    </div>
+    <div class="progress-detail" id="progressDetail"></div>
+    <div class="progress-result" id="progressResult"></div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
+const BCART_ADMIN_BASE = 'https://beaufieldec.i16.bcart.jp/admin/products';
 
 // ===================== 状態 =====================
 let session = null;
 let allDiffs = [];
 let currentFilter = 'all';
+let currentSupplier = '';
 let pendingIgnoreCode = null;
 let pendingIgnoreName = null;
 
@@ -232,12 +283,13 @@ function goToPortal() {
 }
 
 // ===================== タブ切り替え =====================
-function switchTab(tab) {
+function switchTab(tab, el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-  event.currentTarget.classList.add('active');
+  if (el) el.classList.add('active');
   document.getElementById('tab-' + tab).classList.add('active');
   if (tab === 'ignore') loadIgnoreList();
+  if (tab === 'history') loadHistory();
 }
 
 // ===================== データ読み込み =====================
@@ -272,8 +324,6 @@ function updateSummary() {
 }
 
 // ===================== フィルター =====================
-let currentSupplier = '';
-
 function setFilter(filter, btn) {
   currentFilter = filter;
   document.querySelectorAll('.type-filter-btn').forEach(b => b.classList.remove('active'));
@@ -325,6 +375,16 @@ function renderDiffs() {
   updateBulkBtn();
 }
 
+function bcartLinks(d) {
+  if (!d.bcartProductId || !d.bcartSetId) return '';
+  const productUrl = BCART_ADMIN_BASE + '/' + d.bcartProductId + '/edit';
+  const setUrl = BCART_ADMIN_BASE + '/' + d.bcartProductId + '/set/' + d.bcartSetId + '/edit';
+  return '<div class="bcart-ids">' +
+    '🔗 商品ID: <a href="' + productUrl + '" target="_blank">' + d.bcartProductId + '</a>' +
+    '&nbsp;／&nbsp;セットID: <a href="' + setUrl + '" target="_blank">' + d.bcartSetId + '</a>' +
+    '</div>';
+}
+
 function renderDiffItem(d) {
   const isIgnored = d.isIgnored;
   const isWip = d.isWip;
@@ -345,17 +405,51 @@ function renderDiffItem(d) {
         badges += '<span class="badge badge-price">💰 価格差異</span>';
         details += '<div class="diff-detail"><div class="row"><span class="lbl">売上単価</span><span class="old">' + issue.bcartPrice.toLocaleString() + '円</span> → <span class="new">' + issue.csvPrice.toLocaleString() + '円</span></div></div>';
         if (!isIgnored) {
-          checkboxes += '<input type="checkbox" class="diff-check" data-code="' + esc(d.code) + '" data-type="price" data-set-id="' + d.bcartSetId + '" data-price="' + issue.csvPrice + '" onchange="updateBulkBtn()">';
-          actionBtns += '<button class="btn btn-success btn-sm" onclick="updatePrice(\'' + d.bcartSetId + '\',\'' + esc(d.code) + '\',' + issue.csvPrice + ')">💰 価格更新</button>';
+          checkboxes += '<input type="checkbox" class="diff-check"' +
+            ' data-code="' + esc(d.code) + '"' +
+            ' data-type="price"' +
+            ' data-set-id="' + d.bcartSetId + '"' +
+            ' data-price="' + issue.csvPrice + '"' +
+            ' data-before-price="' + issue.bcartPrice + '"' +
+            ' data-name="' + esc(d.name) + '"' +
+            ' data-csv-kouri="' + (d.csvKouri || 0) + '"' +
+            ' data-csv-shiire="' + (d.csvShiire || 0) + '"' +
+            ' onchange="updateBulkBtn()">';
+          actionBtns += '<button class="btn btn-success btn-sm"' +
+            ' data-set-id="' + d.bcartSetId + '"' +
+            ' data-code="' + esc(d.code) + '"' +
+            ' data-name="' + esc(d.name) + '"' +
+            ' data-price="' + issue.csvPrice + '"' +
+            ' data-before-price="' + issue.bcartPrice + '"' +
+            ' data-csv-kouri="' + (d.csvKouri || 0) + '"' +
+            ' data-csv-shiire="' + (d.csvShiire || 0) + '"' +
+            ' onclick="updatePriceBtn(this)">💰 価格更新</button>';
         }
       }
       if (issue.type === 'discontinued') {
         badges += '<span class="badge badge-disc">🚫 廃番</span>';
-        details += '<div class="diff-detail"><div class="row"><span class="lbl">状態</span><span>BCARTで非表示にする必要があります</span></div></div>';
+        details += '<div class="diff-detail"><div class="row"><span class="lbl">状態</span><span>BCARTセットを非表示にする必要があります</span></div></div>';
         if (!isIgnored) {
-          checkboxes += '<input type="checkbox" class="diff-check" data-code="' + esc(d.code) + '" data-type="discontinued" data-product-id="' + d.bcartProductId + '" onchange="updateBulkBtn()">';
-          actionBtns += '<button class="btn btn-danger btn-sm" onclick="hideProduct(\'' + d.bcartProductId + '\',\'' + esc(d.code) + '\')">🚫 非表示にする</button>';
+          checkboxes += '<input type="checkbox" class="diff-check"' +
+            ' data-code="' + esc(d.code) + '"' +
+            ' data-type="discontinued"' +
+            ' data-set-id="' + d.bcartSetId + '"' +
+            ' data-name="' + esc(d.name) + '"' +
+            ' onchange="updateBulkBtn()">';
+          actionBtns += '<button class="btn btn-danger btn-sm"' +
+            ' data-set-id="' + d.bcartSetId + '"' +
+            ' data-code="' + esc(d.code) + '"' +
+            ' data-name="' + esc(d.name) + '"' +
+            ' onclick="hideProductSetBtn(this)">🚫 非表示にする</button>';
         }
+      }
+      if (issue.type === 'jodai') {
+        badges += '<span class="badge badge-price">💴 上代差異</span>';
+        details += '<div class="diff-detail"><div class="row"><span class="lbl">上代</span><span class="old">' + issue.bcartJodai.toLocaleString() + '円</span> → <span class="new">' + issue.csvJodai.toLocaleString() + '円</span></div></div>';
+      }
+      if (issue.type === 'jan') {
+        badges += '<span class="badge badge-price">🔖 JAN差異</span>';
+        details += '<div class="diff-detail"><div class="row"><span class="lbl">JAN</span><span class="old">' + esc(issue.bcartJan) + '</span> → <span class="new">' + esc(issue.csvJan) + '</span></div></div>';
       }
     });
   }
@@ -373,6 +467,7 @@ function renderDiffItem(d) {
     '<span class="diff-name">' + esc(d.name) + '</span>' +
     '<span class="diff-supplier">' + esc(d.supplier || '') + '</span>' +
     badges +
+    bcartLinks(d) +
     '</div>' +
     details +
     '<div class="diff-actions">' +
@@ -382,7 +477,7 @@ function renderDiffItem(d) {
     '</div>';
 }
 
-// ===================== 一括更新 =====================
+// ===================== 一括更新（進捗表示付き） =====================
 function toggleSelectAll(cb) {
   document.querySelectorAll('.diff-check').forEach(c => c.checked = cb.checked);
   updateBulkBtn();
@@ -395,46 +490,116 @@ function updateBulkBtn() {
   btn.textContent = count > 0 ? '✅ 選択した ' + count + ' 件を一括更新' : '✅ 選択項目を一括更新';
 }
 
-function bulkUpdate() {
+async function bulkUpdate() {
   const checked = document.querySelectorAll('.diff-check:checked');
   if (checked.length === 0) return;
-  if (!confirm(checked.length + '件をBCARTに反映します。よろしいですか？')) return;
+  const total = checked.length;
+  if (!confirm(total + '件をBCARTに反映します。よろしいですか？')) return;
 
   const items = [];
   checked.forEach(c => {
-    const item = { code: c.dataset.code, type: c.dataset.type };
-    if (c.dataset.type === 'price') { item.bcartSetId = c.dataset.setId; item.price = parseFloat(c.dataset.price); }
-    if (c.dataset.type === 'discontinued') { item.bcartProductId = c.dataset.productId; }
-    items.push(item);
+    if (c.dataset.type === 'price') {
+      items.push({
+        action: 'updatePrice',
+        code: c.dataset.code,
+        name: c.dataset.name || '',
+        bcartSetId: c.dataset.setId,
+        price: parseFloat(c.dataset.price),
+        beforePrice: parseFloat(c.dataset.beforePrice || 0),
+        csvKouri: parseFloat(c.dataset.csvKouri || 0),
+        csvShiire: parseFloat(c.dataset.csvShiire || 0)
+      });
+    } else if (c.dataset.type === 'discontinued') {
+      items.push({
+        action: 'hideProductSet',
+        code: c.dataset.code,
+        name: c.dataset.name || '',
+        bcartSetId: c.dataset.setId
+      });
+    }
   });
 
-  showToast('更新中...');
-  gasPost({ action: 'bulkUpdate', items: items }, function(res) {
-    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
-    const failed = res.results.filter(r => !r.ok);
-    showToast(failed.length > 0
-      ? (items.length - failed.length) + '件成功、' + failed.length + '件失敗'
-      : items.length + '件を更新しました'
-    , failed.length > 0);
+  showProgressOverlay(total);
+
+  let successCount = 0;
+  let failCount = 0;
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    updateProgressOverlay(i + 1, total, item.code + ' ' + item.name);
+    try {
+      const res = await gasPostAsync(item);
+      if (res.ok) { successCount++; }
+      else { failCount++; }
+    } catch(e) {
+      failCount++;
+    }
+  }
+
+  const resultMsg = failCount > 0
+    ? successCount + '件成功、' + failCount + '件失敗'
+    : total + '件をすべて更新しました';
+  finishProgressOverlay(resultMsg, failCount > 0);
+}
+
+// ===================== 進捗オーバーレイ =====================
+function showProgressOverlay(total) {
+  document.getElementById('progressCount').textContent = '0 / ' + total;
+  document.getElementById('progressBarFill').style.width = '0%';
+  document.getElementById('progressDetail').textContent = '準備中...';
+  document.getElementById('progressResult').textContent = '';
+  document.getElementById('progressOverlay').classList.add('open');
+  document.getElementById('bulkBtn').disabled = true;
+}
+
+function updateProgressOverlay(current, total, label) {
+  document.getElementById('progressCount').textContent = current + ' / ' + total;
+  document.getElementById('progressBarFill').style.width = Math.round((current / total) * 100) + '%';
+  document.getElementById('progressDetail').textContent = label || '';
+}
+
+function finishProgressOverlay(resultMsg, isError) {
+  document.getElementById('progressCount').textContent = '完了';
+  document.getElementById('progressBarFill').style.width = '100%';
+  document.getElementById('progressDetail').textContent = '';
+  document.getElementById('progressResult').innerHTML =
+    '<span style="color:' + (isError ? '#dc2626' : '#059669') + ';font-weight:600;">' + esc(resultMsg) + '</span>';
+
+  setTimeout(function() {
+    document.getElementById('progressOverlay').classList.remove('open');
+    document.getElementById('bulkBtn').disabled = false;
+    showToast(resultMsg, isError);
     loadData();
-  });
+  }, 1800);
 }
 
 // ===================== 個別更新 =====================
-function updatePrice(bcartSetId, code, price) {
-  if (!confirm(code + ' の価格を ' + Number(price).toLocaleString() + '円 に更新しますか？')) return;
-  gasPost({ action: 'updatePrice', bcartSetId: bcartSetId, price: price }, function(res) {
+function updatePriceBtn(btn) {
+  const code = btn.dataset.code;
+  const name = btn.dataset.name;
+  const bcartSetId = btn.dataset.setId;
+  const price = parseFloat(btn.dataset.price);
+  const beforePrice = parseFloat(btn.dataset.beforePrice || 0);
+  const csvKouri = parseFloat(btn.dataset.csvKouri || 0);
+  const csvShiire = parseFloat(btn.dataset.csvShiire || 0);
+
+  if (!confirm(code + ' の価格を ' + price.toLocaleString() + '円 に更新しますか？')) return;
+  gasPost({ action: 'updatePrice', bcartSetId, price, beforePrice, csvKouri, csvShiire, code, name }, function(res) {
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
     showToast('価格を更新しました');
     removeDiff(code);
   });
 }
 
-function hideProduct(bcartProductId, code) {
-  if (!confirm(code + ' をBCARTで非表示にしますか？')) return;
-  gasPost({ action: 'hideProduct', bcartProductId: bcartProductId }, function(res) {
+function hideProductSetBtn(btn) {
+  const code = btn.dataset.code;
+  const name = btn.dataset.name;
+  const bcartSetId = btn.dataset.setId;
+
+  if (!confirm(code + ' のセットをBCARTで非表示にしますか？')) return;
+  gasPost({ action: 'hideProductSet', bcartSetId, code, name }, function(res) {
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
-    showToast('非表示にしました');
+    showToast('セットを非表示にしました');
     removeDiff(code);
   });
 }
@@ -504,16 +669,20 @@ function loadIgnoreList() {
       document.getElementById('ignoreList').innerHTML = '<div style="text-align:center;padding:32px;color:#9ca3af;">対応不要商品はありません</div>';
       return;
     }
-    document.getElementById('ignoreList').innerHTML = list.map(item =>
-      '<div class="ignore-item">' +
-      '<div class="info">' +
-      '<div><strong>' + esc(item.code) + '</strong> <span style="color:#6b7280;">' + esc(item.name) + '</span></div>' +
-      (item.reason ? '<div class="reason">理由: ' + esc(item.reason) + '</div>' : '') +
-      '<div style="font-size:11px;color:#9ca3af;margin-top:2px;">' + esc(String(item.registeredAt)) + '</div>' +
-      '</div>' +
-      '<button class="btn btn-gray btn-sm" onclick="unmarkIgnoreFromList(\'' + esc(item.code) + '\',this)">解除</button>' +
-      '</div>'
-    ).join('');
+    document.getElementById('ignoreList').innerHTML = list.map(item => {
+      const diff = allDiffs.find(d => d.code === String(item.code));
+      const links = diff ? bcartLinks(diff) : '';
+      return '<div class="ignore-item">' +
+        '<div class="info">' +
+        '<div><strong>' + esc(item.code) + '</strong> <span style="color:#6b7280;">' + esc(item.name) + '</span>' +
+        (item.supplier ? '<span style="font-size:11px;color:#9ca3af;margin-left:8px;">' + esc(item.supplier) + '</span>' : '') + '</div>' +
+        (item.reason ? '<div class="reason">理由: ' + esc(item.reason) + '</div>' : '') +
+        '<div style="font-size:11px;color:#9ca3af;margin-top:2px;">' + esc(String(item.registeredAt)) + '</div>' +
+        (links ? '<div style="margin-top:4px;">' + links + '</div>' : '') +
+        '</div>' +
+        '<button class="btn btn-gray btn-sm" onclick="unmarkIgnoreFromList(\'' + esc(item.code) + '\',this)">解除</button>' +
+        '</div>';
+    }).join('');
   });
 }
 
@@ -540,37 +709,74 @@ function searchStock() {
 
   const container = document.getElementById('stockResult');
   if (found.length === 0) {
-    // 差異リストにない場合でも直接入力で対応
     container.innerHTML =
       '<div class="stock-result">' +
       '<div style="color:#6b7280;font-size:13px;margin-bottom:10px;">差異リストにない商品コードでも直接設定できます。</div>' +
       '<div style="display:flex;gap:8px;align-items:center;">' +
       '<strong>' + esc(query) + '</strong>' +
-      '<button class="btn btn-danger btn-sm" onclick="setStock(\'' + esc(query) + '\',0,this)">🚫 欠品（在庫0）</button>' +
-      '<button class="btn btn-success btn-sm" onclick="setStock(\'' + esc(query) + '\',1,this)">✅ 在庫あり（在庫1）</button>' +
+      '<button class="btn btn-danger btn-sm" onclick="setStock(\'' + esc(query) + '\',\'\',0,this)">🚫 欠品（在庫0）</button>' +
+      '<button class="btn btn-success btn-sm" onclick="setStock(\'' + esc(query) + '\',\'\',1,this)">✅ 在庫あり（在庫1）</button>' +
       '</div></div>';
     return;
   }
 
-  container.innerHTML = found.map(d =>
-    '<div class="stock-result">' +
-    '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">' +
-    '<div><span style="font-family:monospace;font-size:12px;color:#6b7280;">' + esc(d.code) + '</span> <strong>' + esc(d.name) + '</strong></div>' +
-    '<div style="display:flex;gap:8px;">' +
-    '<button class="btn btn-danger btn-sm" onclick="setStock(\'' + esc(d.code) + '\',0,this)">🚫 欠品（在庫0）</button>' +
-    '<button class="btn btn-success btn-sm" onclick="setStock(\'' + esc(d.code) + '\',1,this)">✅ 在庫あり（在庫1）</button>' +
-    '</div></div></div>'
-  ).join('');
+  container.innerHTML = found.map(d => {
+    const links = bcartLinks(d);
+    return '<div class="stock-result">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">' +
+      '<div><span style="font-family:monospace;font-size:12px;color:#6b7280;">' + esc(d.code) + '</span> <strong>' + esc(d.name) + '</strong>' +
+      (links ? '<div style="margin-top:4px;">' + links + '</div>' : '') + '</div>' +
+      '<div style="display:flex;gap:8px;">' +
+      '<button class="btn btn-danger btn-sm" onclick="setStock(\'' + esc(d.code) + '\',\'' + esc(d.name) + '\',0,this)">🚫 欠品（在庫0）</button>' +
+      '<button class="btn btn-success btn-sm" onclick="setStock(\'' + esc(d.code) + '\',\'' + esc(d.name) + '\',1,this)">✅ 在庫あり（在庫1）</button>' +
+      '</div></div></div>';
+  }).join('');
 }
 
-function setStock(productNo, stock, btn) {
+function setStock(productNo, name, stock, btn) {
   const label = stock === 0 ? '欠品（在庫0）' : '在庫あり（在庫1）';
   if (!confirm(productNo + ' を ' + label + ' に設定しますか？')) return;
   btn.disabled = true;
-  gasPost({ action: 'setStock', productNo: productNo, stock: stock }, function(res) {
+  gasPost({ action: 'setStock', productNo: productNo, name: name || '', stock: stock }, function(res) {
     btn.disabled = false;
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
     showToast(productNo + ' を ' + label + ' に設定しました');
+  });
+}
+
+// ===================== 更新履歴 =====================
+function loadHistory() {
+  document.getElementById('historyList').innerHTML = '<div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>';
+  gasPost({ action: 'getHistory' }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    const list = res.list || [];
+    if (list.length === 0) {
+      document.getElementById('historyList').innerHTML = '<div style="text-align:center;padding:32px;color:#9ca3af;">履歴はありません</div>';
+      return;
+    }
+    const rows = list.map(item => {
+      const isOk = String(item.result).startsWith('成功');
+      return '<tr>' +
+        '<td style="white-space:nowrap;font-size:12px;">' + esc(String(item.date)) + '</td>' +
+        '<td style="white-space:nowrap;">' + esc(item.userName) + '</td>' +
+        '<td style="font-family:monospace;font-size:12px;">' + esc(item.code) + '</td>' +
+        '<td>' + esc(item.name) + '</td>' +
+        '<td style="white-space:nowrap;">' + esc(item.type) + '</td>' +
+        '<td style="color:#9ca3af;font-size:12px;">' + esc(item.before) + '</td>' +
+        '<td style="font-size:12px;">' + esc(item.after) + '</td>' +
+        '<td class="' + (isOk ? 'result-ok' : 'result-ng') + '">' + esc(item.result) + '</td>' +
+        '</tr>';
+    }).join('');
+
+    document.getElementById('historyList').innerHTML =
+      '<div style="overflow-x:auto;">' +
+      '<table class="history-table">' +
+      '<thead><tr>' +
+      '<th>日時</th><th>操作者</th><th>商品コード</th><th>商品名</th>' +
+      '<th>操作種別</th><th>変更前</th><th>変更後</th><th>結果</th>' +
+      '</tr></thead>' +
+      '<tbody>' + rows + '</tbody>' +
+      '</table></div>';
   });
 }
 
@@ -602,7 +808,7 @@ function runDebug() {
   });
 }
 
-// ===================== GAS通信（fetch） =====================
+// ===================== GAS通信 =====================
 function gasPost(params, callback) {
   params.session = session;
   fetch(GAS_URL, {
@@ -613,6 +819,15 @@ function gasPost(params, callback) {
   .then(r => r.json())
   .then(res => callback(res))
   .catch(err => showToast('通信エラー: ' + err.message, true));
+}
+
+function gasPostAsync(params) {
+  params.session = session;
+  return fetch(GAS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify(params)
+  }).then(r => r.json());
 }
 
 // ===================== ユーティリティ =====================
