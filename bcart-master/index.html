@@ -1793,11 +1793,11 @@ function renderSpSettings() {
 
     html += '<div style="border-top:1px solid #e5e7eb;padding-top:16px;">';
     html += '<div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;">特集から商品セットを選んで特別価格を設定</div>';
-    html += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">' +
-      '<select id="spFeatureSelect" style="padding:7px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;background:#fff;flex:1;max-width:280px;">' +
+    html += '<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:12px;">' +
+      '<select id="spFeatureSelect" size="8" style="border:1px solid #d1d5db;border-radius:6px;font-size:13px;background:#fff;flex:1;max-width:320px;overflow-y:auto;">' +
       '<option value="">特集を選択...</option>' +
       '</select>' +
-      '<button class="btn btn-primary btn-sm" onclick="loadSpFeatureSets()">一覧を表示</button>' +
+      '<button class="btn btn-primary btn-sm" style="margin-top:4px;" onclick="loadSpFeatureSets()">一覧を表示</button>' +
       '</div>';
     html += '<div id="spFeatureSetsArea"></div>';
     html += '</div>';
