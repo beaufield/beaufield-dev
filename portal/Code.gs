@@ -1,6 +1,6 @@
 // ============================================================
 // Beaufield ポータル - Google Apps Script
-// Version: v1.3.2
+// Version: v1.3.3
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -11,7 +11,7 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.3.2';
+const VERSION       = 'v1.3.4';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
 
 // ロックアウト設定
@@ -295,7 +295,17 @@ function validateSession(data) {
   const userId = _getSessionUser(ss, token);
   if (!userId) return { ok: false };
 
-  return { ok: true, user_id: userId };
+  // ユーザー名を users シートから取得して返す
+  const rows = ss.getSheetByName('users').getDataRange().getValues();
+  let userName = userId;
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === userId) {
+      userName = String(rows[i][1]) || userId;
+      break;
+    }
+  }
+
+  return { ok: true, user_id: userId, name: userName };
 }
 
 // ============================================================
@@ -358,4 +368,11 @@ function _json(data) {
   return ContentService
     .createTextOutput(JSON.stringify(data))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+// ============================================================
+// keepWarm: GASのコールドスタートを防ぐ定期実行用関数
+// ============================================================
+function keepWarm() {
+  // 何もしない（トリガーによる定期呼び出しでインスタンスをウォームアップするだけ）
 }
