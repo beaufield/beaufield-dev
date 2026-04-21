@@ -365,6 +365,27 @@
     .s-cell-count { font-size: 15px; font-weight: 700; line-height: 1.1; }
     .s-cell-sub   { font-size: 10px; color: #9ca3af; }
     .s-legend { font-size: 11px; color: #9ca3af; margin-top: 6px; text-align: right; }
+    /* スワイプナビ */
+    .summary-swipe-outer { overflow: hidden; }
+    .summary-swipe-body { will-change: transform; }
+    .summary-week-nav {
+      display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0;
+    }
+    .summary-week-nav .filter-select { flex: 1; min-width: 0; }
+    .summary-nav-btn {
+      flex-shrink: 0; width: 32px; height: 32px;
+      border: 1.5px solid var(--primary); border-radius: 6px;
+      background: #fff; color: var(--primary);
+      font-size: 16px; line-height: 1; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.15s, color 0.15s;
+    }
+    .summary-nav-btn:disabled { border-color: var(--border); color: #d1d5db; cursor: default; }
+    .summary-nav-btn:not(:disabled):active { background: var(--primary); color: #fff; }
+    .summary-swipe-hint {
+      font-size: 10px; color: #d1d5db; text-align: center;
+      margin-top: 4px; letter-spacing: 0.05em;
+    }
     /* 集計 週/月モード切替 */
     .summary-mode-tabs { display: flex; gap: 0; border-radius: 8px; overflow: hidden; border: 1.5px solid var(--primary); flex-shrink: 0; }
     .summary-mode-btn {
@@ -780,7 +801,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.19.0';
+const APP_VERSION = 'v1.20.0';
 const START_MONTH = '2026-04'; // 運用開始月（これより前は選択肢に表示しない）
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
@@ -1207,7 +1228,7 @@ function renderApp() {
     case 'login':        app.innerHTML = renderLogin();        break;
     case 'check':        app.innerHTML = renderCheck();        break;
     case 'history':      app.innerHTML = renderHistory(); bindHistoryFilterEvents(); break;
-    case 'summary':      app.innerHTML = renderSummary();      break;
+    case 'summary':      app.innerHTML = renderSummary(); bindSummarySwipeEvents(); break;
     case 'salons':       app.innerHTML = renderSalons();       break;
     case 'admin':        app.innerHTML = renderAdmin();        break;
     case 'admin-salons': app.innerHTML = renderAdminSalons();  break;
@@ -2310,6 +2331,7 @@ async function loadSummary() {
     var result = await apiGet('getSummary', params);
     summaryData = result;
     saveSummaryCache(cacheKey, result);
+    if (summaryPeriodMode === 'week') prefetchAdjacentWeeks();
   } catch(e) {
     showToast('集計データの取得に失敗しました: ' + e.message, 'error');
     summaryData = { matrix: [], alerts: [] };
@@ -2351,7 +2373,15 @@ function renderSummary() {
       var sel = (selWeek === monStr) ? ' selected' : '';
       weekOpts += '<option value="' + monStr + '"' + sel + '>' + escHtml(lbl) + '</option>';
     }
-    selectorHtml = '<select class="filter-select" id="summary-week" onchange="onSummaryWeekChange()">' + weekOpts + '</select>';
+    var prevWeek = addWeeks(selWeek, -1);
+    var nextWeek = addWeeks(selWeek, 1);
+    var canPrev = prevWeek >= START_MONTH + '-01';
+    var canNext = nextWeek <= currentMonday;
+    selectorHtml = '<div class="summary-week-nav">' +
+      '<button class="summary-nav-btn" onclick="navigateSummaryWeek(-1)"' + (canPrev ? '' : ' disabled') + '>&#8592;</button>' +
+      '<select class="filter-select" id="summary-week" onchange="onSummaryWeekChange()">' + weekOpts + '</select>' +
+      '<button class="summary-nav-btn" onclick="navigateSummaryWeek(1)"' + (canNext ? '' : ' disabled') + '>&#8594;</button>' +
+      '</div>';
   } else {
     // 月セレクター（直近12ヶ月）
     var curMonth = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
@@ -2383,8 +2413,18 @@ function renderSummary() {
     bodyHtml = buildSummaryMatrix(summaryData.matrix) + alertMemberTabsHtml + buildSummaryAlerts(summaryData.alerts);
   }
 
+  var swipeHint = (summaryPeriodMode === 'week')
+    ? '<div class="summary-swipe-hint">← スワイプで週移動 →</div>'
+    : '';
+
   return renderHeader('集計') +
-    '<div class="content">' + filterHtml + bodyHtml + '</div>' +
+    '<div class="content">' +
+      filterHtml +
+      swipeHint +
+      '<div class="summary-swipe-outer">' +
+        '<div id="summary-swipe-body">' + bodyHtml + '</div>' +
+      '</div>' +
+    '</div>' +
     renderBottomNav();
 }
 
@@ -2415,6 +2455,147 @@ function onSummaryMonthChange() {
   summaryData        = null;
   summaryAlertFilter = 'all';
   loadSummary();
+}
+
+/** YYYY-MM-DD に n 週加算した YYYY-MM-DD を返す */
+function addWeeks(weekStr, n) {
+  var parts = weekStr.split('-').map(Number);
+  var d = new Date(parts[0], parts[1] - 1, parts[2]);
+  d.setDate(d.getDate() + n * 7);
+  return d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+}
+
+/** 週ナビゲーション（スワイプ or ボタン）: direction=-1=前週, +1=次週 */
+async function navigateSummaryWeek(direction) {
+  var currentMonday = getMondayOfWeek(new Date());
+  var selWeek = summaryWeekStart || currentMonday;
+  var newWeek = addWeeks(selWeek, direction);
+
+  // 範囲チェック
+  if (newWeek < START_MONTH + '-01') return;
+  if (newWeek > currentMonday) return;
+
+  // スライドアウトアニメーション
+  var body = document.getElementById('summary-swipe-body');
+  if (body) {
+    body.style.transition = 'transform 0.2s ease';
+    body.style.transform = direction < 0 ? 'translateX(100%)' : 'translateX(-100%)';
+  }
+  await new Promise(function(r) { setTimeout(r, 200); });
+
+  // 状態更新
+  summaryWeekStart   = newWeek;
+  summaryData        = null;
+  summaryAlertFilter = 'all';
+
+  // キャッシュ確認
+  var cacheKey = SUMMARY_WEEK_CACHE_PREFIX + newWeek;
+  var cached   = loadSummaryCache(cacheKey);
+
+  if (cached) {
+    summaryData = cached;
+    renderApp();
+    // スライドイン
+    var nb = document.getElementById('summary-swipe-body');
+    if (nb) {
+      nb.style.transition = 'none';
+      nb.style.transform  = direction < 0 ? 'translateX(-100%)' : 'translateX(100%)';
+      nb.offsetHeight; // reflow
+      nb.style.transition = 'transform 0.25s ease';
+      nb.style.transform  = 'translateX(0)';
+    }
+    prefetchAdjacentWeeks();
+  } else {
+    // キャッシュなし: ローディング表示してフェッチ
+    showLoading();
+    try {
+      var result = await apiGet('getSummary', { user_id: currentUser.user_id, week_start: newWeek });
+      summaryData = result;
+      saveSummaryCache(cacheKey, result);
+    } catch(e) {
+      showToast('集計データの取得に失敗しました: ' + e.message, 'error');
+      summaryData = { matrix: [], alerts: [] };
+    } finally {
+      hideLoading();
+      renderApp();
+      var nb2 = document.getElementById('summary-swipe-body');
+      if (nb2) {
+        nb2.style.transition = 'none';
+        nb2.style.transform  = direction < 0 ? 'translateX(-100%)' : 'translateX(100%)';
+        nb2.offsetHeight;
+        nb2.style.transition = 'transform 0.25s ease';
+        nb2.style.transform  = 'translateX(0)';
+      }
+      prefetchAdjacentWeeks();
+    }
+  }
+}
+
+/** 前後週をバックグラウンドでプリフェッチ（サイレント） */
+async function prefetchAdjacentWeeks() {
+  if (summaryPeriodMode !== 'week' || !currentUser) return;
+  var currentMonday = getMondayOfWeek(new Date());
+  var selWeek = summaryWeekStart || currentMonday;
+
+  // -1週, +1週, -2週 の順でフェッチ（範囲外・キャッシュ済みはスキップ）
+  var targets = [-1, 1, -2].map(function(n) { return addWeeks(selWeek, n); })
+    .filter(function(w) { return w >= START_MONTH + '-01' && w <= currentMonday; });
+
+  for (var i = 0; i < targets.length; i++) {
+    var weekStr  = targets[i];
+    var cacheKey = SUMMARY_WEEK_CACHE_PREFIX + weekStr;
+    if (loadSummaryCache(cacheKey)) continue; // 既にキャッシュあり
+    try {
+      var result = await apiGet('getSummary', { user_id: currentUser.user_id, week_start: weekStr });
+      saveSummaryCache(cacheKey, result);
+    } catch(e) { /* プリフェッチ失敗は無視 */ }
+    // GASへの連続リクエストを少し間隔を空ける
+    await new Promise(function(r) { setTimeout(r, 600); });
+  }
+}
+
+/** スワイプイベントを #summary-swipe-body にバインド */
+function bindSummarySwipeEvents() {
+  if (summaryPeriodMode !== 'week') return;
+  var body = document.getElementById('summary-swipe-body');
+  if (!body) return;
+
+  var startX, startY, dragging = false;
+
+  body.addEventListener('touchstart', function(e) {
+    startX   = e.touches[0].clientX;
+    startY   = e.touches[0].clientY;
+    dragging = true;
+    body.style.transition = 'none';
+  }, { passive: true });
+
+  body.addEventListener('touchmove', function(e) {
+    if (!dragging) return;
+    var dx = e.touches[0].clientX - startX;
+    var dy = e.touches[0].clientY - startY;
+    // 横方向が支配的な場合のみ追従（縦スクロールと競合しない）
+    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) {
+      body.style.transform = 'translateX(' + (dx * 0.35) + 'px)';
+    }
+  }, { passive: true });
+
+  body.addEventListener('touchend', function(e) {
+    if (!dragging) return;
+    dragging = false;
+    var dx = e.changedTouches[0].clientX - startX;
+    var dy = e.changedTouches[0].clientY - startY;
+
+    // 50px 以上かつ横方向が支配的ならスワイプ確定
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      navigateSummaryWeek(dx > 0 ? -1 : 1);
+    } else {
+      // 閾値未満 → 元に戻す
+      body.style.transition = 'transform 0.2s ease';
+      body.style.transform  = 'translateX(0)';
+    }
+  }, { passive: true });
 }
 
 /** アラートのメンバーフィルタ切り替え（manager用） */
