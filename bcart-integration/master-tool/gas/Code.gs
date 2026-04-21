@@ -1,7 +1,7 @@
 // BCARTマスター管理ツール - バックエンド
 // Version: v1.5.0
 
-const VERSION = 'v1.5.0';
+const VERSION = 'v1.5.1';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -412,7 +412,7 @@ function bcartGetAll(path) {
         return { ok: false, error: 'BCART_API_ERROR: ' + res.getResponseCode() };
       }
       const parsed = JSON.parse(res.getContentText());
-      const page = parsed.data || parsed.product_sets || parsed.products || parsed.specials || parsed.product_stock || parsed.categories || parsed;
+      const page = parsed.data || parsed.product_sets || parsed.products || parsed.specials || parsed.features || parsed.product_stock || parsed.categories || parsed;
       if (!Array.isArray(page) || page.length === 0) break;
       allData.push(...page);
       if (page.length < limit) break;
