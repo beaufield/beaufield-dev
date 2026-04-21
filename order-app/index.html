@@ -825,7 +825,7 @@
   </div>
 </nav>
 
-<div class="version-label" id="version-label">v1.21.0</div>
+<div class="version-label" id="version-label">v1.21.1</div>
 
 <!-- ==============================
      モーダル: 数量入力
@@ -998,7 +998,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.21.0'; // メロス発注書PDF出力追加
+const APP_VERSION    = 'v1.21.1'; // メロス発注書: 相手商品CDで座標照合
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm';
@@ -1203,6 +1203,7 @@ function parseProductCSV(text, fileName) {
       unit:            findColIdx(headers, '単位名'),
       supplierCD:      findColIdx(headers, '仕入先CD'),
       supplierName:    findColIdx(headers, '仕入先名'),
+      makerCode:       findColIdx(headers, '相手商品CD'),
       jan:             findColIdx(headers, 'JANCD'),
       purchasePrice:   findColIdx(headers, '仕入単価'),
       discontinued:    findColIdx(headers, '廃番'),
@@ -1221,6 +1222,7 @@ function parseProductCSV(text, fileName) {
     const hasStockMgmt = colMap.stockManagement !== -1;
     const hasLastSale  = colMap.lastSaleDate    !== -1;
     const hasSupName   = colMap.supplierName    !== -1;
+    const hasMakerCode = colMap.makerCode       !== -1;
 
     const products = [];
     for (let i = 1; i < lines.length; i++) {
@@ -1233,6 +1235,7 @@ function parseProductCSV(text, fileName) {
         unit:            cleanCell(cols[colMap.unit]),
         supplierCD:      cleanCell(cols[colMap.supplierCD]),
         supplierName:    hasSupName  ? cleanCell(cols[colMap.supplierName])    : '',
+        makerCode:       hasMakerCode ? cleanCell(cols[colMap.makerCode])     : '',
         jan:             cleanCell(cols[colMap.jan]),
         purchasePrice:   hasPriceCol ? parseFloat(cleanCell(cols[colMap.purchasePrice]).replace(/,/g, '')) || 0 : 0,
         discontinued:    hasDisconCol ? cleanCell(cols[colMap.discontinued])   : '',
@@ -1723,6 +1726,7 @@ function confirmQty() {
     memo,
     isHandwritten: pendingProduct.isHandwritten || false,
     supplierCD:    pendingProduct.supplierCD    || '',
+    makerCode:     pendingProduct.makerCode     || '',
     purchasePrice: pendingProduct.purchasePrice || 0
   };
   const dupIdx = findDupIndex(item);
@@ -2440,16 +2444,16 @@ async function outputMelosPDF() {
   const items = cartItems.filter(i => !i.isHandwritten);
   const matched = [], unmatched = [];
   for (const item of items) {
-    const code = String(parseInt(item.code, 10) || item.code);
-    if (MELOS_COORD_MAP[code]) {
+    const code = String(parseInt(item.makerCode, 10) || '');
+    if (code && MELOS_COORD_MAP[code]) {
       matched.push({ item, coord: MELOS_COORD_MAP[code] });
     } else {
       unmatched.push(item);
     }
   }
   if (unmatched.length > 0) {
-    const names = unmatched.map(i => `・${i.name}（コード:${i.code || '(なし)'} JAN:${i.janCode || '(なし)'}）`).join('\n');
-    if (!confirm(`以下の商品はメロス発注書に自動入力できません：\n\n${names}\n\n続けますか？`)) return;
+    const names = unmatched.map(i => '・' + i.name).join('\n');
+    if (!confirm(`以下の商品はメロス発注書に自動入力できません（手書き対応が必要）：\n\n${names}\n\n続けますか？`)) return;
   }
   showLoading('メロス発注書を生成中...');
   try {
@@ -3003,8 +3007,9 @@ async function reOutputMelosPDF(orderNo) {
 
   const matched = [], unmatched = [];
   for (const item of items.filter(i => !i.isHandwritten)) {
-    const code = String(parseInt(item.code, 10) || item.code);
-    if (MELOS_COORD_MAP[code]) {
+    const master = productMaster.find(p => p.code === item.code || (item.jan && p.jan === item.jan));
+    const code = master ? String(parseInt(master.makerCode, 10) || '') : '';
+    if (code && MELOS_COORD_MAP[code]) {
       matched.push({ item, coord: MELOS_COORD_MAP[code] });
     } else {
       unmatched.push(item);
