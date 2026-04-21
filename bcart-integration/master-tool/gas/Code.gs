@@ -1,7 +1,7 @@
 // BCARTマスター管理ツール - バックエンド
 // Version: v1.5.0
 
-const VERSION = 'v1.5.2';
+const VERSION = 'v1.5.3';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -74,9 +74,11 @@ function doPost(e) {
       case 'deleteSpecialSeries':  return jsonResponse(deleteSpecialSeries(params));
       case 'savePriceSetting':     return jsonResponse(savePriceSetting(params));
       case 'deletePriceSetting':   return jsonResponse(deletePriceSetting(params));
-      case 'getBcartSpecialPrices':return jsonResponse(getBcartSpecialPrices(params));
-      case 'applySpecialPrices':   return jsonResponse(applySpecialPrices(params));
-      default:                     return jsonResponse({ ok: false, error: 'UNKNOWN_ACTION' });
+      case 'getBcartSpecialPrices':    return jsonResponse(getBcartSpecialPrices(params));
+      case 'applySpecialPrices':       return jsonResponse(applySpecialPrices(params));
+      case 'getProductSetsByFeature':  return jsonResponse(getProductSetsByFeature(params));
+      case 'debugSpecials':            return jsonResponse(debugSpecials());
+      default:                         return jsonResponse({ ok: false, error: 'UNKNOWN_ACTION' });
     }
   } catch (err) {
     return jsonResponse({ ok: false, error: err.message });
@@ -910,9 +912,9 @@ function getSpecialPriceData() {
   for (let i = 1; i < groupRows.length; i++) {
     if (groupRows[i][0]) {
       groups.push({
-        group_id:   groupRows[i][0],
-        group_name: groupRows[i][1],
-        member_ids: groupRows[i][2],
+        group_id:   String(groupRows[i][0]),
+        group_name: String(groupRows[i][1]),
+        member_ids: String(groupRows[i][2] || ''),
         created_at: String(groupRows[i][3]),
         note:       groupRows[i][4] || ''
       });
@@ -1385,6 +1387,38 @@ function applySpecialPrices(params) {
   });
 
   return { ok: true, successCount: successCount, failCount: failCount, errors: errors };
+}
+
+function getProductSetsByFeature(params) {
+  const featureId = String(params.featureId);
+  const products  = bcartGetAll('/products');
+  if (!products.ok) return products;
+  const allSets = bcartGetAll('/product_sets');
+  if (!allSets.ok) return allSets;
+  const setByProductId = {};
+  allSets.data.forEach(s => {
+    if (!setByProductId[s.product_id]) setByProductId[s.product_id] = [];
+    setByProductId[s.product_id].push(s.id);
+  });
+  const matchProducts = products.data.filter(p =>
+    String(p.feature_id1||'') === featureId ||
+    String(p.feature_id2||'') === featureId ||
+    String(p.feature_id3||'') === featureId
+  );
+  const setIds = [];
+  matchProducts.forEach(p => (setByProductId[p.id] || []).forEach(sid => setIds.push(sid)));
+  return { ok: true, count: setIds.length, productSetIds: setIds };
+}
+
+function debugSpecials() {
+  const res = bcartGet('/features');
+  const rawText = res.ok ? JSON.stringify(res.data, null, 2) : 'ERROR: ' + res.error;
+  const first = res.ok && res.data ? (
+    res.data.features ? JSON.stringify(res.data.features[0], null, 2) :
+    res.data.data      ? JSON.stringify(res.data.data[0], null, 2) :
+    JSON.stringify(res.data, null, 2)
+  ) : '';
+  return { ok: true, rawText: rawText, firstItem: first };
 }
 
 // ===================== 更新履歴 =====================
