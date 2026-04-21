@@ -825,7 +825,7 @@
   </div>
 </nav>
 
-<div class="version-label" id="version-label">v1.21.1</div>
+<div class="version-label" id="version-label">v1.21.2</div>
 
 <!-- ==============================
      モーダル: 数量入力
@@ -998,12 +998,12 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.21.1'; // メロス発注書: 相手商品CDで座標照合
+const APP_VERSION    = 'v1.21.2'; // 商品マスターキャッシュv2(makerCode対応)
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
-const LS_MASTER          = 'bf_pm';
-const LS_MASTER_DATE     = 'bf_pm_date';
-const LS_MASTER_GAS_DATE = 'bf_pm_gas_date'; // GASによる最終更新日時
+const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
+const LS_MASTER_DATE     = 'bf_pm_date_v2';
+const LS_MASTER_GAS_DATE = 'bf_pm_gas_date_v2';
 const LS_PROD_HIST   = 'bf_prod_hist'; // 商品別直近注文（localStorage永続）
 const SS_CART        = 'bf_cart';
 const LS_MEMO_HIST   = 'bf_memo_h';
