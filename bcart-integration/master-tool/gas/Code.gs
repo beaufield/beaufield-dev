@@ -1307,7 +1307,7 @@ function markWip(params) {
   const sheet = getOrCreateSheet(SHEET_WIP);
   const rows = sheet.getDataRange().getValues();
   for (let i = 1; i < rows.length; i++) {
-    if (rows[i][0] === params.code) return { ok: true };
+    if (String(rows[i][0]) === String(params.code)) return { ok: true };
   }
   sheet.appendRow([params.code, params.name, new Date().toLocaleString('ja-JP')]);
   return { ok: true };
@@ -1317,7 +1317,7 @@ function unmarkWip(params) {
   const sheet = getOrCreateSheet(SHEET_WIP);
   const rows = sheet.getDataRange().getValues();
   for (let i = 1; i < rows.length; i++) {
-    if (rows[i][0] === params.code) { sheet.deleteRow(i + 1); return { ok: true }; }
+    if (String(rows[i][0]) === String(params.code)) { sheet.deleteRow(i + 1); return { ok: true }; }
   }
   return { ok: true };
 }
