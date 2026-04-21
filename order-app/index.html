@@ -2448,8 +2448,8 @@ async function outputMelosPDF() {
     }
   }
   if (unmatched.length > 0) {
-    const names = unmatched.map(i => '・' + i.name).join('\n');
-    if (!confirm(`以下の商品はメロス発注書に自動入力できません（手書き対応が必要）：\n\n${names}\n\n続けますか？`)) return;
+    const names = unmatched.map(i => `・${i.name}（コード:${i.code || '(なし)'} JAN:${i.janCode || '(なし)'}）`).join('\n');
+    if (!confirm(`以下の商品はメロス発注書に自動入力できません：\n\n${names}\n\n続けますか？`)) return;
   }
   showLoading('メロス発注書を生成中...');
   try {
