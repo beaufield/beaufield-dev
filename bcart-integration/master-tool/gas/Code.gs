@@ -1,7 +1,7 @@
 // BCARTマスター管理ツール - バックエンド
 // Version: v1.5.0
 
-const VERSION = 'v1.5.3';
+const VERSION = 'v1.5.4';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -772,10 +772,14 @@ function getSpecials() {
       if (p.feature_id2) featureIds.add(p.feature_id2);
       if (p.feature_id3) featureIds.add(p.feature_id3);
     });
-    return {
-      ok: true,
-      specials: [...featureIds].sort((a, b) => a - b).map(id => ({ id: id, name: '特集 ' + id }))
-    };
+    const featureList = [...featureIds].sort((a, b) => a - b).map(id => {
+      const matched = products.data.filter(p =>
+        p.feature_id1 == id || p.feature_id2 == id || p.feature_id3 == id
+      );
+      const sample = matched.length > 0 ? String(matched[0].name || '').substring(0, 12) : '';
+      return { id: id, name: '特集' + id + ': ' + sample + ' 他' + matched.length + '件' };
+    });
+    return { ok: true, specials: featureList };
   } catch(e) {
     return { ok: true, specials: [] };
   }
