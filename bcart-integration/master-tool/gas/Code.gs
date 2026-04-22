@@ -1,7 +1,7 @@
 // BCARTマスター管理ツール - バックエンド
-// Version: v1.6.0
+// Version: v1.7.0
 
-const VERSION = 'v1.6.0';
+const VERSION = 'v1.7.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -524,7 +524,9 @@ function updatePrice(params) {
 }
 
 function updateJodai(params) {
-  const res = bcartPatch('/product_sets/' + params.bcartSetId, { jodai: params.jodai });
+  const body = { jodai: params.jodai };
+  if (params.jodaiType) body.jodai_type = params.jodaiType;
+  const res = bcartPatch('/product_sets/' + params.bcartSetId, body);
   addHistory({
     userName: params._userName,
     code: params.code || '',
@@ -555,6 +557,7 @@ function updateAll(params) {
   const body = {};
   if (params.price   !== undefined) body.unit_price = params.price;
   if (params.jodai   !== undefined) body.jodai = params.jodai;
+  if (params.jodai   !== undefined && params.jodaiType) body.jodai_type = params.jodaiType;
   if (params.janCode !== undefined) body.jan_code = params.janCode;
   if (params.csvKouri || params.csvShiire) {
     body.group_price = {};
@@ -635,7 +638,9 @@ function bulkUpdate(params) {
         result: res.ok ? '成功' : ('失敗: ' + res.error)
       });
     } else if (item.type === 'jodai') {
-      res = bcartPatch('/product_sets/' + item.bcartSetId, { jodai: item.jodai });
+      const jodaiBody = { jodai: item.jodai };
+      if (item.jodaiType) jodaiBody.jodai_type = item.jodaiType;
+      res = bcartPatch('/product_sets/' + item.bcartSetId, jodaiBody);
     } else if (item.type === 'jan') {
       res = bcartPatch('/product_sets/' + item.bcartSetId, { jan_code: item.janCode });
     }
@@ -738,20 +743,23 @@ function searchProducts(params) {
 }
 
 function getSpecials() {
-  try {
-    const res = bcartGet('/features');
-    if (res.ok && res.data) {
-      const raw = res.data;
-      const list = raw.features || raw.data || (Array.isArray(raw) ? raw : []);
-      if (list.length > 0) {
-        const specials = list.map(f => ({
-          id:   f.id         || f.feature_id   || f.featureId,
-          name: f.name       || f.feature_name || f.title || f.featureName || String(f.id || f.feature_id || '')
-        })).filter(f => f.id);
-        if (specials.length > 0) return { ok: true, specials: specials };
+  const endpoints = ['/product_features', '/features'];
+  for (const ep of endpoints) {
+    try {
+      const res = bcartGet(ep);
+      if (res.ok && res.data) {
+        const raw = res.data;
+        const list = raw.product_features || raw.features || raw.data || (Array.isArray(raw) ? raw : []);
+        if (list.length > 0) {
+          const specials = list.map(f => ({
+            id:   f.id         || f.feature_id   || f.featureId,
+            name: f.name       || f.feature_name || f.title || f.featureName || String(f.id || f.feature_id || '')
+          })).filter(f => f.id);
+          if (specials.length > 0) return { ok: true, specials: specials };
+        }
       }
-    }
-  } catch(e) {}
+    } catch(e) {}
+  }
 
   try {
     const products = bcartGetAll('/products');
@@ -1304,7 +1312,7 @@ function markWip(params) {
   const sheet = getOrCreateSheet(SHEET_WIP);
   const rows = sheet.getDataRange().getValues();
   for (let i = 1; i < rows.length; i++) {
-    if (rows[i][0] === params.code) return { ok: true };
+    if (String(rows[i][0]) === String(params.code)) return { ok: true };
   }
   sheet.appendRow([params.code, params.name, new Date().toLocaleString('ja-JP')]);
   return { ok: true };
@@ -1314,7 +1322,7 @@ function unmarkWip(params) {
   const sheet = getOrCreateSheet(SHEET_WIP);
   const rows = sheet.getDataRange().getValues();
   for (let i = 1; i < rows.length; i++) {
-    if (rows[i][0] === params.code) { sheet.deleteRow(i + 1); return { ok: true }; }
+    if (String(rows[i][0]) === String(params.code)) { sheet.deleteRow(i + 1); return { ok: true }; }
   }
   return { ok: true };
 }
