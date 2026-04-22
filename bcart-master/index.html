@@ -205,14 +205,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.6.0</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.5.4</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v1.6.0</span>
+    <span class="version">HTML v1.5.4</span>
   </div>
 
   <div class="tabs">
@@ -354,8 +354,9 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <!-- タブ5: 特別価格 -->
     <div class="tab-panel" id="tab-special-price">
       <div class="sp-subnav">
+        <button class="sp-subnav-btn active" id="sp-btn-settings" onclick="switchSpSubview('settings',this)">設定管理</button>
         <button class="sp-subnav-btn" id="sp-btn-groups" onclick="switchSpSubview('groups',this)">顧客グループ</button>
-        <button class="sp-subnav-btn active" id="sp-btn-settings" onclick="switchSpSubview('settings',this)">特別価格設定</button>
+        <button class="sp-subnav-btn" id="sp-btn-series" onclick="switchSpSubview('series',this)">シリーズ</button>
       </div>
       <div id="sp-alert-area"></div>
       <div id="sp-content">
@@ -451,24 +452,22 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
       </div>
       <div class="form-row">
         <div class="form-field">
-          <label>カテゴリー *</label>
-          <select id="regCategoryId">
-            <option value="">読み込み中...</option>
-          </select>
+          <label>カテゴリーID *（BCART管理画面で確認）</label>
+          <input type="number" id="regCategoryId" placeholder="例: 5" min="1">
         </div>
       </div>
       <div class="form-row">
         <div class="form-field">
-          <label>特集1（シリーズ）</label>
-          <select id="regFeatureId1" size="6"><option value="">なし</option></select>
+          <label>特集1</label>
+          <select id="regFeatureId1"><option value="">なし</option></select>
         </div>
         <div class="form-field">
-          <label>特集2（メーカー）</label>
-          <select id="regFeatureId2" size="6"><option value="">なし</option></select>
+          <label>特集2</label>
+          <select id="regFeatureId2"><option value="">なし</option></select>
         </div>
         <div class="form-field">
-          <label>特集3（キャンペーン）</label>
-          <select id="regFeatureId3" size="6"><option value="">なし</option></select>
+          <label>特集3</label>
+          <select id="regFeatureId3"><option value="">なし</option></select>
         </div>
       </div>
     </div>
@@ -565,6 +564,79 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
   </div>
 </div>
 
+<!-- シリーズ編集モーダル -->
+<div class="modal-overlay" id="seriesModal">
+  <div class="modal" style="width:420px;max-width:95vw;">
+    <h3 id="seriesModalTitle">商品シリーズ</h3>
+    <input type="hidden" id="editSeriesId">
+    <div class="form-row" style="margin-bottom:10px;">
+      <div class="form-field" style="flex:1;">
+        <label>シリーズ名 *</label>
+        <input type="text" id="seriesName" placeholder="例: VOSシリーズ">
+      </div>
+    </div>
+    <div class="form-row" style="margin-bottom:10px;">
+      <div class="form-field" style="flex:1;">
+        <label>特集（BCART）*</label>
+        <select id="seriesFeatureId" onchange="onSeriesFeatureChange()">
+          <option value="">特集を選択...</option>
+        </select>
+      </div>
+    </div>
+    <div id="seriesProductCount" style="font-size:12px;color:#6b7280;margin-bottom:12px;"></div>
+    <div class="actions">
+      <button class="btn btn-gray" onclick="closeModal('seriesModal')">キャンセル</button>
+      <button class="btn btn-primary" onclick="saveSeriesModal()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 価格設定編集モーダル -->
+<div class="modal-overlay" id="settingModal">
+  <div class="modal" style="width:380px;max-width:95vw;">
+    <h3 id="settingModalTitle">特別価格設定</h3>
+    <input type="hidden" id="editSettingId">
+    <div class="form-row" style="margin-bottom:10px;">
+      <div class="form-field" style="flex:1;">
+        <label>シリーズ *</label>
+        <select id="settingSeriesId"></select>
+      </div>
+    </div>
+    <div class="form-row" style="margin-bottom:10px;">
+      <div class="form-field" style="flex:1;">
+        <label>顧客グループ *</label>
+        <select id="settingGroupId"></select>
+      </div>
+    </div>
+    <div class="form-row" style="margin-bottom:10px;">
+      <div class="form-field" style="flex:1;">
+        <label>特別価格（円）*</label>
+        <input type="number" id="settingUnitPrice" min="0" placeholder="例: 14000">
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-gray" onclick="closeModal('settingModal')">キャンセル</button>
+      <button class="btn btn-primary" onclick="saveSettingModal()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 適用確認モーダル -->
+<div class="modal-overlay" id="applyModal">
+  <div class="modal" style="width:560px;max-width:95vw;max-height:90vh;overflow-y:auto;">
+    <h3>💎 特別価格を適用</h3>
+    <div id="applyModalInfo" style="margin-bottom:10px;font-size:13px;"></div>
+    <div id="applyPreviewArea" class="apply-preview"></div>
+    <div style="margin-top:14px;padding:10px 12px;background:#fef3c7;border-radius:6px;font-size:12px;color:#92400e;">
+      ⚠️ BCARTの商品セットに特別価格を書き込みます。他のグループの設定はそのまま維持されます。
+    </div>
+    <div class="actions" style="margin-top:14px;">
+      <button class="btn btn-gray" onclick="closeModal('applyModal')">キャンセル</button>
+      <button class="btn btn-primary" id="applyExecuteBtn" onclick="executeApply()">✅ 適用する</button>
+    </div>
+  </div>
+</div>
+
 <!-- 進捗オーバーレイ -->
 <div id="progressOverlay">
   <div class="progress-card">
@@ -604,9 +676,8 @@ let regFeatures = [];
 // 機能B: 特別価格
 let spData = null;
 let spSubview = 'settings';
-let spSelectedGroupId = null;
-let spFeatureSets = [];
-let spFeaturesCache = null;
+let spFeaturesLoaded = false;
+let applySettingId = null;
 
 // ===================== 初期化 =====================
 window.onload = function() {
@@ -1587,19 +1658,7 @@ function openRegisterModal(code) {
   setPattern('A');
   document.getElementById('registerModal').classList.add('open');
 
-  if (regCategories.length === 0) {
-    document.getElementById('regCategoryId').innerHTML = '<option value="">読み込み中...</option>';
-    gasPost({ action: 'getCategories' }, function(res) {
-      if (res.ok && res.categories) {
-        regCategories = res.categories;
-        populateCategorySelect();
-      } else {
-        document.getElementById('regCategoryId').innerHTML = '<option value="">取得失敗（ID直接入力）</option>';
-      }
-    });
-  } else {
-    populateCategorySelect();
-  }
+  document.getElementById('regCategoryId').value = '';
   if (regFeatures.length === 0) {
     gasPost({ action: 'getFeatures' }, function(res) {
       if (res.ok && res.specials) {
@@ -1627,13 +1686,6 @@ function setPattern(pattern) {
   }
 }
 
-
-function populateCategorySelect() {
-  const sel = document.getElementById('regCategoryId');
-  if (!sel) return;
-  sel.innerHTML = '<option value="">カテゴリーを選択 *</option>' +
-    regCategories.map(c => '<option value="' + c.id + '">' + esc(c.name) + '</option>').join('');
-}
 
 function populateFeatureSelects() {
   const opts = '<option value="">なし</option>' +
@@ -1720,18 +1772,76 @@ function switchSpSubview(view, btn) {
 }
 
 function loadSpecialPriceData() {
-  document.getElementById('sp-content').innerHTML = '<div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>';
+  document.getElementById('sp-content').innerHTML = '<div class="loading"><div class="spinner"></div><div>読み込み中（BCART新規商品検知含む）...</div></div>';
+  document.getElementById('sp-alert-area').innerHTML = '';
   gasPost({ action: 'getSpecialPriceData' }, function(res) {
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
     spData = res;
+    renderSpAlerts();
     renderSpContent();
   });
+}
+
+function renderSpAlerts() {
+  const area = document.getElementById('sp-alert-area');
+  const alerts = (spData.newProductAlerts || []);
+  if (alerts.length === 0) { area.innerHTML = ''; return; }
+  area.innerHTML = alerts.map(a =>
+    '<div class="sp-alert">⚠️ <strong>' + esc(a.series_name) + '</strong> に新しい商品セットが追加されています（' +
+    a.saved_count + ' → ' + a.current_count + '件）' +
+    '<button class="btn btn-sm btn-primary" style="margin-left:12px;" onclick="refreshSeries(\'' + esc(a.series_id) + '\')">シリーズを更新</button>' +
+    '</div>'
+  ).join('');
 }
 
 function renderSpContent() {
   if (!spData) return;
   if (spSubview === 'settings') renderSpSettings();
   else if (spSubview === 'groups') renderSpGroups();
+  else if (spSubview === 'series') renderSpSeries();
+}
+
+function renderSpSettings() {
+  const groups = spData.groups || [];
+  const series = spData.series || [];
+  const settings = spData.settings || [];
+  const groupMap = {};
+  groups.forEach(g => { groupMap[g.group_id] = g; });
+  const seriesMap = {};
+  series.forEach(s => { seriesMap[s.series_id] = s; });
+
+  let html = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">' +
+    '<button class="btn btn-primary btn-sm" onclick="openSettingModal(null)">+ 新規設定追加</button>' +
+    '<button class="btn btn-gray btn-sm" onclick="loadSpecialPriceData()">🔄 更新</button>' +
+    '</div>';
+
+  if (settings.length === 0) {
+    html += '<div class="sp-empty">特別価格設定がありません。「+ 新規設定追加」から登録してください。</div>';
+  } else {
+    html += '<div style="overflow-x:auto;"><table class="sp-table"><thead><tr>' +
+      '<th>シリーズ</th><th>顧客グループ</th><th>特別価格</th><th>アクション</th>' +
+      '</tr></thead><tbody>';
+    settings.forEach(st => {
+      const ser = seriesMap[st.series_id];
+      const grp = groupMap[st.group_id];
+      const memberCount = grp ? grp.member_ids.split(',').filter(s => s.trim()).length : 0;
+      const setCount = ser ? ser.product_set_ids.length : 0;
+      html += '<tr>' +
+        '<td><strong>' + esc(ser ? ser.series_name : st.series_id) + '</strong><br><span style="font-size:11px;color:#9ca3af;">' + setCount + '商品セット</span></td>' +
+        '<td>' + esc(grp ? grp.group_name : st.group_id) + '<br><span style="font-size:11px;color:#9ca3af;">' + memberCount + '名</span></td>' +
+        '<td style="font-weight:700;color:#1a56db;">¥' + Number(st.unit_price).toLocaleString() + '</td>' +
+        '<td style="white-space:nowrap;">' +
+        '<button class="btn btn-sm btn-gray" style="margin-right:4px;" onclick="openSettingModal(\'' + esc(st.setting_id) + '\')">編集</button>' +
+        '<button class="btn btn-sm btn-primary" style="margin-right:4px;" onclick="openApplyModal(\'' + esc(st.setting_id) + '\')">▶ 適用</button>' +
+        '<button class="btn btn-sm btn-danger" onclick="deleteSetting(\'' + esc(st.setting_id) + '\')">削除</button>' +
+        '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    html += '<div style="margin-top:12px;">' +
+      '<button class="btn btn-success" onclick="openApplyModal(\'all\')">📤 全設定をBCARTに適用</button>' +
+      '</div>';
+  }
+  document.getElementById('sp-content').innerHTML = html;
 }
 
 function renderSpGroups() {
@@ -1757,183 +1867,29 @@ function renderSpGroups() {
   document.getElementById('sp-content').innerHTML = html;
 }
 
-function renderSpSettings() {
-  const groups = spData.groups || [];
-  let html = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:16px;">' +
-    '<select id="spGroupSelect" onchange="onSpGroupChange(this.value)" style="padding:7px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;background:#fff;flex:1;max-width:320px;">' +
-    '<option value="">顧客グループを選択してください</option>' +
-    groups.map(g => '<option value="' + esc(g.group_id) + '"' + (g.group_id === spSelectedGroupId ? ' selected' : '') + '>' + esc(g.group_name) + '</option>').join('') +
-    '</select>' +
-    '<button class="btn btn-gray btn-sm" onclick="loadSpecialPriceData()">🔄 更新</button>' +
+function renderSpSeries() {
+  const series = spData.series || [];
+  let html = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">' +
+    '<button class="btn btn-primary btn-sm" onclick="openSeriesModal(null)">+ 新規シリーズ追加</button>' +
+    '<button class="btn btn-gray btn-sm" onclick="debugSpecialsBtn()">🔍 特集API確認</button>' +
     '</div>';
-
-  if (spSelectedGroupId) {
-    const details = (spData.details || []).filter(d => d.group_id === spSelectedGroupId);
-
-    html += '<div style="margin-bottom:20px;">';
-    html += '<div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px;">登録済みの特別価格</div>';
-    if (details.length === 0) {
-      html += '<div style="font-size:13px;color:#9ca3af;padding:8px 0;">この顧客グループには特別価格設定がありません。</div>';
-    } else {
-      html += '<div style="overflow-x:auto;"><table class="sp-table"><thead><tr>' +
-        '<th>品番</th><th>商品セット名</th><th>特別価格</th><th>更新日時</th><th></th>' +
-        '</tr></thead><tbody>';
-      details.forEach(d => {
-        html += '<tr>' +
-          '<td style="font-family:monospace;font-size:12px;color:#6b7280;">' + esc(d.product_no) + '</td>' +
-          '<td>' + esc(d.product_set_name) + '</td>' +
-          '<td style="font-weight:700;color:#1a56db;">¥' + Number(d.unit_price).toLocaleString() + '</td>' +
-          '<td style="font-size:11px;color:#9ca3af;">' + esc(String(d.updated_at || '').substring(0, 16)) + '</td>' +
-          '<td><button class="btn btn-sm btn-danger" onclick="deleteSpDetail(\'' + esc(d.detail_id) + '\',\'' + esc(d.product_no) + '\')">削除</button></td>' +
-          '</tr>';
-      });
-      html += '</tbody></table></div>';
-    }
-    html += '</div>';
-
-    html += '<div style="border-top:1px solid #e5e7eb;padding-top:16px;">';
-    html += '<div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;">特集から商品セットを選んで特別価格を設定</div>';
-    html += '<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:12px;">' +
-      '<select id="spFeatureSelect" size="8" style="border:1px solid #d1d5db;border-radius:6px;font-size:13px;background:#fff;flex:1;max-width:320px;overflow-y:auto;">' +
-      '<option value="">特集を選択...</option>' +
-      '</select>' +
-      '<button class="btn btn-primary btn-sm" style="margin-top:4px;" onclick="loadSpFeatureSets()">一覧を表示</button>' +
-      '</div>';
-    html += '<div id="spFeatureSetsArea"></div>';
-    html += '</div>';
+  if (series.length === 0) {
+    html += '<div class="sp-empty">商品シリーズがありません。</div>';
+  } else {
+    html += series.map(s => {
+      return '<div class="sp-card">' +
+        '<div class="sp-card-info">' +
+        '<div class="sp-card-title">📦 ' + esc(s.series_name) + '</div>' +
+        '<div class="sp-card-sub">特集: ' + esc(s.feature_name || s.feature_id) + ' ／ ' + s.product_set_ids.length + '商品セット' +
+        (s.last_checked_at ? ' ／ 最終確認: ' + esc(s.last_checked_at) : '') + '</div>' +
+        '</div>' +
+        '<button class="btn btn-sm btn-gray" style="margin-right:4px;" onclick="refreshSeries(\'' + esc(s.series_id) + '\')">更新</button>' +
+        '<button class="btn btn-sm btn-gray" style="margin-right:4px;" onclick="openSeriesModal(\'' + esc(s.series_id) + '\')">編集</button>' +
+        '<button class="btn btn-sm btn-danger" onclick="deleteSeries(\'' + esc(s.series_id) + '\',\'' + esc(s.series_name) + '\')">削除</button>' +
+        '</div>';
+    }).join('');
   }
-
   document.getElementById('sp-content').innerHTML = html;
-
-  if (spSelectedGroupId) {
-    if (spFeaturesCache) {
-      populateSpFeatureSelect();
-    } else {
-      gasPost({ action: 'getFeatures' }, function(res) {
-        if (res.ok && res.specials) {
-          spFeaturesCache = res.specials;
-          populateSpFeatureSelect();
-        }
-      });
-    }
-    if (spFeatureSets.length > 0) renderSpFeatureSets();
-  }
-}
-
-function onSpGroupChange(groupId) {
-  spSelectedGroupId = groupId || null;
-  spFeatureSets = [];
-  renderSpSettings();
-}
-
-function populateSpFeatureSelect() {
-  const sel = document.getElementById('spFeatureSelect');
-  if (!sel || !spFeaturesCache) return;
-  sel.innerHTML = '<option value="">特集を選択...</option>' +
-    spFeaturesCache.map(f => '<option value="' + f.id + '">' + esc(f.name) + '</option>').join('');
-}
-
-function loadSpFeatureSets() {
-  const sel = document.getElementById('spFeatureSelect');
-  if (!sel || !sel.value) { showToast('特集を選択してください', true); return; }
-  const featureId = parseInt(sel.value);
-  const area = document.getElementById('spFeatureSetsArea');
-  area.innerHTML = '<div class="loading"><div class="spinner"></div><div>商品セット一覧を取得中...</div></div>';
-  gasPost({ action: 'getProductSetsForFeature', featureId: featureId }, function(res) {
-    if (!res.ok) { area.innerHTML = '<div style="color:#dc2626;padding:8px;">取得エラー: ' + esc(res.error) + '</div>'; return; }
-    spFeatureSets = res.sets || [];
-    renderSpFeatureSets();
-  });
-}
-
-function renderSpFeatureSets() {
-  const area = document.getElementById('spFeatureSetsArea');
-  if (!area) return;
-  if (spFeatureSets.length === 0) {
-    area.innerHTML = '<div style="font-size:13px;color:#9ca3af;">この特集には商品セットがありません。</div>';
-    return;
-  }
-
-  const savedDetails = (spData.details || []).filter(d => d.group_id === spSelectedGroupId);
-  const savedMap = {};
-  savedDetails.forEach(d => { savedMap[String(d.product_set_id)] = d.unit_price; });
-
-  let html = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">' +
-    '<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">' +
-    '<input type="checkbox" id="spSelectAll" onchange="spToggleAll(this.checked)"> すべて選択</label>' +
-    '<div style="display:flex;gap:6px;align-items:center;margin-left:auto;">' +
-    '<span style="font-size:12px;color:#6b7280;">一括価格:</span>' +
-    '<input type="number" id="spBulkPrice" placeholder="例: 14000" min="0" style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;width:120px;">' +
-    '<button class="btn btn-gray btn-sm" onclick="applySpBulkPrice()">チェック済みに適用</button>' +
-    '</div></div>';
-
-  html += '<div style="overflow-x:auto;"><table class="sp-table"><thead><tr>' +
-    '<th style="width:36px;"></th><th>品番</th><th>商品セット名</th><th>通常価格</th><th>特別価格</th>' +
-    '</tr></thead><tbody>';
-
-  spFeatureSets.forEach(s => {
-    const savedPrice = savedMap[String(s.id)];
-    const isChecked = savedPrice !== undefined ? ' checked' : '';
-    html += '<tr>' +
-      '<td style="text-align:center;"><input type="checkbox" class="sp-set-check" data-id="' + s.id + '" data-no="' + esc(s.product_no) + '" data-name="' + esc(s.name) + '"' + isChecked + '></td>' +
-      '<td style="font-family:monospace;font-size:12px;color:#6b7280;">' + esc(s.product_no) + '</td>' +
-      '<td style="font-size:13px;">' + esc(s.name) + '</td>' +
-      '<td style="color:#6b7280;">¥' + Number(s.unit_price || 0).toLocaleString() + '</td>' +
-      '<td><input type="number" class="sp-price-input" data-id="' + s.id + '" value="' + (savedPrice !== undefined ? savedPrice : '') + '" placeholder="価格" min="0" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;width:100px;"></td>' +
-      '</tr>';
-  });
-
-  html += '</tbody></table></div>';
-  html += '<div style="margin-top:12px;text-align:right;">' +
-    '<button class="btn btn-primary" onclick="executeSpApply()">💎 BCARTに適用して保存</button>' +
-    '</div>';
-
-  area.innerHTML = html;
-}
-
-function spToggleAll(checked) {
-  document.querySelectorAll('.sp-set-check').forEach(c => c.checked = checked);
-}
-
-function applySpBulkPrice() {
-  const bulkPrice = document.getElementById('spBulkPrice') ? document.getElementById('spBulkPrice').value : '';
-  if (!bulkPrice || parseFloat(bulkPrice) <= 0) { showToast('一括価格に正の数値を入力してください', true); return; }
-  document.querySelectorAll('.sp-set-check:checked').forEach(c => {
-    const priceInput = document.querySelector('.sp-price-input[data-id="' + c.dataset.id + '"]');
-    if (priceInput) priceInput.value = bulkPrice;
-  });
-}
-
-function executeSpApply() {
-  if (!spSelectedGroupId) { showToast('顧客グループを選択してください', true); return; }
-  const items = [];
-  document.querySelectorAll('.sp-set-check:checked').forEach(c => {
-    const priceInput = document.querySelector('.sp-price-input[data-id="' + c.dataset.id + '"]');
-    const price = priceInput ? parseFloat(priceInput.value) : 0;
-    if (!price || price <= 0) return;
-    items.push({ product_set_id: c.dataset.id, product_no: c.dataset.no, product_set_name: c.dataset.name, unit_price: price });
-  });
-  if (items.length === 0) { showToast('商品セットを選択し、特別価格を入力してください', true); return; }
-  if (!confirm(items.length + '件の商品セットにBCARTへ特別価格を適用します。\nよろしいですか？')) return;
-  showToast('BCARTに反映中... (' + items.length + '件)');
-  gasPost({ action: 'applyGroupPrices', group_id: spSelectedGroupId, items: items }, function(res) {
-    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
-    const msg = res.failCount > 0
-      ? res.successCount + '件成功、' + res.failCount + '件失敗'
-      : items.length + '件に特別価格を適用しました';
-    showToast(msg, res.failCount > 0);
-    spFeatureSets = [];
-    loadSpecialPriceData();
-  });
-}
-
-function deleteSpDetail(detailId, productNo) {
-  if (!confirm('「' + productNo + '」の特別価格設定を削除します。\nBCARTからも該当グループの会員IDのspecial_priceが削除されます。\nよろしいですか？')) return;
-  gasPost({ action: 'deleteSpecialPriceDetail', detail_id: detailId }, function(res) {
-    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
-    showToast('削除しました');
-    loadSpecialPriceData();
-  });
 }
 
 // グループ CRUD
@@ -1971,6 +1927,232 @@ function deleteGroup(groupId, name) {
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
     showToast('削除しました');
     loadSpecialPriceData();
+  });
+}
+
+// シリーズ CRUD
+function openSeriesModal(seriesId) {
+  document.getElementById('editSeriesId').value = seriesId || '';
+  document.getElementById('seriesModalTitle').textContent = seriesId ? 'シリーズを編集' : '新規商品シリーズ';
+  const s = seriesId ? (spData.series || []).find(x => x.series_id === seriesId) : null;
+  document.getElementById('seriesName').value = s ? s.series_name : '';
+  document.getElementById('seriesProductCount').textContent = '';
+
+  const sel = document.getElementById('seriesFeatureId');
+  if (!spFeaturesLoaded) {
+    sel.innerHTML = '<option value="">読み込み中...</option>';
+    gasPost({ action: 'getFeatures' }, function(res) {
+      if (res.ok && res.specials) {
+        spFeaturesLoaded = true;
+        regFeatures = res.specials;
+        sel.innerHTML = '<option value="">特集を選択...</option>' +
+          res.specials.map(f => '<option value="' + f.id + '">' + esc(f.name) + '</option>').join('');
+        if (s) sel.value = s.feature_id;
+      }
+    });
+  } else {
+    sel.innerHTML = '<option value="">特集を選択...</option>' +
+      regFeatures.map(f => '<option value="' + f.id + '">' + esc(f.name) + '</option>').join('');
+    if (s) sel.value = s.feature_id;
+  }
+  document.getElementById('seriesModal').classList.add('open');
+}
+
+function onSeriesFeatureChange() {
+  const featureId = document.getElementById('seriesFeatureId').value;
+  document.getElementById('seriesProductCount').textContent = '';
+  if (!featureId) return;
+  document.getElementById('seriesProductCount').textContent = '商品セット数を確認中...';
+  gasPost({ action: 'getProductSetsByFeature', featureId: parseInt(featureId) }, function(res) {
+    if (res.ok) {
+      document.getElementById('seriesProductCount').textContent = 'この特集には現在 ' + (res.count || 0) + ' 商品セットが含まれます';
+    } else {
+      document.getElementById('seriesProductCount').textContent = '';
+    }
+  });
+}
+
+function saveSeriesModal() {
+  const name      = document.getElementById('seriesName').value.trim();
+  const featureId = document.getElementById('seriesFeatureId').value;
+  if (!name || !featureId) { showToast('シリーズ名と特集は必須です', true); return; }
+  const featureName = document.getElementById('seriesFeatureId').options[document.getElementById('seriesFeatureId').selectedIndex].text;
+  gasPost({
+    action:       'saveSpecialSeries',
+    series_id:    document.getElementById('editSeriesId').value || null,
+    series_name:  name,
+    feature_id:   parseInt(featureId),
+    feature_name: featureName
+  }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    closeModal('seriesModal');
+    showToast('保存しました（' + (res.productCount || 0) + '商品セット）');
+    loadSpecialPriceData();
+  });
+}
+
+function refreshSeries(seriesId) {
+  showToast('商品セット数を更新中...');
+  gasPost({ action: 'updateSeriesProducts', series_id: seriesId }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    showToast('更新しました（現在 ' + res.productCount + '件、' + res.addedCount + '件追加）');
+    loadSpecialPriceData();
+  });
+}
+
+function deleteSeries(seriesId, name) {
+  if (!confirm('「' + name + '」を削除します。\n関連する特別価格設定も削除されます。\nよろしいですか？')) return;
+  gasPost({ action: 'deleteSpecialSeries', series_id: seriesId }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    showToast('削除しました');
+    loadSpecialPriceData();
+  });
+}
+
+// 価格設定 CRUD
+function openSettingModal(settingId) {
+  document.getElementById('editSettingId').value = settingId || '';
+  document.getElementById('settingModalTitle').textContent = settingId ? '特別価格設定を編集' : '新規特別価格設定';
+  const st = settingId ? (spData.settings || []).find(x => x.setting_id === settingId) : null;
+  const groups = spData.groups || [];
+  const series = spData.series || [];
+  document.getElementById('settingSeriesId').innerHTML =
+    '<option value="">シリーズを選択 *</option>' +
+    series.map(s => '<option value="' + esc(s.series_id) + '">' + esc(s.series_name) + '</option>').join('');
+  document.getElementById('settingGroupId').innerHTML =
+    '<option value="">グループを選択 *</option>' +
+    groups.map(g => '<option value="' + esc(g.group_id) + '">' + esc(g.group_name) + '</option>').join('');
+  if (st) {
+    document.getElementById('settingSeriesId').value = st.series_id;
+    document.getElementById('settingGroupId').value  = st.group_id;
+    document.getElementById('settingUnitPrice').value = st.unit_price;
+  } else {
+    document.getElementById('settingUnitPrice').value = '';
+  }
+  document.getElementById('settingModal').classList.add('open');
+}
+
+function saveSettingModal() {
+  const seriesId  = document.getElementById('settingSeriesId').value;
+  const groupId   = document.getElementById('settingGroupId').value;
+  const unitPrice = parseFloat(document.getElementById('settingUnitPrice').value);
+  if (!seriesId || !groupId) { showToast('シリーズとグループは必須です', true); return; }
+  if (!unitPrice || unitPrice <= 0) { showToast('特別価格に正の数値を入力してください', true); return; }
+  gasPost({
+    action:      'savePriceSetting',
+    setting_id:  document.getElementById('editSettingId').value || null,
+    series_id:   seriesId,
+    group_id:    groupId,
+    unit_price:  unitPrice
+  }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    closeModal('settingModal');
+    showToast('保存しました');
+    loadSpecialPriceData();
+  });
+}
+
+function deleteSetting(settingId) {
+  if (!confirm('この特別価格設定を削除します。\nBCARTから該当グループの会員IDのspecial_priceも削除されます。\nよろしいですか？')) return;
+  gasPost({ action: 'deletePriceSetting', setting_id: settingId }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    showToast('削除しました');
+    loadSpecialPriceData();
+  });
+}
+
+// 適用確認モーダル
+function openApplyModal(settingId) {
+  applySettingId = settingId;
+  let seriesId, settingInfo;
+
+  if (settingId === 'all') {
+    settingInfo = '全設定（' + (spData.settings || []).length + '件）';
+    const allSeriesIds = [...new Set((spData.settings || []).map(s => s.series_id))];
+    seriesId = allSeriesIds[0];
+  } else {
+    const st = (spData.settings || []).find(x => x.setting_id === settingId);
+    if (!st) return;
+    const ser = (spData.series || []).find(x => x.series_id === st.series_id);
+    const grp = (spData.groups || []).find(x => x.group_id === st.group_id);
+    seriesId = st.series_id;
+    settingInfo = (ser ? ser.series_name : st.series_id) + ' × ' + (grp ? grp.group_name : st.group_id) + ' → ¥' + Number(st.unit_price).toLocaleString();
+  }
+
+  document.getElementById('applyModalInfo').innerHTML = '<strong>' + esc(settingInfo) + '</strong>';
+  document.getElementById('applyPreviewArea').innerHTML = '<div class="loading"><div class="spinner"></div><div>BCART現在設定を取得中...</div></div>';
+  document.getElementById('applyExecuteBtn').disabled = false;
+  document.getElementById('applyModal').classList.add('open');
+
+  gasPost({ action: 'getBcartSpecialPrices', series_id: seriesId }, function(res) {
+    if (!res.ok) {
+      document.getElementById('applyPreviewArea').innerHTML = '<div style="color:#dc2626;padding:12px;">取得エラー: ' + esc(res.error) + '</div>';
+      return;
+    }
+    const items = res.items || [];
+    if (items.length === 0) {
+      document.getElementById('applyPreviewArea').innerHTML = '<div style="padding:12px;color:#9ca3af;">対象商品セットなし</div>';
+      return;
+    }
+
+    let st = null;
+    if (settingId !== 'all') {
+      st = (spData.settings || []).find(x => x.setting_id === settingId);
+    }
+    const grp = st ? (spData.groups || []).find(x => x.group_id === st.group_id) : null;
+    const memberIds = grp ? String(grp.member_ids || '').split(',').map(s => s.trim()).filter(s => s) : [];
+    const targetPrice = st ? st.unit_price : null;
+
+    const rows = items.map(item => {
+      const sp = item.special_price || {};
+      let changeLines = [];
+      memberIds.forEach(mid => {
+        const cur = sp[mid];
+        if (cur) {
+          if (targetPrice !== null && cur.unit_price !== targetPrice) {
+            changeLines.push('<span class="preview-change">' + esc(mid) + ': ¥' + Number(cur.unit_price).toLocaleString() + ' → ¥' + Number(targetPrice).toLocaleString() + '</span>');
+          } else {
+            changeLines.push('<span class="preview-keep">' + esc(mid) + ': 変更なし</span>');
+          }
+        } else {
+          changeLines.push('<span class="preview-new">' + esc(mid) + ': 新規 ¥' + (targetPrice !== null ? Number(targetPrice).toLocaleString() : '?') + '</span>');
+        }
+      });
+      const otherIds = Object.keys(sp).filter(k => !memberIds.includes(k));
+      if (otherIds.length > 0) {
+        changeLines.push('<span class="preview-keep">他グループ(' + otherIds.length + '名): 維持</span>');
+      }
+      return '<div class="apply-preview-row"><span style="font-family:monospace;font-size:11px;color:#6b7280;">' + esc(item.product_no) + '</span> ' +
+        esc(item.name) + '<br>' + changeLines.join(' ／ ') + '</div>';
+    }).join('');
+    document.getElementById('applyPreviewArea').innerHTML = rows;
+  });
+}
+
+function debugSpecialsBtn() {
+  showToast('特集APIを確認中...');
+  gasPost({ action: 'debugSpecials' }, function(res) {
+    if (!res.ok) { openDebugModal('特集APIエラー', JSON.stringify(res, null, 2)); return; }
+    openDebugModal('特集API 生レスポンス', '=== 1件目のフィールド ===\n' + res.firstItem + '\n\n=== 全体 ===\n' + res.rawText);
+  });
+}
+
+function executeApply() {
+  const btn = document.getElementById('applyExecuteBtn');
+  btn.disabled = true;
+  btn.textContent = '適用中...';
+  const params = applySettingId === 'all'
+    ? { action: 'applySpecialPrices', apply_all: true }
+    : { action: 'applySpecialPrices', setting_id: applySettingId };
+  gasPost(params, function(res) {
+    btn.disabled = false;
+    btn.textContent = '✅ 適用する';
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    closeModal('applyModal');
+    const msg = res.failCount > 0
+      ? res.successCount + '件成功、' + res.failCount + '件失敗'
+      : res.successCount + '件に特別価格を適用しました';
+    showToast(msg, res.failCount > 0);
   });
 }
 </script>
