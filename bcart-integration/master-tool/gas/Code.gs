@@ -1,7 +1,7 @@
 // BCARTマスター管理ツール - バックエンド
 // Version: v1.8.0
 
-const VERSION = 'v1.9.0';
+const VERSION = 'v1.9.1';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -75,6 +75,7 @@ function doPost(e) {
       case 'saveSpecialPriceDetails':   return jsonResponse(saveSpecialPriceDetails(params));
       case 'deleteSpecialPriceDetail':  return jsonResponse(deleteSpecialPriceDetail(params));
       case 'saveViewFilterDetails':     return jsonResponse(saveViewFilterDetails(params));
+      case 'getViewFilterCurrent':      return jsonResponse(getViewFilterCurrent(params));
       case 'applyViewFilters':          return jsonResponse(applyViewFilters(params));
       case 'deleteViewFilterDetail':    return jsonResponse(deleteViewFilterDetail(params));
       case 'getMembers':                return jsonResponse(getMembers());
@@ -1326,6 +1327,33 @@ function deleteSpecialPriceDetail(params) {
 
 // ===================== 例外表示設定 =====================
 const VF_FILTER_VALUE = '非会員,通常会員,1,2';
+
+function getViewFilterCurrent(params) {
+  const memberIds = params.member_ids || [];
+  const results = [];
+  (params.product_set_ids || []).forEach(setId => {
+    const res = bcartGet('/product_sets/' + setId);
+    if (res.ok && res.data) {
+      const cur = res.data;
+      const curVcid  = String(cur.visible_customer_id || '');
+      const curFilter = String(cur.view_group_filter || '');
+      const existingIds = curVcid.split(',').map(s => s.trim()).filter(s => s);
+      const mergedIds   = [...new Set([...existingIds, ...memberIds])];
+      results.push({
+        product_set_id:            setId,
+        before_view_group_filter:  curFilter,
+        before_visible_customer_id: curVcid,
+        after_view_group_filter:   VF_FILTER_VALUE,
+        after_visible_customer_id: mergedIds.join(','),
+        already_set:               memberIds.every(id => existingIds.includes(id)) && curFilter === VF_FILTER_VALUE
+      });
+    } else {
+      results.push({ product_set_id: setId, error: res.error || '取得失敗' });
+    }
+    Utilities.sleep(100);
+  });
+  return { ok: true, results: results };
+}
 
 function saveViewFilterDetails(params) {
   const sheet = getOrCreateSheet(SHEET_VF_DETAILS);
