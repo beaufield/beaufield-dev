@@ -60,7 +60,7 @@ const APP_MASTER = [
     appName: 'bcart-master',
     label:   'BCARTマスター管理',
     icon:    '🛒',
-    url:     'https://beaufield.github.io/beaufield-dev/bcart-master/'
+    url:     'https://beaufield.github.io/beaufield-dev/bcart-integration/master-tool/'
   }
 ];
 
