@@ -10,7 +10,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.8.0';
+const VERSION  = '1.8.1';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -504,110 +504,122 @@ function saveReservation(data) {
     return _err('この商品の受付期限が過ぎています');
   }
 
-  // 在庫チェック（stock_limit > 0 の場合のみ）
-  if (product.stock_limit > 0) {
-    let alreadyReserved = 0;
-    if (rs && rs.getLastRow() >= 2) {
-      const rRows = rs.getRange(2, 1, rs.getLastRow() - 1, 6).getValues();
-      for (const rr of rRows) {
-        if (String(rr[2]) === productId) {
-          if (data.reservation_no && Number(rr[0]) === Number(data.reservation_no)) continue;
-          alreadyReserved += Number(rr[4]) || 0;
-        }
-      }
-    }
-    const remaining = product.stock_limit - alreadyReserved;
-    if (quantity > remaining) {
-      return _err(`予約可能数を超えています（残り ${remaining} 個）`);
-    }
+  // 在庫チェック・採番・書き込みを排他制御（並行リクエストによる在庫超過・重複No防止）
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+  } catch(e) {
+    return _err('混雑しています。しばらくしてから再試行してください。');
   }
 
-  const now    = _now();
-  const nowFmt = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm');
-
-  if (data.reservation_no) {
-    // ---- 更新 ----
-    if (!rs || rs.getLastRow() < 2) return _err('予約が見つかりません');
-    const rows = rs.getRange(2, 1, rs.getLastRow() - 1, 14).getValues();
-    for (let i = 0; i < rows.length; i++) {
-      if (Number(rows[i][0]) === Number(data.reservation_no)) {
-        if (userInfo.yoyaku_role !== 'admin') {
-          if (String(rows[i][6]) !== String(data._userId)) return _err('他の担当者の予約は変更できません');
-          if (String(rows[i][5]) !== '予約') return _err('確定済みの予約は変更できません');
-        }
-        // 数量増加は予約優先度の公平性を損なうため拒否（admin含む全ユーザー）
-        const originalQty = Number(rows[i][4]);
-        if (quantity > originalQty) {
-          return _err(`数量を増やすことはできません（現在: ${originalQty}個）`);
-        }
-        rs.getRange(i + 2, 2, 1, 10).setValues([[
-          salonName, productId, product.name, quantity,
-          rows[i][5],
-          staffId, staffName,
-          String(data._userId), userInfo.name,
-          deliveryMethod
-        ]]);
-        rs.getRange(i + 2, 13).setValue(now);
-        rs.getRange(i + 2, 14).setValue(notes);  // N列: 備考
-        return _ok({
-          reservation_no: Number(data.reservation_no),
-          message:        '更新しました',
-          product_name:   product.name,
-          reservation: {
-            reservation_no:  Number(data.reservation_no),
-            salon_name:      salonName,
-            product_id:      productId,
-            product_name:    product.name,
-            quantity:        quantity,
-            status:          String(rows[i][5]),
-            staff_id:        staffId,
-            staff_name:      staffName,
-            operator_id:     String(data._userId),
-            operator_name:   userInfo.name,
-            delivery_method: deliveryMethod,
-            reserved_at:     rows[i][11]
-              ? Utilities.formatDate(new Date(rows[i][11]), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm')
-              : nowFmt,
-            updated_at: nowFmt,
-            notes:      notes
+  try {
+    // 在庫チェック（stock_limit > 0 の場合のみ）
+    if (product.stock_limit > 0) {
+      let alreadyReserved = 0;
+      if (rs && rs.getLastRow() >= 2) {
+        const rRows = rs.getRange(2, 1, rs.getLastRow() - 1, 6).getValues();
+        for (const rr of rRows) {
+          if (String(rr[2]) === productId) {
+            if (data.reservation_no && Number(rr[0]) === Number(data.reservation_no)) continue;
+            alreadyReserved += Number(rr[4]) || 0;
           }
-        });
+        }
+      }
+      const remaining = product.stock_limit - alreadyReserved;
+      if (quantity > remaining) {
+        return _err(`予約可能数を超えています（残り ${remaining} 個）`);
       }
     }
-    return _err('予約が見つかりません');
 
-  } else {
-    // ---- 新規登録 ----
-    const newNo = rs && rs.getLastRow() >= 2
-      ? Math.max(...rs.getRange(2, 1, rs.getLastRow() - 1, 1).getValues().map(r => Number(r[0]) || 0)) + 1
-      : 1;
+    const now    = _now();
+    const nowFmt = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm');
 
-    rs.appendRow([
-      newNo, salonName, productId, product.name, quantity, '予約',
-      staffId, staffName,
-      String(data._userId), userInfo.name,
-      deliveryMethod, now, now, notes
-    ]);
-    return _ok({
-      reservation_no: newNo,
-      message: '予約を登録しました',
-      reservation: {
-        reservation_no:  newNo,
-        salon_name:      salonName,
-        product_id:      productId,
-        product_name:    product.name,
-        quantity:        quantity,
-        status:          '予約',
-        staff_id:        staffId,
-        staff_name:      staffName,
-        operator_id:     String(data._userId),
-        operator_name:   userInfo.name,
-        delivery_method: deliveryMethod,
-        reserved_at:     nowFmt,
-        updated_at:      nowFmt,
-        notes:           notes
+    if (data.reservation_no) {
+      // ---- 更新 ----
+      if (!rs || rs.getLastRow() < 2) return _err('予約が見つかりません');
+      const rows = rs.getRange(2, 1, rs.getLastRow() - 1, 14).getValues();
+      for (let i = 0; i < rows.length; i++) {
+        if (Number(rows[i][0]) === Number(data.reservation_no)) {
+          if (userInfo.yoyaku_role !== 'admin') {
+            if (String(rows[i][6]) !== String(data._userId)) return _err('他の担当者の予約は変更できません');
+            if (String(rows[i][5]) !== '予約') return _err('確定済みの予約は変更できません');
+          }
+          // 数量増加は予約優先度の公平性を損なうため拒否（admin含む全ユーザー）
+          const originalQty = Number(rows[i][4]);
+          if (quantity > originalQty) {
+            return _err(`数量を増やすことはできません（現在: ${originalQty}個）`);
+          }
+          rs.getRange(i + 2, 2, 1, 10).setValues([[
+            salonName, productId, product.name, quantity,
+            rows[i][5],
+            staffId, staffName,
+            String(data._userId), userInfo.name,
+            deliveryMethod
+          ]]);
+          rs.getRange(i + 2, 13).setValue(now);
+          rs.getRange(i + 2, 14).setValue(notes);  // N列: 備考
+          return _ok({
+            reservation_no: Number(data.reservation_no),
+            message:        '更新しました',
+            product_name:   product.name,
+            reservation: {
+              reservation_no:  Number(data.reservation_no),
+              salon_name:      salonName,
+              product_id:      productId,
+              product_name:    product.name,
+              quantity:        quantity,
+              status:          String(rows[i][5]),
+              staff_id:        staffId,
+              staff_name:      staffName,
+              operator_id:     String(data._userId),
+              operator_name:   userInfo.name,
+              delivery_method: deliveryMethod,
+              reserved_at:     rows[i][11]
+                ? Utilities.formatDate(new Date(rows[i][11]), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm')
+                : nowFmt,
+              updated_at: nowFmt,
+              notes:      notes
+            }
+          });
+        }
       }
-    });
+      return _err('予約が見つかりません');
+
+    } else {
+      // ---- 新規登録 ----
+      const newNo = rs && rs.getLastRow() >= 2
+        ? Math.max(...rs.getRange(2, 1, rs.getLastRow() - 1, 1).getValues().map(r => Number(r[0]) || 0)) + 1
+        : 1;
+
+      rs.appendRow([
+        newNo, salonName, productId, product.name, quantity, '予約',
+        staffId, staffName,
+        String(data._userId), userInfo.name,
+        deliveryMethod, now, now, notes
+      ]);
+      return _ok({
+        reservation_no: newNo,
+        message: '予約を登録しました',
+        reservation: {
+          reservation_no:  newNo,
+          salon_name:      salonName,
+          product_id:      productId,
+          product_name:    product.name,
+          quantity:        quantity,
+          status:          '予約',
+          staff_id:        staffId,
+          staff_name:      staffName,
+          operator_id:     String(data._userId),
+          operator_name:   userInfo.name,
+          delivery_method: deliveryMethod,
+          reserved_at:     nowFmt,
+          updated_at:      nowFmt,
+          notes:           notes
+        }
+      });
+    }
+  } finally {
+    lock.releaseLock();
   }
 }
 
