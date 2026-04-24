@@ -227,14 +227,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.9.7</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.9.8</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v1.9.7</span>
+    <span class="version">HTML v1.9.8</span>
   </div>
 
   <div class="tabs">
@@ -2583,31 +2583,56 @@ function searchSpProduct() {
   area.innerHTML = '<div style="font-size:12px;color:#9ca3af;padding:6px 0;">検索中...</div>';
   gasPost({ action: 'searchProductSets', keyword: kw }, function(res) {
     if (!res.ok) { area.innerHTML = '<div style="color:#dc2626;font-size:12px;">' + esc(res.error) + '</div>'; return; }
-    if (res.sets.length === 0) { area.innerHTML = '<div style="font-size:12px;color:#9ca3af;padding:6px 0;">該当なし</div>'; return; }
-    area.innerHTML = '<div style="overflow-x:auto;margin-top:8px;"><table class="sp-table"><thead><tr>' +
-      '<th>品番</th><th>商品セット名</th><th>通常価格</th><th>特別価格</th><th></th></tr></thead><tbody>' +
-      res.sets.map(s =>
-        '<tr>' +
-        '<td style="font-family:monospace;font-size:12px;">' + esc(s.product_no) + '</td>' +
-        '<td style="font-size:12px;">' + esc(s.name) + '</td>' +
-        '<td style="color:#6b7280;">¥' + Number(s.unit_price || 0).toLocaleString() + '</td>' +
-        '<td><input type="number" id="spsr-price-' + s.id + '" placeholder="特別価格" min="0" style="padding:4px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:12px;width:90px;"></td>' +
-        '<td><button class="btn btn-sm btn-success" onclick="addSpSearchResult(\'' + s.id + '\',\'' + esc(s.product_no) + '\',\'' + esc(s.name) + '\')">追加</button></td>' +
-        '</tr>'
-      ).join('') +
-      '</tbody></table></div>';
+    if (!res.sets || res.sets.length === 0) { area.innerHTML = '<div style="font-size:12px;color:#9ca3af;padding:6px 0;">該当なし</div>'; return; }
+    const savedMap = {};
+    (spData.details || []).filter(d => d.group_id === spSelectedGroupId)
+      .forEach(d => { savedMap[String(d.product_set_id)] = d.unit_price; });
+
+    let html = '<div style="margin-top:8px;">';
+    // チェックボックスリスト
+    html += '<div style="max-height:240px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px;">';
+    res.sets.forEach(s => {
+      const isSaved = savedMap[String(s.id)] !== undefined;
+      html += '<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid #f3f4f6;cursor:pointer;">' +
+        '<input type="checkbox" class="sp-search-check" data-id="' + s.id + '" data-no="' + esc(s.product_no) + '" data-name="' + esc(s.name) + '"' + (isSaved ? ' checked' : '') + '>' +
+        '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:12px;">' + esc(s.name) +
+          ' <span style="font-family:monospace;color:#9ca3af;font-size:10px;">[' + esc(s.product_no) + ']</span>' +
+          (isSaved ? ' <span style="background:#fef3c7;color:#92400e;font-size:10px;padding:1px 4px;border-radius:3px;">保存済 ¥' + Number(savedMap[String(s.id)]).toLocaleString() + '</span>' : '') +
+        '</div>' +
+        '<div style="font-size:10px;color:#9ca3af;">通常価格: ¥' + Number(s.unit_price || 0).toLocaleString() + '</div>' +
+        '</div></label>';
+    });
+    html += '</div>';
+    // 価格入力 + 保存ボタン
+    html += '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;padding:10px;background:#f9fafb;border-radius:6px;">' +
+      '<span style="font-size:12px;color:#374151;white-space:nowrap;">特別価格:</span>' +
+      '<div style="position:relative;flex:1;">' +
+        '<span style="position:absolute;left:8px;top:50%;transform:translateY(-50%);color:#6b7280;font-size:12px;">¥</span>' +
+        '<input type="number" id="spSearchPrice" placeholder="0" min="0" style="width:100%;padding:6px 8px 6px 20px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;">' +
+      '</div>' +
+      '<button class="btn btn-success" onclick="saveSpSearchChecked()">保存</button>' +
+      '</div>';
+    html += '</div>';
+    area.innerHTML = html;
   });
 }
 
-// 検索結果から1件追加
-function addSpSearchResult(setId, productNo, setName) {
+function saveSpSearchChecked() {
   if (!spSelectedGroupId) { showToast('グループを選択してください', true); return; }
-  const priceEl = document.getElementById('spsr-price-' + setId);
-  const price = priceEl ? parseFloat(priceEl.value) : 0;
+  const price = parseFloat((document.getElementById('spSearchPrice') || {}).value || '0');
   if (!price || price <= 0) { showToast('特別価格を入力してください', true); return; }
-  gasPost({ action: 'saveSpecialPriceDetails', group_id: spSelectedGroupId, items: [{ product_set_id: setId, product_no: productNo, product_set_name: setName, unit_price: price }] }, function(res) {
+  const items = [];
+  document.querySelectorAll('.sp-search-check:checked').forEach(c => {
+    items.push({ product_set_id: c.dataset.id, product_no: c.dataset.no, product_set_name: c.dataset.name, unit_price: price });
+  });
+  if (items.length === 0) { showToast('商品を選択してください', true); return; }
+  const btn = document.querySelector('[onclick="saveSpSearchChecked()"]');
+  if (btn) { btn.textContent = '保存中...'; btn.disabled = true; }
+  gasPost({ action: 'saveSpecialPriceDetails', group_id: spSelectedGroupId, items: items }, function(res) {
+    if (btn) { btn.textContent = '保存'; btn.disabled = false; }
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
-    showToast(productNo + ' を保存しました');
+    showToast(items.length + '件を保存しました');
     loadSpecialPriceData();
   });
 }
