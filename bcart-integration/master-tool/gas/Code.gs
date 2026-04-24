@@ -1,7 +1,7 @@
 // BCARTマスター管理ツール - バックエンド
 // Version: v1.8.0
 
-const VERSION = 'v1.8.2';
+const VERSION = 'v1.8.3';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -938,10 +938,14 @@ function getMembers() {
     }
 
     const members = allMembers.map(m => ({
-      id:    String(m.id || ''),
-      name:  m.company_name || m.name || m.username || String(m.id || ''),
-      email: m.email || '',
-      code:  String(m.code || m.customer_no || m.member_no || '')
+      id:            String(m.id || ''),
+      name:          m.comp_name || m.company_name || m.name || String(m.id || ''),
+      ext_id:        String(m.ext_id || ''),
+      comp_name:     String(m.comp_name || ''),
+      view_group_id: String(m.view_group_id || ''),
+      memo:          String(m.memo || ''),
+      email:         String(m.email || ''),
+      code:          String(m.code || m.customer_no || '')
     })).filter(m => m.id);
 
     return { ok: true, members: members };
