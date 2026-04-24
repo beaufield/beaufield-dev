@@ -227,14 +227,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.9.5</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.9.6</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v1.9.5</span>
+    <span class="version">HTML v1.9.6</span>
   </div>
 
   <div class="tabs">
@@ -2478,42 +2478,55 @@ function openSpApplyPreview() {
       const allSp = cur.all_special || {};
       const allEntries = Object.entries(allSp);
 
-      // 変更前セル: BCARTにある全special_priceを価格別グループ表示
+      // キーがカンマ区切りの場合も含め、個別IDに展開して価格マップを作成
+      // 例: { "10004,10008,10010": { unit_price: 2500 } } → 各IDを2500にマップ
+      const idPriceMap = {}; // { "10004": 2500, "10008": 2500, ... }
+      const idVdMap    = {}; // { "10004": volume_discount, ... }
+      allEntries.forEach(([key, val]) => {
+        key.split(',').map(s => s.trim()).filter(s => s).forEach(id => {
+          idPriceMap[id] = val.unit_price;
+          if (val.volume_discount && Object.keys(val.volume_discount).length > 0) {
+            idVdMap[id] = val.volume_discount;
+          }
+        });
+      });
+      const coveredIds = Object.keys(idPriceMap);
+
+      // 変更前セル: 個別IDに展開した上で価格別グループ表示
       let beforeHtml;
-      if (allEntries.length === 0) {
+      if (coveredIds.length === 0) {
         beforeHtml = '<span style="color:#9ca3af;font-size:11px;">未設定</span>';
       } else {
         const byPrice = {};
-        allEntries.forEach(([mid, val]) => {
-          const p = val.unit_price;
+        coveredIds.forEach(id => {
+          const p = idPriceMap[id];
           if (!byPrice[p]) byPrice[p] = [];
-          byPrice[p].push(mid);
+          byPrice[p].push(id);
         });
         beforeHtml = Object.entries(byPrice).map(([price, ids]) =>
           '<div style="font-size:11px;color:#6b7280;">¥' + Number(price).toLocaleString() +
-          ': ' + ids.slice(0, 3).join(', ') + (ids.length > 3 ? ' 他' + (ids.length - 3) + '名' : '') +
-          ' <span style="color:#9ca3af;">(' + ids.length + '名)</span></div>'
+          ': ' + ids.slice(0, 4).join(', ') + (ids.length > 4 ? ' 他' + (ids.length - 4) + '名' : '') +
+          ' <span style="color:#9ca3af;">（' + ids.length + '名）</span></div>'
         ).join('');
-        // 数量割引があれば追記
-        const withVd = allEntries.filter(([, v]) => v.volume_discount && Object.keys(v.volume_discount).length > 0);
-        if (withVd.length > 0) {
-          const vd = withVd[0][1].volume_discount;
+        // 数量割引があれば1件分だけ追記
+        const vdEntry = Object.values(idVdMap)[0];
+        if (vdEntry) {
           beforeHtml += '<div style="font-size:10px;color:#9ca3af;margin-top:2px;">' +
-            Object.entries(vd).sort((a, b) => Number(a[0]) - Number(b[0]))
+            Object.entries(vdEntry).sort((a, b) => Number(a[0]) - Number(b[0]))
               .map(([qty, price]) => qty + 'セット:¥' + Number(price).toLocaleString()).join(' / ') +
             '</div>';
         }
       }
 
-      // 変更後セル: このグループのメンバーに対する新規/更新/変更なしを表示
-      const newMids     = memberIds.filter(mid => !allSp[String(mid)]);
-      const changedMids = memberIds.filter(mid => allSp[String(mid)] && allSp[String(mid)].unit_price != d.unit_price);
-      const sameMids    = memberIds.filter(mid => allSp[String(mid)] && allSp[String(mid)].unit_price == d.unit_price);
+      // 変更後セル: グループ7名それぞれの状態を判定
+      const newMids     = memberIds.filter(mid => idPriceMap[String(mid)] === undefined);
+      const changedMids = memberIds.filter(mid => idPriceMap[String(mid)] !== undefined && idPriceMap[String(mid)] != d.unit_price);
+      const sameMids    = memberIds.filter(mid => idPriceMap[String(mid)] !== undefined && idPriceMap[String(mid)] == d.unit_price);
       const isChanged   = newMids.length > 0 || changedMids.length > 0;
 
       let afterHtml = '<div style="font-weight:700;color:#059669;font-size:13px;">¥' + Number(d.unit_price).toLocaleString() + '</div>';
-      if (newMids.length > 0)     afterHtml += '<div style="font-size:10px;color:#059669;">+新規: ' + newMids.length + '名</div>';
-      if (changedMids.length > 0) afterHtml += '<div style="font-size:10px;color:#d97706;">価格更新: ' + changedMids.length + '名</div>';
+      if (newMids.length > 0)     afterHtml += '<div style="font-size:10px;color:#059669;">新規追加: ' + newMids.length + '名</div>';
+      if (changedMids.length > 0) afterHtml += '<div style="font-size:10px;color:#d97706;">価格変更: ' + changedMids.length + '名</div>';
       if (sameMids.length > 0)    afterHtml += '<div style="font-size:10px;color:#9ca3af;">変更なし: ' + sameMids.length + '名</div>';
 
       tbodyHtml += '<tr' + (!isChanged ? ' style="opacity:0.6;"' : '') + '>' +
