@@ -1,7 +1,7 @@
 // BCARTマスター管理ツール - バックエンド
 // Version: v1.8.0
 
-const VERSION = 'v1.8.1';
+const VERSION = 'v1.8.2';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -911,22 +911,43 @@ function registerProduct(params) {
 
 // ===================== 会員取得 =====================
 function getMembers() {
-  const endpoints = ['/members', '/customers', '/users'];
-  for (const ep of endpoints) {
-    try {
-      const result = bcartGetAll(ep);
-      if (result.ok && result.data && result.data.length > 0) {
-        const members = result.data.map(m => ({
-          id:    String(m.id || m.member_id || m.user_id || ''),
-          name:  m.name || m.company_name || m.username || m.member_name || '',
-          email: m.email || '',
-          code:  String(m.code || m.member_no || m.customer_no || '')
-        })).filter(m => m.id);
-        return { ok: true, members: members };
+  try {
+    const token = getBcartToken();
+    const allMembers = [];
+    let offset = 0;
+    const limit = 100;
+
+    while (true) {
+      const url = BCART_BASE_URL + '/customers?limit=' + limit + '&offset=' + offset;
+      const res = UrlFetchApp.fetch(url, {
+        method: 'get',
+        headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
+        muteHttpExceptions: true
+      });
+      if (res.getResponseCode() !== 200) {
+        return { ok: false, error: 'BCART_API_ERROR: ' + res.getResponseCode() + ' ' + res.getContentText().slice(0, 200) };
       }
-    } catch(e) {}
+      const parsed = JSON.parse(res.getContentText());
+      // /customers は { "customers": [...] } 形式で返す
+      const page = parsed.customers || parsed.data || (Array.isArray(parsed) ? parsed : null);
+      if (!page || !Array.isArray(page) || page.length === 0) break;
+      allMembers.push(...page);
+      if (page.length < limit) break;
+      offset += limit;
+      Utilities.sleep(300);
+    }
+
+    const members = allMembers.map(m => ({
+      id:    String(m.id || ''),
+      name:  m.company_name || m.name || m.username || String(m.id || ''),
+      email: m.email || '',
+      code:  String(m.code || m.customer_no || m.member_no || '')
+    })).filter(m => m.id);
+
+    return { ok: true, members: members };
+  } catch(e) {
+    return { ok: false, error: e.message };
   }
-  return { ok: false, error: '会員APIが見つかりません（/members /customers /users を試行）' };
 }
 
 // ===================== 商品セット検索 =====================
