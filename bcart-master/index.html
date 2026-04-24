@@ -649,6 +649,29 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
   </div>
 </div>
 
+<!-- 例外表示設定 プレビューモーダル -->
+<div class="modal-overlay" id="vfPreviewModal">
+  <div class="modal" style="width:720px;max-width:95vw;max-height:90vh;display:flex;flex-direction:column;">
+    <h3>👁 例外表示設定 — 変更プレビュー</h3>
+    <div id="vfPreviewInfo" style="margin-bottom:12px;font-size:13px;color:#6b7280;"></div>
+    <div style="flex:1;overflow-y:auto;max-height:400px;border:1px solid #e5e7eb;border-radius:6px;">
+      <table class="sp-table" style="font-size:12px;">
+        <thead><tr>
+          <th>品番</th><th>商品名</th>
+          <th>変更前<br><span style="font-size:10px;font-weight:400;">visible_customer_id</span></th>
+          <th>変更後<br><span style="font-size:10px;font-weight:400;">visible_customer_id</span></th>
+          <th>filter</th>
+        </tr></thead>
+        <tbody id="vfPreviewBody"></tbody>
+      </table>
+    </div>
+    <div class="actions" style="margin-top:16px;">
+      <button class="btn btn-gray" onclick="closeModal('vfPreviewModal')">キャンセル</button>
+      <button class="btn btn-success" id="vfApplyConfirmBtn" onclick="executeVfApply()" disabled>✅ BCARTに反映する</button>
+    </div>
+  </div>
+</div>
+
 <!-- 進捗オーバーレイ -->
 <div id="progressOverlay">
   <div class="progress-card">
@@ -2184,17 +2207,71 @@ function applyVfToBcart() {
   const selGroup = (spData.groups || []).find(g => g.group_id === spSelectedGroupId);
   const memberIds = selGroup ? String(selGroup.member_ids || '').split(',').map(s => s.trim()).filter(s => s) : [];
   if (memberIds.length === 0) { showToast('会員IDが設定されていません', true); return; }
-  if (!confirm(selGroup.group_name + ' の ' + vfDetails.length + '件をBCARTに反映します。\n' +
-    'view_group_filter: 非会員,通常会員,1,2\n' +
-    'visible_customer_id: ' + memberIds.join(',') + '\nよろしいですか？')) return;
-  showToast('反映中...');
-  const items = vfDetails.map(d => ({ product_set_id: d.product_set_id, product_no: d.product_no, product_set_name: d.product_set_name }));
-  gasPost({ action: 'applyViewFilters', group_id: spSelectedGroupId, items: items }, function(res) {
+
+  // プレビューモーダルを開いてローディング状態にする
+  document.getElementById('vfPreviewInfo').innerHTML =
+    '<strong>' + esc(selGroup.group_name) + '</strong>　' +
+    '会員: ' + memberIds.length + '名　→　' + vfDetails.length + '件　<span style="color:#9ca3af;">BCARTから現在値を取得中...</span>';
+  document.getElementById('vfPreviewBody').innerHTML =
+    '<tr><td colspan="5" style="text-align:center;padding:24px;color:#9ca3af;">読み込み中...</td></tr>';
+  document.getElementById('vfApplyConfirmBtn').disabled = true;
+  document.getElementById('vfPreviewModal').classList.add('open');
+
+  const productSetIds = vfDetails.map(d => d.product_set_id);
+  gasPost({ action: 'getViewFilterCurrent', product_set_ids: productSetIds, member_ids: memberIds }, function(res) {
+    if (!res.ok) {
+      closeModal('vfPreviewModal');
+      showToast('プレビュー取得エラー: ' + res.error, true);
+      return;
+    }
+    const previewMap = {};
+    (res.results || []).forEach(r => { previewMap[String(r.product_set_id)] = r; });
+
+    document.getElementById('vfPreviewInfo').innerHTML =
+      '<strong>' + esc(selGroup.group_name) + '</strong>　会員: ' + memberIds.length + '名　→　' + vfDetails.length + '件に例外表示設定を適用します';
+
+    let tbodyHtml = '';
+    vfDetails.forEach(d => {
+      const p = previewMap[String(d.product_set_id)] || {};
+      const beforeVcid  = p.before_visible_customer_id || '（未設定）';
+      const afterVcid   = p.after_visible_customer_id  || '';
+      const filterChanged = p.before_view_group_filter !== 'VF_FILTER_VALUE' && !p.already_set;
+      const alreadySet  = p.already_set;
+      // visible_customer_id は長くなるため省略表示
+      const truncate = (s, n) => s.length > n ? s.slice(0, n) + '…' : s;
+      tbodyHtml += '<tr' + (alreadySet ? ' style="opacity:0.5;"' : '') + '>' +
+        '<td style="font-family:monospace;font-size:11px;color:#6b7280;">' + esc(d.product_no) + '</td>' +
+        '<td style="font-size:12px;">' + esc(d.product_set_name) + '</td>' +
+        '<td style="font-size:11px;color:#9ca3af;" title="' + esc(beforeVcid) + '">' + esc(truncate(beforeVcid, 40)) + '</td>' +
+        '<td style="font-size:11px;color:#059669;font-weight:600;" title="' + esc(afterVcid) + '">' + esc(truncate(afterVcid, 40)) + '</td>' +
+        '<td style="font-size:11px;text-align:center;">' +
+          (alreadySet ? '<span style="color:#9ca3af;">設定済</span>' :
+           filterChanged ? '<span style="color:#d97706;">変更</span>' :
+           '<span style="color:#9ca3af;">変更なし</span>') +
+        '</td>' +
+        '</tr>';
+    });
+    document.getElementById('vfPreviewBody').innerHTML = tbodyHtml;
+    spPendingVfItems = vfDetails.map(d => ({ product_set_id: d.product_set_id, product_no: d.product_no, product_set_name: d.product_set_name }));
+    document.getElementById('vfApplyConfirmBtn').disabled = false;
+  });
+}
+
+function executeVfApply() {
+  if (spPendingVfItems.length === 0) return;
+  const btn = document.getElementById('vfApplyConfirmBtn');
+  btn.textContent = '反映中...';
+  btn.disabled = true;
+  gasPost({ action: 'applyViewFilters', group_id: spSelectedGroupId, items: spPendingVfItems }, function(res) {
+    btn.textContent = '✅ BCARTに反映する';
+    btn.disabled = false;
+    closeModal('vfPreviewModal');
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
     const msg = res.failCount > 0
       ? res.successCount + '件成功、' + res.failCount + '件失敗'
-      : vfDetails.length + '件をBCARTに反映しました';
+      : spPendingVfItems.length + '件をBCARTに反映しました';
     showToast(msg, res.failCount > 0);
+    spPendingVfItems = [];
     loadSpecialPriceData();
   });
 }
