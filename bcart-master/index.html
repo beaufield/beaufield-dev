@@ -227,14 +227,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.8.3</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.9.0</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v1.8.3</span>
+    <span class="version">HTML v1.9.0</span>
   </div>
 
   <div class="tabs">
@@ -695,6 +695,8 @@ let spFeaturesCache = null;
 let allMembers = [];
 let membersLoaded = false;
 let pendingMemberGroupId = null;
+let spVfFeatureSets = [];
+let spPendingVfItems = [];
 let spPendingApplyItems = [];
 
 // ===================== 初期化 =====================
@@ -1991,7 +1993,66 @@ function renderSpSettings() {
       '<button class="btn btn-primary btn-sm" style="margin-top:4px;" onclick="loadSpFeatureSets()">一覧を表示</button>' +
       '</div>';
     html += '<div id="spFeatureSetsArea"></div>';
+    html += '</div>'; // 商品追加セクション終わり
+
+    // ── 例外表示設定セクション ──
+    const useVf = selGroup && selGroup.use_view_filter;
+    const vfDetails = (spData.vfDetails || []).filter(d => d.group_id === spSelectedGroupId);
+    html += '<div style="border-top:2px solid #e5e7eb;padding-top:20px;margin-top:8px;">';
+    html += '<div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">👁 例外表示設定</div>';
+    html += '<label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;cursor:pointer;font-size:13px;">' +
+      '<input type="checkbox" id="vfEnabledCheck"' + (useVf ? ' checked' : '') + ' onchange="toggleVfEnabled(this.checked)">' +
+      '<span>例外表示設定を使用する</span>' +
+      '<span style="font-size:11px;color:#9ca3af;margin-left:4px;">（view_group_filter: 非会員,通常会員,1,2 を自動セット）</span>' +
+      '</label>';
+
+    html += '<div id="vfMainSection"' + (useVf ? '' : ' style="display:none;"') + '>';
+
+    // 保存済みVF商品テーブル
+    html += '<div style="margin-bottom:16px;">';
+    html += '<div style="font-size:12px;font-weight:700;color:#6b7280;margin-bottom:8px;">アプリ内保存済みの例外表示商品</div>';
+    if (vfDetails.length === 0) {
+      html += '<div style="font-size:13px;color:#9ca3af;padding:4px 0;">まだ例外表示商品が設定されていません。</div>';
+    } else {
+      html += '<div style="overflow-x:auto;"><table class="sp-table"><thead><tr>' +
+        '<th>品番</th><th>商品セット名</th><th>適用日時</th><th></th></tr></thead><tbody>';
+      vfDetails.forEach(d => {
+        html += '<tr>' +
+          '<td style="font-family:monospace;font-size:12px;color:#6b7280;">' + esc(d.product_no) + '</td>' +
+          '<td>' + esc(d.product_set_name) + '</td>' +
+          '<td style="font-size:11px;color:#9ca3af;">' + esc(String(d.applied_at || '').substring(0, 16)) + '</td>' +
+          '<td><button class="btn btn-sm btn-danger" onclick="deleteVfDetail(\'' + esc(d.detail_id) + '\',\'' + d.product_set_id + '\',\'' + esc(d.product_no) + '\')">削除</button></td>' +
+          '</tr>';
+      });
+      html += '</tbody></table></div>';
+      html += '<div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end;">' +
+        '<button class="btn btn-success" onclick="applyVfToBcart()">👁 BCARTに反映する（' + vfDetails.length + '件）</button>' +
+        '</div>';
+    }
     html += '</div>';
+
+    // 商品追加セクション（VF用）
+    html += '<div style="border-top:1px solid #e5e7eb;padding-top:14px;">';
+    html += '<div style="font-size:12px;font-weight:700;color:#6b7280;margin-bottom:10px;">商品を追加（表示ON/OFFのみ・価格不要）</div>';
+    html += '<div style="margin-bottom:12px;">' +
+      '<div style="font-size:12px;color:#6b7280;margin-bottom:6px;">品番・商品名で検索</div>' +
+      '<div class="sp-product-search">' +
+      '<input type="text" id="vfProductSearchInput" placeholder="品番または商品名を入力" onkeydown="if(event.key===\'Enter\')searchVfProduct()">' +
+      '<button class="btn btn-primary btn-sm" onclick="searchVfProduct()">検索</button>' +
+      '</div>' +
+      '<div id="vfProductSearchResult"></div>' +
+      '</div>';
+    html += '<div style="font-size:12px;color:#6b7280;margin-bottom:6px;">または特集から選択</div>';
+    html += '<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:12px;">' +
+      '<select id="vfFeatureSelect" size="6" style="border:1px solid #d1d5db;border-radius:6px;font-size:13px;background:#fff;flex:1;max-width:300px;overflow-y:auto;">' +
+      '<option value="">特集を選択...</option>' +
+      '</select>' +
+      '<button class="btn btn-primary btn-sm" style="margin-top:4px;" onclick="loadVfFeatureSets()">一覧を表示</button>' +
+      '</div>';
+    html += '<div id="vfFeatureSetsArea"></div>';
+    html += '</div>'; // 商品追加セクション(VF)終わり
+    html += '</div>'; // vfMainSection終わり
+    html += '</div>'; // 例外表示設定セクション終わり
   }
 
   document.getElementById('sp-content').innerHTML = html;
@@ -1999,22 +2060,189 @@ function renderSpSettings() {
   if (spSelectedGroupId) {
     if (spFeaturesCache) {
       populateSpFeatureSelect();
+      populateVfFeatureSelect();
     } else {
       gasPost({ action: 'getFeatures' }, function(res) {
         if (res.ok && res.specials) {
           spFeaturesCache = res.specials;
           populateSpFeatureSelect();
+          populateVfFeatureSelect();
         }
       });
     }
     if (spFeatureSets.length > 0) renderSpFeatureSets();
+    if (spVfFeatureSets.length > 0) renderVfFeatureSets();
   }
 }
 
 function onSpGroupChange(groupId) {
   spSelectedGroupId = groupId || null;
   spFeatureSets = [];
+  spVfFeatureSets = [];
   renderSpSettings();
+}
+
+// ── 例外表示設定 関数群 ──
+
+function toggleVfEnabled(checked) {
+  if (!spSelectedGroupId) return;
+  const selGroup = (spData.groups || []).find(g => g.group_id === spSelectedGroupId);
+  if (!selGroup) return;
+  gasPost({
+    action: 'saveCustomerGroup',
+    group_id: spSelectedGroupId,
+    group_name: selGroup.group_name,
+    member_ids: selGroup.member_ids || '',
+    note: selGroup.note || '',
+    use_view_filter: checked
+  }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    const sec = document.getElementById('vfMainSection');
+    if (sec) sec.style.display = checked ? '' : 'none';
+    loadSpecialPriceData();
+  });
+}
+
+function populateVfFeatureSelect() {
+  const sel = document.getElementById('vfFeatureSelect');
+  if (!sel || !spFeaturesCache) return;
+  sel.innerHTML = '<option value="">特集を選択...</option>' +
+    spFeaturesCache.map(f => '<option value="' + f.id + '">' + esc(f.name) + '</option>').join('');
+}
+
+function loadVfFeatureSets() {
+  const sel = document.getElementById('vfFeatureSelect');
+  if (!sel || !sel.value) { showToast('特集を選択してください', true); return; }
+  const featureId = parseInt(sel.value);
+  const area = document.getElementById('vfFeatureSetsArea');
+  area.innerHTML = '<div class="loading"><div class="spinner"></div><div>商品セット一覧を取得中...</div></div>';
+  gasPost({ action: 'getProductSetsForFeature', featureId: featureId }, function(res) {
+    if (!res.ok) { area.innerHTML = '<div style="color:#dc2626;padding:8px;">取得エラー: ' + esc(res.error) + '</div>'; return; }
+    spVfFeatureSets = res.sets || [];
+    renderVfFeatureSets();
+  });
+}
+
+function renderVfFeatureSets() {
+  const area = document.getElementById('vfFeatureSetsArea');
+  if (!area) return;
+  if (spVfFeatureSets.length === 0) {
+    area.innerHTML = '<div style="font-size:13px;color:#9ca3af;">この特集には商品セットがありません。</div>';
+    return;
+  }
+  const savedVfMap = {};
+  (spData.vfDetails || []).filter(d => d.group_id === spSelectedGroupId)
+    .forEach(d => { savedVfMap[String(d.product_set_id)] = true; });
+
+  let html = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">' +
+    '<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">' +
+    '<input type="checkbox" id="vfSelectAll" onchange="vfToggleAll(this.checked)"> すべて選択</label>' +
+    '</div>';
+  html += '<div style="overflow-x:auto;"><table class="sp-table"><thead><tr>' +
+    '<th style="width:36px;"></th><th>品番</th><th>商品セット名</th><th>通常価格</th>' +
+    '</tr></thead><tbody>';
+  spVfFeatureSets.forEach(s => {
+    const isChecked = savedVfMap[String(s.id)] ? ' checked' : '';
+    html += '<tr>' +
+      '<td style="text-align:center;"><input type="checkbox" class="vf-set-check" data-id="' + s.id + '" data-no="' + esc(s.product_no) + '" data-name="' + esc(s.name) + '"' + isChecked + '></td>' +
+      '<td style="font-family:monospace;font-size:12px;color:#6b7280;">' + esc(s.product_no) + '</td>' +
+      '<td style="font-size:13px;">' + esc(s.name) + '</td>' +
+      '<td style="color:#6b7280;">¥' + Number(s.unit_price || 0).toLocaleString() + '</td>' +
+      '</tr>';
+  });
+  html += '</tbody></table></div>';
+  html += '<div style="margin-top:12px;text-align:right;">' +
+    '<button class="btn btn-success" onclick="saveVfToApp()">💾 アプリに保存</button>' +
+    '</div>';
+  area.innerHTML = html;
+}
+
+function vfToggleAll(checked) {
+  document.querySelectorAll('.vf-set-check').forEach(c => c.checked = checked);
+}
+
+function saveVfToApp() {
+  if (!spSelectedGroupId) { showToast('グループを選択してください', true); return; }
+  const items = [];
+  document.querySelectorAll('.vf-set-check:checked').forEach(c => {
+    items.push({ product_set_id: c.dataset.id, product_no: c.dataset.no, product_set_name: c.dataset.name });
+  });
+  if (items.length === 0) { showToast('商品セットを選択してください', true); return; }
+  showToast('保存中...');
+  gasPost({ action: 'saveViewFilterDetails', group_id: spSelectedGroupId, items: items }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    showToast(items.length + '件をアプリに保存しました。「BCARTに反映する」から適用できます。');
+    spVfFeatureSets = [];
+    loadSpecialPriceData();
+  });
+}
+
+function applyVfToBcart() {
+  if (!spSelectedGroupId) return;
+  const vfDetails = (spData.vfDetails || []).filter(d => d.group_id === spSelectedGroupId);
+  if (vfDetails.length === 0) { showToast('反映する例外表示商品がありません', true); return; }
+  const selGroup = (spData.groups || []).find(g => g.group_id === spSelectedGroupId);
+  const memberIds = selGroup ? String(selGroup.member_ids || '').split(',').map(s => s.trim()).filter(s => s) : [];
+  if (memberIds.length === 0) { showToast('会員IDが設定されていません', true); return; }
+  if (!confirm(selGroup.group_name + ' の ' + vfDetails.length + '件をBCARTに反映します。\n' +
+    'view_group_filter: 非会員,通常会員,1,2\n' +
+    'visible_customer_id: ' + memberIds.join(',') + '\nよろしいですか？')) return;
+  showToast('反映中...');
+  const items = vfDetails.map(d => ({ product_set_id: d.product_set_id, product_no: d.product_no, product_set_name: d.product_set_name }));
+  gasPost({ action: 'applyViewFilters', group_id: spSelectedGroupId, items: items }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    const msg = res.failCount > 0
+      ? res.successCount + '件成功、' + res.failCount + '件失敗'
+      : vfDetails.length + '件をBCARTに反映しました';
+    showToast(msg, res.failCount > 0);
+    loadSpecialPriceData();
+  });
+}
+
+function deleteVfDetail(detailId, setId, productNo) {
+  if (!confirm('「' + productNo + '」の例外表示設定を削除します。\nBCARTからも当グループの会員IDがvisible_customer_idから除去されます。\nよろしいですか？')) return;
+  gasPost({ action: 'deleteViewFilterDetail', detail_id: detailId, group_id: spSelectedGroupId, product_set_id: setId }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    showToast('削除しました');
+    loadSpecialPriceData();
+  });
+}
+
+function searchVfProduct() {
+  const kw = (document.getElementById('vfProductSearchInput') || {}).value || '';
+  if (!kw.trim()) { showToast('検索キーワードを入力してください', true); return; }
+  const area = document.getElementById('vfProductSearchResult');
+  area.innerHTML = '<div style="font-size:12px;color:#9ca3af;padding:6px 0;">検索中...</div>';
+  gasPost({ action: 'searchProductSets', keyword: kw }, function(res) {
+    if (!res.ok) { area.innerHTML = '<div style="color:#dc2626;font-size:12px;">' + esc(res.error) + '</div>'; return; }
+    if (!res.sets || res.sets.length === 0) { area.innerHTML = '<div style="font-size:12px;color:#9ca3af;padding:6px 0;">該当なし</div>'; return; }
+    const savedVfMap = {};
+    (spData.vfDetails || []).filter(d => d.group_id === spSelectedGroupId)
+      .forEach(d => { savedVfMap[String(d.product_set_id)] = true; });
+    area.innerHTML = '<div style="overflow-x:auto;margin-top:8px;"><table class="sp-table"><thead><tr>' +
+      '<th>品番</th><th>商品セット名</th><th>通常価格</th><th></th></tr></thead><tbody>' +
+      res.sets.map(s =>
+        '<tr>' +
+        '<td style="font-family:monospace;font-size:12px;">' + esc(s.product_no) + '</td>' +
+        '<td style="font-size:12px;">' + esc(s.name) + '</td>' +
+        '<td style="color:#6b7280;">¥' + Number(s.unit_price || 0).toLocaleString() + '</td>' +
+        '<td><button class="btn btn-sm ' + (savedVfMap[String(s.id)] ? 'btn-gray' : 'btn-success') + '" ' +
+        (savedVfMap[String(s.id)] ? 'disabled' : 'onclick="addVfSearchResult(\'' + s.id + '\',\'' + esc(s.product_no) + '\',\'' + esc(s.name) + '\')"') +
+        '>' + (savedVfMap[String(s.id)] ? '保存済み' : '追加') + '</button></td>' +
+        '</tr>'
+      ).join('') +
+      '</tbody></table></div>';
+  });
+}
+
+function addVfSearchResult(setId, productNo, setName) {
+  if (!spSelectedGroupId) { showToast('グループを選択してください', true); return; }
+  gasPost({ action: 'saveViewFilterDetails', group_id: spSelectedGroupId,
+    items: [{ product_set_id: setId, product_no: productNo, product_set_name: setName }] }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    showToast(productNo + ' を保存しました');
+    loadSpecialPriceData();
+  });
 }
 
 function populateSpFeatureSelect() {
