@@ -83,14 +83,6 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .stock-search input { flex: 1; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
 .stock-result { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; margin-bottom: 8px; }
 
-.ignore-item { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 8px; padding: 12px 14px; }
-.ignore-item-top { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap; }
-.ignore-item-code { font-family: monospace; font-size: 12px; color: #6b7280; background: #f3f4f6; padding: 1px 6px; border-radius: 4px; white-space: nowrap; }
-.ignore-item-supplier { font-size: 12px; color: #9ca3af; }
-.ignore-item-name { font-weight: 600; font-size: 14px; line-height: 1.5; margin-bottom: 6px; word-break: break-all; }
-.ignore-item-reason { display: inline-block; background: #fef3c7; border: 1px solid #fcd34d; border-radius: 4px; padding: 3px 8px; font-size: 12px; color: #92400e; margin-bottom: 6px; }
-.ignore-item-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.ignore-item-date { font-size: 11px; color: #9ca3af; }
 
 /* 進捗オーバーレイ */
 #progressOverlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; align-items: center; justify-content: center; }
@@ -232,19 +224,18 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.0.5</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.1.0</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.0.5</span>
+    <span class="version">HTML v2.1.0</span>
   </div>
 
   <div class="tabs">
     <div class="tab active" onclick="switchTab('diff',this)">差異一覧</div>
-    <div class="tab" onclick="switchTab('ignore',this)">対応不要</div>
     <div class="tab" onclick="switchTab('stock',this)">欠品設定</div>
     <div class="tab" onclick="switchTab('search',this)">商品検索</div>
     <div class="tab" onclick="switchTab('special-price',this)">💎 特別価格</div>
@@ -315,21 +306,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
       </div>
     </div>
 
-    <!-- タブ2: 対応不要一覧 -->
-    <div class="tab-panel" id="tab-ignore">
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
-        <select id="ignoreSupplierSelect" onchange="renderIgnoreList()" style="padding:5px 10px;border:1px solid #e5e7eb;border-radius:6px;font-size:13px;background:#fff;flex:1;max-width:280px;">
-          <option value="">仕入先: すべて</option>
-        </select>
-        <span id="ignoreCount" style="font-size:12px;color:#6b7280;"></span>
-        <button class="btn btn-gray btn-sm" style="margin-left:auto;" onclick="loadIgnoreList()">🔄 更新</button>
-      </div>
-      <div id="ignoreList">
-        <div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>
-      </div>
-    </div>
-
-    <!-- タブ3: 欠品設定 -->
+    <!-- タブ2: 欠品設定 -->
     <div class="tab-panel" id="tab-stock">
       <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;">
         <p style="margin-bottom:12px;color:#6b7280;font-size:13px;">商品コードまたは商品名で検索し、在庫0（欠品）または1（復活）を設定します。</p>
@@ -751,7 +728,6 @@ function switchTab(tab, el) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   el.classList.add('active');
   document.getElementById('tab-' + tab).classList.add('active');
-  if (tab === 'ignore') loadIgnoreList();
   if (tab === 'search') openSearchTab();
   if (tab === 'special-price') openSpecialPriceTab();
   if (tab === 'history') loadHistory();
@@ -1008,7 +984,10 @@ function renderDiffItem(d) {
     '<span class="diff-supplier">' + esc(d.supplier || '') + '</span>' +
     '</div>' +
     (badges ? '<div style="padding:0 14px 8px;display:flex;gap:4px;flex-wrap:wrap;">' + badges + '</div>' : '') +
-    (isIgnored && d.ignoreReason ? '<div style="padding:0 14px 8px;"><span style="display:inline-block;background:#fef3c7;border:1px solid #fcd34d;border-radius:4px;padding:3px 8px;font-size:12px;color:#92400e;">📋 ' + esc(d.ignoreReason) + '</span></div>' : '') +
+    (isIgnored ? '<div style="padding:0 14px 8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+      (d.ignoreReason ? '<span style="display:inline-block;background:#fef3c7;border:1px solid #fcd34d;border-radius:4px;padding:3px 8px;font-size:12px;color:#92400e;">📋 ' + esc(d.ignoreReason) + '</span>' : '') +
+      (d.ignoreDate ? '<span style="font-size:11px;color:#9ca3af;">' + esc(d.ignoreDate) + '</span>' : '') +
+      '</div>' : '') +
     (links ? '<div style="padding:2px 14px 6px;">' + links + '</div>' : '') +
     details +
     '<div class="diff-actions">' +
@@ -1322,7 +1301,8 @@ function confirmIgnore() {
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
     showToast('対応不要にしました');
     const d = allDiffs.find(x => x.code === pendingIgnoreCode);
-    if (d) { d.isIgnored = true; d.ignoreReason = reason; }
+    const today = new Date().toLocaleDateString('ja-JP');
+    if (d) { d.isIgnored = true; d.ignoreReason = reason; d.ignoreDate = today; }
     updateSummary();
     renderDiffs();
   });
@@ -1380,73 +1360,14 @@ function confirmBulkIgnore() {
       ? (items.length - failed.length) + '件登録、' + failed.length + '件失敗'
       : items.length + '件を対応不要にしました'
     , failed.length > 0);
+    const today = new Date().toLocaleDateString('ja-JP');
     codes.forEach(code => {
       const d = allDiffs.find(x => x.code === code);
-      if (d) { d.isIgnored = true; d.ignoreReason = reason; }
+      if (d) { d.isIgnored = true; d.ignoreReason = reason; d.ignoreDate = today; }
     });
     document.getElementById('selectAll').checked = false;
     updateSummary();
     renderDiffs();
-  });
-}
-
-// ===================== 対応不要一覧 =====================
-let ignoreListCache = [];
-
-function loadIgnoreList() {
-  document.getElementById('ignoreList').innerHTML = '<div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>';
-  gasPost({ action: 'getIgnoreList' }, function(res) {
-    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
-    ignoreListCache = (res.list || []).map(item => {
-      if (!item.supplier) {
-        const normalCode = String(parseInt(item.code, 10) || item.code);
-        item.supplier = csvSupplierMap[normalCode] || csvSupplierMap[item.code] || '';
-      }
-      return item;
-    });
-    const sel = document.getElementById('ignoreSupplierSelect');
-    const suppliers = [...new Set(ignoreListCache.map(i => i.supplier).filter(s => s))].sort();
-    const current = sel.value;
-    sel.innerHTML = '<option value="">仕入先: すべて</option>' +
-      suppliers.map(s => '<option value="' + esc(s) + '"' + (s === current ? ' selected' : '') + '>' + esc(s) + '</option>').join('');
-    renderIgnoreList();
-  });
-}
-
-function renderIgnoreList() {
-  const supplier = document.getElementById('ignoreSupplierSelect').value;
-  const filtered = supplier ? ignoreListCache.filter(i => i.supplier === supplier) : ignoreListCache;
-  document.getElementById('ignoreCount').textContent = filtered.length + '件';
-  if (filtered.length === 0) {
-    document.getElementById('ignoreList').innerHTML = '<div style="text-align:center;padding:32px;color:#9ca3af;">対応不要商品はありません</div>';
-    return;
-  }
-  document.getElementById('ignoreList').innerHTML = filtered.map(item =>
-    '<div class="ignore-item">' +
-    '<div class="ignore-item-top">' +
-    '<span class="ignore-item-code">' + esc(item.code) + '</span>' +
-    (item.supplier ? '<span class="ignore-item-supplier">(' + esc(item.supplier) + ')</span>' : '') +
-    '</div>' +
-    '<div class="ignore-item-name">' + esc(item.name) + '</div>' +
-    (item.reason ? '<div><span class="ignore-item-reason">📋 ' + esc(item.reason) + '</span></div>' : '') +
-    '<div class="ignore-item-footer">' +
-    '<span class="ignore-item-date">' + esc(String(item.registeredAt)) + '</span>' +
-    '<button class="btn btn-gray btn-sm" onclick="unmarkIgnoreFromList(\'' + esc(item.code) + '\',this)">解除</button>' +
-    '</div>' +
-    '</div>'
-  ).join('');
-}
-
-function unmarkIgnoreFromList(code, btn) {
-  if (!confirm('対応不要を解除しますか？')) return;
-  gasPost({ action: 'unmarkIgnore', code: code }, function(res) {
-    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
-    showToast('解除しました');
-    ignoreListCache = ignoreListCache.filter(i => i.code !== code);
-    const d = allDiffs.find(x => x.code === code);
-    if (d) d.isIgnored = false;
-    updateSummary();
-    renderIgnoreList();
   });
 }
 
