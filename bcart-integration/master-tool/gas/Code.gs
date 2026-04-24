@@ -1,7 +1,7 @@
 // BCARTマスター管理ツール - バックエンド
 // Version: v1.8.0
 
-const VERSION = 'v1.9.2';
+const VERSION = 'v1.9.4';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -75,6 +75,7 @@ function doPost(e) {
       case 'saveSpecialPriceDetails':   return jsonResponse(saveSpecialPriceDetails(params));
       case 'deleteSpecialPriceDetail':  return jsonResponse(deleteSpecialPriceDetail(params));
       case 'saveViewFilterDetails':     return jsonResponse(saveViewFilterDetails(params));
+      case 'getSpecialPriceCurrent':     return jsonResponse(getSpecialPriceCurrent(params));
       case 'getViewFilterCurrent':      return jsonResponse(getViewFilterCurrent(params));
       case 'applyViewFilters':          return jsonResponse(applyViewFilters(params));
       case 'deleteViewFilterDetail':    return jsonResponse(deleteViewFilterDetail(params));
@@ -1327,6 +1328,28 @@ function deleteSpecialPriceDetail(params) {
 
 // ===================== 例外表示設定 =====================
 const VF_FILTER_VALUE = '非会員,通常会員,1,2';
+
+function getSpecialPriceCurrent(params) {
+  const memberIds = params.member_ids || [];
+  const setIds = (params.product_set_ids || []).map(String);
+
+  // 単体APIはspecial_priceを返さないケースがあるため、リストAPIを使用
+  const allSets = bcartGetAll('/product_sets');
+  if (!allSets.ok) return allSets;
+
+  const results = setIds.map(setId => {
+    const setData = allSets.data.find(s => String(s.id) === setId);
+    if (!setData) return { product_set_id: setId, error: '商品セットが見つかりません' };
+    const sp = setData.special_price || {};
+    const currentSp = {};
+    memberIds.forEach(mid => {
+      if (sp[String(mid)]) currentSp[String(mid)] = sp[String(mid)];
+    });
+    return { product_set_id: setId, unit_price: setData.unit_price, current_special: currentSp };
+  });
+
+  return { ok: true, results: results };
+}
 
 function getViewFilterCurrent(params) {
   const memberIds = params.member_ids || [];
