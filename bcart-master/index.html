@@ -227,14 +227,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.9.2</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.9.3</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v1.9.2</span>
+    <span class="version">HTML v1.9.3</span>
   </div>
 
   <div class="tabs">
@@ -638,7 +638,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <div id="spPreviewInfo" style="margin-bottom:12px;font-size:13px;color:#6b7280;"></div>
     <div style="flex:1;overflow-y:auto;max-height:400px;border:1px solid #e5e7eb;border-radius:6px;">
       <table class="sp-preview-table" id="spPreviewTable">
-        <thead><tr><th>品番</th><th>商品セット名</th><th>通常価格</th><th>特別価格</th></tr></thead>
+        <thead><tr><th>品番</th><th>商品セット名</th><th>現在の特別価格（変更前）</th><th>設定後（変更後）</th></tr></thead>
         <tbody id="spPreviewBody"></tbody>
       </table>
     </div>
@@ -658,9 +658,9 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
       <table class="sp-table" style="font-size:12px;">
         <thead><tr>
           <th>品番</th><th>商品名</th>
-          <th>変更前<br><span style="font-size:10px;font-weight:400;">visible_customer_id</span></th>
-          <th>変更後<br><span style="font-size:10px;font-weight:400;">visible_customer_id</span></th>
-          <th>filter</th>
+          <th>変更前<br><span style="font-size:10px;font-weight:400;">設定済件数</span></th>
+          <th>追加される会員ID</th>
+          <th>状態</th>
         </tr></thead>
         <tbody id="vfPreviewBody"></tbody>
       </table>
@@ -2230,25 +2230,45 @@ function applyVfToBcart() {
     document.getElementById('vfPreviewInfo').innerHTML =
       '<strong>' + esc(selGroup.group_name) + '</strong>　会員: ' + memberIds.length + '名　→　' + vfDetails.length + '件に例外表示設定を適用します';
 
+    const VF_FILTER_VALUE = '非会員,通常会員,1,2';
     let tbodyHtml = '';
     vfDetails.forEach(d => {
       const p = previewMap[String(d.product_set_id)] || {};
-      const beforeVcid  = p.before_visible_customer_id || '（未設定）';
-      const afterVcid   = p.after_visible_customer_id  || '';
-      const filterChanged = p.before_view_group_filter !== 'VF_FILTER_VALUE' && !p.already_set;
-      const alreadySet  = p.already_set;
-      // visible_customer_id は長くなるため省略表示
-      const truncate = (s, n) => s.length > n ? s.slice(0, n) + '…' : s;
+      const alreadySet = p.already_set;
+      const beforeIds = (p.before_visible_customer_id || '').split(',').map(s => s.trim()).filter(s => s);
+      const afterIds  = (p.after_visible_customer_id  || '').split(',').map(s => s.trim()).filter(s => s);
+      const newIds    = afterIds.filter(id => !beforeIds.includes(id));
+
+      // 変更前セル: 件数のみ
+      const beforeCell = beforeIds.length === 0
+        ? '<span style="color:#9ca3af;font-size:11px;">未設定</span>'
+        : '<span style="color:#6b7280;font-size:11px;">' + beforeIds.length + '件設定済</span>';
+
+      // 追加IDセル: 新規IDを緑チップで表示
+      const addedCell = alreadySet
+        ? '<span style="color:#9ca3af;font-size:11px;">（追加なし）</span>'
+        : newIds.length === 0
+          ? '<span style="color:#9ca3af;font-size:11px;">なし</span>'
+          : newIds.map(id =>
+              '<span style="background:#d1fae5;color:#065f46;padding:1px 5px;border-radius:3px;font-size:10px;margin:1px;display:inline-block;white-space:nowrap;">+' + esc(id) + '</span>'
+            ).join(' ');
+
+      // 状態セル
+      const filterBefore = p.before_view_group_filter || '';
+      const statusCell = alreadySet
+        ? '<span style="color:#9ca3af;font-size:11px;">設定済</span>'
+        : newIds.length > 0
+          ? '<span style="color:#059669;font-size:11px;font-weight:600;">+' + newIds.length + '名追加</span>'
+          : filterBefore !== VF_FILTER_VALUE
+            ? '<span style="color:#d97706;font-size:11px;">フィルター更新</span>'
+            : '<span style="color:#9ca3af;font-size:11px;">変更なし</span>';
+
       tbodyHtml += '<tr' + (alreadySet ? ' style="opacity:0.5;"' : '') + '>' +
         '<td style="font-family:monospace;font-size:11px;color:#6b7280;">' + esc(d.product_no) + '</td>' +
         '<td style="font-size:12px;">' + esc(d.product_set_name) + '</td>' +
-        '<td style="font-size:11px;color:#9ca3af;" title="' + esc(beforeVcid) + '">' + esc(truncate(beforeVcid, 40)) + '</td>' +
-        '<td style="font-size:11px;color:#059669;font-weight:600;" title="' + esc(afterVcid) + '">' + esc(truncate(afterVcid, 40)) + '</td>' +
-        '<td style="font-size:11px;text-align:center;">' +
-          (alreadySet ? '<span style="color:#9ca3af;">設定済</span>' :
-           filterChanged ? '<span style="color:#d97706;">変更</span>' :
-           '<span style="color:#9ca3af;">変更なし</span>') +
-        '</td>' +
+        '<td>' + beforeCell + '</td>' +
+        '<td>' + addedCell + '</td>' +
+        '<td style="text-align:center;">' + statusCell + '</td>' +
         '</tr>';
     });
     document.getElementById('vfPreviewBody').innerHTML = tbodyHtml;
@@ -2427,21 +2447,81 @@ function openSpApplyPreview() {
   if (details.length === 0) { showToast('反映する特別価格がありません', true); return; }
   const selGroup = (spData.groups || []).find(g => g.group_id === spSelectedGroupId);
   const memberIds = selGroup ? String(selGroup.member_ids || '').split(',').map(s => s.trim()).filter(s => s) : [];
+
+  // ローディング状態でモーダルを開く
   document.getElementById('spPreviewInfo').innerHTML =
     '<strong>' + esc(selGroup ? selGroup.group_name : '') + '</strong>' +
-    '　会員: ' + memberIds.length + '名　→　' + details.length + '件の商品に特別価格を適用します';
-  let tbodyHtml = '';
-  details.forEach(d => {
-    tbodyHtml += '<tr>' +
-      '<td style="font-family:monospace;font-size:12px;">' + esc(d.product_no) + '</td>' +
-      '<td style="font-size:12px;">' + esc(d.product_set_name) + '</td>' +
-      '<td style="color:#9ca3af;">—</td>' +
-      '<td style="font-weight:700;color:#059669;">¥' + Number(d.unit_price).toLocaleString() + '</td>' +
-      '</tr>';
-  });
-  document.getElementById('spPreviewBody').innerHTML = tbodyHtml;
-  spPendingApplyItems = details.map(d => ({ product_set_id: d.product_set_id, product_no: d.product_no, product_set_name: d.product_set_name, unit_price: d.unit_price }));
+    '　会員: ' + memberIds.length + '名　→　' + details.length + '件　' +
+    '<span style="color:#9ca3af;">BCARTから現在値を取得中...</span>';
+  document.getElementById('spPreviewBody').innerHTML =
+    '<tr><td colspan="4" style="text-align:center;padding:24px;color:#9ca3af;">読み込み中...</td></tr>';
+  document.getElementById('spApplyConfirmBtn').disabled = true;
   document.getElementById('spApplyPreviewModal').classList.add('open');
+
+  const productSetIds = details.map(d => d.product_set_id);
+  gasPost({ action: 'getSpecialPriceCurrent', product_set_ids: productSetIds, member_ids: memberIds }, function(res) {
+    if (!res.ok) {
+      closeModal('spApplyPreviewModal');
+      showToast('プレビュー取得エラー: ' + res.error, true);
+      return;
+    }
+    const curMap = {};
+    (res.results || []).forEach(r => { curMap[String(r.product_set_id)] = r; });
+
+    document.getElementById('spPreviewInfo').innerHTML =
+      '<strong>' + esc(selGroup ? selGroup.group_name : '') + '</strong>' +
+      '　会員: ' + memberIds.length + '名　→　' + details.length + '件の商品に特別価格を適用します';
+
+    let tbodyHtml = '';
+    details.forEach(d => {
+      const cur = curMap[String(d.product_set_id)] || {};
+      const currentSp = cur.current_special || {};
+      const entries = Object.entries(currentSp);
+
+      // 変更前セル
+      let beforeHtml;
+      if (entries.length === 0) {
+        beforeHtml = '<span style="color:#9ca3af;font-size:11px;">未設定</span>';
+      } else {
+        const uniquePrices = [...new Set(entries.map(([,v]) => v.unit_price))];
+        if (uniquePrices.length === 1) {
+          beforeHtml = '<span style="color:#6b7280;font-size:12px;">¥' + Number(uniquePrices[0]).toLocaleString() + '</span>' +
+            '<span style="color:#9ca3af;font-size:10px;margin-left:4px;">(' + entries.length + '名設定済)</span>';
+        } else {
+          beforeHtml = entries.map(([mid, v]) =>
+            '<div style="font-size:10px;color:#6b7280;">会員' + esc(mid) + ': ¥' + Number(v.unit_price).toLocaleString() + '</div>'
+          ).join('');
+        }
+        // 数量割引があれば追記
+        const withVd = entries.filter(([,v]) => v.volume_discount && Object.keys(v.volume_discount).length > 0);
+        if (withVd.length > 0) {
+          const vd = withVd[0][1].volume_discount;
+          beforeHtml += '<div style="font-size:10px;color:#9ca3af;margin-top:2px;">' +
+            Object.entries(vd).sort((a,b) => Number(a[0])-Number(b[0]))
+              .map(([qty, price]) => qty + 'セット:¥' + Number(price).toLocaleString()).join(' / ') +
+            '</div>';
+        }
+      }
+
+      // 変更後セル
+      const currentPrices = entries.map(([,v]) => v.unit_price);
+      const isChanged = currentPrices.length === 0 || currentPrices.some(p => p != d.unit_price) || entries.length !== memberIds.length;
+      const afterHtml = '<span style="font-weight:700;color:#059669;font-size:13px;">¥' + Number(d.unit_price).toLocaleString() + '</span>' +
+        '<span style="color:#9ca3af;font-size:10px;margin-left:4px;">(全' + memberIds.length + '名)</span>' +
+        (!isChanged ? '<div style="font-size:10px;color:#9ca3af;margin-top:2px;">変更なし</div>' : '');
+
+      tbodyHtml += '<tr' + (!isChanged ? ' style="opacity:0.6;"' : '') + '>' +
+        '<td style="font-family:monospace;font-size:12px;">' + esc(d.product_no) + '</td>' +
+        '<td style="font-size:12px;">' + esc(d.product_set_name) + '</td>' +
+        '<td>' + beforeHtml + '</td>' +
+        '<td>' + afterHtml + '</td>' +
+        '</tr>';
+    });
+
+    document.getElementById('spPreviewBody').innerHTML = tbodyHtml;
+    spPendingApplyItems = details.map(d => ({ product_set_id: d.product_set_id, product_no: d.product_no, product_set_name: d.product_set_name, unit_price: d.unit_price }));
+    document.getElementById('spApplyConfirmBtn').disabled = false;
+  });
 }
 
 // BCARTへ実際に反映
