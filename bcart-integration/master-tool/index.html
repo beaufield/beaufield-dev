@@ -227,14 +227,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.0.2</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.0.3</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.0.2</span>
+    <span class="version">HTML v2.0.3</span>
   </div>
 
   <div class="tabs">
@@ -267,7 +267,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
         <button class="filter-btn type-filter-btn"        data-filter="discontinued" onclick="setFilter('discontinued',this)">🚫 廃番</button>
         <button class="filter-btn type-filter-btn"        data-filter="unregistered" onclick="setFilter('unregistered',this)">❌ 未登録</button>
         <button class="filter-btn type-filter-btn"        data-filter="wip"          onclick="setFilter('wip',this)">✏️ 作業中</button>
-        <button class="filter-btn type-filter-btn"        data-filter="ignored"      onclick="setFilter('ignored',this)">対応不要も表示</button>
+        <button class="filter-btn type-filter-btn"        data-filter="ignored"      onclick="setFilter('ignored',this)">対応不要のみ</button>
         <div style="margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
           <button class="btn btn-primary btn-sm" onclick="loadData()">🔄 再読み込み</button>
           <button class="btn btn-gray btn-sm" onclick="runDebug()">🔍 デバッグ</button>
@@ -784,11 +784,11 @@ function loadData() {
 }
 
 function updateSummary() {
-  const active = allDiffs.filter(d => !d.isIgnored);
+  const active = allDiffs.filter(d => !d.isIgnored && applyStockFilter(d));
   document.getElementById('cnt-price').textContent = active.filter(d => d.issues && d.issues.some(i => i.type === 'price' || i.type === 'jodai')).length;
   document.getElementById('cnt-disc').textContent  = active.filter(d => d.issues && d.issues.some(i => i.type === 'discontinued')).length;
   document.getElementById('cnt-unreg').textContent = active.filter(d => d.type === 'unregistered').length;
-  document.getElementById('cnt-ignore').textContent = allDiffs.filter(d => d.isIgnored).length;
+  document.getElementById('cnt-ignore').textContent = allDiffs.filter(d => d.isIgnored && applyStockFilter(d)).length;
 }
 
 // ===================== フィルター =====================
@@ -834,6 +834,7 @@ function setStockFilter(val, btn) {
   stockFilter = val;
   document.querySelectorAll('.stock-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+  updateSummary();
   renderDiffs();
 }
 
@@ -847,8 +848,9 @@ function buildSupplierFilter() {
   const sel = document.getElementById('supplierSelect');
   const typeFiltered = allDiffs.filter(d => {
     if (!applyStockFilter(d)) return false;
-    if (d.isIgnored && currentFilter !== 'ignored') return false;
-    if (currentFilter === 'all' || currentFilter === 'ignored') return true;
+    if (currentFilter === 'ignored') return d.isIgnored;
+    if (d.isIgnored) return false;
+    if (currentFilter === 'all') return true;
     if (currentFilter === 'price') return d.issues && d.issues.some(i => i.type === 'price' || i.type === 'jodai');
     if (currentFilter === 'jan') return d.issues && d.issues.some(i => i.type === 'jan');
     if (currentFilter === 'discontinued') return d.issues && d.issues.some(i => i.type === 'discontinued');
@@ -869,9 +871,10 @@ function buildSupplierFilter() {
 function getFilteredDiffs() {
   return allDiffs.filter(d => {
     if (!applyStockFilter(d)) return false;
-    if (d.isIgnored && currentFilter !== 'ignored') return false;
     if (currentSupplier && d.supplier !== currentSupplier) return false;
-    if (currentFilter === 'all' || currentFilter === 'ignored') return true;
+    if (currentFilter === 'ignored') return d.isIgnored;
+    if (d.isIgnored) return false;
+    if (currentFilter === 'all') return true;
     if (currentFilter === 'price') return d.issues && d.issues.some(i => i.type === 'price' || i.type === 'jodai');
     if (currentFilter === 'jan') return d.issues && d.issues.some(i => i.type === 'jan');
     if (currentFilter === 'discontinued') return d.issues && d.issues.some(i => i.type === 'discontinued');
