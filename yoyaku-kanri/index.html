@@ -401,7 +401,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.14.2</span>
+  <span class="header-version">v1.14.3</span>
 </header>
 
 <!-- ============================================================ -->
@@ -2600,7 +2600,12 @@ function openModal(id)  { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
 function showConfirm(msg, btnText, callback, btnClass = 'btn-danger') {
-  document.getElementById('confirmMessage').innerHTML = msg.replace(/\n/g, '<br>');
+  const confirmEl = document.getElementById('confirmMessage');
+  confirmEl.textContent = '';
+  msg.split('\n').forEach((line, i) => {
+    if (i > 0) confirmEl.appendChild(document.createElement('br'));
+    confirmEl.appendChild(document.createTextNode(line));
+  });
   const btn = document.getElementById('confirmOkBtn');
   btn.textContent = btnText;
   btn.className   = `btn ${btnClass}`;
