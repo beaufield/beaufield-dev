@@ -1,7 +1,7 @@
 // BCARTマスター管理ツール - バックエンド
 // Version: v1.8.0
 
-const VERSION = 'v2.0.0';
+const VERSION = 'v2.0.1';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -121,6 +121,8 @@ function loadData() {
 
   const bcartProducts = bcartGetAll('/products');
   if (!bcartProducts.ok) return bcartProducts;
+
+  Utilities.sleep(500);
 
   const bcartSets = bcartGetAll('/product_sets');
   if (!bcartSets.ok) return bcartSets;
@@ -400,28 +402,36 @@ function bcartGetAll(path) {
     while (true) {
       const url = BCART_BASE_URL + path + '?limit=' + limit + '&offset=' + offset;
       let res;
-      for (let retry = 0; retry <= 2; retry++) {
+      for (let retry = 0; retry <= 3; retry++) {
         res = UrlFetchApp.fetch(url, {
           method: 'get',
           headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
           muteHttpExceptions: true
         });
-        if (res.getResponseCode() === 429) {
-          if (retry < 2) { Utilities.sleep(3000); continue; }
+        const code = res.getResponseCode();
+        if (code === 429) {
+          if (retry < 3) { Utilities.sleep(5000 * (retry + 1)); continue; }
           return { ok: false, error: 'BCART_API_ERROR: 429 レート制限（しばらく待ってから再読み込みしてください）' };
+        }
+        if (code === 503 || code === 502) {
+          if (retry < 3) { Utilities.sleep(5000 * (retry + 1)); continue; }
+          return { ok: false, error: 'BCART_API_ERROR: ' + code + ' 帯域幅エラー（しばらく待ってから再読み込みしてください）\n' + res.getContentText().slice(0, 300) };
         }
         break;
       }
       if (res.getResponseCode() !== 200) {
-        return { ok: false, error: 'BCART_API_ERROR: ' + res.getResponseCode() };
+        return { ok: false, error: 'BCART_API_ERROR: ' + res.getResponseCode() + '\n' + res.getContentText().slice(0, 300) };
       }
       const parsed = JSON.parse(res.getContentText());
+      if (parsed.message || parsed.error) {
+        return { ok: false, error: 'BCART_API_ERROR: ' + (parsed.message || parsed.error) };
+      }
       const page = parsed.data || parsed.product_sets || parsed.products || parsed.specials || parsed.product_stock || parsed.categories || parsed;
       if (!Array.isArray(page) || page.length === 0) break;
       allData.push(...page);
       if (page.length < limit) break;
       offset += limit;
-      if (offset > 0) Utilities.sleep(300);
+      Utilities.sleep(600);
     }
 
     return { ok: true, data: allData };
