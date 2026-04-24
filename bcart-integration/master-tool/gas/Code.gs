@@ -1,7 +1,7 @@
 // BCARTマスター管理ツール - バックエンド
 // Version: v1.8.0
 
-const VERSION = 'v1.8.3';
+const VERSION = 'v1.9.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -17,6 +17,7 @@ const SHEET_WIP         = '作業中';
 const SHEET_HISTORY     = '更新履歴';
 const SHEET_SP_GROUPS   = '特別価格_顧客グループ';
 const SHEET_SP_DETAILS  = '特別価格_明細';
+const SHEET_VF_DETAILS  = '例外表示_明細';
 
 // ===================== エントリポイント =====================
 function doPost(e) {
@@ -73,6 +74,9 @@ function doPost(e) {
       case 'applyGroupPrices':          return jsonResponse(applyGroupPrices(params));
       case 'saveSpecialPriceDetails':   return jsonResponse(saveSpecialPriceDetails(params));
       case 'deleteSpecialPriceDetail':  return jsonResponse(deleteSpecialPriceDetail(params));
+      case 'saveViewFilterDetails':     return jsonResponse(saveViewFilterDetails(params));
+      case 'applyViewFilters':          return jsonResponse(applyViewFilters(params));
+      case 'deleteViewFilterDetail':    return jsonResponse(deleteViewFilterDetail(params));
       case 'getMembers':                return jsonResponse(getMembers());
       default:                         return jsonResponse({ ok: false, error: 'UNKNOWN_ACTION' });
     }
@@ -987,11 +991,12 @@ function getSpecialPriceData() {
   for (let i = 1; i < groupRows.length; i++) {
     if (groupRows[i][0]) {
       groups.push({
-        group_id:   String(groupRows[i][0]),
-        group_name: String(groupRows[i][1]),
-        member_ids: String(groupRows[i][2] || ''),
-        created_at: String(groupRows[i][3]),
-        note:       groupRows[i][4] || ''
+        group_id:       String(groupRows[i][0]),
+        group_name:     String(groupRows[i][1]),
+        member_ids:     String(groupRows[i][2] || ''),
+        created_at:     String(groupRows[i][3]),
+        note:           groupRows[i][4] || '',
+        use_view_filter: groupRows[i][5] === true || groupRows[i][5] === 'TRUE'
       });
     }
   }
@@ -1013,7 +1018,23 @@ function getSpecialPriceData() {
     }
   }
 
-  return { ok: true, groups: groups, details: details };
+  const vfSheet = getOrCreateSheet(SHEET_VF_DETAILS);
+  const vfRows = vfSheet.getDataRange().getValues();
+  const vfDetails = [];
+  for (let i = 1; i < vfRows.length; i++) {
+    if (vfRows[i][0]) {
+      vfDetails.push({
+        detail_id:        String(vfRows[i][0]),
+        group_id:         String(vfRows[i][1]),
+        product_set_id:   vfRows[i][2],
+        product_no:       String(vfRows[i][3]),
+        product_set_name: String(vfRows[i][4]),
+        applied_at:       String(vfRows[i][5])
+      });
+    }
+  }
+
+  return { ok: true, groups: groups, details: details, vfDetails: vfDetails };
 }
 
 function saveCustomerGroup(params) {
@@ -1021,22 +1042,23 @@ function saveCustomerGroup(params) {
   const rows = sheet.getDataRange().getValues();
   const memberIds = params.member_ids || '';
 
+  const uvf = params.use_view_filter === true || params.use_view_filter === 'TRUE' ? 'TRUE' : 'FALSE';
   if (params.group_id) {
     for (let i = 1; i < rows.length; i++) {
       if (String(rows[i][0]) === params.group_id) {
         sheet.getRange(i + 1, 2).setValue(params.group_name);
-        // カンマが千区切り数字として解釈されないようテキスト形式を強制
         const mCell = sheet.getRange(i + 1, 3);
         mCell.setNumberFormat('@');
         mCell.setValue(memberIds);
         sheet.getRange(i + 1, 5).setValue(params.note || '');
+        sheet.getRange(i + 1, 6).setValue(uvf);
         return { ok: true, group_id: params.group_id };
       }
     }
   }
 
   const newId = 'G' + new Date().getTime().toString(36).toUpperCase();
-  sheet.appendRow([newId, params.group_name, '', new Date().toLocaleString('ja-JP'), params.note || '']);
+  sheet.appendRow([newId, params.group_name, '', new Date().toLocaleString('ja-JP'), params.note || '', uvf]);
   const lastRow = sheet.getLastRow();
   const mCell = sheet.getRange(lastRow, 3);
   mCell.setNumberFormat('@');
@@ -1081,6 +1103,30 @@ function deleteCustomerGroup(params) {
       });
     }
   }
+
+  // 例外表示設定のクリーンアップ
+  const vfSheet = getOrCreateSheet(SHEET_VF_DETAILS);
+  const vfRows = vfSheet.getDataRange().getValues();
+  const vfRowsToDelete = [];
+  for (let i = 1; i < vfRows.length; i++) {
+    if (String(vfRows[i][1]) === params.group_id) {
+      vfRowsToDelete.push({ rowIdx: i + 1, setId: vfRows[i][2] });
+    }
+  }
+  if (memberIds.length > 0 && vfRowsToDelete.length > 0) {
+    vfRowsToDelete.forEach(entry => {
+      const res = bcartGet('/product_sets/' + entry.setId);
+      if (res.ok && res.data) {
+        let ids = String(res.data.visible_customer_id || '').split(',').map(s => s.trim()).filter(s => s);
+        ids = ids.filter(id => !memberIds.includes(id));
+        const patch = { visible_customer_id: ids.join(',') };
+        if (ids.length === 0) patch.view_group_filter = '';
+        bcartPatch('/product_sets/' + entry.setId, patch);
+        Utilities.sleep(100);
+      }
+    });
+  }
+  vfRowsToDelete.sort((a, b) => b.rowIdx - a.rowIdx).forEach(entry => vfSheet.deleteRow(entry.rowIdx));
 
   detailRowsToDelete.sort((a, b) => b - a).forEach(rowIdx => detailSheet.deleteRow(rowIdx));
   if (groupRowIdx > 0) groupSheet.deleteRow(groupRowIdx);
@@ -1278,6 +1324,116 @@ function deleteSpecialPriceDetail(params) {
   return { ok: true };
 }
 
+// ===================== 例外表示設定 =====================
+const VF_FILTER_VALUE = '非会員,通常会員,1,2';
+
+function saveViewFilterDetails(params) {
+  const sheet = getOrCreateSheet(SHEET_VF_DETAILS);
+  let rows = sheet.getDataRange().getValues();
+
+  params.items.forEach(item => {
+    let found = false;
+    for (let i = 1; i < rows.length; i++) {
+      if (String(rows[i][1]) === params.group_id && String(rows[i][2]) === String(item.product_set_id)) {
+        sheet.getRange(i + 1, 5).setValue(item.product_set_name || '');
+        sheet.getRange(i + 1, 6).setValue(new Date().toLocaleString('ja-JP'));
+        rows[i][4] = item.product_set_name;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      const newId = 'V' + new Date().getTime().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 4);
+      const newRow = [newId, params.group_id, item.product_set_id, item.product_no || '', item.product_set_name || '', new Date().toLocaleString('ja-JP')];
+      sheet.appendRow(newRow);
+      rows.push(newRow);
+    }
+    Utilities.sleep(50);
+  });
+
+  addHistory({
+    userName: params._userName, code: '', name: params.group_id,
+    type: '例外表示アプリ保存', before: '', after: params.items.length + '件', result: '成功'
+  });
+  return { ok: true, savedCount: params.items.length };
+}
+
+function applyViewFilters(params) {
+  const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
+  const groupRows = groupSheet.getDataRange().getValues();
+  let memberIds = [];
+  for (let i = 1; i < groupRows.length; i++) {
+    if (String(groupRows[i][0]) === params.group_id) {
+      memberIds = String(groupRows[i][2] || '').split(',').map(s => s.trim()).filter(s => s);
+      break;
+    }
+  }
+  if (memberIds.length === 0) return { ok: false, error: 'グループの会員IDが設定されていません' };
+
+  let successCount = 0, failCount = 0;
+  const errors = [];
+
+  params.items.forEach(item => {
+    const cur = bcartGet('/product_sets/' + item.product_set_id);
+    let existingIds = [];
+    if (cur.ok && cur.data) {
+      existingIds = String(cur.data.visible_customer_id || '').split(',').map(s => s.trim()).filter(s => s);
+    }
+    // 既存IDと今回のIDをマージ（union）
+    const merged = [...new Set([...existingIds, ...memberIds])].join(',');
+
+    const res = bcartPatch('/product_sets/' + item.product_set_id, {
+      view_group_filter:   VF_FILTER_VALUE,
+      visible_customer_id: merged
+    });
+    if (res.ok) { successCount++; } else { failCount++; errors.push('setId ' + item.product_set_id + ': ' + res.error); }
+    Utilities.sleep(150);
+  });
+
+  addHistory({
+    userName: params._userName, code: '', name: params.group_id,
+    type: '例外表示適用',
+    before: '', after: '成功: ' + successCount + '件 / 失敗: ' + failCount + '件',
+    result: failCount > 0 ? '一部失敗' : '成功'
+  });
+  return { ok: true, successCount: successCount, failCount: failCount, errors: errors };
+}
+
+function deleteViewFilterDetail(params) {
+  const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
+  const groupRows = groupSheet.getDataRange().getValues();
+  let memberIds = [];
+  for (let i = 1; i < groupRows.length; i++) {
+    if (String(groupRows[i][0]) === params.group_id) {
+      memberIds = String(groupRows[i][2] || '').split(',').map(s => s.trim()).filter(s => s);
+      break;
+    }
+  }
+
+  if (params.product_set_id && memberIds.length > 0) {
+    const cur = bcartGet('/product_sets/' + params.product_set_id);
+    if (cur.ok && cur.data) {
+      let ids = String(cur.data.visible_customer_id || '').split(',').map(s => s.trim()).filter(s => s);
+      ids = ids.filter(id => !memberIds.includes(id));
+      const patch = { visible_customer_id: ids.join(',') };
+      if (ids.length === 0) patch.view_group_filter = '';
+      bcartPatch('/product_sets/' + params.product_set_id, patch);
+    }
+  }
+
+  const sheet = getOrCreateSheet(SHEET_VF_DETAILS);
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === params.detail_id) { sheet.deleteRow(i + 1); break; }
+  }
+
+  addHistory({
+    userName: params._userName, code: '', name: 'group:' + params.group_id + ' / set:' + params.product_set_id,
+    type: '例外表示削除', before: '', after: '', result: '成功'
+  });
+  return { ok: true };
+}
+
 // ===================== 更新履歴 =====================
 function addHistory(entry) {
   try {
@@ -1343,9 +1499,13 @@ function getOrCreateSheet(sheetName) {
       sheet.setFrozenRows(1);
       sheet.getRange(1, 1, 1, 8).setFontWeight('bold').setBackground('#f3f4f6');
     } else if (sheetName === SHEET_SP_GROUPS) {
-      sheet.appendRow(['group_id', 'group_name', 'member_ids', 'created_at', 'note']);
+      sheet.appendRow(['group_id', 'group_name', 'member_ids', 'created_at', 'note', 'use_view_filter']);
       sheet.setFrozenRows(1);
-      sheet.getRange(1, 1, 1, 5).setFontWeight('bold').setBackground('#f3f4f6');
+      sheet.getRange(1, 1, 1, 6).setFontWeight('bold').setBackground('#f3f4f6');
+    } else if (sheetName === SHEET_VF_DETAILS) {
+      sheet.appendRow(['detail_id', 'group_id', 'product_set_id', 'product_no', 'product_set_name', 'applied_at']);
+      sheet.setFrozenRows(1);
+      sheet.getRange(1, 1, 1, 6).setFontWeight('bold').setBackground('#f3f4f6');
     } else if (sheetName === SHEET_SP_DETAILS) {
       sheet.appendRow(['detail_id', 'group_id', 'product_set_id', 'product_no', 'product_set_name', 'unit_price', 'updated_at']);
       sheet.setFrozenRows(1);
@@ -1358,6 +1518,12 @@ function getOrCreateSheet(sheetName) {
     } else {
       const headerVal = sheet.getRange(1, 5).getValue();
       if (!headerVal) sheet.getRange(1, 5).setValue('仕入先名');
+    }
+  } else if (sheetName === SHEET_SP_GROUPS) {
+    // use_view_filter 列の自動追加（既存シートのマイグレーション）
+    if (sheet.getLastColumn() < 6) {
+      sheet.getRange(1, 6).setValue('use_view_filter');
+      sheet.getRange(1, 6).setFontWeight('bold').setBackground('#f3f4f6');
     }
   }
   return sheet;
