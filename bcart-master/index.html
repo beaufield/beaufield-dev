@@ -185,10 +185,11 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .sp-table td { padding: 8px 12px; border-bottom: 1px solid #f3f4f6; vertical-align: middle; }
 .sp-table tr:last-child td { border-bottom: none; }
 .sp-table tr:hover td { background: #f9fafb; }
-.sp-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
-.sp-card-info { flex: 1; }
-.sp-card-title { font-weight: 600; }
-.sp-card-sub { font-size: 12px; color: #6b7280; margin-top: 2px; }
+.sp-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 10px; }
+.sp-card-info { width: 100%; }
+.sp-card-title { font-weight: 600; font-size: 15px; }
+.sp-card-sub { font-size: 12px; color: #6b7280; margin-top: 4px; }
+.sp-card-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .sp-empty { text-align: center; padding: 32px; color: #9ca3af; }
 .apply-preview { max-height: 300px; overflow-y: auto; margin-top: 12px; border: 1px solid #e5e7eb; border-radius: 6px; }
 .apply-preview-row { padding: 7px 12px; border-bottom: 1px solid #f3f4f6; font-size: 12px; }
@@ -226,14 +227,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.8.0</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.8.1</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v1.8.0</span>
+    <span class="version">HTML v1.8.1</span>
   </div>
 
   <div class="tabs">
@@ -375,7 +376,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <!-- タブ5: 特別価格 -->
     <div class="tab-panel" id="tab-special-price">
       <div class="sp-subnav">
-        <button class="sp-subnav-btn" id="sp-btn-groups" onclick="switchSpSubview('groups',this)">顧客グループ</button>
+        <button class="sp-subnav-btn" id="sp-btn-groups" onclick="switchSpSubview('groups',this)">導入サロングループ</button>
         <button class="sp-subnav-btn active" id="sp-btn-settings" onclick="switchSpSubview('settings',this)">特別価格設定</button>
       </div>
       <div id="sp-alert-area"></div>
@@ -586,7 +587,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <!-- 顧客グループ編集モーダル -->
 <div class="modal-overlay" id="groupModal">
   <div class="modal" style="width:420px;max-width:95vw;">
-    <h3 id="groupModalTitle">顧客グループ</h3>
+    <h3 id="groupModalTitle">導入サロングループ</h3>
     <input type="hidden" id="editGroupId">
     <div class="form-row" style="margin-bottom:10px;">
       <div class="form-field" style="flex:1;">
@@ -1897,7 +1898,7 @@ function renderSpGroups() {
         '<div class="sp-card-title">👥 ' + esc(g.group_name) + '</div>' +
         '<div class="sp-card-sub">会員: ' + memberLabel + '　特別価格商品: ' + detailCount + '件' + (g.note ? '　— ' + esc(g.note) : '') + '</div>' +
         '</div>' +
-        '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+        '<div class="sp-card-actions">' +
         '<button class="btn btn-sm btn-wip" onclick="openMemberSelectModal(\'' + esc(g.group_id) + '\',\'' + esc(g.group_name) + '\')">👥 会員を管理</button>' +
         '<button class="btn btn-sm btn-primary" onclick="switchToSettings(\'' + esc(g.group_id) + '\')">💎 価格設定</button>' +
         '<button class="btn btn-sm btn-gray" onclick="openGroupModal(\'' + esc(g.group_id) + '\')">編集</button>' +
@@ -2206,10 +2207,10 @@ function openMemberSelectModal(groupId, groupName) {
     gasPost({ action: 'getMembers' }, function(res) {
       if (res.ok && res.members) {
         allMembers = res.members;
-        membersLoaded = true;
       } else {
         allMembers = [];
       }
+      membersLoaded = true;
       renderMemberList('');
     });
   }
@@ -2298,7 +2299,7 @@ function deleteSpDetail(detailId, productNo) {
 // グループ CRUD
 function openGroupModal(groupId) {
   document.getElementById('editGroupId').value = groupId || '';
-  document.getElementById('groupModalTitle').textContent = groupId ? '特価サロングループを編集' : '新規特価サロングループ';
+  document.getElementById('groupModalTitle').textContent = groupId ? '導入サロングループを編集' : '新規導入サロングループ';
   const g = groupId ? (spData.groups || []).find(x => x.group_id === groupId) : null;
   document.getElementById('groupName').value = g ? g.group_name : '';
   document.getElementById('groupMemberIds').value = g ? (g.member_ids || '') : '';
