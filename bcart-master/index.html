@@ -227,14 +227,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v1.9.9</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.0.0</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v1.9.9</span>
+    <span class="version">HTML v2.0.0</span>
   </div>
 
   <div class="tabs">
@@ -2584,57 +2584,43 @@ function searchSpProduct() {
   gasPost({ action: 'searchProductSets', keyword: kw }, function(res) {
     if (!res.ok) { area.innerHTML = '<div style="color:#dc2626;font-size:12px;">' + esc(res.error) + '</div>'; return; }
     if (!res.sets || res.sets.length === 0) { area.innerHTML = '<div style="font-size:12px;color:#9ca3af;padding:6px 0;">該当なし</div>'; return; }
+
     const savedMap = {};
     (spData.details || []).filter(d => d.group_id === spSelectedGroupId)
       .forEach(d => { savedMap[String(d.product_set_id)] = d.unit_price; });
 
-    let html = '<div style="margin-top:8px;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">';
-    res.sets.forEach((s, i) => {
-      const isSaved = savedMap[String(s.id)] !== undefined;
-      const savedPrice = isSaved ? savedMap[String(s.id)] : '';
-      html += '<div style="padding:10px 12px;' + (i > 0 ? 'border-top:1px solid #f3f4f6;' : '') + '">' +
-        // 商品名・品番・通常価格
-        '<div style="font-size:12px;margin-bottom:6px;">' + esc(s.name) +
-          ' <span style="font-family:monospace;color:#9ca3af;font-size:10px;">[' + esc(s.product_no) + ']</span>' +
-          (isSaved ? ' <span style="background:#fef3c7;color:#92400e;font-size:10px;padding:1px 4px;border-radius:3px;">保存済</span>' : '') +
-        '</div>' +
-        '<div style="font-size:10px;color:#9ca3af;margin-bottom:8px;">通常価格: ¥' + Number(s.unit_price || 0).toLocaleString() + '</div>' +
-        // 特別価格入力 + 保存ボタン（横並び）
-        '<div style="display:flex;gap:8px;align-items:center;">' +
-          '<span style="font-size:11px;color:#374151;white-space:nowrap;">特別価格:</span>' +
-          '<div style="position:relative;flex:1;">' +
-            '<span style="position:absolute;left:7px;top:50%;transform:translateY(-50%);color:#6b7280;font-size:11px;">¥</span>' +
-            '<input type="number" id="spsr-price-' + s.id + '" value="' + esc(String(savedPrice)) + '" placeholder="0" min="0" ' +
-              'style="width:100%;padding:5px 6px 5px 18px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;">' +
-          '</div>' +
-          '<button class="btn btn-success btn-sm" onclick="addSpSearchResult(\'' + s.id + '\',\'' + esc(s.product_no) + '\',\'' + esc(s.name) + '\')">保存</button>' +
-        '</div>' +
-        '</div>';
-    });
-    html += '</div>';
-    area.innerHTML = html;
-  });
-}
+    // 特集選択と同じレイアウト
+    let html = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">' +
+      '<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">' +
+      '<input type="checkbox" id="spSelectAll" onchange="spToggleAll(this.checked)"> すべて選択</label>' +
+      '<div style="display:flex;gap:6px;align-items:center;margin-left:auto;">' +
+      '<span style="font-size:12px;color:#6b7280;">一括価格:</span>' +
+      '<input type="number" id="spBulkPrice" placeholder="例: 14000" min="0" style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;width:120px;">' +
+      '<button class="btn btn-gray btn-sm" onclick="applySpBulkPrice()">チェック済みに適用</button>' +
+      '</div></div>';
 
-function addSpSearchResult(setId, productNo, setName) {
-  if (!spSelectedGroupId) { showToast('グループを選択してください', true); return; }
-  const priceEl = document.getElementById('spsr-price-' + setId);
-  const price = priceEl ? parseFloat(priceEl.value) : 0;
-  if (!price || price <= 0) { showToast('特別価格を入力してください', true); return; }
-  gasPost({ action: 'saveSpecialPriceDetails', group_id: spSelectedGroupId,
-    items: [{ product_set_id: setId, product_no: productNo, product_set_name: setName, unit_price: price }] }, function(res) {
-    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
-    showToast(productNo + ' ¥' + price.toLocaleString() + ' を保存しました');
-    // 保存済みバッジを更新（リロードせず）
-    const label = priceEl ? priceEl.closest('div[style*="padding:10px"]') : null;
-    if (label) {
-      const badge = label.querySelector('[style*="fef3c7"]');
-      if (!badge) {
-        const nameDiv = label.querySelector('div[style*="margin-bottom:6px"]');
-        if (nameDiv) nameDiv.insertAdjacentHTML('beforeend', ' <span style="background:#fef3c7;color:#92400e;font-size:10px;padding:1px 4px;border-radius:3px;">保存済</span>');
-      }
-    }
-    loadSpecialPriceData();
+    html += '<div style="overflow-x:auto;"><table class="sp-table"><thead><tr>' +
+      '<th style="width:36px;"></th><th>品番</th><th>商品セット名</th><th>通常価格</th><th>特別価格</th>' +
+      '</tr></thead><tbody>';
+
+    res.sets.forEach(s => {
+      const savedPrice = savedMap[String(s.id)];
+      const isChecked = savedPrice !== undefined ? ' checked' : '';
+      html += '<tr>' +
+        '<td style="text-align:center;"><input type="checkbox" class="sp-set-check" data-id="' + s.id + '" data-no="' + esc(s.product_no) + '" data-name="' + esc(s.name) + '"' + isChecked + '></td>' +
+        '<td style="font-family:monospace;font-size:12px;color:#6b7280;">' + esc(s.product_no) + '</td>' +
+        '<td style="font-size:13px;">' + esc(s.name) + '</td>' +
+        '<td style="color:#6b7280;">¥' + Number(s.unit_price || 0).toLocaleString() + '</td>' +
+        '<td><input type="number" class="sp-price-input" data-id="' + s.id + '" value="' + (savedPrice !== undefined ? savedPrice : '') + '" placeholder="価格" min="0" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;width:100px;"></td>' +
+        '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+    html += '<div style="margin-top:12px;text-align:right;">' +
+      '<button class="btn btn-success" onclick="saveSpToApp()">💾 アプリに保存</button>' +
+      '</div>';
+
+    area.innerHTML = html;
   });
 }
 
