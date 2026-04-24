@@ -1,7 +1,7 @@
 // BCARTマスター管理ツール - バックエンド
 // Version: v1.8.0
 
-const VERSION = 'v1.8.0';
+const VERSION = 'v1.8.1';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -870,7 +870,7 @@ function registerProduct(params) {
         '10': { fixed_price: params.csvShiire || 0 }
       },
       unit:        params.csvUnit || '',
-      quantity:    0,
+      quantity:    1,
       min_order:   1,
       stock_flag:  1,
       tax_type_id: params.taxTypeId || 1,
