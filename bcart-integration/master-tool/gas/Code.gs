@@ -1,7 +1,7 @@
 // BCARTマスター管理ツール - バックエンド
 // Version: v1.8.0
 
-const VERSION = 'v2.0.1';
+const VERSION = 'v2.0.2';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -308,7 +308,8 @@ function calcDiffs(csvRows, bcartProducts, bcartSets, ignoreMap, wipMap) {
 
     const codeKey = String(parseInt(code, 10) || code);
 
-    const isIgnored = !!ignoreMap[codeKey];
+    const ignoreEntry = ignoreMap[codeKey];
+    const isIgnored = !!ignoreEntry;
     const isWip = !!wipMap[codeKey];
     const bcartSet = bcartSetMap[codeKey];
 
@@ -330,7 +331,8 @@ function calcDiffs(csvRows, bcartProducts, bcartSets, ignoreMap, wipMap) {
         stockManagement: row['在庫有無'] || '',
         isIgnored: isIgnored,
         isWip: isWip,
-        ignoreReason: ignoreMap[codeKey] || '',
+        ignoreReason: ignoreEntry ? (ignoreEntry.reason || '') : '',
+        ignoreDate:   ignoreEntry ? (ignoreEntry.date   || '') : '',
         bcartSetId: null,
         bcartProductId: null
       });
@@ -375,7 +377,8 @@ function calcDiffs(csvRows, bcartProducts, bcartSets, ignoreMap, wipMap) {
         csvShiire: csvShiire,
         isIgnored: isIgnored,
         isWip: isWip,
-        ignoreReason: ignoreMap[codeKey] || '',
+        ignoreReason: ignoreEntry ? (ignoreEntry.reason || '') : '',
+        ignoreDate:   ignoreEntry ? (ignoreEntry.date   || '') : '',
         bcartSetId: bcartSet.id,
         bcartProductId: bcartSet.product_id
       });
@@ -1603,7 +1606,13 @@ function getIgnoreMap() {
   const rows = sheet.getDataRange().getValues();
   const map = {};
   for (let i = 1; i < rows.length; i++) {
-    if (rows[i][0]) map[rows[i][0]] = rows[i][2] || '';
+    if (rows[i][0]) {
+      const rawDate = String(rows[i][3] || '');
+      map[rows[i][0]] = {
+        reason: rows[i][2] || '',
+        date:   rawDate.split(' ')[0] || rawDate
+      };
+    }
   }
   return map;
 }
