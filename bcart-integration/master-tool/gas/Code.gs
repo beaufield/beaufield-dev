@@ -1,7 +1,7 @@
 // BCARTマスター管理ツール - バックエンド
-// Version: v1.7.0
+// Version: v1.8.0
 
-const VERSION = 'v1.7.0';
+const VERSION = 'v1.8.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -65,12 +65,15 @@ function doPost(e) {
       case 'getFeatures':          return jsonResponse(getSpecials());
       case 'registerProduct':      return jsonResponse(registerProduct(params));
       // 機能B: 特別価格管理
-      case 'getSpecialPriceData':      return jsonResponse(getSpecialPriceData());
-      case 'saveCustomerGroup':        return jsonResponse(saveCustomerGroup(params));
-      case 'deleteCustomerGroup':      return jsonResponse(deleteCustomerGroup(params));
-      case 'getProductSetsForFeature': return jsonResponse(getProductSetsForFeature(params));
-      case 'applyGroupPrices':         return jsonResponse(applyGroupPrices(params));
-      case 'deleteSpecialPriceDetail': return jsonResponse(deleteSpecialPriceDetail(params));
+      case 'getSpecialPriceData':       return jsonResponse(getSpecialPriceData());
+      case 'saveCustomerGroup':         return jsonResponse(saveCustomerGroup(params));
+      case 'deleteCustomerGroup':       return jsonResponse(deleteCustomerGroup(params));
+      case 'getProductSetsForFeature':  return jsonResponse(getProductSetsForFeature(params));
+      case 'searchProductSets':         return jsonResponse(searchProductSets(params));
+      case 'applyGroupPrices':          return jsonResponse(applyGroupPrices(params));
+      case 'saveSpecialPriceDetails':   return jsonResponse(saveSpecialPriceDetails(params));
+      case 'deleteSpecialPriceDetail':  return jsonResponse(deleteSpecialPriceDetail(params));
+      case 'getMembers':                return jsonResponse(getMembers());
       default:                         return jsonResponse({ ok: false, error: 'UNKNOWN_ACTION' });
     }
   } catch (err) {
@@ -312,7 +315,7 @@ function calcDiffs(csvRows, bcartProducts, bcartSets, ignoreMap, wipMap) {
         name: row['商品名'] || row['略称'] || '',
         supplier: row['仕入先名'] || '',
         csvPrice:  unregPrice,
-        csvKouri:  parseFloat(String(row['定価1'] || '').replace(/,/g, '')) || 0,
+        csvKouri:  parseFloat(String(row['定価１'] || row['定価1'] || '').replace(/,/g, '')) || 0,
         csvShiire: parseFloat(String(row['仕入単価'] || '').replace(/,/g, '')) || 0,
         csvJan:    (row['JANCD'] || '').trim(),
         csvUnit:   (row['単位名'] || '').trim(),
@@ -343,7 +346,7 @@ function calcDiffs(csvRows, bcartProducts, bcartSets, ignoreMap, wipMap) {
       issues.push({ type: 'price', csvPrice: csvPrice, bcartPrice: bcartPrice });
     }
     if (isDiscontinued && bcartSetVisible) {
-      issues.push({ type: 'discontinued' });
+      issues.push({ type: 'discontinued', bcartProductFlag: bcartProduct.flag || '' });
     }
     if (csvKouri > 0 && Math.abs(csvKouri - bcartJodai) > 0) {
       issues.push({ type: 'jodai', csvJodai: csvKouri, bcartJodai: bcartJodai });
@@ -867,6 +870,7 @@ function registerProduct(params) {
         '10': { fixed_price: params.csvShiire || 0 }
       },
       unit:        params.csvUnit || '',
+      quantity:    0,
       min_order:   1,
       stock_flag:  1,
       tax_type_id: params.taxTypeId || 1,
@@ -903,6 +907,50 @@ function registerProduct(params) {
   });
 
   return { ok: true, productId: createdProductId, setId: createdSetId };
+}
+
+// ===================== 会員取得 =====================
+function getMembers() {
+  const endpoints = ['/members', '/customers', '/users'];
+  for (const ep of endpoints) {
+    try {
+      const result = bcartGetAll(ep);
+      if (result.ok && result.data && result.data.length > 0) {
+        const members = result.data.map(m => ({
+          id:    String(m.id || m.member_id || m.user_id || ''),
+          name:  m.name || m.company_name || m.username || m.member_name || '',
+          email: m.email || '',
+          code:  String(m.code || m.member_no || m.customer_no || '')
+        })).filter(m => m.id);
+        return { ok: true, members: members };
+      }
+    } catch(e) {}
+  }
+  return { ok: false, error: '会員APIが見つかりません（/members /customers /users を試行）' };
+}
+
+// ===================== 商品セット検索 =====================
+function searchProductSets(params) {
+  const keyword = (params.keyword || '').toLowerCase().trim();
+  if (!keyword) return { ok: false, error: 'キーワードを入力してください' };
+
+  const sets = bcartGetAll('/product_sets');
+  if (!sets.ok) return sets;
+
+  const filtered = sets.data.filter(s =>
+    (String(s.product_no || '')).toLowerCase().includes(keyword) ||
+    (String(s.name || '')).toLowerCase().includes(keyword)
+  ).slice(0, 30);
+
+  return {
+    ok: true,
+    sets: filtered.map(s => ({
+      id:         s.id,
+      product_no: s.product_no || '',
+      name:       s.name || '',
+      unit_price: s.unit_price || 0
+    }))
+  };
 }
 
 // ===================== 機能B: 特別価格管理 =====================
@@ -946,12 +994,16 @@ function getSpecialPriceData() {
 function saveCustomerGroup(params) {
   const sheet = getOrCreateSheet(SHEET_SP_GROUPS);
   const rows = sheet.getDataRange().getValues();
+  const memberIds = params.member_ids || '';
 
   if (params.group_id) {
     for (let i = 1; i < rows.length; i++) {
       if (String(rows[i][0]) === params.group_id) {
         sheet.getRange(i + 1, 2).setValue(params.group_name);
-        sheet.getRange(i + 1, 3).setValue(params.member_ids);
+        // カンマが千区切り数字として解釈されないようテキスト形式を強制
+        const mCell = sheet.getRange(i + 1, 3);
+        mCell.setNumberFormat('@');
+        mCell.setValue(memberIds);
         sheet.getRange(i + 1, 5).setValue(params.note || '');
         return { ok: true, group_id: params.group_id };
       }
@@ -959,7 +1011,11 @@ function saveCustomerGroup(params) {
   }
 
   const newId = 'G' + new Date().getTime().toString(36).toUpperCase();
-  sheet.appendRow([newId, params.group_name, params.member_ids, new Date().toLocaleString('ja-JP'), params.note || '']);
+  sheet.appendRow([newId, params.group_name, '', new Date().toLocaleString('ja-JP'), params.note || '']);
+  const lastRow = sheet.getLastRow();
+  const mCell = sheet.getRange(lastRow, 3);
+  mCell.setNumberFormat('@');
+  mCell.setValue(memberIds);
   return { ok: true, group_id: newId };
 }
 
@@ -1046,6 +1102,42 @@ function getProductSetsForFeature(params) {
 
   sets.sort((a, b) => String(a.product_no).localeCompare(String(b.product_no)));
   return { ok: true, sets: sets };
+}
+
+// アプリ内に保存のみ（BCARTには反映しない）
+function saveSpecialPriceDetails(params) {
+  const detailSheet = getOrCreateSheet(SHEET_SP_DETAILS);
+  let detailRows = detailSheet.getDataRange().getValues();
+
+  params.items.forEach(item => {
+    let found = false;
+    for (let i = 1; i < detailRows.length; i++) {
+      if (String(detailRows[i][1]) === params.group_id && String(detailRows[i][2]) === String(item.product_set_id)) {
+        detailSheet.getRange(i + 1, 5).setValue(item.product_set_name || '');
+        detailSheet.getRange(i + 1, 6).setValue(item.unit_price);
+        detailSheet.getRange(i + 1, 7).setValue(new Date().toLocaleString('ja-JP'));
+        detailRows[i][5] = item.unit_price;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      const newId = 'D' + new Date().getTime().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 5);
+      const newRow = [newId, params.group_id, item.product_set_id, item.product_no || '', item.product_set_name || '', item.unit_price, new Date().toLocaleString('ja-JP')];
+      detailSheet.appendRow(newRow);
+      detailRows.push(newRow);
+    }
+    Utilities.sleep(50);
+  });
+
+  addHistory({
+    userName: params._userName,
+    code: '', name: params.group_id,
+    type: '特別価格アプリ保存',
+    before: '', after: params.items.length + '件',
+    result: '成功'
+  });
+  return { ok: true, savedCount: params.items.length };
 }
 
 function applyGroupPrices(params) {
