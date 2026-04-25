@@ -205,7 +205,8 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .member-item input[type=checkbox] { flex-shrink: 0; }
 .member-item-info { flex: 1; font-size: 13px; }
 .member-item-id { font-size: 11px; color: #9ca3af; font-family: monospace; }
-.badge-parent-hidden { background: #f3f4f6; color: #6b7280; border: 1px solid #d1d5db; font-size: 11px; }
+.badge-parent-hidden  { background: #f3f4f6; color: #6b7280; border: 1px solid #d1d5db; font-size: 11px; }
+.badge-parent-visible { background: #fef9c3; color: #b45309; border: 1px solid #fde047; font-size: 11px; }
 
 /* 特別価格プレビューモーダル */
 .sp-preview-modal { width: 640px; max-width: 95vw; max-height: 90vh; display: flex; flex-direction: column; }
@@ -224,14 +225,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.1.0</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.2.0</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.1.0</span>
+    <span class="version">HTML v2.2.0</span>
   </div>
 
   <div class="tabs">
@@ -441,9 +442,10 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
         <option value="単価">単価</option>
       </select>
     </div>
-    <div class="actions">
+    <div class="actions" style="flex-wrap:wrap;gap:6px;">
       <button class="btn btn-gray" onclick="cancelJodaiType()">キャンセル</button>
-      <button class="btn btn-jodai" onclick="confirmJodaiType()">💴 更新する</button>
+      <button class="btn btn-jodai" onclick="confirmJodaiTypeDefault()" style="background:#ede9fe;color:#6d28d9;border-color:#c4b5fd;">💴 参考上代で更新</button>
+      <button class="btn btn-jodai" onclick="confirmJodaiType()">💴 選択して更新</button>
     </div>
   </div>
 </div>
@@ -735,10 +737,19 @@ function switchTab(tab, el) {
 
 // ===================== データ読み込み =====================
 function loadData() {
-  document.getElementById('diffList').innerHTML = '<div class="loading"><div class="spinner"></div><div>データを読み込み中...</div></div>';
+  const loadSteps = ['データを読み込み中...', 'CSVを読み込み中...', 'BCART商品データを取得中...', '差異を計算中...', 'もうすぐ完了...'];
+  document.getElementById('diffList').innerHTML = '<div class="loading"><div class="spinner"></div><div id="loadingMsg">' + loadSteps[0] + '</div></div>';
   ['cnt-price','cnt-disc','cnt-unreg','cnt-ignore'].forEach(id => document.getElementById(id).textContent = '-');
 
+  const stepTimers = [5000, 18000, 35000, 55000].map(function(delay, i) {
+    return setTimeout(function() {
+      const el = document.getElementById('loadingMsg');
+      if (el) el.textContent = loadSteps[i + 1] || loadSteps[loadSteps.length - 1];
+    }, delay);
+  });
+
   gasPost({ action: 'loadData' }, function(res) {
+    stepTimers.forEach(clearTimeout);
     if (!res.ok) { showToast('データ読み込みエラー: ' + res.error, true); return; }
 
     const csvMsg = 'CSV: ' + (res.totalCsv || 0) + '件 / BCART: ' + (res.totalBcart || 0) + '件';
@@ -767,7 +778,7 @@ function loadData() {
 function updateSummary() {
   const active = allDiffs.filter(d => !d.isIgnored && applyStockFilter(d));
   document.getElementById('cnt-price').textContent = active.filter(d => d.issues && d.issues.some(i => i.type === 'price' || i.type === 'jodai')).length;
-  document.getElementById('cnt-disc').textContent  = active.filter(d => d.issues && d.issues.some(i => i.type === 'discontinued')).length;
+  document.getElementById('cnt-disc').textContent  = active.filter(d => d.issues && d.issues.some(i => i.type === 'discontinued' || i.type === 'parent_visible')).length;
   document.getElementById('cnt-unreg').textContent = active.filter(d => d.type === 'unregistered').length;
   document.getElementById('cnt-ignore').textContent = allDiffs.filter(d => d.isIgnored && applyStockFilter(d)).length;
 }
@@ -834,7 +845,7 @@ function buildSupplierFilter() {
     if (currentFilter === 'all') return true;
     if (currentFilter === 'price') return d.issues && d.issues.some(i => i.type === 'price' || i.type === 'jodai');
     if (currentFilter === 'jan') return d.issues && d.issues.some(i => i.type === 'jan');
-    if (currentFilter === 'discontinued') return d.issues && d.issues.some(i => i.type === 'discontinued');
+    if (currentFilter === 'discontinued') return d.issues && d.issues.some(i => i.type === 'discontinued' || i.type === 'parent_visible');
     if (currentFilter === 'unregistered') return d.type === 'unregistered';
     if (currentFilter === 'wip') return d.isWip;
     return true;
@@ -858,7 +869,7 @@ function getFilteredDiffs() {
     if (currentFilter === 'all') return true;
     if (currentFilter === 'price') return d.issues && d.issues.some(i => i.type === 'price' || i.type === 'jodai');
     if (currentFilter === 'jan') return d.issues && d.issues.some(i => i.type === 'jan');
-    if (currentFilter === 'discontinued') return d.issues && d.issues.some(i => i.type === 'discontinued');
+    if (currentFilter === 'discontinued') return d.issues && d.issues.some(i => i.type === 'discontinued' || i.type === 'parent_visible');
     if (currentFilter === 'unregistered') return d.type === 'unregistered';
     if (currentFilter === 'wip') return d.isWip;
     return true;
@@ -949,6 +960,13 @@ function renderDiffItem(d) {
         if (!isIgnored) {
           actionBtns += '<button class="btn btn-sm" style="background:#f0fdf4;color:#16a34a;" onclick="updateJan(\'' + d.bcartSetId + '\',\'' + esc(d.code) + '\',\'' + esc(issue.csvJan) + '\')">🔖 JAN更新</button>';
           updatableIssues.push({ type: 'jan', janCode: issue.csvJan });
+        }
+      }
+      if (issue.type === 'parent_visible') {
+        badges += '<span class="badge badge-parent-visible">👻 親商品表示中</span>';
+        details += '<div class="diff-detail"><div class="row"><span class="lbl">状態</span><span style="color:#92400e;">廃番済みですが親商品（BCART）がまだ「表示」です。手動で非表示にしてください。</span></div></div>';
+        if (!isIgnored && d.bcartProductId) {
+          actionBtns += '<button class="btn btn-sm" style="background:#fef9c3;color:#b45309;border:1px solid #fde047;" onclick="hideParentProduct(\'' + esc(d.bcartProductId) + '\',\'' + esc(d.code) + '\',\'' + esc(d.name) + '\')">👻 親商品を非表示</button>';
         }
       }
     });
@@ -1087,6 +1105,7 @@ async function bulkUpdateByType(type) {
 
     showProgressOverlay(items.length);
     let successCount = 0, failCount = 0;
+    const failedItems = [];
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
@@ -1094,16 +1113,20 @@ async function bulkUpdateByType(type) {
       try {
         const res = await gasPostAsync(item);
         if (res.ok) successCount++;
-        else failCount++;
+        else {
+          failCount++;
+          failedItems.push({ code: item.code, name: item.name || '', error: res.error || '' });
+        }
       } catch(e) {
         failCount++;
+        failedItems.push({ code: item.code, name: item.name || '', error: e.message || '' });
       }
     }
 
     const resultMsg = failCount > 0
       ? successCount + '件成功、' + failCount + '件失敗'
       : items.length + '件をすべて更新しました';
-    finishProgressOverlay(resultMsg, failCount > 0);
+    finishProgressOverlay(resultMsg, failCount > 0, failedItems);
   }
 
   if (jodaiItems.length > 0) {
@@ -1156,18 +1179,31 @@ function updateProgressOverlay(current, total, label) {
   document.getElementById('progressDetail').textContent = label || '';
 }
 
-function finishProgressOverlay(resultMsg, isError) {
+function finishProgressOverlay(resultMsg, isError, failedItems) {
   document.getElementById('progressCount').textContent = '完了';
   document.getElementById('progressBarFill').style.width = '100%';
   document.getElementById('progressDetail').textContent = '';
-  document.getElementById('progressResult').innerHTML =
-    '<span style="color:' + (isError ? '#dc2626' : '#059669') + ';font-weight:600;">' + esc(resultMsg) + '</span>';
+  let resultHtml = '<span style="color:' + (isError ? '#dc2626' : '#059669') + ';font-weight:600;">' + esc(resultMsg) + '</span>';
+  if (failedItems && failedItems.length > 0) {
+    const shown = failedItems.slice(0, 10);
+    const extra = failedItems.length - shown.length;
+    resultHtml += '<div style="margin-top:10px;max-height:150px;overflow-y:auto;border:1px solid #fca5a5;border-radius:6px;background:#fff;text-align:left;">' +
+      shown.map(function(f) {
+        return '<div style="padding:4px 8px;border-bottom:1px solid #fee2e2;font-size:11px;">' +
+          '<span style="font-family:monospace;color:#6b7280;">' + esc(f.code) + '</span> ' + esc(f.name) +
+          (f.error ? '<div style="color:#dc2626;font-size:10px;">' + esc(f.error) + '</div>' : '') +
+          '</div>';
+      }).join('') +
+      (extra > 0 ? '<div style="padding:4px 8px;font-size:11px;color:#9ca3af;">他 ' + extra + ' 件</div>' : '') +
+      '</div>';
+  }
+  document.getElementById('progressResult').innerHTML = resultHtml;
 
   setTimeout(function() {
     document.getElementById('progressOverlay').classList.remove('open');
     showToast(resultMsg, isError);
     loadData();
-  }, 1800);
+  }, isError ? 4000 : 1800);
 }
 
 // ===================== 個別更新 =====================
@@ -1183,17 +1219,30 @@ function updatePrice(bcartSetId, code, price, csvKouri, csvShiire) {
 function openJodaiTypeModal(message, callback) {
   pendingJodaiCallback = callback;
   document.getElementById('jodaiTypeMessage').textContent = message;
-  document.getElementById('jodaiTypeSelect').value = '参考上代';
+  const saved = localStorage.getItem('bm_jodaiType') || '参考上代';
+  document.getElementById('jodaiTypeSelect').value = saved;
   document.getElementById('jodaiTypeModal').classList.add('open');
 }
 
 function confirmJodaiType() {
   const type = document.getElementById('jodaiTypeSelect').value;
+  localStorage.setItem('bm_jodaiType', type);
   closeModal('jodaiTypeModal');
   if (pendingJodaiCallback) {
     const cb = pendingJodaiCallback;
     pendingJodaiCallback = null;
     cb(type);
+  }
+}
+
+function confirmJodaiTypeDefault() {
+  localStorage.setItem('bm_jodaiType', '参考上代');
+  document.getElementById('jodaiTypeSelect').value = '参考上代';
+  closeModal('jodaiTypeModal');
+  if (pendingJodaiCallback) {
+    const cb = pendingJodaiCallback;
+    pendingJodaiCallback = null;
+    cb('参考上代');
   }
 }
 
@@ -1259,6 +1308,15 @@ function hideProductSet(bcartSetId, code, name) {
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
     showToast('非表示にしました');
     removeDiff(code);
+  });
+}
+
+function hideParentProduct(productId, code, name) {
+  if (!confirm('親商品（商品ID: ' + productId + '）を非表示にします。\n（商品コード: ' + code + '　' + name + '）\n\nよろしいですか？')) return;
+  gasPost({ action: 'updateProduct', productId: productId, productFields: { flag: '非表示' } }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    showToast('親商品を非表示にしました');
+    removeIssue(code, 'parent_visible');
   });
 }
 
@@ -1904,15 +1962,24 @@ function renderSpSettings() {
     if (details.length === 0) {
       html += '<div style="font-size:13px;color:#9ca3af;padding:8px 0;">まだ特別価格が設定されていません。</div>';
     } else {
+      const unappliedSpCount = details.filter(d => !d.applied_at).length;
+      if (unappliedSpCount > 0) {
+        html += '<div class="warn-bar" style="margin-bottom:10px;">⚠️ ' + unappliedSpCount + '件がアプリ保存済みですが、BCARTにはまだ反映されていません。</div>';
+      }
       html += '<div style="overflow-x:auto;"><table class="sp-table"><thead><tr>' +
-        '<th>品番</th><th>商品セット名</th><th>特別価格</th><th>更新日時</th><th></th>' +
+        '<th>品番</th><th>商品セット名</th><th>特別価格</th><th>更新日時</th><th>BCART反映</th><th></th>' +
         '</tr></thead><tbody>';
       details.forEach(d => {
+        const appliedAt = String(d.applied_at || '');
+        const reflectBadge = appliedAt === ''
+          ? '<span style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:700;">⚠️ 未反映</span>'
+          : '<span style="color:#059669;font-size:10px;">✅ ' + esc(appliedAt.substring(0, 16)) + '</span>';
         html += '<tr>' +
           '<td style="font-family:monospace;font-size:12px;color:#6b7280;">' + esc(d.product_no) + '</td>' +
           '<td>' + esc(d.product_set_name) + '</td>' +
           '<td style="font-weight:700;color:#1a56db;">¥' + Number(d.unit_price).toLocaleString() + '</td>' +
           '<td style="font-size:11px;color:#9ca3af;">' + esc(String(d.updated_at || '').substring(0, 16)) + '</td>' +
+          '<td>' + reflectBadge + '</td>' +
           '<td><button class="btn btn-sm btn-danger" onclick="deleteSpDetail(\'' + esc(d.detail_id) + '\',\'' + esc(d.product_no) + '\')">削除</button></td>' +
           '</tr>';
       });
@@ -1952,8 +2019,8 @@ function renderSpSettings() {
     html += '</div>'; // 商品追加セクション終わり
 
     // ── 例外表示設定セクション ──
-    const useVf = (selGroup && selGroup.use_view_filter) || vfDetails.length > 0;
     const vfDetails = (spData.vfDetails || []).filter(d => d.group_id === spSelectedGroupId);
+    const useVf = (selGroup && selGroup.use_view_filter) || vfDetails.length > 0;
     html += '<div style="border-top:2px solid #e5e7eb;padding-top:20px;margin-top:8px;">';
     html += '<div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">👁 例外表示設定</div>';
     html += '<label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;cursor:pointer;font-size:13px;">' +
@@ -1970,13 +2037,21 @@ function renderSpSettings() {
     if (vfDetails.length === 0) {
       html += '<div style="font-size:13px;color:#9ca3af;padding:4px 0;">まだ例外表示商品が設定されていません。</div>';
     } else {
+      const unappliedVfCount = vfDetails.filter(d => !d.applied_at).length;
+      if (unappliedVfCount > 0) {
+        html += '<div class="warn-bar" style="margin-bottom:10px;">⚠️ ' + unappliedVfCount + '件がアプリ保存済みですが、BCARTにはまだ反映されていません。</div>';
+      }
       html += '<div style="overflow-x:auto;"><table class="sp-table"><thead><tr>' +
-        '<th>品番</th><th>商品セット名</th><th>適用日時</th><th></th></tr></thead><tbody>';
+        '<th>品番</th><th>商品セット名</th><th>BCART反映</th><th></th></tr></thead><tbody>';
       vfDetails.forEach(d => {
+        const appliedAtVf = String(d.applied_at || '');
+        const reflectBadgeVf = appliedAtVf === ''
+          ? '<span style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:700;">⚠️ 未反映</span>'
+          : '<span style="color:#059669;font-size:10px;">✅ ' + esc(appliedAtVf.substring(0, 16)) + '</span>';
         html += '<tr>' +
           '<td style="font-family:monospace;font-size:12px;color:#6b7280;">' + esc(d.product_no) + '</td>' +
           '<td>' + esc(d.product_set_name) + '</td>' +
-          '<td style="font-size:11px;color:#9ca3af;">' + esc(String(d.applied_at || '').substring(0, 16)) + '</td>' +
+          '<td>' + reflectBadgeVf + '</td>' +
           '<td><button class="btn btn-sm btn-danger" onclick="deleteVfDetail(\'' + esc(d.detail_id) + '\',\'' + d.product_set_id + '\',\'' + esc(d.product_no) + '\')">削除</button></td>' +
           '</tr>';
       });
@@ -2108,7 +2183,7 @@ function renderVfFeatureSets() {
   });
   html += '</tbody></table></div>';
   html += '<div style="margin-top:12px;text-align:right;">' +
-    '<button class="btn btn-success" onclick="saveVfToApp()">💾 アプリに保存</button>' +
+    '<button class="btn btn-success" onclick="saveVfToApp()">💾 一時保存（BCARTに反映はまだ）</button>' +
     '</div>';
   area.innerHTML = html;
 }
@@ -2127,7 +2202,7 @@ function saveVfToApp() {
   showToast('保存中...');
   gasPost({ action: 'saveViewFilterDetails', group_id: spSelectedGroupId, items: items }, function(res) {
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
-    showToast(items.length + '件をアプリに保存しました。「BCARTに反映する」から適用できます。');
+    showToast(items.length + '件を一時保存しました。BCARTに反映するには「BCARTに反映する」ボタンを押してください。');
     spVfFeatureSets = [];
     loadSpecialPriceData();
   });
@@ -2334,7 +2409,7 @@ function renderSpFeatureSets() {
 
   html += '</tbody></table></div>';
   html += '<div style="margin-top:12px;text-align:right;">' +
-    '<button class="btn btn-success" onclick="saveSpToApp()">💾 アプリに保存</button>' +
+    '<button class="btn btn-success" onclick="saveSpToApp()">💾 一時保存（BCARTに反映はまだ）</button>' +
     '</div>';
 
   area.innerHTML = html;
@@ -2367,7 +2442,7 @@ function saveSpToApp() {
   showToast('保存中...');
   gasPost({ action: 'saveSpecialPriceDetails', group_id: spSelectedGroupId, items: items }, function(res) {
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
-    showToast(items.length + '件をアプリに保存しました。「BCARTに反映する」から適用できます。');
+    showToast(items.length + '件を一時保存しました。BCARTに反映するには「BCARTに反映する」ボタンを押してください。');
     spFeatureSets = [];
     loadSpecialPriceData();
   });
@@ -2567,7 +2642,7 @@ function searchSpProduct() {
 
     html += '</tbody></table></div>';
     html += '<div style="margin-top:12px;text-align:right;">' +
-      '<button class="btn btn-success" onclick="saveSpToApp()">💾 アプリに保存</button>' +
+      '<button class="btn btn-success" onclick="saveSpToApp()">💾 一時保存（BCARTに反映はまだ）</button>' +
       '</div>';
 
     area.innerHTML = html;
@@ -2717,7 +2792,17 @@ function saveGroupModal() {
 }
 
 function deleteGroup(groupId, name) {
-  if (!confirm('「' + name + '」を削除します。\n関連する特別価格設定もBCARTから削除されます。\nよろしいですか？')) return;
+  const g = spData ? (spData.groups || []).find(x => x.group_id === groupId) : null;
+  const memberIds = g ? String(g.member_ids || '').split(',').map(s => s.trim()).filter(s => s) : [];
+  const spCount = spData ? (spData.details || []).filter(d => d.group_id === groupId).length : 0;
+  const vfCount = spData ? (spData.vfDetails || []).filter(d => d.group_id === groupId).length : 0;
+  const confirmMsg = '「' + name + '」を削除します。\n\n' +
+    '会員: ' + memberIds.length + '名\n' +
+    '特別価格設定: ' + spCount + '件\n' +
+    '例外表示設定: ' + vfCount + '件\n\n' +
+    '関連する特別価格・例外表示設定はBCARTからも削除されます。\n' +
+    'この操作は取り消せません。よろしいですか？';
+  if (!confirm(confirmMsg)) return;
   gasPost({ action: 'deleteCustomerGroup', group_id: groupId }, function(res) {
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
     showToast('削除しました');
