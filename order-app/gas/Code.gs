@@ -15,7 +15,7 @@
 const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
-const VERSION         = 'v1.8.1';
+const VERSION         = 'v1.8.2';
 
 // Google Drive上の商品マスターCSVファイル名
 // ※ 同名ファイルが複数ある場合はファイルIDで指定（下記コメント参照）
@@ -155,8 +155,8 @@ function doPost(e) {
     switch (action) {
       case 'saveOrder':    return jsonResponse(saveOrder(p, auth.user_id));
       case 'deleteOrder':  return jsonResponse(deleteOrder(p, auth.user_id));
-      case 'saveSupplier': return jsonResponse(saveSupplier(p));
-      case 'saveStaff':    return jsonResponse(saveStaff(p));
+      case 'saveSupplier': return jsonResponse(saveSupplier(p, auth.user_id));
+      case 'saveStaff':    return jsonResponse(saveStaff(p, auth.user_id));
       default:             return jsonResponse({ success: false, error: '不明なアクション: ' + action });
     }
   } catch(err) {
@@ -715,7 +715,8 @@ function generateOrderNo(dateStr) {
 // ============================================================
 // POST: 発注先マスター操作
 // ============================================================
-function saveSupplier(p) {
+function saveSupplier(p, user_id) {
+  if (!getIsAdmin(user_id)) return { success: false, error: 'FORBIDDEN', message: '管理者権限が必要です' };
   const mode          = p.mode          || '';
   const code          = String(p.code          || '').trim();
   const name          = String(p.name          || '').trim();
@@ -757,7 +758,8 @@ function saveSupplier(p) {
 // ============================================================
 // POST: 担当者マスター操作
 // ============================================================
-function saveStaff(p) {
+function saveStaff(p, user_id) {
+  if (!getIsAdmin(user_id)) return { success: false, error: 'FORBIDDEN', message: '管理者権限が必要です' };
   const mode = p.mode || '';
   const name = String(p.name || '').trim();
 
