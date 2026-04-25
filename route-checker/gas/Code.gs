@@ -13,7 +13,7 @@
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS         = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID = _PROPS.getProperty('SPREADSHEET_ID');
-const VERSION        = '1.11.1';
+const VERSION        = '1.11.2';
 
 // beaufield-auth 共通認証設定
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
@@ -124,6 +124,8 @@ function doGet(e) {
     if (!auth.valid) {
       return _jsonResponse(_err('SESSION_INVALID'));
     }
+    // セッション検証済みのuser_idで上書き（クライアント送信値の改ざんを防止）
+    data.user_id = auth.user_id;
   }
 
   try {
@@ -161,6 +163,8 @@ function doPost(e) {
   if (!auth.valid) {
     return _jsonResponse(_err('SESSION_INVALID'));
   }
+  // セッション検証済みのuser_idで上書き（クライアント送信値の改ざんを防止）
+  data.user_id = auth.user_id;
 
   try {
     switch (action) {
