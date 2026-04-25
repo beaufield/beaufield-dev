@@ -216,6 +216,18 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .sp-product-search { display: flex; gap: 8px; margin-bottom: 12px; }
 .sp-product-search input { flex: 1; padding: 7px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
 .sp-search-result { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; margin-bottom: 8px; }
+/* 説明文生成タブ */
+.desc-product-card { background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:16px; margin-bottom:12px; transition:opacity 0.3s; }
+.desc-product-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; gap:12px; }
+.desc-product-name { font-weight:600; font-size:14px; margin-bottom:2px; }
+.desc-product-meta { font-size:12px; color:#6b7280; }
+.desc-product-actions { display:flex; gap:6px; flex-shrink:0; }
+.desc-textarea { width:100%; border:1px solid #d1d5db; border-radius:6px; padding:10px; font-size:13px; font-family:inherit; resize:vertical; line-height:1.6; }
+.desc-textarea:focus { outline:none; border-color:#1a56db; box-shadow:0 0 0 2px #dbeafe; }
+.desc-status { margin-top:6px; font-size:12px; min-height:18px; }
+.desc-status-ok { color:#059669; }
+.desc-status-error { color:#dc2626; }
+.desc-status-applied { color:#1a56db; font-weight:600; }
 </style>
 </head>
 <body>
@@ -232,7 +244,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.2.0</span>
+    <span class="version">HTML v2.3.0</span>
   </div>
 
   <div class="tabs">
@@ -241,6 +253,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <div class="tab" onclick="switchTab('search',this)">商品検索</div>
     <div class="tab" onclick="switchTab('special-price',this)">💎 特別価格</div>
     <div class="tab" onclick="switchTab('history',this)">📋 更新履歴</div>
+    <div class="tab" onclick="switchTab('description',this)">✏️ 説明文生成</div>
   </div>
 
   <div class="content">
@@ -377,6 +390,19 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
       <div id="historyList">
         <div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>
       </div>
+    </div>
+
+    <!-- タブ7: 説明文生成 -->
+    <div class="tab-panel" id="tab-description">
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:16px;">
+        <p style="font-size:13px;color:#374151;margin-bottom:8px;">Gemini AI（無料）が商品説明文を自動生成します。生成後に内容を確認・修正してからBCARTに反映してください。</p>
+        <p style="font-size:12px;color:#6b7280;margin-bottom:12px;">※ 事前にGASスクリプトプロパティに <code>GEMINI_API_KEY</code> を設定してください。</p>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <button class="btn btn-primary" id="descLoadBtn" onclick="loadProductsForDescription()">📦 説明文なし商品を取得</button>
+          <span id="descProductCount" style="font-size:12px;color:#6b7280;"></span>
+        </div>
+      </div>
+      <div id="descProductList"></div>
     </div>
 
   </div>
@@ -733,6 +759,7 @@ function switchTab(tab, el) {
   if (tab === 'search') openSearchTab();
   if (tab === 'special-price') openSpecialPriceTab();
   if (tab === 'history') loadHistory();
+  if (tab === 'description') initDescriptionTab();
 }
 
 // ===================== データ読み込み =====================
@@ -2808,6 +2835,143 @@ function deleteGroup(groupId, name) {
     showToast('削除しました');
     loadSpecialPriceData();
   });
+}
+
+// ===================== 機能C: 説明文生成 =====================
+
+function initDescriptionTab() {}
+
+function loadProductsForDescription() {
+  const btn = document.getElementById('descLoadBtn');
+  btn.disabled = true;
+  btn.textContent = '取得中...';
+  document.getElementById('descProductCount').textContent = '';
+  gasPostAsync({ action: 'getProductsForDescription' }).then(function(res) {
+    btn.disabled = false;
+    btn.textContent = '📦 説明文なし商品を取得';
+    if (!res.ok) { showToast('取得失敗: ' + res.error, true); return; }
+    document.getElementById('descProductCount').textContent =
+      '説明文なし: ' + res.products.length + '件 ／ 全' + res.total + '件（説明文あり: ' + res.withDetail + '件）';
+    renderDescProductList(res.products);
+  }).catch(function(e) {
+    btn.disabled = false;
+    btn.textContent = '📦 説明文なし商品を取得';
+    showToast('通信エラー: ' + e.message, true);
+  });
+}
+
+function renderDescProductList(products) {
+  const el = document.getElementById('descProductList');
+  if (!products || !products.length) {
+    el.innerHTML = '<div style="padding:24px;text-align:center;color:#6b7280;background:#fff;border-radius:8px;border:1px solid #e5e7eb;">説明文なしの商品はありません 🎉</div>';
+    return;
+  }
+  let html = '<div style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
+    '<button class="btn btn-primary btn-sm" id="batchGenBtn" onclick="batchGenerateDesc()">✨ 上から10件まとめて生成</button>' +
+    '<span style="font-size:12px;color:#6b7280;">（1件ずつ順番に処理・1件あたり約4秒）</span></div>';
+  products.forEach(function(p) {
+    const nameAttr = escAttr(p.name);
+    const catAttr  = escAttr(p.category_name || '');
+    html += '<div class="desc-product-card" id="desc-card-' + p.id + '">' +
+      '<div class="desc-product-header">' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div class="desc-product-name">' + esc(p.name) + '</div>' +
+          '<div class="desc-product-meta">カテゴリ: ' + esc(p.category_name || '未設定') + ' ／ 商品ID: ' + p.id + '</div>' +
+        '</div>' +
+        '<div class="desc-product-actions">' +
+          '<button class="btn btn-primary btn-sm" onclick="generateOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',\'' + catAttr + '\',this)">✨ 生成</button>' +
+          '<button class="btn btn-success btn-sm" id="apply-btn-' + p.id + '" onclick="applyOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',this)" disabled>✅ 反映</button>' +
+        '</div>' +
+      '</div>' +
+      '<textarea class="desc-textarea" id="desc-text-' + p.id + '" rows="8" placeholder="「✨ 生成」を押すとAIが説明文を作成します。内容を確認・修正してから「✅ 反映」でBCARTに登録します。"></textarea>' +
+      '<div class="desc-status" id="desc-status-' + p.id + '"></div></div>';
+  });
+  el.innerHTML = html;
+}
+
+function escAttr(str) {
+  return String(str || '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+}
+
+function generateOneDesc(productId, productName, categoryName, btn) {
+  btn.disabled = true;
+  btn.textContent = '生成中...';
+  const statusEl = document.getElementById('desc-status-' + productId);
+  statusEl.textContent = '';
+  statusEl.className = 'desc-status';
+  gasPostAsync({ action: 'generateDescription', productId: productId, productName: productName, categoryName: categoryName })
+  .then(function(res) {
+    if (!res.ok) {
+      statusEl.textContent = '❌ ' + res.error;
+      statusEl.className = 'desc-status desc-status-error';
+      btn.disabled = false; btn.textContent = '✨ 生成'; return;
+    }
+    document.getElementById('desc-text-' + productId).value = res.text;
+    document.getElementById('apply-btn-' + productId).disabled = false;
+    statusEl.textContent = '✓ 生成完了。内容を確認してから「✅ 反映」を押してください。';
+    statusEl.className = 'desc-status desc-status-ok';
+    btn.textContent = '🔄 再生成'; btn.disabled = false;
+  }).catch(function(e) {
+    statusEl.textContent = '❌ エラー: ' + e.message;
+    statusEl.className = 'desc-status desc-status-error';
+    btn.disabled = false; btn.textContent = '✨ 生成';
+  });
+}
+
+function applyOneDesc(productId, productName, btn) {
+  const description = document.getElementById('desc-text-' + productId).value.trim();
+  if (!description) { alert('説明文が空です'); return; }
+  if (!confirm('「' + productName + '」の説明文をBCARTに反映しますか？')) return;
+  btn.disabled = true; btn.textContent = '反映中...';
+  const statusEl = document.getElementById('desc-status-' + productId);
+  gasPostAsync({ action: 'applyDescription', productId: productId, description: description, name: productName })
+  .then(function(res) {
+    if (!res.ok) {
+      statusEl.textContent = '❌ 反映失敗: ' + res.error;
+      statusEl.className = 'desc-status desc-status-error';
+      btn.disabled = false; btn.textContent = '✅ 反映'; return;
+    }
+    statusEl.textContent = '✅ BCARTに反映しました';
+    statusEl.className = 'desc-status desc-status-applied';
+    btn.disabled = true; btn.textContent = '✅ 反映済み';
+    document.getElementById('desc-card-' + productId).style.opacity = '0.5';
+  }).catch(function(e) {
+    statusEl.textContent = '❌ エラー: ' + e.message;
+    statusEl.className = 'desc-status desc-status-error';
+    btn.disabled = false; btn.textContent = '✅ 反映';
+  });
+}
+
+var batchGenerating = false;
+
+function batchGenerateDesc() {
+  if (batchGenerating) { showToast('まとめて生成は実行中です', true); return; }
+  batchGenerating = true;
+  const cards = document.querySelectorAll('.desc-product-card');
+  const queue = [];
+  cards.forEach(function(card) {
+    const productId = card.id.replace('desc-card-', '');
+    if (document.getElementById('desc-text-' + productId).value.trim()) return;
+    const nameEl = card.querySelector('.desc-product-name');
+    const metaEl = card.querySelector('.desc-product-meta');
+    const catText = metaEl ? metaEl.textContent.replace('カテゴリ: ', '').split(' ／ ')[0] : '';
+    queue.push({ id: productId, name: nameEl ? nameEl.textContent : '', category: catText });
+  });
+  const batch = queue.slice(0, 10);
+  if (!batch.length) { batchGenerating = false; showToast('すべての商品に説明文が生成されています'); return; }
+  document.getElementById('batchGenBtn').disabled = true;
+  function processNext(idx) {
+    if (idx >= batch.length) {
+      batchGenerating = false;
+      document.getElementById('batchGenBtn').disabled = false;
+      showToast('まとめて生成が完了しました（' + batch.length + '件）'); return;
+    }
+    const item = batch[idx];
+    const btn = document.querySelector('#desc-card-' + item.id + ' .btn-primary');
+    generateOneDesc(item.id, item.name, item.category, btn);
+    setTimeout(function() { processNext(idx + 1); }, 4200);
+  }
+  processNext(0);
 }
 </script>
 </body>
