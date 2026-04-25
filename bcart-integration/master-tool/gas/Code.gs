@@ -1,11 +1,12 @@
 // BCARTマスター管理ツール - バックエンド
 
-const VERSION = 'v2.2.0';
+const VERSION = 'v2.4.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
 const CSV_FOLDER_ID = '12QedyGwHcpXF-lEQBgJo5sIC_i3Iv42P';
 const CSV_FILENAME = '商品.CSV';
+const GEMINI_MODEL = 'gemini-2.5-flash-lite';
 
 // 認証（beaufield-auth GAS）
 const AUTH_GAS_URL = 'https://script.google.com/macros/s/AKfycbzNVW7AaPUTuwneE-M40DTN1clO5VT2yLCHq7cjYvaHqfMfXgVi38UAOsDZQbmmN3wOzw/exec';
@@ -1783,39 +1784,49 @@ function getProductsForDescription() {
     name: p.name || '',
     category_id: String(p.category_id || ''),
     category_name: categoryMap[String(p.category_id)] || '',
-    detail: p.detail || '',
+    detail: p.description || '',
     flag: p.flag || ''
   }));
 
-  const noDetail  = allMapped.filter(p => !p.detail || p.detail.trim() === '');
+  const noDetail  = allMapped.filter(p => !p.detail || p.detail.trim() === '').sort((a, b) => b.id - a.id);
   const hasDetail = allMapped.filter(p => p.detail && p.detail.trim() !== '');
+  // ※ detail は内部的に p.description をマッピングしたもの
 
   return { ok: true, products: noDetail, withDetail: hasDetail.length, total: allMapped.length };
 }
 
 function generateDescription(params) {
-  const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  const apiKey = (PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY') || '').trim();
   if (!apiKey) return { ok: false, error: 'GEMINI_API_KEYが設定されていません（スクリプトプロパティ: GEMINI_API_KEY）' };
 
   const productName  = params.productName  || '';
   const categoryName = params.categoryName || '美容商材';
+  const useSearch    = params.useSearch !== false;
 
-  const prompt =
-    'あなたは美容商材の専門ライターです。\n' +
-    '以下の美容商材（美容室・エステサロン向けBtoB）の商品説明文を日本語で作成してください。\n\n' +
-    '商品名: ' + productName + '\n' +
-    'カテゴリ: ' + categoryName + '\n\n' +
-    '以下のフォーマットのみで出力してください（余計な前置き・後書きは不要）:\n\n' +
-    '【こんなサロンに】\n（ターゲットサロン・1文・30〜50文字）\n\n' +
-    '【特長】\n・（特長1・20〜30文字）\n・（特長2・20〜30文字）\n・（特長3・20〜30文字）\n\n' +
-    '【使い方のポイント】\n（使い方のポイント・1文・20〜40文字）\n\n' +
-    '商品名から合理的に推測できる内容のみで作成し、不確かな数値・成分・効能は記載しないこと。';
+  const prompt = useSearch
+    ? 'あなたは美容商材の専門ライターです。\n' +
+      'Web検索で「' + productName + '」の商品情報を調べ、美容室・エステサロン向けBtoB商材の説明文を日本語で作成してください。\n\n' +
+      '商品名: ' + productName + '\n' +
+      'カテゴリ: ' + categoryName + '\n\n' +
+      '・検索で得た実際の商品情報をもとに、100〜150文字程度で簡潔に説明してください。\n' +
+      '・見出しや箇条書きは使わず、自然な文章で書いてください。\n' +
+      '・余計な前置き・後書きは不要です。説明文の本文のみ出力してください。\n' +
+      '・検索で確認できない情報（成分・数値・効能等）は記載しないこと。'
+    : 'あなたは美容商材の専門ライターです。\n' +
+      '以下の美容商材（美容室・エステサロン向けBtoB）の商品説明文を日本語で作成してください。\n\n' +
+      '商品名: ' + productName + '\n' +
+      'カテゴリ: ' + categoryName + '\n\n' +
+      '・どのような商品かを簡潔に説明する文章を100〜150文字程度で作成してください。\n' +
+      '・見出しや箇条書きは使わず、自然な文章で書いてください。\n' +
+      '・余計な前置き・後書きは不要です。説明文の本文のみ出力してください。\n' +
+      '・商品名から合理的に推測できる内容のみで作成し、不確かな数値・成分・効能は記載しないこと。';
 
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + apiKey;
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + GEMINI_MODEL + ':generateContent?key=' + encodeURIComponent(apiKey);
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: { maxOutputTokens: 600, temperature: 0.7 }
   };
+  if (useSearch) body.tools = [{ google_search: {} }];
 
   try {
     const res = UrlFetchApp.fetch(url, {
@@ -1824,15 +1835,63 @@ function generateDescription(params) {
       payload: JSON.stringify(body),
       muteHttpExceptions: true
     });
-    const code = res.getResponseCode();
-    if (code === 429) return { ok: false, error: 'Gemini API 無料枠の上限に達しました。明日また試してください。' };
-    if (code !== 200) return { ok: false, error: 'Gemini API エラー: ' + code + ' ' + res.getContentText().slice(0, 200) };
+    const httpCode = res.getResponseCode();
+    const rawBody  = res.getContentText();
 
-    const data = JSON.parse(res.getContentText());
+    if (httpCode !== 200) {
+      let errCode = '', errStatus = '', errMessage = '', errDetails = '';
+      let quotaMetric = '', quotaId = '', quotaDimensions = '', limitValue = null;
+      try {
+        const errData = JSON.parse(rawBody);
+        const e = errData.error || {};
+        errCode    = e.code    != null ? String(e.code)    : '';
+        errStatus  = e.status  != null ? String(e.status)  : '';
+        errMessage = e.message != null ? String(e.message) : '';
+        if (Array.isArray(e.details)) {
+          errDetails = JSON.stringify(e.details);
+          e.details.forEach(function(d) {
+            const dtype = d['@type'] || '';
+            if (dtype.indexOf('QuotaFailure') !== -1) {
+              const v = (d.violations || [])[0] || {};
+              quotaMetric     = v.quotaMetric     || v.subject || quotaMetric;
+              quotaId         = v.quotaId         || quotaId;
+              quotaDimensions = v.quotaDimensions ? JSON.stringify(v.quotaDimensions) : quotaDimensions;
+              if (v.quotaValue !== undefined) limitValue = v.quotaValue;
+            }
+            if (dtype.indexOf('ErrorInfo') !== -1) {
+              const m = d.metadata || {};
+              if (!quotaMetric) quotaMetric = m.quota_metric || m.quotaMetric || '';
+              if (!quotaId)     quotaId     = m.quota_id     || m.quotaId     || '';
+              if (limitValue === null && m.limit !== undefined) limitValue = m.limit;
+            }
+          });
+        }
+      } catch(parseErr) {}
+
+      var msg = 'Gemini API エラー HTTP ' + httpCode;
+      if (errCode)         msg += '\ncode: '              + errCode;
+      if (errStatus)       msg += '\nstatus: '            + errStatus;
+      if (errMessage)      msg += '\nmessage: '           + errMessage;
+      if (errDetails)      msg += '\ndetails: '           + errDetails;
+      if (quotaMetric)     msg += '\nquota_metric: '      + quotaMetric;
+      if (quotaId)         msg += '\nquota_id: '          + quotaId;
+      if (quotaDimensions) msg += '\nquota_dimensions: '  + quotaDimensions;
+      if (limitValue !== null) msg += '\nlimit: '         + limitValue;
+
+      if (limitValue === 0 || limitValue === '0') {
+        msg += '\n\n→ このプロジェクト/モデルの無料入力トークン枠が0に設定されています（使いすぎではありません）。' +
+               'Google AI StudioのプロジェクトでGemini APIの無料枠クォータを確認・申請してください。';
+      }
+
+      msg += '\n\nraw: ' + rawBody.slice(0, 1000);
+      return { ok: false, error: msg };
+    }
+
+    const data = JSON.parse(rawBody);
     const text = data.candidates && data.candidates[0] && data.candidates[0].content &&
                  data.candidates[0].content.parts && data.candidates[0].content.parts[0]
                  ? data.candidates[0].content.parts[0].text : '';
-    if (!text) return { ok: false, error: '説明文の生成に失敗しました（空のレスポンス）' };
+    if (!text) return { ok: false, error: '説明文の生成に失敗しました（空のレスポンス）\n\nraw: ' + rawBody.slice(0, 1000) };
     return { ok: true, text: text.trim() };
   } catch(e) {
     return { ok: false, error: e.message };
@@ -1844,7 +1903,7 @@ function applyDescription(params) {
   const description = params.description || '';
   if (!description.trim()) return { ok: false, error: '説明文が空です' };
 
-  const res = bcartPatch('/products/' + params.productId, { detail: description });
+  const res = bcartPatch('/products/' + params.productId, { description: description });
   addHistory({
     userName: params._userName,
     code:   params.code || '',

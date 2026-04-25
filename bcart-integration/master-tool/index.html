@@ -237,14 +237,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.2.0</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.4.0</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.3.0</span>
+    <span class="version">HTML v2.4.0</span>
   </div>
 
   <div class="tabs">
@@ -396,7 +396,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <div class="tab-panel" id="tab-description">
       <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:16px;">
         <p style="font-size:13px;color:#374151;margin-bottom:8px;">Gemini AI（無料）が商品説明文を自動生成します。生成後に内容を確認・修正してからBCARTに反映してください。</p>
-        <p style="font-size:12px;color:#6b7280;margin-bottom:12px;">※ 事前にGASスクリプトプロパティに <code>GEMINI_API_KEY</code> を設定してください。</p>
+        <p style="font-size:12px;color:#6b7280;margin-bottom:10px;">※ 事前にGASスクリプトプロパティに <code>GEMINI_API_KEY</code> を設定してください。</p>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;padding:10px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;flex-wrap:wrap;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:600;color:#0369a1;white-space:nowrap;">
+            <input type="checkbox" id="descSearchToggle" checked style="width:15px;height:15px;cursor:pointer;accent-color:#0284c7;">
+            🔍 Web検索グラウンディング
+          </label>
+          <span style="font-size:12px;color:#6b7280;">ONのとき、AIが実際にWeb検索して正確な情報をもとに説明文を生成します（無料枠: 上限500回/日）。不明な商品はOFFに切り替えてください。</span>
+        </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <button class="btn btn-primary" id="descLoadBtn" onclick="loadProductsForDescription()">📦 説明文なし商品を取得</button>
           <span id="descProductCount" style="font-size:12px;color:#6b7280;"></span>
@@ -2868,7 +2875,7 @@ function renderDescProductList(products) {
   }
   let html = '<div style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
     '<button class="btn btn-primary btn-sm" id="batchGenBtn" onclick="batchGenerateDesc()">✨ 上から10件まとめて生成</button>' +
-    '<span style="font-size:12px;color:#6b7280;">（1件ずつ順番に処理・1件あたり約4秒）</span></div>';
+    '<span style="font-size:12px;color:#6b7280;">（1件ずつ順番に処理・Web検索ありの場合は1件あたり約6〜8秒）</span></div>';
   products.forEach(function(p) {
     const nameAttr = escAttr(p.name);
     const catAttr  = escAttr(p.category_name || '');
@@ -2893,13 +2900,19 @@ function escAttr(str) {
   return String(str || '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');
 }
 
+function getDescSearchToggle() {
+  const toggle = document.getElementById('descSearchToggle');
+  return toggle ? toggle.checked : false;
+}
+
 function generateOneDesc(productId, productName, categoryName, btn) {
   btn.disabled = true;
-  btn.textContent = '生成中...';
+  const useSearch = getDescSearchToggle();
+  btn.textContent = useSearch ? '🔍 検索中...' : '生成中...';
   const statusEl = document.getElementById('desc-status-' + productId);
   statusEl.textContent = '';
   statusEl.className = 'desc-status';
-  gasPostAsync({ action: 'generateDescription', productId: productId, productName: productName, categoryName: categoryName })
+  gasPostAsync({ action: 'generateDescription', productId: productId, productName: productName, categoryName: categoryName, useSearch: useSearch })
   .then(function(res) {
     if (!res.ok) {
       statusEl.textContent = '❌ ' + res.error;
@@ -2908,7 +2921,7 @@ function generateOneDesc(productId, productName, categoryName, btn) {
     }
     document.getElementById('desc-text-' + productId).value = res.text;
     document.getElementById('apply-btn-' + productId).disabled = false;
-    statusEl.textContent = '✓ 生成完了。内容を確認してから「✅ 反映」を押してください。';
+    statusEl.textContent = (useSearch ? '🔍 Web検索あり・' : '') + '✓ 生成完了。内容を確認してから「✅ 反映」を押してください。';
     statusEl.className = 'desc-status desc-status-ok';
     btn.textContent = '🔄 再生成'; btn.disabled = false;
   }).catch(function(e) {
@@ -2969,7 +2982,8 @@ function batchGenerateDesc() {
     const item = batch[idx];
     const btn = document.querySelector('#desc-card-' + item.id + ' .btn-primary');
     generateOneDesc(item.id, item.name, item.category, btn);
-    setTimeout(function() { processNext(idx + 1); }, 4200);
+    var interval = getDescSearchToggle() ? 8000 : 4200;
+    setTimeout(function() { processNext(idx + 1); }, interval);
   }
   processNext(0);
 }
