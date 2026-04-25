@@ -11,7 +11,7 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.4.0';
+const VERSION       = 'v1.5.0';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
 
 // ロックアウト設定
@@ -107,6 +107,7 @@ function doPost(e) {
     switch (action) {
       case 'login':           return _json(login(data));
       case 'resetPin':        return _json(resetPin(data));
+      case 'changePin':       return _json(changePin(data));
       case 'validateSession': return _json(validateSession(data));
       default:                return _json({ success: false, error: '不明なアクション: ' + action });
     }
@@ -251,6 +252,46 @@ function resetPin(data) {
     }
   }
   return { success: false, message: '対象ユーザーが見つかりません' };
+}
+
+// ============================================================
+// PIN変更（本人による変更）
+// ============================================================
+function changePin(data) {
+  const { session_token, current_pin, new_pin } = data;
+
+  if (!session_token || current_pin === undefined || current_pin === null || !new_pin) {
+    return { success: false, message: '必須パラメータが不足しています' };
+  }
+
+  const newPinStr = String(new_pin).padStart(4, '0');
+  if (!/^\d{4}$/.test(newPinStr)) {
+    return { success: false, message: 'PINは4桁の数字で入力してください' };
+  }
+
+  const ss = SpreadsheetApp.openById(AUTH_SHEET_ID);
+
+  // セッション検証
+  const userId = _getSessionUser(ss, session_token);
+  if (!userId) {
+    return { success: false, message: 'セッションが無効です。再ログインしてください' };
+  }
+
+  // 現在のPINと照合してから更新
+  const sh            = ss.getSheetByName('users');
+  const rows          = sh.getDataRange().getValues();
+  const currentPinStr = String(current_pin).padStart(4, '0');
+
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === userId) {
+      if (String(rows[i][2]).padStart(4, '0') !== currentPinStr) {
+        return { success: false, message: '現在のPINが正しくありません' };
+      }
+      sh.getRange(i + 1, 3).setValue(newPinStr);
+      return { success: true, message: 'PINを変更しました' };
+    }
+  }
+  return { success: false, message: 'ユーザーが見つかりません' };
 }
 
 // ============================================================

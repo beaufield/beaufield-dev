@@ -235,6 +235,18 @@
     }
     .manage-btn:hover { background: rgba(255,255,255,0.3); }
 
+    .pin-change-btn {
+      background: rgba(255,255,255,0.2);
+      border: none;
+      color: white;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .pin-change-btn:hover { background: rgba(255,255,255,0.3); }
+
     .logout-btn {
       background: rgba(255,255,255,0.2);
       border: none;
@@ -449,6 +461,7 @@
     </div>
     <div class="header-actions">
       <button class="manage-btn" id="manageBtn" onclick="openManageModal()">ユーザー管理</button>
+      <button class="pin-change-btn" onclick="openChangePinModal()">PIN変更</button>
       <button class="logout-btn" onclick="doLogout()">ログアウト</button>
     </div>
   </div>
@@ -458,7 +471,7 @@
       <div class="no-apps">読み込み中...</div>
     </div>
   </div>
-  <div class="home-footer">Beaufield Portal v1.1.0</div>
+  <div class="home-footer">Beaufield Portal v1.2.0</div>
 </div>
 
 <!-- ── ユーザー管理モーダル ── -->
@@ -485,6 +498,39 @@
 
     <div class="error-msg"   id="manageErrorMsg"></div>
     <div class="success-msg" id="manageSuccessMsg"></div>
+  </div>
+</div>
+
+<!-- ── PIN変更モーダル ── -->
+<div class="modal-overlay" id="changePinModal" onclick="onChangePinOverlayClick(event)">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3>PIN変更</h3>
+      <button class="modal-close" onclick="closeChangePinModal()">✕</button>
+    </div>
+
+    <div style="margin-bottom:16px;">
+      <div class="section-label">現在のPIN</div>
+      <input type="password" id="cpCurrentPin" class="modal-pin-input"
+        maxlength="4" inputmode="numeric" pattern="[0-9]*"
+        placeholder="• • • •" autocomplete="off">
+    </div>
+    <div style="margin-bottom:16px;">
+      <div class="section-label">新しいPIN</div>
+      <input type="password" id="cpNewPin" class="modal-pin-input"
+        maxlength="4" inputmode="numeric" pattern="[0-9]*"
+        placeholder="• • • •" autocomplete="off">
+    </div>
+    <div style="margin-bottom:20px;">
+      <div class="section-label">新しいPIN（確認）</div>
+      <input type="password" id="cpConfirmPin" class="modal-pin-input"
+        maxlength="4" inputmode="numeric" pattern="[0-9]*"
+        placeholder="• • • •" autocomplete="off">
+    </div>
+
+    <button class="reset-btn" onclick="doChangePin()">PINを変更する</button>
+    <div class="error-msg"   id="changePinErrorMsg"></div>
+    <div class="success-msg" id="changePinSuccessMsg"></div>
   </div>
 </div>
 
@@ -517,9 +563,16 @@
       if (e.key === 'Enter') doLogin();
     });
 
-    // モーダル内のPIN入力でEnterキー対応
+    // 管理者PIN リセットモーダルのEnterキー対応
     document.getElementById('newPinInput').addEventListener('keydown', e => {
       if (e.key === 'Enter') doResetPin();
+    });
+
+    // PIN変更モーダルのEnterキー対応
+    ['cpCurrentPin','cpNewPin','cpConfirmPin'].forEach(id => {
+      document.getElementById(id).addEventListener('keydown', e => {
+        if (e.key === 'Enter') doChangePin();
+      });
     });
   });
 
@@ -727,6 +780,72 @@
       showManageMsg('error', '通信エラーが発生しました');
     } finally {
       setLoading(false);
+    }
+  }
+
+  // ── PIN変更モーダル ────────────────────────────────────────────
+  function openChangePinModal() {
+    document.getElementById('cpCurrentPin').value  = '';
+    document.getElementById('cpNewPin').value      = '';
+    document.getElementById('cpConfirmPin').value  = '';
+    document.getElementById('changePinErrorMsg').style.display   = 'none';
+    document.getElementById('changePinSuccessMsg').style.display = 'none';
+    document.getElementById('changePinModal').style.display = 'flex';
+    document.getElementById('cpCurrentPin').focus();
+  }
+
+  function closeChangePinModal() {
+    document.getElementById('changePinModal').style.display = 'none';
+  }
+
+  function onChangePinOverlayClick(e) {
+    if (e.target === document.getElementById('changePinModal')) closeChangePinModal();
+  }
+
+  async function doChangePin() {
+    const currentPin = document.getElementById('cpCurrentPin').value;
+    const newPin     = document.getElementById('cpNewPin').value;
+    const confirmPin = document.getElementById('cpConfirmPin').value;
+
+    if (currentPin.length !== 4) { showChangePinMsg('error', '現在のPINを4桁で入力してください'); return; }
+    if (newPin.length !== 4)     { showChangePinMsg('error', '新しいPINを4桁で入力してください'); return; }
+    if (newPin !== confirmPin)   { showChangePinMsg('error', '新しいPINが一致しません'); return; }
+    if (newPin === currentPin)   { showChangePinMsg('error', '現在と同じPINは使用できません'); return; }
+
+    const session = getSession();
+    if (!session) { showChangePinMsg('error', 'セッションが切れています。再ログインしてください'); return; }
+
+    setLoading(true);
+    try {
+      const res = await gasPost('changePin', {
+        session_token: session.token,
+        current_pin:   currentPin,
+        new_pin:       newPin
+      });
+      if (res.success) {
+        showChangePinMsg('success', 'PINを変更しました');
+        document.getElementById('cpCurrentPin').value = '';
+        document.getElementById('cpNewPin').value     = '';
+        document.getElementById('cpConfirmPin').value = '';
+      } else {
+        showChangePinMsg('error', res.message || 'PIN変更に失敗しました');
+      }
+    } catch {
+      showChangePinMsg('error', '通信エラーが発生しました');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function showChangePinMsg(type, msg) {
+    const errEl = document.getElementById('changePinErrorMsg');
+    const sucEl = document.getElementById('changePinSuccessMsg');
+    if (type === 'error') {
+      errEl.textContent = msg; errEl.style.display = 'block';
+      sucEl.style.display = 'none';
+    } else {
+      sucEl.textContent = msg; sucEl.style.display = 'block';
+      errEl.style.display = 'none';
     }
   }
 
