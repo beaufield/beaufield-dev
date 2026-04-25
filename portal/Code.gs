@@ -11,7 +11,7 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.3.4';
+const VERSION       = 'v1.4.0';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
 
 // ロックアウト設定
@@ -69,12 +69,12 @@ const APP_MASTER = [
 // ============================================================
 function doGet(e) {
   const action = e && e.parameter && e.parameter.action ? e.parameter.action : '';
-  const data   = e && e.parameter && e.parameter.data   ? JSON.parse(e.parameter.data) : {};
+  const token  = e && e.parameter && e.parameter.session_token ? e.parameter.session_token : '';
 
   try {
     switch (action) {
       case 'getUsers':    return _json(getUsers());
-      case 'getUserApps': return _json(getUserApps(data));
+      case 'getUserApps': return _json(getUserApps(token));
       default:            return _json({ success: false, error: '不明なアクション: ' + action });
     }
   } catch (err) {
@@ -245,6 +245,8 @@ function resetPin(data) {
       sh.getRange(i + 1, 3).setValue(pinStr); // C列（PIN）を更新
       // ロックアウトも同時に解除
       PropertiesService.getScriptProperties().deleteProperty('lockout_' + target_user_id);
+      // 対象ユーザーの既存セッションをすべて削除（旧PINでのトークンを無効化）
+      _deleteUserSessions(ss, target_user_id);
       return { success: true, message: 'PINを更新しました' };
     }
   }
@@ -252,24 +254,24 @@ function resetPin(data) {
 }
 
 // ============================================================
-// アクセス可能アプリ一覧取得
+// アクセス可能アプリ一覧取得（セッション必須）
 // ============================================================
-function getUserApps(data) {
-  const { user_id } = data;
-  if (!user_id) return { success: false, message: 'user_idは必須です' };
+function getUserApps(token) {
+  if (!token) return { success: false, error: 'SESSION_INVALID' };
 
-  const ss    = SpreadsheetApp.openById(AUTH_SHEET_ID);
+  const ss     = SpreadsheetApp.openById(AUTH_SHEET_ID);
+  const userId = _getSessionUser(ss, token);
+  if (!userId) return { success: false, error: 'SESSION_INVALID' };
+
   const roles = ss.getSheetByName('user_app_roles').getDataRange().getValues();
 
-  // そのユーザーがアクセス権を持つアプリ名のセット
   const accessMap = {};
   for (let i = 1; i < roles.length; i++) {
-    if (String(roles[i][0]) === user_id && roles[i][2] !== 'none') {
-      accessMap[String(roles[i][1])] = String(roles[i][2]); // appName → role
+    if (String(roles[i][0]) === userId && roles[i][2] !== 'none') {
+      accessMap[String(roles[i][1])] = String(roles[i][2]);
     }
   }
 
-  // APP_MASTER から該当するものだけ返す（定義順を維持）
   const apps = APP_MASTER
     .filter(app => accessMap[app.appName])
     .map(app => ({
@@ -346,6 +348,18 @@ function _getSessionUser(ss, token) {
     }
   }
   return null;
+}
+
+// ============================================================
+// 対象ユーザーのセッションを全削除（PINリセット・無効化時に使用）
+// ============================================================
+function _deleteUserSessions(ss, userId) {
+  const sh = ss.getSheetByName('sessions');
+  if (!sh) return;
+  const data = sh.getDataRange().getValues();
+  for (let i = data.length - 1; i >= 1; i--) {
+    if (String(data[i][1]) === userId) sh.deleteRow(i + 1);
+  }
 }
 
 // ============================================================

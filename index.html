@@ -606,7 +606,8 @@
 
     setLoading(true);
     try {
-      const res  = await gasGet('getUserApps', { user_id: userId });
+      const session = getSession();
+      const res  = await gasGet('getUserApps', {}, session ? session.token : '');
       const grid = document.getElementById('appGrid');
       if (!res.success || !res.apps || !res.apps.length) {
         grid.innerHTML = '<div class="no-apps">利用可能なアプリがありません<br><small style="font-size:11px;margin-top:4px;display:block">管理者にお問い合わせください</small></div>';
@@ -730,8 +731,9 @@
   }
 
   // ── GAS 通信 ──────────────────────────────────────────────────
-  async function gasGet(action, data) {
-    const qs  = 'action=' + action + '&data=' + encodeURIComponent(JSON.stringify(data));
+  async function gasGet(action, data, token) {
+    let qs = 'action=' + action + '&data=' + encodeURIComponent(JSON.stringify(data));
+    if (token) qs += '&session_token=' + encodeURIComponent(token);
     const res = await fetch(GAS_URL + '?' + qs);
     return res.json();
   }
