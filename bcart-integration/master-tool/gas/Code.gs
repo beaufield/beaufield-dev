@@ -1,7 +1,6 @@
 // BCARTマスター管理ツール - バックエンド
-// Version: v1.8.0
 
-const VERSION = 'v2.0.2';
+const VERSION = 'v2.2.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -75,11 +74,15 @@ function doPost(e) {
       case 'saveSpecialPriceDetails':   return jsonResponse(saveSpecialPriceDetails(params));
       case 'deleteSpecialPriceDetail':  return jsonResponse(deleteSpecialPriceDetail(params));
       case 'saveViewFilterDetails':     return jsonResponse(saveViewFilterDetails(params));
-      case 'getSpecialPriceCurrent':     return jsonResponse(getSpecialPriceCurrent(params));
+      case 'getSpecialPriceCurrent':    return jsonResponse(getSpecialPriceCurrent(params));
       case 'getViewFilterCurrent':      return jsonResponse(getViewFilterCurrent(params));
       case 'applyViewFilters':          return jsonResponse(applyViewFilters(params));
       case 'deleteViewFilterDetail':    return jsonResponse(deleteViewFilterDetail(params));
       case 'getMembers':                return jsonResponse(getMembers());
+      // 機能C: 説明文生成
+      case 'getProductsForDescription': return jsonResponse(getProductsForDescription());
+      case 'generateDescription':       return jsonResponse(generateDescription(params));
+      case 'applyDescription':          return jsonResponse(applyDescription(params));
       default:                         return jsonResponse({ ok: false, error: 'UNKNOWN_ACTION' });
     }
   } catch (err) {
@@ -358,6 +361,10 @@ function calcDiffs(csvRows, bcartProducts, bcartSets, ignoreMap, wipMap) {
     if (isDiscontinued && bcartSetVisible) {
       issues.push({ type: 'discontinued', bcartProductFlag: bcartProduct.flag || '' });
     }
+    // ② 廃番済み・セット非表示だが親商品がまだ表示中の場合を検出
+    if (isDiscontinued && !bcartSetVisible && bcartProduct.flag === '表示') {
+      issues.push({ type: 'parent_visible' });
+    }
     if (csvKouri > 0 && Math.abs(csvKouri - bcartJodai) > 0) {
       issues.push({ type: 'jodai', csvJodai: csvKouri, bcartJodai: bcartJodai });
     }
@@ -613,7 +620,21 @@ function hideProductSet(params) {
   return res;
 }
 
+// ⑧ 品番存在確認付き欠品設定
 function setStock(params) {
+  // 品番がBCARTに存在するか事前確認
+  const checkRes = bcartGet('/product_stock/' + params.productNo);
+  if (!checkRes.ok) {
+    return { ok: false, error: '品番「' + params.productNo + '」はBCARTに見つかりませんでした（' + checkRes.error + '）' };
+  }
+  const stockData = checkRes.data;
+  const isEmpty = !stockData ||
+    (Array.isArray(stockData) && stockData.length === 0) ||
+    (typeof stockData === 'object' && !Array.isArray(stockData) && Object.keys(stockData).length === 0);
+  if (isEmpty) {
+    return { ok: false, error: '品番「' + params.productNo + '」は在庫管理が設定されていないか、BCARTに存在しません' };
+  }
+
   const res = bcartPatch('/product_stock', [{ product_no: params.productNo, stock: String(params.stock) }]);
   addHistory({
     userName: params._userName,
@@ -822,6 +843,17 @@ function updateProductAction(params) {
   if (params.productId && params.productFields) {
     const res = bcartPatch('/products/' + params.productId, params.productFields);
     results.push({ target: 'product', ok: res.ok, error: res.error || '' });
+    if (res.ok) {
+      addHistory({
+        userName: params._userName || '不明',
+        code: params.code || '',
+        name: params.name || '',
+        type: '親商品非表示',
+        before: '表示',
+        after: '非表示',
+        result: '成功'
+      });
+    }
   }
   if (params.setId && params.setFields) {
     const res = bcartPatch('/product_sets/' + params.setId, params.setFields);
@@ -845,6 +877,7 @@ function getCategories() {
   };
 }
 
+// ① 孤立商品の自動ロールバック付き新規登録
 function registerProduct(params) {
   const productBody = {
     products: [{
@@ -899,15 +932,30 @@ function registerProduct(params) {
 
   const step2 = bcartPost('/product_sets', setBody);
   if (!step2.ok) {
-    addHistory({
-      userName: params._userName,
-      code: params.code || '',
-      name: params.productName || '',
-      type: '新規登録（セット作成失敗・孤立商品ID: ' + createdProductId + '）',
-      before: '', after: '商品ID: ' + createdProductId,
-      result: '失敗: ' + step2.error
-    });
-    return { ok: false, error: step2.error, orphanProductId: createdProductId };
+    // 自動ロールバック: step1で作成した商品を削除する
+    const rollback = bcartDelete('/products/' + createdProductId);
+    if (rollback.ok) {
+      addHistory({
+        userName: params._userName,
+        code: params.code || '',
+        name: params.productName || '',
+        type: '新規登録（ロールバック完了）',
+        before: '', after: '商品ID: ' + createdProductId + ' を削除',
+        result: '失敗: ' + step2.error
+      });
+      return { ok: false, error: '登録失敗（自動ロールバック完了）: ' + step2.error };
+    } else {
+      // ロールバックも失敗した場合は孤立商品IDを返す
+      addHistory({
+        userName: params._userName,
+        code: params.code || '',
+        name: params.productName || '',
+        type: '新規登録（孤立商品: 手動削除要）',
+        before: '', after: '孤立商品ID: ' + createdProductId,
+        result: '失敗: ' + step2.error
+      });
+      return { ok: false, error: step2.error, orphanProductId: createdProductId };
+    }
   }
 
   const createdSetId = step2.data && step2.data.product_sets && step2.data.product_sets[0]
@@ -947,7 +995,6 @@ function getMembers() {
         return { ok: false, error: 'BCART_API_ERROR: ' + res.getResponseCode() + ' ' + res.getContentText().slice(0, 200) };
       }
       const parsed = JSON.parse(res.getContentText());
-      // /customers は { "customers": [...] } 形式で返す
       const page = parsed.customers || parsed.data || (Array.isArray(parsed) ? parsed : null);
       if (!page || !Array.isArray(page) || page.length === 0) break;
       allMembers.push(...page);
@@ -999,6 +1046,7 @@ function searchProductSets(params) {
 
 // ===================== 機能B: 特別価格管理 =====================
 
+// ③ applied_at列を含めてデータを返す
 function getSpecialPriceData() {
   const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
   const groupRows = groupSheet.getDataRange().getValues();
@@ -1028,7 +1076,8 @@ function getSpecialPriceData() {
         product_no:       String(detailRows[i][3]),
         product_set_name: String(detailRows[i][4]),
         unit_price:       detailRows[i][5],
-        updated_at:       String(detailRows[i][6])
+        updated_at:       String(detailRows[i][6]),
+        applied_at:       String(detailRows[i][7] || '')  // ③ 追加
       });
     }
   }
@@ -1044,7 +1093,7 @@ function getSpecialPriceData() {
         product_set_id:   vfRows[i][2],
         product_no:       String(vfRows[i][3]),
         product_set_name: String(vfRows[i][4]),
-        applied_at:       String(vfRows[i][5])
+        applied_at:       String(vfRows[i][5] || '')  // ③ VFは既存列だが意味を「反映時刻」に統一
       });
     }
   }
@@ -1190,7 +1239,7 @@ function getProductSetsForFeature(params) {
   return { ok: true, sets: sets };
 }
 
-// アプリ内に保存のみ（BCARTには反映しない）
+// ③ アプリ保存時にapplied_atをクリア（未反映状態にする）
 function saveSpecialPriceDetails(params) {
   const detailSheet = getOrCreateSheet(SHEET_SP_DETAILS);
   let detailRows = detailSheet.getDataRange().getValues();
@@ -1202,6 +1251,7 @@ function saveSpecialPriceDetails(params) {
         detailSheet.getRange(i + 1, 5).setValue(item.product_set_name || '');
         detailSheet.getRange(i + 1, 6).setValue(item.unit_price);
         detailSheet.getRange(i + 1, 7).setValue(new Date().toLocaleString('ja-JP'));
+        detailSheet.getRange(i + 1, 8).setValue('');  // ③ applied_atをクリア（未反映）
         detailRows[i][5] = item.unit_price;
         found = true;
         break;
@@ -1209,7 +1259,7 @@ function saveSpecialPriceDetails(params) {
     }
     if (!found) {
       const newId = 'D' + new Date().getTime().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 5);
-      const newRow = [newId, params.group_id, item.product_set_id, item.product_no || '', item.product_set_name || '', item.unit_price, new Date().toLocaleString('ja-JP')];
+      const newRow = [newId, params.group_id, item.product_set_id, item.product_no || '', item.product_set_name || '', item.unit_price, new Date().toLocaleString('ja-JP'), ''];  // ③ applied_at空で追加
       detailSheet.appendRow(newRow);
       detailRows.push(newRow);
     }
@@ -1226,6 +1276,7 @@ function saveSpecialPriceDetails(params) {
   return { ok: true, savedCount: params.items.length };
 }
 
+// ③ BCART反映時にapplied_atを記録
 function applyGroupPrices(params) {
   const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
   const groupRows = groupSheet.getDataRange().getValues();
@@ -1258,7 +1309,6 @@ function applyGroupPrices(params) {
     }
 
     const newSp = Object.assign({}, bcartSet.special_price || {});
-    // カンマ区切りキーのうち、グループ会員IDと重複するものを削除
     Object.keys(newSp).forEach(key => {
       if (key.indexOf(',') !== -1) {
         const ids = key.split(',').map(s => s.trim()).filter(s => s);
@@ -1272,12 +1322,14 @@ function applyGroupPrices(params) {
     const res = bcartPatch('/product_sets/' + item.product_set_id, { special_price: newSp });
     if (res.ok) {
       successCount++;
+      const nowStr = new Date().toLocaleString('ja-JP');
       let found = false;
       for (let i = 1; i < detailRows.length; i++) {
         if (String(detailRows[i][1]) === params.group_id && detailRows[i][2] == item.product_set_id) {
           detailSheet.getRange(i + 1, 5).setValue(item.product_set_name || '');
           detailSheet.getRange(i + 1, 6).setValue(item.unit_price);
-          detailSheet.getRange(i + 1, 7).setValue(new Date().toLocaleString('ja-JP'));
+          detailSheet.getRange(i + 1, 7).setValue(nowStr);
+          detailSheet.getRange(i + 1, 8).setValue(nowStr);  // ③ applied_atに反映時刻を記録
           detailRows[i][5] = item.unit_price;
           found = true;
           break;
@@ -1285,7 +1337,7 @@ function applyGroupPrices(params) {
       }
       if (!found) {
         const newId = 'D' + new Date().getTime().toString(36).toUpperCase();
-        const newRow = [newId, params.group_id, item.product_set_id, item.product_no || '', item.product_set_name || '', item.unit_price, new Date().toLocaleString('ja-JP')];
+        const newRow = [newId, params.group_id, item.product_set_id, item.product_no || '', item.product_set_name || '', item.unit_price, nowStr, nowStr];
         detailSheet.appendRow(newRow);
         detailRows.push(newRow);
       }
@@ -1354,14 +1406,12 @@ const VF_FILTER_VALUE = '非会員,通常会員,1,2';
 function getSpecialPriceCurrent(params) {
   const setIds = (params.product_set_ids || []).map(String);
 
-  // リストAPIで取得（special_priceを含む）
   const allSets = bcartGetAll('/product_sets');
   if (!allSets.ok) return allSets;
 
   const results = setIds.map(setId => {
     const setData = allSets.data.find(s => String(s.id) === setId);
     if (!setData) return { product_set_id: setId, error: '商品セットが見つかりません' };
-    // all_special: すべての special_price エントリ（他グループ分も含む）
     return {
       product_set_id: setId,
       unit_price: setData.unit_price,
@@ -1399,6 +1449,7 @@ function getViewFilterCurrent(params) {
   return { ok: true, results: results };
 }
 
+// ③ アプリ保存時にapplied_atをクリア（VF）
 function saveViewFilterDetails(params) {
   const sheet = getOrCreateSheet(SHEET_VF_DETAILS);
   let rows = sheet.getDataRange().getValues();
@@ -1408,7 +1459,7 @@ function saveViewFilterDetails(params) {
     for (let i = 1; i < rows.length; i++) {
       if (String(rows[i][1]) === params.group_id && String(rows[i][2]) === String(item.product_set_id)) {
         sheet.getRange(i + 1, 5).setValue(item.product_set_name || '');
-        sheet.getRange(i + 1, 6).setValue(new Date().toLocaleString('ja-JP'));
+        sheet.getRange(i + 1, 6).setValue('');  // ③ applied_atをクリア（未反映）
         rows[i][4] = item.product_set_name;
         found = true;
         break;
@@ -1416,7 +1467,7 @@ function saveViewFilterDetails(params) {
     }
     if (!found) {
       const newId = 'V' + new Date().getTime().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 4);
-      const newRow = [newId, params.group_id, item.product_set_id, item.product_no || '', item.product_set_name || '', new Date().toLocaleString('ja-JP')];
+      const newRow = [newId, params.group_id, item.product_set_id, item.product_no || '', item.product_set_name || '', ''];  // ③ applied_at空で追加
       sheet.appendRow(newRow);
       rows.push(newRow);
     }
@@ -1430,6 +1481,7 @@ function saveViewFilterDetails(params) {
   return { ok: true, savedCount: params.items.length };
 }
 
+// ③ BCART反映時にapplied_atを記録（VF）
 function applyViewFilters(params) {
   const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
   const groupRows = groupSheet.getDataRange().getValues();
@@ -1442,6 +1494,9 @@ function applyViewFilters(params) {
   }
   if (memberIds.length === 0) return { ok: false, error: 'グループの会員IDが設定されていません' };
 
+  const vfSheet = getOrCreateSheet(SHEET_VF_DETAILS);
+  let vfRows = vfSheet.getDataRange().getValues();
+
   let successCount = 0, failCount = 0;
   const errors = [];
 
@@ -1451,14 +1506,27 @@ function applyViewFilters(params) {
     if (cur.ok && cur.data) {
       existingIds = String(cur.data.visible_customer_id || '').split(',').map(s => s.trim()).filter(s => s);
     }
-    // 既存IDと今回のIDをマージ（union）
     const merged = [...new Set([...existingIds, ...memberIds])].join(',');
 
     const res = bcartPatch('/product_sets/' + item.product_set_id, {
       view_group_filter:   VF_FILTER_VALUE,
       visible_customer_id: merged
     });
-    if (res.ok) { successCount++; } else { failCount++; errors.push('setId ' + item.product_set_id + ': ' + res.error); }
+    if (res.ok) {
+      successCount++;
+      // ③ applied_atに反映時刻を記録
+      const nowStr = new Date().toLocaleString('ja-JP');
+      for (let i = 1; i < vfRows.length; i++) {
+        if (String(vfRows[i][1]) === params.group_id && String(vfRows[i][2]) === String(item.product_set_id)) {
+          vfSheet.getRange(i + 1, 6).setValue(nowStr);
+          vfRows[i][5] = nowStr;
+          break;
+        }
+      }
+    } else {
+      failCount++;
+      errors.push('setId ' + item.product_set_id + ': ' + res.error);
+    }
     Utilities.sleep(150);
   });
 
@@ -1579,23 +1647,33 @@ function getOrCreateSheet(sheetName) {
       sheet.setFrozenRows(1);
       sheet.getRange(1, 1, 1, 6).setFontWeight('bold').setBackground('#f3f4f6');
     } else if (sheetName === SHEET_SP_DETAILS) {
-      sheet.appendRow(['detail_id', 'group_id', 'product_set_id', 'product_no', 'product_set_name', 'unit_price', 'updated_at']);
+      // ③ applied_at列を含む8列構成
+      sheet.appendRow(['detail_id', 'group_id', 'product_set_id', 'product_no', 'product_set_name', 'unit_price', 'updated_at', 'applied_at']);
       sheet.setFrozenRows(1);
-      sheet.getRange(1, 1, 1, 7).setFontWeight('bold').setBackground('#f3f4f6');
+      sheet.getRange(1, 1, 1, 8).setFontWeight('bold').setBackground('#f3f4f6');
     }
-  } else if (sheetName === SHEET_IGNORE) {
-    const lastCol = sheet.getLastColumn();
-    if (lastCol < 5) {
-      sheet.getRange(1, 5).setValue('仕入先名');
-    } else {
-      const headerVal = sheet.getRange(1, 5).getValue();
-      if (!headerVal) sheet.getRange(1, 5).setValue('仕入先名');
-    }
-  } else if (sheetName === SHEET_SP_GROUPS) {
-    // use_view_filter 列の自動追加（既存シートのマイグレーション）
-    if (sheet.getLastColumn() < 6) {
-      sheet.getRange(1, 6).setValue('use_view_filter');
-      sheet.getRange(1, 6).setFontWeight('bold').setBackground('#f3f4f6');
+  } else {
+    // 既存シートのマイグレーション処理
+    if (sheetName === SHEET_IGNORE) {
+      const lastCol = sheet.getLastColumn();
+      if (lastCol < 5) {
+        sheet.getRange(1, 5).setValue('仕入先名');
+      } else {
+        const headerVal = sheet.getRange(1, 5).getValue();
+        if (!headerVal) sheet.getRange(1, 5).setValue('仕入先名');
+      }
+    } else if (sheetName === SHEET_SP_GROUPS) {
+      // use_view_filter 列の自動追加
+      if (sheet.getLastColumn() < 6) {
+        sheet.getRange(1, 6).setValue('use_view_filter');
+        sheet.getRange(1, 6).setFontWeight('bold').setBackground('#f3f4f6');
+      }
+    } else if (sheetName === SHEET_SP_DETAILS) {
+      // ③ applied_at 列の自動追加（既存シートへのマイグレーション）
+      if (sheet.getLastColumn() < 8) {
+        sheet.getRange(1, 8).setValue('applied_at');
+        sheet.getRange(1, 8).setFontWeight('bold').setBackground('#f3f4f6');
+      }
     }
   }
   return sheet;
@@ -1688,6 +1766,97 @@ function unmarkWip(params) {
   return { ok: true };
 }
 
+// ===================== 機能C: 説明文生成（Gemini API） =====================
+
+function getProductsForDescription() {
+  const products = bcartGetAll('/products');
+  if (!products.ok) return products;
+
+  const categoriesRes = bcartGetAll('/categories');
+  const categoryMap = {};
+  if (categoriesRes.ok) {
+    categoriesRes.data.forEach(c => { categoryMap[String(c.id)] = c.name || String(c.id); });
+  }
+
+  const allMapped = products.data.map(p => ({
+    id: p.id,
+    name: p.name || '',
+    category_id: String(p.category_id || ''),
+    category_name: categoryMap[String(p.category_id)] || '',
+    detail: p.detail || '',
+    flag: p.flag || ''
+  }));
+
+  const noDetail  = allMapped.filter(p => !p.detail || p.detail.trim() === '');
+  const hasDetail = allMapped.filter(p => p.detail && p.detail.trim() !== '');
+
+  return { ok: true, products: noDetail, withDetail: hasDetail.length, total: allMapped.length };
+}
+
+function generateDescription(params) {
+  const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  if (!apiKey) return { ok: false, error: 'GEMINI_API_KEYが設定されていません（スクリプトプロパティ: GEMINI_API_KEY）' };
+
+  const productName  = params.productName  || '';
+  const categoryName = params.categoryName || '美容商材';
+
+  const prompt =
+    'あなたは美容商材の専門ライターです。\n' +
+    '以下の美容商材（美容室・エステサロン向けBtoB）の商品説明文を日本語で作成してください。\n\n' +
+    '商品名: ' + productName + '\n' +
+    'カテゴリ: ' + categoryName + '\n\n' +
+    '以下のフォーマットのみで出力してください（余計な前置き・後書きは不要）:\n\n' +
+    '【こんなサロンに】\n（ターゲットサロン・1文・30〜50文字）\n\n' +
+    '【特長】\n・（特長1・20〜30文字）\n・（特長2・20〜30文字）\n・（特長3・20〜30文字）\n\n' +
+    '【使い方のポイント】\n（使い方のポイント・1文・20〜40文字）\n\n' +
+    '商品名から合理的に推測できる内容のみで作成し、不確かな数値・成分・効能は記載しないこと。';
+
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + apiKey;
+  const body = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { maxOutputTokens: 600, temperature: 0.7 }
+  };
+
+  try {
+    const res = UrlFetchApp.fetch(url, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(body),
+      muteHttpExceptions: true
+    });
+    const code = res.getResponseCode();
+    if (code === 429) return { ok: false, error: 'Gemini API 無料枠の上限に達しました。明日また試してください。' };
+    if (code !== 200) return { ok: false, error: 'Gemini API エラー: ' + code + ' ' + res.getContentText().slice(0, 200) };
+
+    const data = JSON.parse(res.getContentText());
+    const text = data.candidates && data.candidates[0] && data.candidates[0].content &&
+                 data.candidates[0].content.parts && data.candidates[0].content.parts[0]
+                 ? data.candidates[0].content.parts[0].text : '';
+    if (!text) return { ok: false, error: '説明文の生成に失敗しました（空のレスポンス）' };
+    return { ok: true, text: text.trim() };
+  } catch(e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+function applyDescription(params) {
+  if (!params.productId) return { ok: false, error: '商品IDが指定されていません' };
+  const description = params.description || '';
+  if (!description.trim()) return { ok: false, error: '説明文が空です' };
+
+  const res = bcartPatch('/products/' + params.productId, { detail: description });
+  addHistory({
+    userName: params._userName,
+    code:   params.code || '',
+    name:   params.name || '',
+    type:   '説明文更新',
+    before: '',
+    after:  description.slice(0, 50) + (description.length > 50 ? '...' : ''),
+    result: res.ok ? '成功' : ('失敗: ' + res.error)
+  });
+  return res;
+}
+
 // ===================== LINE WORKS通知（週次タイマー用） =====================
 function weeklyCheck() {
   const result = loadData();
@@ -1698,9 +1867,10 @@ function weeklyCheck() {
 
   const priceCount = activeDiffs.filter(d => d.issues && d.issues.some(i => i.type === 'price')).length;
   const discCount  = activeDiffs.filter(d => d.issues && d.issues.some(i => i.type === 'discontinued')).length;
+  const parentCount = activeDiffs.filter(d => d.issues && d.issues.some(i => i.type === 'parent_visible')).length;
   const unregCount = activeDiffs.filter(d => d.type === 'unregistered').length;
 
-  const msg = `【BCARTマスター管理】差異が${activeDiffs.length}件あります\n💰 価格差異: ${priceCount}件\n🚫 廃番未処理: ${discCount}件\n❌ 未登録: ${unregCount}件\n\nBCARTマスター管理ツールで確認してください。`;
+  let msg = `【BCARTマスター管理】差異が${activeDiffs.length}件あります\n💰 価格差異: ${priceCount}件\n🚫 廃番未処理: ${discCount}件\n👻 親商品表示中: ${parentCount}件\n❌ 未登録: ${unregCount}件\n\nBCARTマスター管理ツールで確認してください。`;
 
   const webhook = PropertiesService.getScriptProperties().getProperty('LINEWORKS_WEBHOOK');
   if (!webhook) return;
