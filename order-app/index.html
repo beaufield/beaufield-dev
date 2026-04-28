@@ -822,7 +822,7 @@
   <div class="nav-item" id="nav-settings" onclick="switchScreen('settings')">
     <span class="nav-icon">⚙️</span><span>設定</span>
   </div>
-  <div class="version-label" id="version-label">v1.21.7</div>
+  <div class="version-label" id="version-label">v1.22.0</div>
 </nav>
 
 <!-- ==============================
@@ -996,7 +996,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.21.8'; // メロス発注書 右列座標を実測値で補正（バサル〜ゼフリィエンス全行）
+const APP_VERSION    = 'v1.22.0'; // メーカー発注書テンプレをDrive+GAS認証配信に移行（直接fetch廃止）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1128,6 +1128,18 @@ async function gasPost(params) {
     return data;
   }
   return data;
+}
+
+/* ===================================================
+   メーカー発注書テンプレート取得（GAS Drive配信）
+=================================================== */
+async function fetchTemplateAsArrayBuffer(makerKey) {
+  const res = await gasGet({ action: 'getOrderTemplate', makerKey });
+  if (!res.success) throw new Error(res.error || 'テンプレート取得失敗: ' + makerKey);
+  const bin = atob(res.data);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return buf.buffer;
 }
 
 /* ===================================================
@@ -2128,10 +2140,7 @@ async function outputGrandexPDF() {
   showLoading('グランデックス発注書を生成中...');
   try {
     const { PDFDocument, StandardFonts, rgb } = PDFLib;
-    const pdfBytes = await fetch('./メーカー発注書/グランデックス.pdf').then(r => {
-      if (!r.ok) throw new Error('グランデックス.pdf の読み込みに失敗しました');
-      return r.arrayBuffer();
-    });
+    const pdfBytes = await fetchTemplateAsArrayBuffer('grandex');
     const pdfDoc = await PDFDocument.load(pdfBytes);
     const page   = pdfDoc.getPages()[0];
     const font   = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -2263,10 +2272,7 @@ async function outputChiyodaPDF() {
   showLoading('千代田化学発注書を生成中...');
   try {
     const { PDFDocument, StandardFonts, rgb } = PDFLib;
-    const pdfBytes = await fetch('./メーカー発注書/千代田化学.pdf').then(r => {
-      if (!r.ok) throw new Error('千代田化学.pdf の読み込みに失敗しました');
-      return r.arrayBuffer();
-    });
+    const pdfBytes = await fetchTemplateAsArrayBuffer('chiyoda');
     const pdfDoc = await PDFDocument.load(pdfBytes);
     const page   = pdfDoc.getPages()[0];
     const font   = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -2406,10 +2412,7 @@ async function outputAlpenrosePDF() {
   showLoading('アルペンローゼ発注書を生成中...');
   try {
     const { PDFDocument, StandardFonts, rgb } = PDFLib;
-    const pdfBytes = await fetch('./メーカー発注書/アルペンローゼhyumi専用発注書.pdf').then(r => {
-      if (!r.ok) throw new Error('アルペンローゼhyumi専用発注書.pdf の読み込みに失敗しました');
-      return r.arrayBuffer();
-    });
+    const pdfBytes = await fetchTemplateAsArrayBuffer('alpenrose');
     const pdfDoc = await PDFDocument.load(pdfBytes);
     const page   = pdfDoc.getPages()[0];
     const font   = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -2458,10 +2461,7 @@ async function outputMelosPDF() {
   showLoading('メロス発注書を生成中...');
   try {
     const { PDFDocument, StandardFonts, rgb } = PDFLib;
-    const pdfBytes = await fetch('./メーカー発注書/メロス発注書2026年4月～.pdf').then(r => {
-      if (!r.ok) throw new Error('メロス発注書2026年4月～.pdf の読み込みに失敗しました');
-      return r.arrayBuffer();
-    });
+    const pdfBytes = await fetchTemplateAsArrayBuffer('melos');
     const pdfDoc = await PDFDocument.load(pdfBytes);
     const page   = pdfDoc.getPages()[0];
     const font   = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -2919,10 +2919,7 @@ async function reOutputGrandexPDF(orderNo) {
   showLoading('グランデックス発注書を生成中...');
   try {
     const { PDFDocument, StandardFonts, rgb } = PDFLib;
-    const pdfBytes = await fetch('./メーカー発注書/グランデックス.pdf').then(r => {
-      if (!r.ok) throw new Error('グランデックス.pdf の読み込みに失敗しました');
-      return r.arrayBuffer();
-    });
+    const pdfBytes = await fetchTemplateAsArrayBuffer('grandex');
     const pdfDoc = await PDFDocument.load(pdfBytes);
     const page   = pdfDoc.getPages()[0];
     const font   = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -2969,10 +2966,7 @@ async function reOutputAlpenrosePDF(orderNo) {
   showLoading('アルペンローゼ発注書を生成中...');
   try {
     const { PDFDocument, StandardFonts, rgb } = PDFLib;
-    const pdfBytes = await fetch('./メーカー発注書/アルペンローゼhyumi専用発注書.pdf').then(r => {
-      if (!r.ok) throw new Error('アルペンローゼhyumi専用発注書.pdf の読み込みに失敗しました');
-      return r.arrayBuffer();
-    });
+    const pdfBytes = await fetchTemplateAsArrayBuffer('alpenrose');
     const pdfDoc = await PDFDocument.load(pdfBytes);
     const page   = pdfDoc.getPages()[0];
     const font   = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -3022,10 +3016,7 @@ async function reOutputMelosPDF(orderNo) {
   showLoading('メロス発注書を生成中...');
   try {
     const { PDFDocument, StandardFonts, rgb } = PDFLib;
-    const pdfBytes = await fetch('./メーカー発注書/メロス発注書2026年4月～.pdf').then(r => {
-      if (!r.ok) throw new Error('メロス発注書2026年4月～.pdf の読み込みに失敗しました');
-      return r.arrayBuffer();
-    });
+    const pdfBytes = await fetchTemplateAsArrayBuffer('melos');
     const pdfDoc = await PDFDocument.load(pdfBytes);
     const page   = pdfDoc.getPages()[0];
     const font   = await pdfDoc.embedFont(StandardFonts.Helvetica);
