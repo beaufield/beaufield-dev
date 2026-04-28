@@ -1,15 +1,23 @@
 // BCARTマスター管理ツール - バックエンド
+//
+// [スクリプトプロパティに設定が必要]
+//   BCART_TOKEN       : BCARTアクセストークン
+//   GEMINI_API_KEY    : Google Gemini APIキー
+//   LINEWORKS_WEBHOOK : LINE WORKS Webhook URL（任意）
+//   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
+//   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.4.0';
+const VERSION = 'v2.4.1';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
-const CSV_FOLDER_ID = '12QedyGwHcpXF-lEQBgJo5sIC_i3Iv42P';
 const CSV_FILENAME = '商品.CSV';
 const GEMINI_MODEL = 'gemini-2.5-flash-lite';
 
-// 認証（beaufield-auth GAS）
-const AUTH_GAS_URL = 'https://script.google.com/macros/s/AKfycbzNVW7AaPUTuwneE-M40DTN1clO5VT2yLCHq7cjYvaHqfMfXgVi38UAOsDZQbmmN3wOzw/exec';
+// スクリプトプロパティから機密値を取得（コード直書き禁止）
+const _BCART_PROPS = PropertiesService.getScriptProperties();
+const CSV_FOLDER_ID = _BCART_PROPS.getProperty('CSV_FOLDER_ID');
+const AUTH_GAS_URL  = _BCART_PROPS.getProperty('AUTH_GAS_URL');
 
 // シート名
 const SHEET_IGNORE      = '対応不要';

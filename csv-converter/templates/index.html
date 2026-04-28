@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CSV変換アプリ</title>
+  <style>
+    /* ── リセット・ベース ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', 'Meiryo UI', Meiryo, sans-serif; background: #f0f4f8; color: #1e293b; font-size: 14px; }
+
+    /* ── ヘッダー ── */
+    .header {
+      background: #1d4ed8; color: white;
+      padding: 14px 28px; display: flex; align-items: center; justify-content: space-between;
+      box-shadow: 0 2px 6px rgba(0,0,0,.2);
+    }
+    .header h1 { font-size: 17px; font-weight: 700; letter-spacing: .02em; }
+    .header .sub { font-size: 12px; opacity: .75; }
+
+    /* ── タブ ── */
+    .tabs { background: white; border-bottom: 2px solid #e2e8f0; display: flex; padding: 0 28px; }
+    .tab {
+      padding: 12px 22px; cursor: pointer; border-bottom: 3px solid transparent;
+      margin-bottom: -2px; font-size: 14px; color: #64748b; font-weight: 500;
+      transition: color .15s, border-color .15s;
+    }
+    .tab:hover { color: #1d4ed8; }
+    .tab.active { border-bottom-color: #1d4ed8; color: #1d4ed8; font-weight: 700; }
+
+    /* ── コンテンツ ── */
+    .content { max-width: 860px; margin: 24px auto; padding: 0 20px; }
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
+
+    /* ── カード ── */
+    .card {
+      background: white; border-radius: 10px; padding: 22px 24px; margin-bottom: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    .card-title { font-size: 14px; font-weight: 700; color: #0f172a; margin-bottom: 16px; display: flex; align-items: center; gap: 6px; }
+
+    /* ── ファイルドロップ ── */
+    .drop-zone {
+      border: 2px dashed #cbd5e1; border-radius: 8px; padding: 30px 20px;
+      text-align: center; cursor: pointer; transition: border-color .2s, background .2s;
+    }
+    .drop-zone:hover, .drop-zone.over { border-color: #1d4ed8; background: #eff6ff; }
+    .drop-zone .icon { font-size: 36px; margin-bottom: 8px; }
+    .drop-zone .hint { color: #64748b; font-size: 13px; }
+    .drop-zone .hint small { display: block; margin-top: 4px; color: #94a3b8; font-size: 11px; }
+    .drop-zone .chosen { margin-top: 10px; color: #1d4ed8; font-weight: 600; font-size: 13px; }
+
+    /* ── フォーム ── */
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .form-group { display: flex; flex-direction: column; gap: 5px; }
+    .form-group label { font-size: 12px; font-weight: 600; color: #475569; }
+    .form-group select,
+    .form-group input[type="text"] {
+      padding: 8px 11px; border: 1px solid #cbd5e1; border-radius: 6px;
+      font-size: 14px; outline: none; transition: border-color .2s;
+    }
+    .form-group select:focus, .form-group input:focus { border-color: #1d4ed8; box-shadow: 0 0 0 3px rgba(29,78,216,.08); }
+    .radio-row { display: flex; gap: 20px; padding: 8px 0; }
+    .radio-label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+    /* ── プレビュー ── */
+    .info-pill {
+      background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 6px;
+      padding: 10px 14px; font-size: 12px; color: #0369a1; margin-bottom: 12px;
+      display: flex; flex-wrap: wrap; gap: 14px;
+    }
+    .info-pill strong { color: #0c4a6e; }
+    .tbl-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead th { background: #f8fafc; padding: 7px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #e2e8f0; white-space: nowrap; color: #475569; }
+    tbody td { padding: 7px 12px; border-bottom: 1px solid #f1f5f9; }
+    tbody tr:last-child td { border-bottom: none; }
+    .unmatched { color: #dc2626; font-weight: 600; }
+    .num { text-align: right; }
+
+    /* ── ボタン ── */
+    .btn {
+      padding: 9px 22px; border-radius: 7px; font-size: 14px; font-weight: 700;
+      cursor: pointer; border: none; transition: background .15s, opacity .15s;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn-primary { background: #1d4ed8; color: white; }
+    .btn-primary:hover:not(:disabled) { background: #1e40af; }
+    .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-danger  { background: #dc2626; color: white; padding: 4px 12px; font-size: 12px; border-radius: 5px; }
+    .btn-danger:hover { background: #b91c1c; }
+    .btn-center  { text-align: center; }
+
+    /* ── アラート ── */
+    .alert { display: none; padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-top: 12px; }
+    .alert.ok  { background: #dcfce7; color: #166534; display: block; }
+    .alert.err { background: #fee2e2; color: #991b1b; display: block; }
+
+    /* ── マスターテーブル ── */
+    .master-add { display: flex; gap: 12px; align-items: flex-end; margin-top: 20px; flex-wrap: wrap; }
+    .master-add .form-group { flex: 1; min-width: 140px; }
+    .master-empty { text-align: center; color: #94a3b8; padding: 20px; }
+
+    /* ── フッター ── */
+    footer { text-align: center; padding: 20px; color: #94a3b8; font-size: 11px; }
+  </style>
+</head>
+<body>
+
+<header class="header">
+  <h1>📄 CSV変換アプリ</h1>
+  <span class="sub">OCR納品書 → 販売管理取込フォーマット（61列）</span>
+</header>
+
+<nav class="tabs">
+  <div class="tab active" onclick="switchTab('convert')">変換</div>
+  <div class="tab"        onclick="switchTab('master')">マスター管理</div>
+</nav>
+
+<div class="content">
+
+  <!-- ═══════════════════ 変換タブ ═══════════════════ -->
+  <div id="pane-convert" class="tab-pane active">
+
+    <!-- ファイル選択 -->
+    <div class="card">
+      <div class="card-title">📁 OCR CSVファイルを選択</div>
+      <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+        <div class="icon">📂</div>
+        <div class="hint">
+          クリックしてファイルを選択、またはドラッグ＆ドロップ
+          <small>ocr-invoice/results/ フォルダ内の .csv ファイル</small>
+        </div>
+        <div class="chosen" id="chosenName"></div>
+      </div>
+      <input type="file" id="fileInput" accept=".csv" style="display:none">
+    </div>
+
+    <!-- 変換設定 -->
+    <div class="card">
+      <div class="card-title">⚙️ 変換設定</div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>メーカー <span style="color:#dc2626">*</span></label>
+          <select id="makerSelect">
+            <option value="">-- 選択してください --</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>取引区分</label>
+          <div class="radio-row">
+            <label class="radio-label">
+              <input type="radio" name="tradeType" value="11" checked>
+              <span>11: 売上（通常仕入）</span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="tradeType" value="31">
+              <span>31: 直送</span>
+            </label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>発注番号 <span style="color:#94a3b8; font-weight:400">（任意）</span></label>
+          <input type="text" id="orderNo" placeholder="空欄のまま変換可">
+        </div>
+      </div>
+    </div>
+
+    <!-- プレビュー（ファイル選択後に表示） -->
+    <div class="card" id="previewCard" style="display:none">
+      <div class="card-title">📋 プレビュー</div>
+      <div class="info-pill" id="infoBar"></div>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>コード</th>
+              <th>商品名</th>
+              <th class="num">数量</th>
+              <th class="num">単価</th>
+              <th class="num">合計</th>
+            </tr>
+          </thead>
+          <tbody id="previewBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 変換ボタン -->
+    <div class="card btn-center">
+      <button class="btn btn-primary" id="convertBtn" onclick="doConvert()" disabled>
+        ▶&nbsp;変換してダウンロード
+      </button>
+      <div class="alert" id="convertAlert"></div>
+    </div>
+
+  </div>
+
+  <!-- ═══════════════════ マスター管理タブ ═══════════════════ -->
+  <div id="pane-master" class="tab-pane">
+    <div class="card">
+      <div class="card-title">🏭 メーカーIDマスター</div>
+      <p style="color:#64748b; font-size:12px; margin-bottom:14px;">
+        メーカー名は OCR ファイル名（例: <code>ナプラ_20260312_12345.csv</code> の「ナプラ」部分）と一致させてください。
+      </p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>メーカー名</th>
+              <th>メーカーID</th>
+              <th style="width:80px; text-align:center">操作</th>
+            </tr>
+          </thead>
+          <tbody id="masterBody"></tbody>
+        </table>
+      </div>
+
+      <!-- 追加フォーム -->
+      <hr style="margin:18px 0; border:none; border-top:1px solid #f1f5f9">
+      <div class="card-title" style="margin-bottom:12px">➕ メーカーを追加・更新</div>
+      <div class="master-add">
+        <div class="form-group">
+          <label>メーカー名</label>
+          <input type="text" id="newName" placeholder="例: ナプラ">
+        </div>
+        <div class="form-group">
+          <label>メーカーID</label>
+          <input type="text" id="newId" placeholder="例: 4526416">
+        </div>
+        <button class="btn btn-primary" onclick="addMaker()">追加</button>
+      </div>
+      <div class="alert" id="masterAlert"></div>
+    </div>
+  </div>
+
+</div>
+
+<footer>CSV変換アプリ v1.0.0</footer>
+
+<script>
+'use strict';
+
+// ──────────────────────────────────────────────
+// タブ切り替え
+// ──────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab, .tab-pane').forEach(el => el.classList.remove('active'));
+  document.querySelector(`.tab[onclick="switchTab('${name}')"]`).classList.add('active');
+  document.getElementById(`pane-${name}`).classList.add('active');
+}
+
+// ──────────────────────────────────────────────
+// ファイル選択・ドロップ
+// ──────────────────────────────────────────────
+let selectedFile = null;
+let previewData  = [];
+
+const dropZone  = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length) onFileChosen(fileInput.files[0]);
+});
+dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('over');
+  if (e.dataTransfer.files.length) onFileChosen(e.dataTransfer.files[0]);
+});
+
+function onFileChosen(file) {
+  selectedFile = file;
+  document.getElementById('chosenName').textContent = '選択: ' + file.name;
+  readAndPreview(file);
+}
+
+// ──────────────────────────────────────────────
+// CSV読み込み・プレビュー表示（クライアント側）
+// ──────────────────────────────────────────────
+function readAndPreview(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    let text = e.target.result;
+    // BOM 除去
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+
+    const lines = text.trim().split(/\r?\n/);
+    if (lines.length < 2) return;
+
+    previewData = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cells = parseCsvLine(lines[i]);
+      if (!cells[0] && !cells[1]) continue;
+      previewData.push(cells);
+    }
+
+    renderPreview(file.name);
+    document.getElementById('convertBtn').disabled = false;
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+function parseCsvLine(line) {
+  const result = [];
+  let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { if (inQ && line[i+1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+    else if (c === ',' && !inQ) { result.push(cur.trim()); cur = ''; }
+    else cur += c;
+  }
+  result.push(cur.trim());
+  return result;
+}
+
+function renderPreview(filename) {
+  // ファイル名解析
+  const base  = filename.replace(/\.csv$/i, '');
+  const parts = base.split('_');
+  let dateStr = '', slipNo = '', dateIdx = -1;
+  for (let i = 0; i < parts.length; i++) {
+    if (/^\d{8}$/.test(parts[i])) { dateStr = parts[i]; dateIdx = i; break; }
+  }
+  if (dateIdx >= 0) slipNo = parts.slice(dateIdx + 1).join('_');
+
+  // 合計金額
+  const total = previewData.reduce((s, r) => s + (parseInt(r[4]) || 0), 0);
+  const unmatched = previewData.filter(r => r[0] === '1').length;
+
+  // 情報バー
+  let info = `<span><strong>行数:</strong> ${previewData.length}件</span>`;
+  if (dateStr) info += `<span><strong>日付:</strong> ${dateStr.slice(0,4)}/${dateStr.slice(4,6)}/${dateStr.slice(6,8)}</span>`;
+  if (slipNo)  info += `<span><strong>伝票番号:</strong> ${slipNo}</span>`;
+  info += `<span><strong>合計金額:</strong> ¥${total.toLocaleString()}</span>`;
+  if (unmatched > 0) info += `<span style="color:#dc2626"><strong>未照合:</strong> ${unmatched}件（コード=1）</span>`;
+  document.getElementById('infoBar').innerHTML = info;
+
+  // プレビューテーブル
+  const tbody = document.getElementById('previewBody');
+  tbody.innerHTML = '';
+  const show = previewData.slice(0, 10);
+  show.forEach(cells => {
+    const tr = document.createElement('tr');
+    const isUm = cells[0] === '1';
+    [cells[0], cells[1], cells[2], cells[3], cells[4]].forEach((v, i) => {
+      const td = document.createElement('td');
+      td.textContent = v || '';
+      if (i === 0 && isUm) td.className = 'unmatched';
+      if (i >= 2) td.className = 'num';
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  if (previewData.length > 10) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 5; td.style.cssText = 'text-align:center; color:#94a3b8; font-size:12px; padding:8px';
+    td.textContent = `… 他 ${previewData.length - 10} 件`;
+    tr.appendChild(td); tbody.appendChild(tr);
+  }
+
+  document.getElementById('previewCard').style.display = '';
+}
+
+// ──────────────────────────────────────────────
+// 変換実行
+// ──────────────────────────────────────────────
+async function doConvert() {
+  if (!selectedFile) { showAlert('convertAlert', 'err', 'ファイルを選択してください'); return; }
+
+  const makerId   = document.getElementById('makerSelect').value;
+  const tradeType = document.querySelector('input[name="tradeType"]:checked').value;
+  const orderNo   = document.getElementById('orderNo').value.trim();
+
+  if (!makerId) { showAlert('convertAlert', 'err', 'メーカーを選択してください'); return; }
+
+  const btn = document.getElementById('convertBtn');
+  btn.disabled = true;
+  btn.textContent = '変換中…';
+
+  try {
+    const fd = new FormData();
+    fd.append('file',       selectedFile);
+    fd.append('maker_id',   makerId);
+    fd.append('trade_type', tradeType);
+    fd.append('order_no',   orderNo);
+
+    const res = await fetch('/api/convert', { method: 'POST', body: fd });
+
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      showAlert('convertAlert', 'err', d.error || '変換に失敗しました');
+      return;
+    }
+
+    // ダウンロード処理
+    const blob = await res.blob();
+    const cd   = res.headers.get('Content-Disposition') || '';
+    const m    = cd.match(/filename=(.+)/);
+    const fname = m ? m[1].replace(/['"]/g, '') : 'import.csv';
+
+    const url = URL.createObjectURL(blob);
+    const a   = document.createElement('a');
+    a.href = url; a.download = fname; a.click();
+    URL.revokeObjectURL(url);
+
+    showAlert('convertAlert', 'ok', `✅ 変換完了！ ${fname} をダウンロードしました。outputフォルダにも保存済みです。`);
+  } catch (err) {
+    showAlert('convertAlert', 'err', 'エラー: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '▶ 変換してダウンロード';
+  }
+}
+
+// ──────────────────────────────────────────────
+// マスター管理
+// ──────────────────────────────────────────────
+async function loadMaster() {
+  const res  = await fetch('/api/master');
+  const data = await res.json();
+
+  // セレクトボックス更新
+  const sel = document.getElementById('makerSelect');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">-- 選択してください --</option>';
+  Object.entries(data).forEach(([name, id]) => {
+    const opt = new Option(`${name}（${id}）`, id);
+    sel.appendChild(opt);
+  });
+  if (cur) sel.value = cur;
+
+  // マスターテーブル更新
+  const tbody = document.getElementById('masterBody');
+  tbody.innerHTML = '';
+  if (Object.keys(data).length === 0) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 3; td.className = 'master-empty';
+    td.textContent = 'まだ登録されていません。下のフォームから追加してください。';
+    tr.appendChild(td); tbody.appendChild(tr);
+    return;
+  }
+  Object.entries(data).forEach(([name, id]) => {
+    const tr = document.createElement('tr');
+
+    const tdN = document.createElement('td'); tdN.textContent = name; tr.appendChild(tdN);
+    const tdI = document.createElement('td'); tdI.textContent = id;   tr.appendChild(tdI);
+
+    const tdA  = document.createElement('td'); tdA.style.textAlign = 'center';
+    const btn  = document.createElement('button');
+    btn.className = 'btn btn-danger';
+    btn.textContent = '削除';
+    btn.onclick = () => deleteMaker(name);
+    tdA.appendChild(btn); tr.appendChild(tdA);
+
+    tbody.appendChild(tr);
+  });
+}
+
+async function addMaker() {
+  const name = document.getElementById('newName').value.trim();
+  const id   = document.getElementById('newId').value.trim();
+  if (!name || !id) { showAlert('masterAlert', 'err', 'メーカー名とIDを入力してください'); return; }
+
+  const res  = await fetch('/api/master', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, id }),
+  });
+  const data = await res.json();
+  if (data.error) { showAlert('masterAlert', 'err', data.error); return; }
+
+  document.getElementById('newName').value = '';
+  document.getElementById('newId').value   = '';
+  showAlert('masterAlert', 'ok', `✅「${name}」を登録しました`);
+  loadMaster();
+}
+
+async function deleteMaker(name) {
+  if (!confirm(`「${name}」を削除しますか？`)) return;
+  await fetch(`/api/master/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  showAlert('masterAlert', 'ok', `「${name}」を削除しました`);
+  loadMaster();
+}
+
+// ──────────────────────────────────────────────
+// アラート表示ヘルパー
+// ──────────────────────────────────────────────
+const _alertTimers = {};
+function showAlert(id, type, msg) {
+  const el = document.getElementById(id);
+  clearTimeout(_alertTimers[id]);
+  el.className = `alert ${type}`;
+  el.textContent = msg;
+  _alertTimers[id] = setTimeout(() => { el.className = 'alert'; }, 6000);
+}
+
+// ──────────────────────────────────────────────
+// 初期化
+// ──────────────────────────────────────────────
+loadMaster();
+</script>
+
+</body>
+</html>
