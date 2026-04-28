@@ -1,0 +1,64 @@
+#!/bin/sh
+# ============================================================
+# pre-commit hook: 業務リソース（PDF/CSV/Excel等）の誤コミットをブロック
+# ============================================================
+# 2026-04-28 PDF漏洩事案を受けて新設。
+# 業務情報（卸価格・取引先・顧客データ等）が Public リポジトリに混入するのを物理的に防ぐ。
+#
+# 初回セットアップ:
+#   git config core.hooksPath .githooks
+# ============================================================
+
+# 拒否対象の拡張子（大文字小文字両方カバー）
+BLOCKED_EXT='\.(pdf|PDF|csv|CSV|xlsx|XLSX|xlsm|XLSM|xls|XLS|tsv|TSV)$'
+
+# ステージされている追加・変更ファイルから対象を抽出
+violations=$(git diff --cached --name-only --diff-filter=ACM | grep -E "$BLOCKED_EXT" || true)
+
+if [ -n "$violations" ]; then
+    echo ""
+    echo "=================================================================="
+    echo "  COMMIT BLOCKED: 業務リソースのコミットは禁止されています"
+    echo "=================================================================="
+    echo ""
+    echo "以下のファイルがステージされています:"
+    echo ""
+    echo "$violations" | sed 's/^/    /'
+    echo ""
+    echo "理由: PDF/CSV/Excel は業務情報（価格・取引先・顧客等）を含むため"
+    echo "      Publicリポジトリにコミットすると全世界に公開されます。"
+    echo ""
+    echo "対処方法:"
+    echo "  1. ステージから取り除く:"
+    echo "     git restore --staged <ファイル名>"
+    echo ""
+    echo "  2. 業務PDF・CSVは Drive/SharePoint に保管し、GAS経由配信パターンを使う"
+    echo "     詳細: 開発・自動化/CLAUDE.md「GitHub投入ルール」セクション参照"
+    echo ""
+    echo "  3. どうしても必要な場合（例: アプリのアイコンPNG）はチェックを一時無効化:"
+    echo "     git commit --no-verify   ← 使用前に必ずたかしさんに確認"
+    echo ""
+    echo "=================================================================="
+    exit 1
+fi
+
+# 認証情報のハードコード検知（簡易チェック）
+secret_pattern='(AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|sk-[a-zA-Z0-9]{20,}|ghp_[A-Za-z0-9]{36}|xoxb-[0-9A-Za-z-]{20,}|password\s*=\s*["\x27][^"\x27]{4,}["\x27])'
+secret_hits=$(git diff --cached --diff-filter=ACM -U0 | grep -E "^\+" | grep -E "$secret_pattern" || true)
+
+if [ -n "$secret_hits" ]; then
+    echo ""
+    echo "=================================================================="
+    echo "  WARNING: 認証情報らしき文字列が検出されました"
+    echo "=================================================================="
+    echo ""
+    echo "$secret_hits" | head -5
+    echo ""
+    echo "上記の文字列が認証情報であれば、コミット前に PropertiesService 等に移行してください。"
+    echo "誤検知の場合のみ --no-verify でスキップ可能です。"
+    echo ""
+    echo "=================================================================="
+    exit 1
+fi
+
+exit 0
