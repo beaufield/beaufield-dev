@@ -18,7 +18,7 @@
 ---
 
 ## Google Sheets 情報
-- スプレッドシートID: `1yVd3yI9v8acjyKaM-fCs_VoBnOx44mnRDOBVGzBB288`
+- スプレッドシートID: ※ `D:\Dropbox\ClaudeWork\.claude\handover-secrets.md` 参照
 - シート構成:
   - `users`: user_id / name / pin / role / team / active / display_order
   - `salons`: salon_id / salon_name / owner_user_id / visit_day / sort_order / active / code
@@ -27,7 +27,7 @@
 ---
 
 ## GAS WebApp
-- デプロイ済みURL: `https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec`
+- デプロイ済みURL: ※ `D:\Dropbox\ClaudeWork\.claude\handover-secrets.md` 参照
 - 実行ユーザー: 自分 / アクセス: 全員
 
 ---
@@ -113,24 +113,8 @@
 
 ## git が使えない場合のプッシュ方法
 
-```powershell
-# 現在のファイルSHAを取得
-curl -s -H "Authorization: token TOKEN" \
-  "https://api.github.com/repos/beaufield/beaufield-dev/contents/route-checker/index.html" \
-  | grep '"sha"'
-
-# PowerShellでプッシュ
-powershell.exe -Command "& {
-  $token = 'TOKEN'
-  $path  = 'D:\Dropbox\ClaudeWork\開発・自動化\route-checker\index.html'
-  $bytes = [System.IO.File]::ReadAllBytes($path)
-  $b64   = [Convert]::ToBase64String($bytes)
-  $body  = @{ message='コミットメッセージ'; content=$b64; sha='FILE_SHA' } | ConvertTo-Json -Depth 3
-  $headers = @{ Authorization='token '+$token; 'Content-Type'='application/json'; 'User-Agent'='ps' }
-  $res = Invoke-RestMethod -Uri 'https://api.github.com/repos/beaufield/beaufield-dev/contents/route-checker/index.html' -Method Put -Headers $headers -Body $body
-  Write-Output ('OK: ' + $res.commit.sha.Substring(0,12))
-}"
-```
+GitHub API経由でPowerShellからプッシュする手順あり。
+詳細は `D:\Dropbox\ClaudeWork\.claude\handover-secrets.md` 参照（GitHub PATとサンプルコマンドを管理）。
 
 ---
 

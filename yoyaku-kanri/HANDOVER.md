@@ -38,12 +38,9 @@ yoyaku-kanri/
 | プロパティ名 | 値 |
 |-------------|-----|
 | `SPREADSHEET_ID` | ※GASスクリプトプロパティに設定済み（直書き禁止） |
-| `AUTH_SHEET_ID` | `1cCQn16ubEN_Af7XWw8KerBscZtFomBnXHjIIiZUr6V8`（beaufield-auth 共通） |
+| `AUTH_SHEET_ID` | ※ `D:\Dropbox\ClaudeWork\.claude\handover-secrets.md` 参照 |
 
-**GAS WebApp URL:**
-```
-https://script.google.com/macros/s/AKfycbxvWbUf17DVe6dpW8cHEqrCuA3BbqF49EXqU3JXkA7hIR5lcT5sZwlQtgJPSi8rKTeo3w/exec
-```
+**GAS WebApp URL:** ※ `D:\Dropbox\ClaudeWork\.claude\handover-secrets.md` 参照
 
 ---
 

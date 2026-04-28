@@ -37,18 +37,11 @@
 | E | team | string | `A` / `B` / `all`（統括・管理者はall） |
 | F | active | boolean | TRUE/FALSE |
 
-**初期データ例**
+**初期データ構成（実データはbeaufield-authシートで管理）**
 
-| user_id | name | pin | role | team | active |
-|---|---|---|---|---|---|
-| U001 | Takashi（管理者） | 0000 | admin | all | TRUE |
-| U002 | 統括者 | 0000 | director | all | TRUE |
-| U003 | A部長 | 0000 | manager | A | TRUE |
-| U004 | B部長 | 0000 | manager | B | TRUE |
-| U005 | 営業A1 | 0000 | sales | A | TRUE |
-| U006 | 営業A2 | 0000 | sales | A | TRUE |
-| U007 | 営業B1 | 0000 | sales | B | TRUE |
-| U008 | 営業B2 | 0000 | sales | B | TRUE |
+実際のユーザー登録は beaufield-auth および本シートに対して個別に手動投入する。
+PINは初期値ではなく、ユーザーごとに別途設定する運用とする。
+（過去ドキュメントに掲載していたサンプル値は、Public公開リスクのため削除済）
 
 ---
 

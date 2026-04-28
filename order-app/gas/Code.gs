@@ -15,7 +15,7 @@
 const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
-const VERSION         = 'v1.8.2';
+const VERSION         = 'v1.9.0';
 
 // Google Drive上の商品マスターCSVファイル名
 // ※ 同名ファイルが複数ある場合はファイルIDで指定（下記コメント参照）
@@ -32,6 +32,19 @@ const SHEET_SUPPLIERS = '発注先マスター';
 const SHEET_STAFF     = '担当者マスター';
 const SHEET_PRODUCTS  = '商品マスター';
 const SHEET_REORDER   = '発注点マスター';
+
+// メーカー発注書テンプレート定義（Drive配信用）
+// スクリプトプロパティ ORDER_TEMPLATE_FOLDER_ID に Drive フォルダIDを設定すること
+const ORDER_TEMPLATES = {
+  'grandex':           'グランデックス.pdf',
+  'chiyoda':           '千代田化学.pdf',
+  'alpenrose':         'アルペンローゼhyumi専用発注書.pdf',
+  'melos':             'メロス発注書2026年4月～.pdf',
+  'melos_2025':        'メロス発注書2025年価格改定後.pdf',
+  'adelans':           'アデランス発注書.pdf',
+  'rhythm':            'リズム注文書2023冬～.pdf',
+  'hokkaido_natural':  '北海道ナチュラルバイオ.pdf'
+};
 
 // ============================================================
 // セッション検証
@@ -88,6 +101,7 @@ function doGet(e) {
       case 'getProductMaster':  return jsonResponse(getProductMaster());
       case 'getOrders':         return jsonResponse(getOrders(p.supplierCode || ''));
       case 'getOrderDetail':    return jsonResponse(getOrderDetail(p.orderNo));
+      case 'getOrderTemplate':  return jsonResponse(getOrderTemplate(p.makerKey || ''));
       default:                  return jsonResponse({ success: false, error: '不明なアクション: ' + action });
     }
   } catch(err) {
@@ -829,4 +843,54 @@ function initializeSheets() {
   }
 
   Logger.log('✅ 初期設定完了 (Version: ' + VERSION + ')');
+}
+
+// ============================================================
+// メーカー発注書テンプレート配信（Drive経由・認証付き）
+// ============================================================
+// 用途: ブラウザがGitHub Pages経由で公開PDFをfetchするのを廃止し、
+//      Driveに保管したテンプレートをセッション認証経由で配信する。
+//
+// 前提:
+//   - Driveに「Beaufield発注書テンプレート」フォルダを作成し、
+//     スクリプトプロパティ ORDER_TEMPLATE_FOLDER_ID にIDを設定
+//   - フォルダ内に ORDER_TEMPLATES で定義した名前の PDF をアップロード
+//   - GASの実行ユーザー設定が「自分」になっていれば、利用者側のGoogle権限は不要
+//
+// レスポンス:
+//   { success: true, filename, mimeType: 'application/pdf', data: <base64> }
+//   または { success: false, error }
+// ============================================================
+function getOrderTemplate(makerKey) {
+  const fileName = ORDER_TEMPLATES[makerKey];
+  if (!fileName) {
+    return { success: false, error: '不明なメーカーキー: ' + makerKey };
+  }
+
+  const folderId = _PROPS.getProperty('ORDER_TEMPLATE_FOLDER_ID');
+  if (!folderId) {
+    return { success: false, error: 'ORDER_TEMPLATE_FOLDER_ID 未設定（GASスクリプトプロパティ）' };
+  }
+
+  try {
+    const folder = DriveApp.getFolderById(folderId);
+    const files  = folder.getFilesByName(fileName);
+
+    if (!files.hasNext()) {
+      return { success: false, error: 'テンプレートPDFが見つかりません: ' + fileName };
+    }
+
+    const file   = files.next();
+    const blob   = file.getBlob();
+    const base64 = Utilities.base64Encode(blob.getBytes());
+
+    return {
+      success: true,
+      filename: fileName,
+      mimeType: 'application/pdf',
+      data: base64
+    };
+  } catch(err) {
+    return { success: false, error: 'テンプレート取得エラー: ' + err.toString() };
+  }
 }
