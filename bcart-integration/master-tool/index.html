@@ -408,6 +408,13 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
           <button class="btn btn-primary" id="descLoadBtn" onclick="loadProductsForDescription()">📦 説明文なし商品を取得</button>
           <span id="descProductCount" style="font-size:12px;color:#6b7280;"></span>
         </div>
+        <div id="descFeatureFilterRow" style="display:none;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap;">
+          <label style="font-size:13px;color:#374151;white-space:nowrap;">特集で絞り込み:</label>
+          <select id="descFeatureFilter" onchange="filterDescProducts()" style="font-size:13px;padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;background:#fff;min-width:180px;">
+            <option value="">すべて表示</option>
+          </select>
+          <span id="descFilterCount" style="font-size:12px;color:#6b7280;"></span>
+        </div>
       </div>
       <div id="descProductList"></div>
     </div>
@@ -2846,25 +2853,58 @@ function deleteGroup(groupId, name) {
 
 // ===================== 機能C: 説明文生成 =====================
 
-function initDescriptionTab() {}
+var descAllProducts = [];
+var descFeatureList = [];
+
+function initDescriptionTab() {
+  if (descFeatureList.length > 0) return;
+  gasPost({ action: 'getFeatures' }, function(res) {
+    if (res.ok && res.specials) {
+      descFeatureList = res.specials;
+      var sel = document.getElementById('descFeatureFilter');
+      sel.innerHTML = '<option value="">すべて表示</option>' +
+        descFeatureList.map(function(f) {
+          return '<option value="' + f.id + '">' + esc(f.name) + '</option>';
+        }).join('');
+    }
+  });
+}
 
 function loadProductsForDescription() {
   const btn = document.getElementById('descLoadBtn');
   btn.disabled = true;
   btn.textContent = '取得中...';
   document.getElementById('descProductCount').textContent = '';
+  document.getElementById('descFilterCount').textContent = '';
   gasPostAsync({ action: 'getProductsForDescription' }).then(function(res) {
     btn.disabled = false;
     btn.textContent = '📦 説明文なし商品を取得';
     if (!res.ok) { showToast('取得失敗: ' + res.error, true); return; }
+    descAllProducts = res.products;
     document.getElementById('descProductCount').textContent =
       '説明文なし: ' + res.products.length + '件 ／ 全' + res.total + '件（説明文あり: ' + res.withDetail + '件）';
-    renderDescProductList(res.products);
+    document.getElementById('descFeatureFilterRow').style.display = 'flex';
+    document.getElementById('descFeatureFilter').value = '';
+    renderDescProductList(descAllProducts);
   }).catch(function(e) {
     btn.disabled = false;
     btn.textContent = '📦 説明文なし商品を取得';
     showToast('通信エラー: ' + e.message, true);
   });
+}
+
+function filterDescProducts() {
+  var featureId = document.getElementById('descFeatureFilter').value;
+  var filtered = featureId
+    ? descAllProducts.filter(function(p) {
+        return String(p.feature_id1 || '') === featureId ||
+               String(p.feature_id2 || '') === featureId ||
+               String(p.feature_id3 || '') === featureId;
+      })
+    : descAllProducts;
+  var countEl = document.getElementById('descFilterCount');
+  countEl.textContent = featureId ? '絞り込み結果: ' + filtered.length + '件' : '';
+  renderDescProductList(filtered);
 }
 
 function renderDescProductList(products) {
