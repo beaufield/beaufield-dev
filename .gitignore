@@ -69,15 +69,11 @@ order-app/pdf_coords.txt
 order-app/grandex.pdf
 order-app/メーカー発注書/
 
-# OCR結果・処理データ
-ocr-invoice/results/
-ocr-invoice/uploads/
-ocr-invoice/商品*.csv
-ocr-invoice/商品*.CSV
+# 納品書OCR（ローカル実行ツール・GitHub不要）
+ocr-invoice/
 
-# CSV変換アプリ作業データ
-csv-converter/output/
-csv-converter/input/
+# CSV変換アプリ（ローカル実行ツール・GitHub不要）
+csv-converter/
 
 # シリアル管理データ
 serial-apps/data/
