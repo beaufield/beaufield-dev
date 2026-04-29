@@ -2968,13 +2968,20 @@ function generateOneDesc(productId, productName, categoryName, btn) {
     statusEl.textContent = (useSearch ? '🔍 Web検索あり・' : '') + '✓ 生成完了。内容を確認してから「✅ 反映」を押してください。';
     statusEl.className = 'desc-status desc-status-ok';
     btn.textContent = '🔄 再生成'; btn.disabled = false;
-    // ソースURL表示
+    // ソースURL or 検索クエリ表示
     var sourcesEl = document.getElementById('desc-sources-' + productId);
-    if (useSearch && res.sources && res.sources.length) {
-      sourcesEl.innerHTML = '📎 参照元: ' + res.sources.map(function(s) {
-        return '<a href="' + esc(s.uri) + '" target="_blank" rel="noopener" style="color:#0284c7;">' + esc(s.title) + '</a>';
-      }).join('、');
-      sourcesEl.style.display = 'block';
+    if (useSearch) {
+      if (res.sources && res.sources.length) {
+        sourcesEl.innerHTML = '📎 参照元: ' + res.sources.map(function(s) {
+          return '<a href="' + esc(s.uri) + '" target="_blank" rel="noopener" style="color:#0284c7;">' + esc(s.title) + '</a>';
+        }).join('、');
+        sourcesEl.style.display = 'block';
+      } else if (res.queries && res.queries.length) {
+        sourcesEl.innerHTML = '🔍 検索クエリ: ' + res.queries.map(function(q) { return esc(q); }).join('、');
+        sourcesEl.style.display = 'block';
+      } else {
+        sourcesEl.style.display = 'none';
+      }
     } else {
       sourcesEl.style.display = 'none';
     }
@@ -3050,6 +3057,8 @@ function factCheckOneDesc(productId, productName, categoryName, btn) {
         res.sources.map(function(s) {
           return '<a href="' + esc(s.uri) + '" target="_blank" rel="noopener" style="color:#0284c7;">' + esc(s.title) + '</a>';
         }).join('、') + '</div>';
+    } else if (res.queries && res.queries.length) {
+      html += '<div style="margin-top:6px;font-size:11px;color:#6b7280;">🔍 検索クエリ: ' + res.queries.map(function(q) { return esc(q); }).join('、') + '</div>';
     }
     resultEl.style.cssText = 'display:block;font-size:12px;margin-top:6px;padding:8px 10px;border-radius:6px;' +
       'background:' + bgColor + ';border:1px solid ' + borderColor + ';color:' + textColor + ';';
