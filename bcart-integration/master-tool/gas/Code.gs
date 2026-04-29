@@ -1807,6 +1807,36 @@ function getProductsForDescription() {
   return { ok: true, products: noDetail, withDetail: hasDetail.length, total: allMapped.length };
 }
 
+// groundingMetadata からソースURL・検索クエリを抽出する共通ヘルパー
+function extractGroundingInfo(candidate) {
+  const sources = [];
+  const queries = [];
+  try {
+    const meta = candidate.groundingMetadata || {};
+    Logger.log('groundingMetadata: ' + JSON.stringify(meta).slice(0, 1000));
+
+    // ソースURL: groundingChunks（標準）
+    (meta.groundingChunks || []).forEach(function(chunk) {
+      if (chunk.web && chunk.web.uri) {
+        sources.push({ uri: chunk.web.uri, title: chunk.web.title || chunk.web.uri });
+      }
+    });
+    // ソースURL: groundingAttributions（旧API）
+    if (!sources.length) {
+      (meta.groundingAttributions || []).forEach(function(attr) {
+        if (attr.web && attr.web.uri) {
+          sources.push({ uri: attr.web.uri, title: attr.web.title || attr.web.uri });
+        }
+      });
+    }
+    // 検索クエリ（ソースURLがない場合のフォールバック表示用）
+    (meta.webSearchQueries || []).forEach(function(q) { queries.push(q); });
+  } catch(e) {
+    Logger.log('extractGroundingInfo error: ' + e.message);
+  }
+  return { sources: sources, queries: queries };
+}
+
 function generateDescription(params) {
   const apiKey = (PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY') || '').trim();
   if (!apiKey) return { ok: false, error: 'GEMINI_API_KEYが設定されていません（スクリプトプロパティ: GEMINI_API_KEY）' };
@@ -1905,18 +1935,8 @@ function generateDescription(params) {
                  ? data.candidates[0].content.parts[0].text : '';
     if (!text) return { ok: false, error: '説明文の生成に失敗しました（空のレスポンス）\n\nraw: ' + rawBody.slice(0, 1000) };
 
-    // groundingMetadata からソースURLを抽出
-    const sources = [];
-    try {
-      const meta = (data.candidates[0].groundingMetadata) || {};
-      (meta.groundingChunks || []).forEach(function(chunk) {
-        if (chunk.web && chunk.web.uri) {
-          sources.push({ uri: chunk.web.uri, title: chunk.web.title || chunk.web.uri });
-        }
-      });
-    } catch(e) {}
-
-    return { ok: true, text: text.trim(), sources: sources };
+    const grounding = extractGroundingInfo(data.candidates[0]);
+    return { ok: true, text: text.trim(), sources: grounding.sources, queries: grounding.queries };
   } catch(e) {
     return { ok: false, error: e.message };
   }
@@ -1969,16 +1989,7 @@ function factCheckDescription(params) {
                  ? data.candidates[0].content.parts[0].text : '';
     if (!text) return { ok: false, error: 'チェック結果が空でした' };
 
-    // groundingMetadata からソースURLを抽出
-    const sources = [];
-    try {
-      const meta = (data.candidates[0].groundingMetadata) || {};
-      (meta.groundingChunks || []).forEach(function(chunk) {
-        if (chunk.web && chunk.web.uri) {
-          sources.push({ uri: chunk.web.uri, title: chunk.web.title || chunk.web.uri });
-        }
-      });
-    } catch(e) {}
+    const grounding = extractGroundingInfo(data.candidates[0]);
 
     // JSONを抽出・パース（コードブロック等をフォールバック除去）
     let result;
@@ -1995,7 +2006,8 @@ function factCheckDescription(params) {
       verdict: result.verdict || 'warning',
       summary: result.summary || '',
       issues:  Array.isArray(result.issues) ? result.issues : [],
-      sources: sources
+      sources: grounding.sources,
+      queries: grounding.queries
     };
   } catch(e) {
     return { ok: false, error: e.message };
