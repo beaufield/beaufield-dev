@@ -91,6 +91,7 @@ function doPost(e) {
       // 機能C: 説明文生成
       case 'getProductsForDescription': return jsonResponse(getProductsForDescription());
       case 'generateDescription':       return jsonResponse(generateDescription(params));
+      case 'factCheckDescription':      return jsonResponse(factCheckDescription(params));
       case 'applyDescription':          return jsonResponse(applyDescription(params));
       default:                         return jsonResponse({ ok: false, error: 'UNKNOWN_ACTION' });
     }
@@ -1903,7 +1904,99 @@ function generateDescription(params) {
                  data.candidates[0].content.parts && data.candidates[0].content.parts[0]
                  ? data.candidates[0].content.parts[0].text : '';
     if (!text) return { ok: false, error: '説明文の生成に失敗しました（空のレスポンス）\n\nraw: ' + rawBody.slice(0, 1000) };
-    return { ok: true, text: text.trim() };
+
+    // groundingMetadata からソースURLを抽出
+    const sources = [];
+    try {
+      const meta = (data.candidates[0].groundingMetadata) || {};
+      (meta.groundingChunks || []).forEach(function(chunk) {
+        if (chunk.web && chunk.web.uri) {
+          sources.push({ uri: chunk.web.uri, title: chunk.web.title || chunk.web.uri });
+        }
+      });
+    } catch(e) {}
+
+    return { ok: true, text: text.trim(), sources: sources };
+  } catch(e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+function factCheckDescription(params) {
+  const apiKey = (PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY') || '').trim();
+  if (!apiKey) return { ok: false, error: 'GEMINI_API_KEYが設定されていません' };
+
+  const productName  = params.productName  || '';
+  const categoryName = params.categoryName || '美容商材';
+  const description  = params.description  || '';
+  if (!description) return { ok: false, error: '説明文が指定されていません' };
+
+  const prompt =
+    'あなたは商品情報の事実確認専門家です。\n' +
+    'Web検索で以下の商品を調査し、説明文の各記述が正確かどうかを判定してください。\n\n' +
+    '商品名: ' + productName + '\n' +
+    'カテゴリ: ' + categoryName + '\n' +
+    '確認する説明文:\n' + description + '\n\n' +
+    '結果を必ず以下のJSON形式のみで出力してください（マークダウンのコードブロック不要）:\n' +
+    '{"verdict":"ok","summary":"判定コメント（20文字以内）","issues":[]}\n\n' +
+    'verdict の選択基準:\n' +
+    '"ok"      → 記述内容がWeb検索で確認でき、正確\n' +
+    '"warning" → 確認できない記述が一部あるが、明らかな誤りはない\n' +
+    '"caution" → 明らかな誤りまたは確認できない重要な記述がある\n' +
+    'issues: 問題点を日本語の配列で記載。okの場合は空配列[]。';
+
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + GEMINI_MODEL + ':generateContent?key=' + encodeURIComponent(apiKey);
+  const body = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { maxOutputTokens: 400, temperature: 0.1 },
+    tools: [{ google_search: {} }]
+  };
+
+  try {
+    const res = UrlFetchApp.fetch(url, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(body),
+      muteHttpExceptions: true
+    });
+    const httpCode = res.getResponseCode();
+    const rawBody  = res.getContentText();
+    if (httpCode !== 200) return { ok: false, error: 'Gemini API エラー HTTP ' + httpCode + '\n' + rawBody.slice(0, 500) };
+
+    const data = JSON.parse(rawBody);
+    const text = data.candidates && data.candidates[0] && data.candidates[0].content &&
+                 data.candidates[0].content.parts && data.candidates[0].content.parts[0]
+                 ? data.candidates[0].content.parts[0].text : '';
+    if (!text) return { ok: false, error: 'チェック結果が空でした' };
+
+    // groundingMetadata からソースURLを抽出
+    const sources = [];
+    try {
+      const meta = (data.candidates[0].groundingMetadata) || {};
+      (meta.groundingChunks || []).forEach(function(chunk) {
+        if (chunk.web && chunk.web.uri) {
+          sources.push({ uri: chunk.web.uri, title: chunk.web.title || chunk.web.uri });
+        }
+      });
+    } catch(e) {}
+
+    // JSONを抽出・パース（コードブロック等をフォールバック除去）
+    let result;
+    try {
+      result = JSON.parse(text.trim());
+    } catch(e) {
+      const m = text.match(/\{[\s\S]*?\}/);
+      if (m) { try { result = JSON.parse(m[0]); } catch(e2) {} }
+    }
+    if (!result) return { ok: false, error: 'チェック結果の解析に失敗しました\n\n' + text.slice(0, 300) };
+
+    return {
+      ok: true,
+      verdict: result.verdict || 'warning',
+      summary: result.summary || '',
+      issues:  Array.isArray(result.issues) ? result.issues : [],
+      sources: sources
+    };
   } catch(e) {
     return { ok: false, error: e.message };
   }

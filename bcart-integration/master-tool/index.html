@@ -2927,11 +2927,15 @@ function renderDescProductList(products) {
         '</div>' +
         '<div class="desc-product-actions">' +
           '<button class="btn btn-primary btn-sm" onclick="generateOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',\'' + catAttr + '\',this)">✨ 生成</button>' +
+          '<button class="btn btn-sm" id="fact-btn-' + p.id + '" onclick="factCheckOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',\'' + catAttr + '\',this)" style="display:none;background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">🔍 チェック</button>' +
           '<button class="btn btn-success btn-sm" id="apply-btn-' + p.id + '" onclick="applyOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',this)" disabled>✅ 反映</button>' +
         '</div>' +
       '</div>' +
       '<textarea class="desc-textarea" id="desc-text-' + p.id + '" rows="8" placeholder="「✨ 生成」を押すとAIが説明文を作成します。内容を確認・修正してから「✅ 反映」でBCARTに登録します。"></textarea>' +
-      '<div class="desc-status" id="desc-status-' + p.id + '"></div></div>';
+      '<div id="desc-sources-' + p.id + '" style="display:none;font-size:11px;color:#6b7280;margin-top:4px;padding:2px 0;line-height:1.6;"></div>' +
+      '<div class="desc-status" id="desc-status-' + p.id + '"></div>' +
+      '<div id="fact-result-' + p.id + '" style="display:none;font-size:12px;margin-top:6px;padding:8px 10px;border-radius:6px;"></div>' +
+    '</div>';
   });
   el.innerHTML = html;
 }
@@ -2964,6 +2968,24 @@ function generateOneDesc(productId, productName, categoryName, btn) {
     statusEl.textContent = (useSearch ? '🔍 Web検索あり・' : '') + '✓ 生成完了。内容を確認してから「✅ 反映」を押してください。';
     statusEl.className = 'desc-status desc-status-ok';
     btn.textContent = '🔄 再生成'; btn.disabled = false;
+    // ソースURL表示
+    var sourcesEl = document.getElementById('desc-sources-' + productId);
+    if (useSearch && res.sources && res.sources.length) {
+      sourcesEl.innerHTML = '📎 参照元: ' + res.sources.map(function(s) {
+        return '<a href="' + esc(s.uri) + '" target="_blank" rel="noopener" style="color:#0284c7;">' + esc(s.title) + '</a>';
+      }).join('、');
+      sourcesEl.style.display = 'block';
+    } else {
+      sourcesEl.style.display = 'none';
+    }
+    // Web検索ONのときだけチェックボタンを表示
+    if (useSearch) {
+      var factBtn = document.getElementById('fact-btn-' + productId);
+      if (factBtn) factBtn.style.display = '';
+    }
+    // 再生成時はチェック結果をリセット
+    var factResult = document.getElementById('fact-result-' + productId);
+    if (factResult) factResult.style.display = 'none';
   }).catch(function(e) {
     statusEl.textContent = '❌ エラー: ' + e.message;
     statusEl.className = 'desc-status desc-status-error';
@@ -2992,6 +3014,50 @@ function applyOneDesc(productId, productName, btn) {
     statusEl.textContent = '❌ エラー: ' + e.message;
     statusEl.className = 'desc-status desc-status-error';
     btn.disabled = false; btn.textContent = '✅ 反映';
+  });
+}
+
+function factCheckOneDesc(productId, productName, categoryName, btn) {
+  var description = document.getElementById('desc-text-' + productId).value.trim();
+  if (!description) { showToast('先に説明文を生成してください', true); return; }
+  btn.disabled = true;
+  btn.textContent = '🔍 確認中...';
+  var resultEl = document.getElementById('fact-result-' + productId);
+  resultEl.style.display = 'none';
+
+  gasPostAsync({ action: 'factCheckDescription', productName: productName, categoryName: categoryName, description: description })
+  .then(function(res) {
+    btn.disabled = false; btn.textContent = '🔍 チェック';
+    if (!res.ok) {
+      resultEl.style.cssText = 'display:block;font-size:12px;margin-top:6px;padding:8px 10px;border-radius:6px;background:#fef2f2;border:1px solid #fecaca;color:#dc2626;';
+      resultEl.innerHTML = '❌ チェック失敗: ' + esc(res.error);
+      return;
+    }
+    var verdict     = res.verdict || 'warning';
+    var icon        = verdict === 'ok' ? '✅' : verdict === 'warning' ? '⚠️' : '❗';
+    var bgColor     = verdict === 'ok' ? '#f0fdf4' : verdict === 'warning' ? '#fffbeb' : '#fef2f2';
+    var borderColor = verdict === 'ok' ? '#bbf7d0' : verdict === 'warning' ? '#fde68a' : '#fecaca';
+    var textColor   = verdict === 'ok' ? '#166534' : verdict === 'warning' ? '#92400e' : '#dc2626';
+
+    var html = '<div style="font-weight:600;">' + icon + ' ' + esc(res.summary) + '</div>';
+    if (res.issues && res.issues.length) {
+      html += '<ul style="margin:6px 0 0 16px;padding:0;">' +
+        res.issues.map(function(issue) { return '<li>' + esc(issue) + '</li>'; }).join('') +
+        '</ul>';
+    }
+    if (res.sources && res.sources.length) {
+      html += '<div style="margin-top:6px;font-size:11px;color:#6b7280;">📎 参照元: ' +
+        res.sources.map(function(s) {
+          return '<a href="' + esc(s.uri) + '" target="_blank" rel="noopener" style="color:#0284c7;">' + esc(s.title) + '</a>';
+        }).join('、') + '</div>';
+    }
+    resultEl.style.cssText = 'display:block;font-size:12px;margin-top:6px;padding:8px 10px;border-radius:6px;' +
+      'background:' + bgColor + ';border:1px solid ' + borderColor + ';color:' + textColor + ';';
+    resultEl.innerHTML = html;
+  }).catch(function(e) {
+    btn.disabled = false; btn.textContent = '🔍 チェック';
+    resultEl.style.cssText = 'display:block;font-size:12px;margin-top:6px;padding:8px 10px;border-radius:6px;background:#fef2f2;border:1px solid #fecaca;color:#dc2626;';
+    resultEl.innerHTML = '❌ 通信エラー: ' + esc(e.message);
   });
 }
 
