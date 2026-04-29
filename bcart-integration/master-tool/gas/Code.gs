@@ -1793,7 +1793,10 @@ function getProductsForDescription() {
     category_id: String(p.category_id || ''),
     category_name: categoryMap[String(p.category_id)] || '',
     detail: p.description || '',
-    flag: p.flag || ''
+    flag: p.flag || '',
+    feature_id1: p.feature_id1 || null,
+    feature_id2: p.feature_id2 || null,
+    feature_id3: p.feature_id3 || null
   }));
 
   const noDetail  = allMapped.filter(p => !p.detail || p.detail.trim() === '').sort((a, b) => b.id - a.id);
