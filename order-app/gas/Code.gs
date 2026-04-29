@@ -15,7 +15,7 @@
 const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
-const VERSION         = 'v1.9.1';
+const VERSION         = 'v1.9.2';
 
 // Google Drive上の商品マスターCSVファイル名
 // ※ 同名ファイルが複数ある場合はファイルIDで指定（下記コメント参照）
@@ -867,10 +867,13 @@ function getOrderTemplate(makerKey) {
     return { success: false, error: '不明なメーカーキー: ' + makerKey };
   }
 
-  const folderId = _PROPS.getProperty('ORDER_TEMPLATE_FOLDER_ID');
+  let folderId = _PROPS.getProperty('ORDER_TEMPLATE_FOLDER_ID');
   if (!folderId) {
     return { success: false, error: 'ORDER_TEMPLATE_FOLDER_ID 未設定（GASスクリプトプロパティ）' };
   }
+  // URLが設定されていた場合もIDを正しく抽出
+  const m = folderId.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (m) folderId = m[1];
 
   try {
     const folder = DriveApp.getFolderById(folderId);
