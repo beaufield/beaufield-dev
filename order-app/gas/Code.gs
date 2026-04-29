@@ -15,7 +15,7 @@
 const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
-const VERSION         = 'v1.9.0';
+const VERSION         = 'v1.9.1';
 
 // Google Drive上の商品マスターCSVファイル名
 // ※ 同名ファイルが複数ある場合はファイルIDで指定（下記コメント参照）
@@ -36,10 +36,10 @@ const SHEET_REORDER   = '発注点マスター';
 // メーカー発注書テンプレート定義（Drive配信用）
 // スクリプトプロパティ ORDER_TEMPLATE_FOLDER_ID に Drive フォルダIDを設定すること
 const ORDER_TEMPLATES = {
-  'grandex':           'グランデックス.pdf',
-  'chiyoda':           '千代田化学.pdf',
-  'alpenrose':         'アルペンローゼhyumi専用発注書.pdf',
-  'melos':             'メロス発注書2026年4月～.pdf',
+  'grandex':           '54.pdf',
+  'chiyoda':           '48.pdf',
+  'alpenrose':         '57.pdf',
+  'melos':             '2.pdf',
   'melos_2025':        'メロス発注書2025年価格改定後.pdf',
   'adelans':           'アデランス発注書.pdf',
   'rhythm':            'リズム注文書2023冬～.pdf',
