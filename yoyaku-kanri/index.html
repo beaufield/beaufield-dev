@@ -280,6 +280,10 @@
     .bar-track { flex: 1; background: var(--border); border-radius: 4px; height: 18px; overflow: hidden; }
     .bar-fill  { background: var(--primary); height: 100%; border-radius: 4px; }
     .bar-val   { font-size: 13px; font-weight: 700; width: 36px; text-align: right; }
+    .bar-val-group { text-align: right; min-width: 90px; }
+    .bar-val-group .bar-val { width: auto; }
+    .bar-amt   { font-size: 11px; color: #6b7280; white-space: nowrap; margin-top: 1px; }
+    .cross-amt { font-size: 10px; color: #6b7280; font-weight: 400; }
 
     /* クロス集計 */
     .cross-table { overflow-x: auto; }
@@ -401,7 +405,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.14.3</span>
+  <span class="header-version">v1.15.0</span>
 </header>
 
 <!-- ============================================================ -->
@@ -608,6 +612,10 @@
     <div class="form-group">
       <label class="form-label">予約上限数（0 = 無制限）</label>
       <input type="number" id="productLimit" class="form-control" min="0" value="0">
+    </div>
+    <div class="form-group">
+      <label class="form-label">単価（円、0 = 未設定）</label>
+      <input type="number" id="productUnitPrice" class="form-control" min="0" value="0">
     </div>
     <div class="form-group">
       <label class="form-label">受付期限（空欄 = 無期限）</label>
@@ -1178,15 +1186,19 @@ function renderList() {
     return;
   }
 
-  // 「予約」ステータスの累計順位を reservation_no 昇順で計算
-  // 商品フィルタがある場合はその商品内での順位、なければ全体
-  const baseForRank = fpid
-    ? reservations.filter(r => r.product_id === fpid && r.status === '予約')
-    : reservations.filter(r => r.status === '予約');
-  baseForRank.sort((a, b) => a.reservation_no - b.reservation_no);
+  // 「予約」ステータスの累計順位を商品別・reservation_no 昇順で計算
+  // フィルタの有無に関わらず常に商品ごとに独立して累計する
   const rankMap = {};
-  let cumQty = 0;
-  baseForRank.forEach(r => { cumQty += r.quantity; rankMap[r.reservation_no] = cumQty; });
+  const yoyakuByProduct = {};
+  reservations.filter(r => r.status === '予約').forEach(r => {
+    if (!yoyakuByProduct[r.product_id]) yoyakuByProduct[r.product_id] = [];
+    yoyakuByProduct[r.product_id].push(r);
+  });
+  Object.values(yoyakuByProduct).forEach(pList => {
+    pList.sort((a, b) => a.reservation_no - b.reservation_no);
+    let cumQty = 0;
+    pList.forEach(r => { cumQty += r.quantity; rankMap[r.reservation_no] = cumQty; });
+  });
 
   // チェック可能件数をカウントして全選択ボタンを表示
   const checkableCount = list.filter(r =>
@@ -2249,6 +2261,10 @@ function renderStats() {
   // フィルタ適用済みデータ
   const filteredRows = filterPid ? reservations.filter(r => r.product_id === filterPid) : reservations;
 
+  // 商品単価マップ（product_id → unit_price）
+  const priceMap = {};
+  products.forEach(p => { priceMap[p.product_id] = p.unit_price || 0; });
+
   // ---- 商品別集計（全件・フィルタなし） ----
   const productMap = {};
   reservations.forEach(r => {
@@ -2259,21 +2275,27 @@ function renderStats() {
     productMap[pid].total += r.quantity;
     if (r.status === '確定') productMap[pid].confirmed += r.quantity;
   });
-  // 在庫上限・残数を products から補完
+  // 在庫上限・残数・単価を products から補完
   products.forEach(p => {
     if (productMap[p.product_id]) {
       productMap[p.product_id].stock_limit = p.stock_limit;
       productMap[p.product_id].remaining   = p.stock_limit > 0
         ? Math.max(0, p.stock_limit - productMap[p.product_id].total) : null;
+      productMap[p.product_id].unit_price  = p.unit_price || 0;
     }
   });
   const byProduct = Object.values(productMap).sort((a, b) => b.total - a.total);
 
-  // ---- 担当別集計（フィルタ適用） ----
+  // ---- 担当別集計（フィルタ適用・金額も集計） ----
   const staffMap = {};
   filteredRows.forEach(r => {
-    if (!staffMap[r.staff_id]) staffMap[r.staff_id] = { staff_id: r.staff_id, staff_name: r.staff_name, total: 0 };
+    const up = priceMap[r.product_id] || 0;
+    if (!staffMap[r.staff_id]) {
+      staffMap[r.staff_id] = { staff_id: r.staff_id, staff_name: r.staff_name, total: 0, yoyakuAmt: 0, confirmedAmt: 0 };
+    }
     staffMap[r.staff_id].total += r.quantity;
+    if (r.status === '予約') staffMap[r.staff_id].yoyakuAmt    += r.quantity * up;
+    if (r.status === '確定') staffMap[r.staff_id].confirmedAmt += r.quantity * up;
   });
   const byStaff = Object.values(staffMap).sort((a, b) => b.total - a.total);
 
@@ -2285,21 +2307,27 @@ function renderStats() {
   });
   const bySalon = Object.values(salonMap).sort((a, b) => b.total - a.total);
 
-  // ---- クロス集計（フィルタ適用） ----
-  const crossData = {};
+  // ---- クロス集計（フィルタ適用・金額も集計） ----
+  const crossData    = {};
+  const crossAmtData = {};
   const staffNamesMap = {};
   const salonNamesSet = {};
   filteredRows.forEach(r => {
+    const up = priceMap[r.product_id] || 0;
     staffNamesMap[r.staff_id] = r.staff_name;
     salonNamesSet[r.salon_name] = true;
-    if (!crossData[r.staff_id]) crossData[r.staff_id] = {};
-    crossData[r.staff_id][r.salon_name] = (crossData[r.staff_id][r.salon_name] || 0) + r.quantity;
+    if (!crossData[r.staff_id])    crossData[r.staff_id]    = {};
+    if (!crossAmtData[r.staff_id]) crossAmtData[r.staff_id] = {};
+    crossData[r.staff_id][r.salon_name]    = (crossData[r.staff_id][r.salon_name]    || 0) + r.quantity;
+    crossAmtData[r.staff_id][r.salon_name] = (crossAmtData[r.staff_id][r.salon_name] || 0) + r.quantity * up;
   });
   const staffList = Object.keys(staffNamesMap).map(id => ({ id, name: staffNamesMap[id] }));
   const salonList = Object.keys(salonNamesSet).sort();
 
   // ---- 描画 ----
-  // 商品別（クリックで選択・解除）
+  const fmtAmt = v => v > 0 ? '¥' + v.toLocaleString() : '—';
+
+  // 商品別テーブル（クリックで選択・解除）
   const prodEl = document.getElementById('statsProduct');
   if (!byProduct.length) {
     prodEl.innerHTML = '<p style="color:#9ca3af;font-size:13px">データなし</p>';
@@ -2310,38 +2338,57 @@ function renderStats() {
           <tr>
             <th>商品名</th>
             <th class="num">予約数</th>
+            <th class="num">予約金額</th>
             <th class="num">確定数</th>
+            <th class="num">確定金額</th>
             <th class="num">上限</th>
             <th class="num">残数</th>
           </tr>
         </thead>
         <tbody>
-          ${byProduct.map(p => `
+          ${byProduct.map(p => {
+            const up          = p.unit_price || 0;
+            const yoyakuQty   = p.total - p.confirmed;
+            const yoyakuAmt   = up > 0 ? fmtAmt(yoyakuQty   * up) : '—';
+            const confirmedAmt = up > 0 ? fmtAmt(p.confirmed * up) : '—';
+            return `
             <tr class="product-row${filterPid === p.product_id ? ' selected' : ''}"
                 onclick="selectStatsProduct('${esc(p.product_id)}', '${esc(p.product_name).replace(/'/g, "\\'")}')">
               <td>${esc(p.product_name)}</td>
-              <td class="num">${p.total}</td>
+              <td class="num">${yoyakuQty}</td>
+              <td class="num">${yoyakuAmt}</td>
               <td class="num">${p.confirmed}</td>
+              <td class="num">${confirmedAmt}</td>
               <td class="num">${p.stock_limit > 0 ? p.stock_limit : '—'}</td>
               <td class="num" style="color:${p.remaining !== null && p.remaining <= 5 ? 'var(--danger)' : 'inherit'}">
                 ${p.remaining !== null ? p.remaining : '—'}
               </td>
-            </tr>`).join('')}
+            </tr>`;
+          }).join('')}
         </tbody>
       </table>`;
   }
 
-  // 担当別バーグラフ
+  // 担当別バーグラフ（数量＋金額）
   const maxStaff = Math.max(...byStaff.map(s => s.total), 1);
+  const hasAmt   = byStaff.some(s => s.yoyakuAmt + s.confirmedAmt > 0);
   document.getElementById('statsStaff').innerHTML =
-    byStaff.map(s => `
+    byStaff.map(s => {
+      const amtHtml = hasAmt
+        ? `<div class="bar-amt">予約 ${fmtAmt(s.yoyakuAmt)} ／ 確定 ${fmtAmt(s.confirmedAmt)}</div>`
+        : '';
+      return `
       <div class="bar-row">
         <div class="bar-label" title="${esc(s.staff_name)}">${esc(s.staff_name)}</div>
         <div class="bar-track">
           <div class="bar-fill" style="width:${(s.total / maxStaff * 100).toFixed(1)}%"></div>
         </div>
-        <div class="bar-val">${s.total}</div>
-      </div>`).join('') || '<p style="color:#9ca3af;font-size:13px">データなし</p>';
+        <div class="bar-val-group">
+          <div class="bar-val">${s.total}個</div>
+          ${amtHtml}
+        </div>
+      </div>`;
+    }).join('') || '<p style="color:#9ca3af;font-size:13px">データなし</p>';
 
   // サロン別（上位20件）
   const top20    = bySalon.slice(0, 20);
@@ -2357,7 +2404,7 @@ function renderStats() {
       </div>`).join('') || '<p style="color:#9ca3af;font-size:13px">データなし</p>';
 
   // クロス集計
-  renderCrossTable({ staffList, salonList, data: crossData });
+  renderCrossTable({ staffList, salonList, data: crossData, amtData: crossAmtData });
 }
 
 function renderCrossTable(cross) {
@@ -2367,21 +2414,30 @@ function renderCrossTable(cross) {
     return;
   }
 
-  const { staffList, salonList, data } = cross;
+  const { staffList, salonList, data, amtData } = cross;
 
-  // 担当ごとの合計
-  const staffTotals = {};
+  // 担当ごとの合計（数量・金額）
+  const staffTotals    = {};
+  const staffAmtTotals = {};
   staffList.forEach(s => {
-    staffTotals[s.id] = salonList.reduce((sum, salon) => sum + (data[s.id]?.[salon] || 0), 0);
+    staffTotals[s.id]    = salonList.reduce((sum, salon) => sum + (data[s.id]?.[salon]    || 0), 0);
+    staffAmtTotals[s.id] = salonList.reduce((sum, salon) => sum + (amtData[s.id]?.[salon] || 0), 0);
   });
-  // サロンごとの合計
-  const salonTotals = {};
+  // サロンごとの合計（数量・金額）
+  const salonTotals    = {};
+  const salonAmtTotals = {};
   salonList.forEach(salon => {
-    salonTotals[salon] = staffList.reduce((sum, s) => sum + (data[s.id]?.[salon] || 0), 0);
+    salonTotals[salon]    = staffList.reduce((sum, s) => sum + (data[s.id]?.[salon]    || 0), 0);
+    salonAmtTotals[salon] = staffList.reduce((sum, s) => sum + (amtData[s.id]?.[salon] || 0), 0);
   });
-  const grandTotal = Object.values(staffTotals).reduce((s, v) => s + v, 0);
+  const grandTotal    = Object.values(staffTotals).reduce((s, v) => s + v, 0);
+  const grandAmtTotal = Object.values(staffAmtTotals).reduce((s, v) => s + v, 0);
 
-  // サロンを行・担当を列に配置（縦横を入れ替え）
+  // いずれかのセルで金額 > 0 のとき金額行を表示
+  const showAmt = grandAmtTotal > 0;
+  const amtLine = amt => showAmt && amt > 0 ? `<div class="cross-amt">¥${amt.toLocaleString()}</div>` : '';
+
+  // サロンを行・担当を列に配置
   let html = `<table>
     <tr>
       <th>サロン \\ 担当</th>
@@ -2393,17 +2449,20 @@ function renderCrossTable(cross) {
     html += `<tr>
       <td style="font-weight:700">${esc(salon)}</td>
       ${staffList.map(s => {
-        const v = data[s.id]?.[salon] || 0;
-        return `<td class="num" style="${v ? 'color:var(--primary);font-weight:600' : 'color:#d1d5db'}">${v || ''}</td>`;
+        const qty = data[s.id]?.[salon] || 0;
+        const amt = amtData[s.id]?.[salon] || 0;
+        return qty
+          ? `<td class="num" style="color:var(--primary);font-weight:600">${qty}${amtLine(amt)}</td>`
+          : `<td class="num" style="color:#d1d5db"></td>`;
       }).join('')}
-      <td class="num total-col">${salonTotals[salon]}</td>
+      <td class="num total-col">${salonTotals[salon]}${amtLine(salonAmtTotals[salon])}</td>
     </tr>`;
   });
 
   html += `<tr class="total-row">
     <td>合計</td>
-    ${staffList.map(s => `<td class="num">${staffTotals[s.id]}</td>`).join('')}
-    <td class="num grand-total">${grandTotal}</td>
+    ${staffList.map(s => `<td class="num">${staffTotals[s.id]}${amtLine(staffAmtTotals[s.id])}</td>`).join('')}
+    <td class="num grand-total">${grandTotal}${amtLine(grandAmtTotal)}</td>
   </tr></table>`;
 
   el.innerHTML = html;
@@ -2424,8 +2483,9 @@ function renderProducts() {
   }
 
   container.innerHTML = products.map(p => {
-    const limitStr   = p.stock_limit > 0 ? `上限 ${p.stock_limit}個` : '上限なし';
+    const limitStr    = p.stock_limit > 0 ? `上限 ${p.stock_limit}個` : '上限なし';
     const reservedStr = `予約済 ${p.reserved_total}個`;
+    const priceStr    = p.unit_price > 0 ? `単価 ${p.unit_price.toLocaleString()}円` : '単価未設定';
     const deadlineStr = p.deadline ? `期限: ${p.deadline}` : '期限なし';
 
     const statusBadge = !p.is_active
@@ -2453,7 +2513,7 @@ function renderProducts() {
           <div class="pc-name">${esc(p.name)}</div>
           ${statusBadge}
         </div>
-        <div class="pc-body">${limitStr} ／ ${reservedStr} ／ ${deadlineStr}</div>
+        <div class="pc-body">${limitStr} ／ ${reservedStr} ／ ${priceStr} ／ ${deadlineStr}</div>
         ${barHtml}
         <div class="pc-footer">
           <button class="btn btn-gray btn-sm" onclick="openProductModal('${p.product_id}')">編集</button>
@@ -2471,16 +2531,18 @@ function openProductModal(productId) {
     const p = products.find(x => x.product_id === productId);
     if (!p) return;
     document.getElementById('productModalTitle').textContent = '商品を編集';
-    document.getElementById('productModalId').value   = p.product_id;
-    document.getElementById('productName').value      = p.name;
-    document.getElementById('productLimit').value     = p.stock_limit;
-    document.getElementById('productDeadline').value  = p.deadline || '';
+    document.getElementById('productModalId').value       = p.product_id;
+    document.getElementById('productName').value          = p.name;
+    document.getElementById('productLimit').value         = p.stock_limit;
+    document.getElementById('productUnitPrice').value     = p.unit_price || 0;
+    document.getElementById('productDeadline').value      = p.deadline || '';
   } else {
     document.getElementById('productModalTitle').textContent = '商品を追加';
-    document.getElementById('productModalId').value   = '';
-    document.getElementById('productName').value      = '';
-    document.getElementById('productLimit').value     = '0';
-    document.getElementById('productDeadline').value  = '';
+    document.getElementById('productModalId').value       = '';
+    document.getElementById('productName').value          = '';
+    document.getElementById('productLimit').value         = '0';
+    document.getElementById('productUnitPrice').value     = '0';
+    document.getElementById('productDeadline').value      = '';
   }
   openModal('productModal');
 }
@@ -2489,6 +2551,7 @@ async function saveProduct() {
   const productId = document.getElementById('productModalId').value;
   const name      = document.getElementById('productName').value.trim();
   const limit     = Number(document.getElementById('productLimit').value) || 0;
+  const unitPrice = Number(document.getElementById('productUnitPrice').value) || 0;
   const deadline  = document.getElementById('productDeadline').value;
 
   if (!name) { showToast('商品名は必須です', 'error'); return; }
@@ -2497,7 +2560,7 @@ async function saveProduct() {
   try {
     const res = await gasPost('saveProduct', {
       product_id: productId || undefined,
-      name, stock_limit: limit, deadline, is_active: true
+      name, stock_limit: limit, unit_price: unitPrice, deadline, is_active: true
     });
     if (!res.success) throw new Error(res.error);
     closeModal('productModal');
