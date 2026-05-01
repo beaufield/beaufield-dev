@@ -10,7 +10,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.8.1';
+const VERSION  = '1.9.0';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -274,8 +274,8 @@ function setupSheets() {
   let ps = ss.getSheetByName(SHEET_PRODUCTS);
   if (!ps) {
     ps = ss.insertSheet(SHEET_PRODUCTS);
-    ps.getRange(1, 1, 1, 6).setValues([[
-      'product_id', 'name', 'stock_limit', 'deadline', 'is_active', 'created_at'
+    ps.getRange(1, 1, 1, 7).setValues([[
+      'product_id', 'name', 'stock_limit', 'deadline', 'is_active', 'created_at', 'unit_price'
     ]]);
     ps.setFrozenRows(1);
     ps.setColumnWidth(1, 160);
@@ -316,7 +316,9 @@ function _getProductsFromSS(ss) {
   const ps = ss.getSheetByName(SHEET_PRODUCTS);
   if (!ps || ps.getLastRow() < 2) return [];
 
-  const pRows    = ps.getRange(2, 1, ps.getLastRow() - 1, 6).getValues();
+  // 7列目（unit_price）が存在しない既存シートでも空文字で返るため後方互換性あり
+  const numCols  = Math.min(ps.getLastColumn(), 7);
+  const pRows    = ps.getRange(2, 1, ps.getLastRow() - 1, numCols).getValues();
   const todayStr = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
 
   return pRows
@@ -340,7 +342,8 @@ function _getProductsFromSS(ss) {
         deadline:       deadline,
         is_active:      isActive,
         is_expired:     !!isExpired,
-        created_at:     r[5] ? String(r[5]) : ''
+        created_at:     r[5] ? String(r[5]) : '',
+        unit_price:     Number(r[6]) || 0  // 7列目。既存シートで列がない場合は0
       };
     });
 }
@@ -367,20 +370,24 @@ function saveProduct(data) {
   const stockLimit = Number(data.stock_limit) || 0;
   const deadline   = data.deadline || '';
   const isActive   = data.is_active !== false;
+  const unitPrice  = Number(data.unit_price) || 0;
 
   if (data.product_id) {
     if (!ps || ps.getLastRow() < 2) return _err('商品が見つかりません');
     const rows = ps.getRange(2, 1, ps.getLastRow() - 1, 1).getValues();
     for (let i = 0; i < rows.length; i++) {
       if (String(rows[i][0]) === String(data.product_id)) {
+        // cols 2-5: name, stock_limit, deadline, is_active
         ps.getRange(i + 2, 2, 1, 4).setValues([[name, stockLimit, deadline, isActive]]);
+        // col 7: unit_price（列が存在しない場合も setValues で自動拡張される）
+        ps.getRange(i + 2, 7).setValue(unitPrice);
         return _ok({ product_id: data.product_id, message: '更新しました' });
       }
     }
     return _err('商品が見つかりません');
   } else {
     const newId = 'P' + new Date().getTime();
-    ps.appendRow([newId, name, stockLimit, deadline, isActive, _now()]);
+    ps.appendRow([newId, name, stockLimit, deadline, isActive, _now(), unitPrice]);
     return _ok({ product_id: newId, message: '登録しました' });
   }
 }
