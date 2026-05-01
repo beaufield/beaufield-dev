@@ -405,7 +405,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.15.0</span>
+  <span class="header-version">v1.16.0</span>
 </header>
 
 <!-- ============================================================ -->
@@ -501,7 +501,15 @@
 <!-- 集計タブ（事務のみ）                                          -->
 <!-- ============================================================ -->
 <div id="tab-stats" class="tab content">
-  <div class="section-title">📦 商品別予約数</div>
+  <div class="filter-row" style="margin-bottom:6px">
+    <select id="statsStatusSel" onchange="onStatsStatusChange()">
+      <option value="予約" selected>予約のみ</option>
+      <option value="確定">確定のみ</option>
+      <option value="all">両方</option>
+    </select>
+  </div>
+
+  <div class="section-title">📦 商品別集計</div>
   <div class="card" id="statsProduct"></div>
 
   <div id="statsProductFilter">
@@ -2224,8 +2232,14 @@ function printShipping() {
 // ③ 集計：GAS呼び出し廃止 → reservations/products のローカルデータから計算
 // ============================================================
 
-// 商品フィルタ状態（product_id | ''）
-let statsProductFilter = '';
+// 集計タブフィルタ状態
+let statsProductFilter = '';   // product_id | ''
+let statsStatusFilter  = '予約'; // '予約' | '確定' | 'all'
+
+function onStatsStatusChange() {
+  statsStatusFilter = document.getElementById('statsStatusSel').value;
+  renderStats();
+}
 
 function selectStatsProduct(pid, name) {
   // 同じ行を再クリックで解除
@@ -2258,16 +2272,21 @@ function renderStats() {
     banner.classList.remove('show');
   }
 
-  // フィルタ適用済みデータ
-  const filteredRows = filterPid ? reservations.filter(r => r.product_id === filterPid) : reservations;
+  // ステータスフィルタを適用した基底データ
+  const baseRows = statsStatusFilter === 'all'
+    ? reservations
+    : reservations.filter(r => r.status === statsStatusFilter);
+
+  // 商品フィルタをさらに適用
+  const filteredRows = filterPid ? baseRows.filter(r => r.product_id === filterPid) : baseRows;
 
   // 商品単価マップ（product_id → unit_price）
   const priceMap = {};
   products.forEach(p => { priceMap[p.product_id] = p.unit_price || 0; });
 
-  // ---- 商品別集計（全件・フィルタなし） ----
+  // ---- 商品別集計（ステータスフィルタ適用・商品フィルタなし） ----
   const productMap = {};
-  reservations.forEach(r => {
+  baseRows.forEach(r => {
     const pid = r.product_id;
     if (!productMap[pid]) {
       productMap[pid] = { product_id: pid, product_name: r.product_name, total: 0, confirmed: 0 };
@@ -2430,6 +2449,8 @@ function renderCrossTable(cross) {
     salonTotals[salon]    = staffList.reduce((sum, s) => sum + (data[s.id]?.[salon]    || 0), 0);
     salonAmtTotals[salon] = staffList.reduce((sum, s) => sum + (amtData[s.id]?.[salon] || 0), 0);
   });
+  // 合計数量の降順でサロン行をソート
+  salonList.sort((a, b) => salonTotals[b] - salonTotals[a]);
   const grandTotal    = Object.values(staffTotals).reduce((s, v) => s + v, 0);
   const grandAmtTotal = Object.values(staffAmtTotals).reduce((s, v) => s + v, 0);
 
