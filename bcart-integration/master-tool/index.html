@@ -244,7 +244,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.6.0</span>
+    <span class="version">HTML v2.6.1</span>
   </div>
 
   <div class="tabs">
@@ -395,14 +395,13 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <!-- タブ7: 説明文生成 -->
     <div class="tab-panel" id="tab-description">
       <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:16px;">
-        <p style="font-size:13px;color:#374151;margin-bottom:8px;">Gemini AI（無料）が商品説明文を自動生成します。生成後に内容を確認・修正してからBCARTに反映してください。</p>
-        <p style="font-size:12px;color:#6b7280;margin-bottom:10px;">※ 事前にGASスクリプトプロパティに <code>GEMINI_API_KEY</code> を設定してください。</p>
+        <p style="font-size:13px;color:#374151;margin-bottom:8px;">Gemini AIが商品説明文を自動生成します。生成後に内容を確認・修正してからBCARTに反映してください。</p>
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;padding:10px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;flex-wrap:wrap;">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:600;color:#0369a1;white-space:nowrap;">
             <input type="checkbox" id="descSearchToggle" checked style="width:15px;height:15px;cursor:pointer;accent-color:#0284c7;">
             🔍 Web検索グラウンディング
           </label>
-          <span style="font-size:12px;color:#6b7280;">ONのとき、AIが実際にWeb検索して正確な情報をもとに説明文を生成します（無料枠あり・上限超えの場合はOFFに切り替えてください）。</span>
+          <span style="font-size:12px;color:#6b7280;">ONのとき、AIが実際にWeb検索して正確な情報をもとに説明文を生成します（使用上限超えの場合はOFFに切り替えてください）。</span>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <button class="btn btn-primary" id="descLoadBtn" onclick="loadProductsForDescription()">📦 説明文なし商品を取得</button>
@@ -1484,41 +1483,40 @@ function normalizeText(str) {
 function searchStock() {
   const rawQuery = document.getElementById('stockQuery').value.trim();
   if (!rawQuery) return;
-  const query = normalizeText(rawQuery);
-
-  const found = allDiffs.filter(d =>
-    normalizeText(d.code).includes(query) || (d.name && normalizeText(d.name).includes(query))
-  );
-
   const container = document.getElementById('stockResult');
-  if (found.length === 0) {
-    container.innerHTML =
-      '<div class="stock-result">' +
-      '<div style="color:#6b7280;font-size:13px;margin-bottom:10px;">差異リストにない商品コードでも直接設定できます。</div>' +
-      '<div style="display:flex;gap:8px;align-items:center;">' +
-      '<strong>' + esc(rawQuery) + '</strong>' +
-      '<button class="btn btn-danger btn-sm" onclick="setStock(\'' + esc(rawQuery) + '\',0,this)">🚫 欠品（在庫0）</button>' +
-      '<button class="btn btn-success btn-sm" onclick="setStock(\'' + esc(rawQuery) + '\',1,this)">✅ 在庫あり（在庫1）</button>' +
-      '</div></div>';
-    return;
-  }
+  container.innerHTML = '<div class="loading"><div class="spinner"></div><div>BCART商品を検索中...</div></div>';
 
-  container.innerHTML = found.map(d =>
-    '<div class="stock-result">' +
-    '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">' +
-    '<div><span style="font-family:monospace;font-size:12px;color:#6b7280;">' + esc(d.code) + '</span> <strong>' + esc(d.name) + '</strong></div>' +
-    '<div style="display:flex;gap:8px;">' +
-    '<button class="btn btn-danger btn-sm" onclick="setStock(\'' + esc(d.code) + '\',0,this)">🚫 欠品（在庫0）</button>' +
-    '<button class="btn btn-success btn-sm" onclick="setStock(\'' + esc(d.code) + '\',1,this)">✅ 在庫あり（在庫1）</button>' +
-    '</div></div></div>'
-  ).join('');
+  gasPost({ action: 'searchProducts', keyword: rawQuery }, function(res) {
+    if (!res.ok) {
+      container.innerHTML = '';
+      showToast('エラー: ' + res.error, true);
+      return;
+    }
+    const found = res.products || [];
+    if (found.length === 0) {
+      container.innerHTML =
+        '<div class="stock-result">' +
+        '<div style="color:#6b7280;font-size:13px;">「' + esc(rawQuery) + '」に一致する商品はBCARTに見つかりませんでした。</div>' +
+        '</div>';
+      return;
+    }
+    container.innerHTML = found.map(p =>
+      '<div class="stock-result">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">' +
+      '<div><span style="font-family:monospace;font-size:12px;color:#6b7280;">' + esc(p.product_no) + '</span> <strong>' + esc(p.name) + '</strong></div>' +
+      '<div style="display:flex;gap:8px;">' +
+      '<button class="btn btn-danger btn-sm" onclick="setStock(\'' + esc(p.product_no) + '\',0,this,\'' + esc(p.name) + '\')">🚫 欠品（在庫0）</button>' +
+      '<button class="btn btn-success btn-sm" onclick="setStock(\'' + esc(p.product_no) + '\',1,this,\'' + esc(p.name) + '\')">✅ 在庫あり（在庫1）</button>' +
+      '</div></div></div>'
+    ).join('');
+  });
 }
 
-function setStock(productNo, stock, btn) {
+function setStock(productNo, stock, btn, name) {
   const label = stock === 0 ? '欠品（在庫0）' : '在庫あり（在庫1）';
   if (!confirm(productNo + ' を ' + label + ' に設定しますか？')) return;
   btn.disabled = true;
-  gasPost({ action: 'setStock', productNo: productNo, stock: stock }, function(res) {
+  gasPost({ action: 'setStock', productNo: productNo, stock: stock, name: name || '' }, function(res) {
     btn.disabled = false;
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
     showToast(productNo + ' を ' + label + ' に設定しました');
@@ -2884,7 +2882,20 @@ function loadProductsForDescription() {
     document.getElementById('descProductCount').textContent =
       '説明文なし: ' + res.products.length + '件 ／ 全' + res.total + '件（説明文あり: ' + res.withDetail + '件）';
     document.getElementById('descFeatureFilterRow').style.display = 'flex';
-    document.getElementById('descFeatureFilter').value = '';
+    // 一覧にある商品の特集IDからドロップダウンを再構築
+    var fids = {};
+    descAllProducts.forEach(function(p) {
+      [p.feature_id1, p.feature_id2, p.feature_id3].forEach(function(fid) { if (fid) fids[fid] = true; });
+    });
+    var fnMap = {};
+    descFeatureList.forEach(function(f) { fnMap[String(f.id)] = f.name; });
+    var descSel = document.getElementById('descFeatureFilter');
+    descSel.innerHTML = '<option value="">すべて表示</option>' +
+      Object.keys(fids).map(Number).sort(function(a,b){return a-b;}).map(function(id) {
+        var n = fnMap[String(id)] || ('特集' + id);
+        return '<option value="' + id + '">' + esc(n) + '</option>';
+      }).join('');
+    descSel.value = '';
     renderDescProductList(descAllProducts);
   }).catch(function(e) {
     btn.disabled = false;

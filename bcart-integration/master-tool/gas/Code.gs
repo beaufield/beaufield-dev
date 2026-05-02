@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.4.1';
+const VERSION = 'v2.4.2';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -446,7 +446,7 @@ function bcartGetAll(path) {
       if (parsed.message || parsed.error) {
         return { ok: false, error: 'BCART_API_ERROR: ' + (parsed.message || parsed.error) };
       }
-      const page = parsed.data || parsed.product_sets || parsed.products || parsed.specials || parsed.product_stock || parsed.categories || parsed;
+      const page = parsed.data || parsed.product_sets || parsed.products || parsed.specials || parsed.product_stock || parsed.categories || parsed.product_features || parsed.features || parsed;
       if (!Array.isArray(page) || page.length === 0) break;
       allData.push(...page);
       if (page.length < limit) break;
@@ -799,7 +799,7 @@ function getSpecials() {
   const endpoints = ['/product_features', '/features'];
   for (const ep of endpoints) {
     try {
-      const res = bcartGet(ep);
+      const res = bcartGetAll(ep);
       if (res.ok && res.data) {
         const raw = res.data;
         const list = raw.product_features || raw.features || raw.data || (Array.isArray(raw) ? raw : []);
