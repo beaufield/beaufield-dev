@@ -505,7 +505,7 @@
     <select id="statsStatusSel" onchange="onStatsStatusChange()">
       <option value="予約" selected>予約のみ</option>
       <option value="確定">確定のみ</option>
-      <option value="all">両方</option>
+      <option value="all">すべて</option>
     </select>
   </div>
 
@@ -1277,8 +1277,8 @@ function renderList() {
     const cardClick = canEdit ? `onclick="openEditModal(${r.reservation_no})"` : '';
     const cardEditable = canEdit ? 'editable' : '';
 
-    const notesRow = r.notes
-      ? `<div class="rc-notes">📝 ${esc(r.notes)}</div>` : '';
+    const notesInline = r.notes
+      ? `<span class="rc-notes" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:0;padding:1px 4px">📝 ${esc(r.notes)}</span>` : '';
 
     return `
       <div class="reservation-card status-${esc(r.status)} ${cardEditable}" ${cardClick}>
@@ -1296,9 +1296,9 @@ function renderList() {
         <div class="rc-row3">
           <span class="rc-staff">👤 ${esc(displayName)}${operatorNote}</span>
           ${delivBadge}
+          ${notesInline}
           <span class="rc-date">${dateStr}</span>
         </div>
-        ${notesRow}
       </div>`;
   }).join('');
 
