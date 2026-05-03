@@ -201,7 +201,7 @@
 
 <header>
   <h1>💰 経費事前申請</h1>
-  <span class="version">v1.2.0</span>
+  <span class="version">v1.4.0</span>
 </header>
 
 <div class="tab-bar">
@@ -347,7 +347,7 @@
   </div>
 </div>
 
-<footer>経費事前申請 v1.2.0 | Beaufield</footer>
+<footer>経費事前申請 v1.4.0 | Beaufield</footer>
 
 <script>
   const GAS_URL    = 'https://script.google.com/macros/s/AKfycbyi1oZ3MLdVflBnjkwzwTC9edeRRQM3TTqcw5zkMzpDZp9e5F1TwMH9ApyK_iuJDC1DDQ/exec';
@@ -407,9 +407,11 @@
         buildNameFilter();
         applyFilters();
       })
-      .catch(() => {
+      .catch(err => {
+        console.error('申請一覧 取得エラー:', err);
+        const msg = (err && err.message) ? err.message : '不明なエラー';
         document.getElementById('req-tbody').innerHTML =
-          '<tr><td colspan="11" class="list-error">データの取得に失敗しました。再度タブを開き直してください。</td></tr>';
+          '<tr><td colspan="11" class="list-error">データの取得に失敗しました。<br><small style="color:#999">' + esc(msg) + '</small></td></tr>';
       });
   }
 
