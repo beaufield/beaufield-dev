@@ -27,13 +27,34 @@
     header h1 { font-size: 18px; font-weight: bold; }
     header .version { font-size: 11px; opacity: 0.7; margin-left: auto; }
 
-    main {
-      flex: 1;
-      max-width: 600px;
-      width: 100%;
-      margin: 24px auto;
+    /* タブバー */
+    .tab-bar {
+      background: #fff;
+      border-bottom: 1px solid #ddd;
+      display: flex;
       padding: 0 16px;
     }
+    .tab-btn {
+      padding: 12px 20px;
+      border: none;
+      background: none;
+      font-size: 14px;
+      font-weight: 600;
+      color: #888;
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      transition: all 0.2s;
+    }
+    .tab-btn.active { color: #1a73e8; border-bottom-color: #1a73e8; }
+    .tab-btn:hover  { color: #1a73e8; }
+
+    main {
+      flex: 1;
+      width: 100%;
+      padding: 24px 16px;
+    }
+
+    #form-view, #success-view { max-width: 600px; margin: 0 auto; }
 
     .card {
       background: #fff;
@@ -42,6 +63,7 @@
       box-shadow: 0 1px 4px rgba(0,0,0,0.12);
     }
 
+    /* ── フォーム ── */
     .field { margin-bottom: 20px; }
     .field label {
       display: block;
@@ -50,14 +72,8 @@
       color: #555;
       margin-bottom: 6px;
     }
-    .field label .required {
-      color: #e53935;
-      margin-left: 4px;
-    }
-
-    .field input,
-    .field select,
-    .field textarea {
+    .field label .required { color: #e53935; margin-left: 4px; }
+    .field input, .field select, .field textarea {
       width: 100%;
       padding: 10px 12px;
       border: 1px solid #ddd;
@@ -66,23 +82,13 @@
       font-family: inherit;
       transition: border-color 0.2s;
     }
-    .field input:focus,
-    .field select:focus,
-    .field textarea:focus {
+    .field input:focus, .field select:focus, .field textarea:focus {
       outline: none;
       border-color: #1a73e8;
     }
-    .field input[readonly] {
-      background: #f8f8f8;
-      color: #666;
-    }
+    .field input[readonly] { background: #f8f8f8; color: #666; }
     .field textarea { resize: vertical; min-height: 80px; }
-
-    .field .hint {
-      font-size: 12px;
-      color: #888;
-      margin-top: 4px;
-    }
+    .field .hint { font-size: 12px; color: #888; margin-top: 4px; }
 
     .btn-submit {
       width: 100%;
@@ -97,14 +103,13 @@
       margin-top: 8px;
       transition: background 0.2s;
     }
-    .btn-submit:hover { background: #1558b0; }
+    .btn-submit:hover    { background: #1558b0; }
     .btn-submit:disabled { background: #aaa; cursor: not-allowed; }
 
-    /* 完了画面 */
     #success-view { display: none; text-align: center; padding: 32px 16px; }
     #success-view .icon { font-size: 56px; margin-bottom: 16px; }
     #success-view h2 { font-size: 20px; margin-bottom: 8px; color: #1a73e8; }
-    #success-view p { color: #666; font-size: 14px; line-height: 1.6; }
+    #success-view p  { color: #666; font-size: 14px; line-height: 1.6; }
     .btn-back {
       display: inline-block;
       margin-top: 24px;
@@ -114,12 +119,10 @@
       border-radius: 6px;
       font-size: 14px;
       cursor: pointer;
-      text-decoration: none;
       color: #333;
     }
     .btn-back:hover { background: #e0e0e0; }
 
-    /* エラー表示 */
     #error-msg {
       display: none;
       background: #fdecea;
@@ -131,20 +134,90 @@
       margin-bottom: 16px;
     }
 
-    footer {
-      text-align: center;
-      padding: 16px;
-      font-size: 11px;
-      color: #aaa;
+    /* ── 申請一覧 ── */
+    #list-view { display: none; max-width: 1100px; margin: 0 auto; }
+
+    .filter-card { margin-bottom: 16px; padding: 16px 20px; }
+    .filter-title { font-size: 13px; font-weight: bold; color: #555; margin-bottom: 12px; }
+    .filter-row   { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+    .filter-group { display: flex; flex-direction: column; gap: 4px; }
+    .filter-group label { font-size: 11px; font-weight: bold; color: #888; }
+    .filter-group select,
+    .filter-group input[type="date"] {
+      padding: 7px 10px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: inherit;
+      background: #fff;
+      min-width: 120px;
     }
+    .filter-group select:focus,
+    .filter-group input[type="date"]:focus { outline: none; border-color: #1a73e8; }
+
+    .btn-reset {
+      padding: 7px 16px;
+      background: #f0f0f0;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      color: #555;
+      align-self: flex-end;
+    }
+    .btn-reset:hover { background: #e0e0e0; }
+
+    .list-meta { font-size: 12px; color: #888; margin-bottom: 10px; }
+
+    .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 720px; }
+    thead th {
+      background: #f8f9fa;
+      padding: 10px 12px;
+      text-align: left;
+      font-weight: bold;
+      color: #555;
+      border-bottom: 2px solid #e0e0e0;
+      white-space: nowrap;
+    }
+    tbody td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
+    tbody tr:hover { background: #f9fbff; }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .purpose-cell {
+      max-width: 200px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: pointer;
+    }
+    .purpose-cell.expanded { white-space: pre-wrap; word-break: break-all; }
+    .comment-cell { max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .amount-cell  { text-align: right; white-space: nowrap; }
+
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; white-space: nowrap; }
+    .badge-申請中 { background: #fff3cd; color: #856404; }
+    .badge-承認   { background: #d1f0d1; color: #155724; }
+    .badge-却下   { background: #fde8e8; color: #721c24; }
+    .badge-other  { background: #e8e8e8; color: #555; }
+
+    .list-loading, .list-error, .list-empty { text-align: center; padding: 40px 0; color: #888; font-size: 14px; }
+    .list-error { color: #c62828; }
+
+    footer { text-align: center; padding: 16px; font-size: 11px; color: #aaa; }
   </style>
 </head>
 <body>
 
 <header>
   <h1>💰 経費事前申請</h1>
-  <span class="version">v1.0.1</span>
+  <span class="version">v1.1.0</span>
 </header>
+
+<div class="tab-bar">
+  <button class="tab-btn active" id="tab-form" onclick="switchTab('form')">申請する</button>
+  <button class="tab-btn"        id="tab-list" onclick="switchTab('list')">申請一覧</button>
+</div>
 
 <main>
   <!-- 申請フォーム -->
@@ -193,36 +266,200 @@
     <p>承認者に通知を送りました。<br>結果は LINE WORKS でお知らせします。</p>
     <button class="btn-back" onclick="resetForm()">もう一度申請する</button>
   </div>
+
+  <!-- 申請一覧 -->
+  <div id="list-view">
+    <div class="card filter-card">
+      <div class="filter-title">絞り込み</div>
+      <div class="filter-row">
+        <div class="filter-group">
+          <label>申請者</label>
+          <select id="f-name" onchange="applyFilters()"><option value="">すべて</option></select>
+        </div>
+        <div class="filter-group">
+          <label>経費種別</label>
+          <select id="f-type" onchange="applyFilters()">
+            <option value="">すべて</option>
+            <option value="交通費">交通費</option>
+            <option value="接待費">接待費</option>
+            <option value="消耗品">消耗品</option>
+            <option value="その他">その他</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>ステータス</label>
+          <select id="f-status" onchange="applyFilters()">
+            <option value="">すべて</option>
+            <option value="申請中">申請中</option>
+            <option value="承認">承認</option>
+            <option value="却下">却下</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>申請日（From）</label>
+          <input type="date" id="f-from" onchange="applyFilters()">
+        </div>
+        <div class="filter-group">
+          <label>申請日（To）</label>
+          <input type="date" id="f-to" onchange="applyFilters()">
+        </div>
+        <button class="btn-reset" onclick="resetFilters()">リセット</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="list-meta" id="list-meta"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>申請日</th>
+              <th>申請者</th>
+              <th>種別</th>
+              <th>使用目的</th>
+              <th>予定日</th>
+              <th>予定額（円）</th>
+              <th>ステータス</th>
+              <th>承認者</th>
+              <th>コメント</th>
+            </tr>
+          </thead>
+          <tbody id="req-tbody">
+            <tr><td colspan="9" class="list-loading">読み込み中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </main>
 
-<footer>経費事前申請 v1.0.1 | Beaufield</footer>
+<footer>経費事前申請 v1.1.0 | Beaufield</footer>
 
 <script>
-  // ===== 設定 =====
   const GAS_URL    = 'https://script.google.com/macros/s/AKfycbyi1oZ3MLdVflBnjkwzwTC9edeRRQM3TTqcw5zkMzpDZp9e5F1TwMH9ApyK_iuJDC1DDQ/exec';
   const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 
+  let session     = null;
+  let formState   = 'form';
+  let allRequests = [];
+  let listLoaded  = false;
+
   // ===== 初期化 =====
-  let session = null;
-
   window.onload = function () {
-    try {
-      session = JSON.parse(localStorage.getItem('bf_session'));
-    } catch (e) {
-      session = null;
-    }
-
+    try { session = JSON.parse(localStorage.getItem('bf_session')); } catch (e) { session = null; }
     if (!session || !session.user_id || new Date(session.expires) < new Date()) {
       location.href = PORTAL_URL;
       return;
     }
-
     document.getElementById('applicant-name').value = session.name || '';
-
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
     document.getElementById('use-date').value = tomorrow.toISOString().split('T')[0];
   };
+
+  // ===== タブ切り替え =====
+  function switchTab(tab) {
+    document.getElementById('tab-form').classList.toggle('active', tab === 'form');
+    document.getElementById('tab-list').classList.toggle('active', tab === 'list');
+
+    if (tab === 'form') {
+      document.getElementById('form-view').style.display    = formState === 'form'    ? '' : 'none';
+      document.getElementById('success-view').style.display = formState === 'success' ? '' : 'none';
+      document.getElementById('list-view').style.display    = 'none';
+    } else {
+      document.getElementById('form-view').style.display    = 'none';
+      document.getElementById('success-view').style.display = 'none';
+      document.getElementById('list-view').style.display    = 'block';
+      if (!listLoaded) loadRequestList();
+    }
+  }
+
+  // ===== 一覧データ取得 =====
+  function loadRequestList() {
+    document.getElementById('req-tbody').innerHTML =
+      '<tr><td colspan="9" class="list-loading">読み込み中...</td></tr>';
+    document.getElementById('list-meta').textContent = '';
+
+    fetch(GAS_URL + '?type=list')
+      .then(r => r.json())
+      .then(data => {
+        if (!data.ok) throw new Error(data.error || '取得失敗');
+        allRequests = data.requests || [];
+        listLoaded  = true;
+        buildNameFilter();
+        applyFilters();
+      })
+      .catch(() => {
+        document.getElementById('req-tbody').innerHTML =
+          '<tr><td colspan="9" class="list-error">データの取得に失敗しました。再度タブを開き直してください。</td></tr>';
+      });
+  }
+
+  function buildNameFilter() {
+    const sel   = document.getElementById('f-name');
+    const cur   = sel.value;
+    const names = [...new Set(allRequests.map(r => r.name).filter(Boolean))].sort();
+    sel.innerHTML = '<option value="">すべて</option>' +
+      names.map(n => `<option value="${esc(n)}"${n === cur ? ' selected' : ''}>${esc(n)}</option>`).join('');
+  }
+
+  // ===== フィルター適用 =====
+  function applyFilters() {
+    const fName   = document.getElementById('f-name').value;
+    const fType   = document.getElementById('f-type').value;
+    const fStatus = document.getElementById('f-status').value;
+    const fFrom   = document.getElementById('f-from').value;
+    const fTo     = document.getElementById('f-to').value;
+
+    const filtered = allRequests.filter(r => {
+      if (fName   && r.name        !== fName)   return false;
+      if (fType   && r.expenseType !== fType)   return false;
+      if (fStatus && r.status      !== fStatus) return false;
+      if (fFrom || fTo) {
+        const d = r.applyDate ? r.applyDate.substring(0, 10) : '';
+        if (fFrom && d && d < fFrom) return false;
+        if (fTo   && d && d > fTo)   return false;
+      }
+      return true;
+    });
+
+    renderTable(filtered);
+    document.getElementById('list-meta').textContent =
+      filtered.length + ' 件' +
+      (filtered.length < allRequests.length ? '（全 ' + allRequests.length + ' 件中）' : '');
+  }
+
+  function resetFilters() {
+    ['f-name','f-type','f-status','f-from','f-to'].forEach(id => {
+      document.getElementById(id).value = '';
+    });
+    applyFilters();
+  }
+
+  // ===== テーブル描画 =====
+  function renderTable(list) {
+    const tbody = document.getElementById('req-tbody');
+    if (!list.length) {
+      tbody.innerHTML = '<tr><td colspan="9" class="list-empty">該当する申請がありません</td></tr>';
+      return;
+    }
+    tbody.innerHTML = list.map(r => {
+      const badgeClass = ['申請中','承認','却下'].includes(r.status) ? 'badge-' + r.status : 'badge-other';
+      const amount     = r.amount ? Number(r.amount).toLocaleString() : '—';
+      const applyDate  = r.applyDate ? r.applyDate.substring(0, 10) : '—';
+      return `<tr>
+        <td style="white-space:nowrap">${esc(applyDate)}</td>
+        <td style="white-space:nowrap">${esc(r.name || '—')}</td>
+        <td style="white-space:nowrap">${esc(r.expenseType || '—')}</td>
+        <td class="purpose-cell" title="${esc(r.purpose || '')}" onclick="this.classList.toggle('expanded')">${esc(r.purpose || '—')}</td>
+        <td style="white-space:nowrap">${esc(r.useDate || '—')}</td>
+        <td class="amount-cell">${amount}</td>
+        <td><span class="badge ${badgeClass}">${esc(r.status || '—')}</span></td>
+        <td style="white-space:nowrap">${esc(r.approverName || '—')}</td>
+        <td class="comment-cell" title="${esc(r.comment || '')}">${esc(r.comment || '—')}</td>
+      </tr>`;
+    }).join('');
+  }
 
   // ===== フォーム送信 =====
   function submitForm() {
@@ -238,57 +475,59 @@
 
     hideError();
     const btn = document.getElementById('btn-submit');
-    btn.disabled = true;
+    btn.disabled    = true;
     btn.textContent = '送信中...';
 
-    const payload = {
-      user_id     : session.user_id,
-      name        : session.name,
-      expense_type: expenseType,
-      purpose     : purpose,
-      use_date    : useDate,
-      amount      : Number(amount)
-    };
-
-    // GAS は外部オリジンからの CORS に対応していないため no-cors で送信
-    // レスポンスは読めないが、リクエストは GAS に届いて処理される
     fetch(GAS_URL + '?type=form', {
-      method     : 'POST',
-      mode       : 'no-cors',
-      headers    : { 'Content-Type': 'text/plain;charset=utf-8' },
-      body       : JSON.stringify(payload)
+      method : 'POST',
+      mode   : 'no-cors',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body   : JSON.stringify({
+        user_id     : session.user_id,
+        name        : session.name,
+        expense_type: expenseType,
+        purpose     : purpose,
+        use_date    : useDate,
+        amount      : Number(amount)
+      })
     })
     .then(() => {
-      document.getElementById('form-view').style.display = 'none';
-      document.getElementById('success-view').style.display = 'block';
+      formState = 'success';
+      listLoaded = false;
+      document.getElementById('form-view').style.display    = 'none';
+      document.getElementById('success-view').style.display = '';
     })
     .catch(() => {
       showError('通信エラーが発生しました。時間をおいて再度お試しください。');
-      btn.disabled = false;
+      btn.disabled    = false;
       btn.textContent = '申請する';
     });
   }
 
   function resetForm() {
-    document.getElementById('expense-type').value = '';
-    document.getElementById('purpose').value = '';
-    document.getElementById('amount').value = '';
-    document.getElementById('btn-submit').disabled = false;
-    document.getElementById('btn-submit').textContent = '申請する';
+    document.getElementById('expense-type').value         = '';
+    document.getElementById('purpose').value              = '';
+    document.getElementById('amount').value               = '';
+    document.getElementById('btn-submit').disabled        = false;
+    document.getElementById('btn-submit').textContent     = '申請する';
     hideError();
+    formState = 'form';
     document.getElementById('success-view').style.display = 'none';
-    document.getElementById('form-view').style.display = 'block';
+    document.getElementById('form-view').style.display    = '';
   }
 
   function showError(msg) {
     const el = document.getElementById('error-msg');
-    el.textContent = msg;
+    el.textContent   = msg;
     el.style.display = 'block';
     window.scrollTo(0, 0);
   }
+  function hideError() { document.getElementById('error-msg').style.display = 'none'; }
 
-  function hideError() {
-    document.getElementById('error-msg').style.display = 'none';
+  function esc(str) {
+    return String(str)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 </script>
 
