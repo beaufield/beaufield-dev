@@ -473,7 +473,12 @@ function updateAccounting_(data) {
 }
 
 function getRequestList_() {
-  const sheet = getDb_().getSheetByName(SHEET_REQUESTS);
+  const db    = getDb_();
+  const sheet = db.getSheetByName(SHEET_REQUESTS);
+  if (!sheet) {
+    const names = db.getSheets().map(s => s.getName()).join(' / ');
+    return jsonResponse_({ ok: false, error: 'シート「' + SHEET_REQUESTS + '」が見つかりません。存在シート: ' + names });
+  }
   const rows  = sheet.getDataRange().getValues();
   const list  = [];
 
