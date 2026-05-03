@@ -143,7 +143,7 @@
 
 <header>
   <h1>💰 経費事前申請</h1>
-  <span class="version">v1.0.0</span>
+  <span class="version">v1.0.1</span>
 </header>
 
 <main>
@@ -195,19 +195,17 @@
   </div>
 </main>
 
-<footer>経費事前申請 v1.0.0 | Beaufield</footer>
+<footer>経費事前申請 v1.0.1 | Beaufield</footer>
 
 <script>
   // ===== 設定 =====
-  // GAS デプロイ後に発行された Web アプリ URL を貼り付けてください
-  const GAS_URL = 'https://script.google.com/macros/s/AKfycbyi1oZ3MLdVflBnjkwzwTC9edeRRQM3TTqcw5zkMzpDZp9e5F1TwMH9ApyK_iuJDC1DDQ/exec';
+  const GAS_URL    = 'https://script.google.com/macros/s/AKfycbyi1oZ3MLdVflBnjkwzwTC9edeRRQM3TTqcw5zkMzpDZp9e5F1TwMH9ApyK_iuJDC1DDQ/exec';
   const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 
   // ===== 初期化 =====
   let session = null;
 
   window.onload = function () {
-    // bf_session チェック
     try {
       session = JSON.parse(localStorage.getItem('bf_session'));
     } catch (e) {
@@ -219,10 +217,8 @@
       return;
     }
 
-    // 申請者名を自動セット
     document.getElementById('applicant-name').value = session.name || '';
 
-    // 使用予定日のデフォルトを明日に設定
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
     document.getElementById('use-date').value = tomorrow.toISOString().split('T')[0];
@@ -235,7 +231,6 @@
     const useDate     = document.getElementById('use-date').value;
     const amount      = document.getElementById('amount').value;
 
-    // バリデーション
     if (!expenseType) { showError('経費種別を選択してください。'); return; }
     if (!purpose)     { showError('使用目的を入力してください。'); return; }
     if (!useDate)     { showError('使用予定日を入力してください。'); return; }
@@ -255,23 +250,19 @@
       amount      : Number(amount)
     };
 
+    // GAS は外部オリジンからの CORS に対応していないため no-cors で送信
+    // レスポンスは読めないが、リクエストは GAS に届いて処理される
     fetch(GAS_URL + '?type=form', {
-      method : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body   : JSON.stringify(payload)
+      method     : 'POST',
+      mode       : 'no-cors',
+      headers    : { 'Content-Type': 'text/plain;charset=utf-8' },
+      body       : JSON.stringify(payload)
     })
-    .then(res => res.json())
-    .then(data => {
-      if (data.ok) {
-        document.getElementById('form-view').style.display = 'none';
-        document.getElementById('success-view').style.display = 'block';
-      } else {
-        showError('エラーが発生しました: ' + (data.error || '不明なエラー'));
-        btn.disabled = false;
-        btn.textContent = '申請する';
-      }
+    .then(() => {
+      document.getElementById('form-view').style.display = 'none';
+      document.getElementById('success-view').style.display = 'block';
     })
-    .catch(err => {
+    .catch(() => {
       showError('通信エラーが発生しました。時間をおいて再度お試しください。');
       btn.disabled = false;
       btn.textContent = '申請する';
