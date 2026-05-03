@@ -13,7 +13,7 @@
 // DB_SHEET_ID        : Google スプレッドシートのID
 // =========================================
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 
 // --- シート名 ---
 const SHEET_REQUESTS  = '申請一覧';
@@ -54,6 +54,16 @@ const COL_M_APR_LW_ID  = 5;  // E: 承認者LWユーザーID
 // =========================================
 // エントリーポイント
 // =========================================
+
+function doGet(e) {
+  try {
+    const type = (e.parameter || {}).type;
+    if (type === 'list') return getRequestList_();
+  } catch (err) {
+    return jsonResponse_({ ok: false, error: err.message });
+  }
+  return jsonResponse_({ ok: false, error: 'unknown type' });
+}
 
 function doPost(e) {
   try {
@@ -431,6 +441,45 @@ function base64urlEncode_(str) {
 
 function base64urlEncodeBytes_(bytes) {
   return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/, '');
+}
+
+function getRequestList_() {
+  const sheet = getDb_().getSheetByName(SHEET_REQUESTS);
+  const rows  = sheet.getDataRange().getValues();
+  const list  = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row[COL_REQ_ID - 1]) continue;
+    list.push({
+      requestId   : String(row[COL_REQ_ID - 1]),
+      applyDate   : formatDateTime_(row[COL_REQ_DATE - 1]),
+      name        : row[COL_REQ_NAME - 1],
+      expenseType : row[COL_REQ_TYPE - 1],
+      purpose     : row[COL_REQ_PURPOSE - 1],
+      useDate     : formatDate_(row[COL_REQ_USE_DATE - 1]),
+      amount      : Number(row[COL_REQ_AMOUNT - 1]) || 0,
+      approverName: String(row[COL_APR_NAME - 1]).trim(),
+      status      : row[COL_STATUS - 1],
+      comment     : row[COL_COMMENT - 1],
+      doneDate    : formatDateTime_(row[COL_DONE_DATE - 1])
+    });
+  }
+
+  list.reverse();
+  return jsonResponse_({ ok: true, requests: list });
+}
+
+function formatDateTime_(d) {
+  if (!d) return '';
+  const date = (d instanceof Date) ? d : new Date(d);
+  if (isNaN(date.getTime())) return String(d);
+  const y   = date.getFullYear();
+  const m   = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const h   = String(date.getHours()).padStart(2, '0');
+  const min = String(date.getMinutes()).padStart(2, '0');
+  return y + '/' + m + '/' + day + ' ' + h + ':' + min;
 }
 
 function formatDate_(d) {
