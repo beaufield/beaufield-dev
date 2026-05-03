@@ -396,7 +396,9 @@ function getDb_() {
 }
 
 function lookupApprover_(userId) {
-  const rows = getDb_().getSheetByName(SHEET_APPROVERS).getDataRange().getValues();
+  const sheet = getDb_().getSheetByName(SHEET_APPROVERS);
+  if (!sheet) return null;
+  const rows = sheet.getDataRange().getValues();
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][COL_M_USER_ID - 1] === userId) {
       return {
@@ -416,7 +418,13 @@ function enqueueComment_(requestId, action, fromUser) {
 }
 
 function getSetting_(key) {
-  const rows = getDb_().getSheetByName(SHEET_SETTINGS).getDataRange().getValues();
+  const db    = getDb_();
+  const sheet = db.getSheetByName(SHEET_SETTINGS);
+  if (!sheet) {
+    Logger.log('設定シートが見つかりません。存在シート: ' + db.getSheets().map(s => s.getName()).join(' / '));
+    return null;
+  }
+  const rows = sheet.getDataRange().getValues();
   for (let i = 0; i < rows.length; i++) {
     if (rows[i][0] === key) return rows[i][1];
   }
