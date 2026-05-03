@@ -13,7 +13,7 @@
 // DB_SHEET_ID        : Google スプレッドシートのID
 // =========================================
 
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 
 // --- シート名 ---
 const SHEET_REQUESTS  = '申請一覧';
@@ -36,6 +36,8 @@ const COL_APR_LW_ID    = 11; // K: 承認者LWユーザーID
 const COL_STATUS       = 12; // L: ステータス（申請中/承認/却下）
 const COL_COMMENT      = 13; // M: 承認コメント
 const COL_DONE_DATE    = 14; // N: 完了日時
+const COL_ACCT_STATUS  = 15; // O: 経理ステータス（未処理/処理済）
+const COL_CONFIRMED    = 16; // P: 確定金額
 
 // --- コメントキュー 列番号 ---
 const COL_Q_REQ_ID     = 1;  // A: RequestId
@@ -72,6 +74,9 @@ function doPost(e) {
     if (type === 'form') {
       const body = e.postData ? JSON.parse(e.postData.contents) : {};
       return handleFormSubmit_(body);
+    } else if (type === 'accounting') {
+      const body = e.postData ? JSON.parse(e.postData.contents) : {};
+      return updateAccounting_(body);
     } else {
       // LINE WORKS コールバック：WEBHOOK_SECRET で検証
       const secret = PropertiesService.getScriptProperties().getProperty('WEBHOOK_SECRET');
@@ -124,6 +129,8 @@ function handleFormSubmit_(data) {
     approverLwId,
     '申請中',
     '',
+    '',
+    '未処理',
     ''
   ]);
 
@@ -443,6 +450,28 @@ function base64urlEncodeBytes_(bytes) {
   return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/, '');
 }
 
+function updateAccounting_(data) {
+  const userId          = data.user_id;
+  const requestId       = data.request_id;
+  const confirmedAmount = Number(data.confirmed_amount) || 0;
+
+  const accountingUserId = getSetting_('経理担当者user_id');
+  const adminUserId      = getSetting_('管理者user_id') || 'U050';
+  if (userId !== accountingUserId && userId !== adminUserId) {
+    return jsonResponse_({ ok: false, error: '権限がありません' });
+  }
+
+  const sheet = getDb_().getSheetByName(SHEET_REQUESTS);
+  const rows  = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][COL_REQ_ID - 1] !== requestId) continue;
+    sheet.getRange(i + 1, COL_ACCT_STATUS).setValue('処理済');
+    sheet.getRange(i + 1, COL_CONFIRMED).setValue(confirmedAmount);
+    return jsonResponse_({ ok: true });
+  }
+  return jsonResponse_({ ok: false, error: '申請が見つかりません' });
+}
+
 function getRequestList_() {
   const sheet = getDb_().getSheetByName(SHEET_REQUESTS);
   const rows  = sheet.getDataRange().getValues();
@@ -452,22 +481,25 @@ function getRequestList_() {
     const row = rows[i];
     if (!row[COL_REQ_ID - 1]) continue;
     list.push({
-      requestId   : String(row[COL_REQ_ID - 1]),
-      applyDate   : formatDateTime_(row[COL_REQ_DATE - 1]),
-      name        : row[COL_REQ_NAME - 1],
-      expenseType : row[COL_REQ_TYPE - 1],
-      purpose     : row[COL_REQ_PURPOSE - 1],
-      useDate     : formatDate_(row[COL_REQ_USE_DATE - 1]),
-      amount      : Number(row[COL_REQ_AMOUNT - 1]) || 0,
-      approverName: String(row[COL_APR_NAME - 1]).trim(),
-      status      : row[COL_STATUS - 1],
-      comment     : row[COL_COMMENT - 1],
-      doneDate    : formatDateTime_(row[COL_DONE_DATE - 1])
+      requestId      : String(row[COL_REQ_ID - 1]),
+      applyDate      : formatDateTime_(row[COL_REQ_DATE - 1]),
+      name           : row[COL_REQ_NAME - 1],
+      expenseType    : row[COL_REQ_TYPE - 1],
+      purpose        : row[COL_REQ_PURPOSE - 1],
+      useDate        : formatDate_(row[COL_REQ_USE_DATE - 1]),
+      amount         : Number(row[COL_REQ_AMOUNT - 1]) || 0,
+      approverName   : String(row[COL_APR_NAME - 1]).trim(),
+      status         : row[COL_STATUS - 1],
+      comment        : row[COL_COMMENT - 1],
+      doneDate       : formatDateTime_(row[COL_DONE_DATE - 1]),
+      acctStatus     : row[COL_ACCT_STATUS - 1] || '未処理',
+      confirmedAmount: Number(row[COL_CONFIRMED - 1]) || 0
     });
   }
 
   list.reverse();
-  return jsonResponse_({ ok: true, requests: list });
+  const accountingUserId = getSetting_('経理担当者user_id') || '';
+  return jsonResponse_({ ok: true, requests: list, accountingUserId: accountingUserId });
 }
 
 function formatDateTime_(d) {
