@@ -61,6 +61,12 @@ const APP_MASTER = [
     label:   'BCARTマスター管理',
     icon:    '🛒',
     url:     'https://beaufield.github.io/beaufield-dev/bcart-integration/master-tool/'
+  },
+  {
+    appName: 'expense-approval',
+    label:   '経費事前申請',
+    icon:    '💰',
+    url:     'https://beaufield.github.io/beaufield-dev/expense-approval/'
   }
 ];
 

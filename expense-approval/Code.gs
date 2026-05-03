@@ -1,6 +1,6 @@
 // =========================================
 // 経費承認フロー GAS バックエンド
-// Version: 1.0.0
+// Version: 1.1.0
 //
 // --- スクリプトプロパティに設定する値 ---
 // LW_CLIENT_ID       : LINE WORKS Client ID
@@ -8,11 +8,12 @@
 // LW_SA_ID           : Service Account ID
 // LW_PRIVATE_KEY     : RSA秘密鍵 PEM全文
 // LW_BOT_ID          : Bot ID
+// TEST_USER_ID       : テスト送信先 LW userId
 // WEBHOOK_SECRET     : LINE WORKS Callback URL に付与するランダム文字列
 // DB_SHEET_ID        : Google スプレッドシートのID
 // =========================================
 
-const VERSION = '1.0.0';
+const VERSION = '1.2.0';
 
 // --- シート名 ---
 const SHEET_REQUESTS  = '申請一覧';
@@ -59,7 +60,6 @@ function doPost(e) {
     const type = e.parameter.type;
 
     if (type === 'form') {
-      // フォーム送信：secret不要（GAS URLは非公開、user_idはマスタで検証）
       const body = e.postData ? JSON.parse(e.postData.contents) : {};
       return handleFormSubmit_(body);
     } else {
@@ -89,7 +89,6 @@ function handleFormSubmit_(data) {
   const useDate       = data.use_date;
   const amount        = data.amount;
 
-  // 承認者マスタから情報を取得
   const masterInfo = lookupApprover_(userId);
   if (!masterInfo) {
     return jsonResponse_({ ok: false, error: '承認者マスタに登録がありません: ' + userId });
@@ -99,10 +98,8 @@ function handleFormSubmit_(data) {
   const approverName  = masterInfo.approverName;
   const approverLwId  = masterInfo.approverLwId;
 
-  // RequestId 生成
   const requestId = 'REQ-' + new Date().getTime();
 
-  // 申請一覧に登録
   getDb_().getSheetByName(SHEET_REQUESTS).appendRow([
     requestId,
     new Date(),
@@ -120,7 +117,6 @@ function handleFormSubmit_(data) {
     ''
   ]);
 
-  // LW に承認依頼を送信
   const token = getLwAccessToken_();
   if (token) {
     sendApprovalRequest_(token, requestId, approverLwId,
@@ -132,45 +128,42 @@ function handleFormSubmit_(data) {
 
 // =========================================
 // LINE WORKS コールバック受信
+// ボタンクリックは message タイプで届く
 // =========================================
 
 function handleLwCallback_(body) {
   const content  = body.content || {};
   const fromUser = (body.source || {}).userId;
 
-  if (content.type === 'postback') {
-    return handlePostback_(content.data, fromUser);
-  } else if (content.type === 'text') {
+  if (content.type === 'text') {
     return handleTextMessage_(content.text, fromUser);
   }
 
   return jsonResponse_({ ok: true });
 }
 
-// --- Postback（ボタン押下）処理 ---
-function handlePostback_(data, fromUser) {
-  // data 形式: "action|requestId"
-  const parts     = (data || '').split('|');
-  const action    = parts[0];
-  const requestId = parts[1];
+// --- テキストメッセージ処理（ボタンクリック or コメント返信）---
+function handleTextMessage_(text, fromUser) {
+  // ボタンクリックによる構造化コマンドの判定
+  // 形式: "承認|REQ-xxx" / "却下|REQ-xxx" / "承認+コメント|REQ-xxx" / "却下+コメント|REQ-xxx"
+  const cmdMatch = (text || '').match(/^(承認\+コメント|却下\+コメント|承認|却下)\|(REQ-.+)$/);
+  if (cmdMatch) {
+    const action    = cmdMatch[1];
+    const requestId = cmdMatch[2];
 
-  if (action === 'approve' || action === 'reject') {
-    // コメントなし → 即確定
-    finalizeRequest_(requestId, action === 'approve', '', fromUser);
-  } else if (action === 'approve_comment' || action === 'reject_comment') {
-    // コメントあり → キューに積んでコメント促し
-    enqueueComment_(requestId, action.replace('_comment', ''), fromUser);
-    const token = getLwAccessToken_();
-    if (token) {
-      sendLwMessage_(token, fromUser, 'コメントを入力して返信してください。');
+    if (action === '承認' || action === '却下') {
+      finalizeRequest_(requestId, action === '承認', '', fromUser);
+    } else if (action === '承認+コメント' || action === '却下+コメント') {
+      enqueueComment_(requestId, action === '承認+コメント' ? 'approve' : 'reject', fromUser);
+      const token = getLwAccessToken_();
+      if (token) {
+        sendLwMessage_(token, fromUser, 'コメントを入力して返信してください。');
+      }
     }
+    return jsonResponse_({ ok: true });
   }
 
-  return jsonResponse_({ ok: true });
-}
-
-// --- テキストメッセージ（コメント返信）処理 ---
-function handleTextMessage_(text, fromUser) {
+  // 自由テキスト → コメントキューの待機中エントリを探す
   const qSheet = getDb_().getSheetByName(SHEET_QUEUE);
   const rows   = qSheet.getDataRange().getValues();
 
@@ -209,7 +202,7 @@ function finalizeRequest_(requestId, approved, comment, fromUser) {
     const applicantName = rows[i][COL_REQ_NAME - 1];
     const expenseType   = rows[i][COL_REQ_TYPE - 1];
     const purpose       = rows[i][COL_REQ_PURPOSE - 1];
-    const useDate       = rows[i][COL_REQ_USE_DATE - 1];
+    const useDate       = formatDate_(rows[i][COL_REQ_USE_DATE - 1]);
     const amount        = rows[i][COL_REQ_AMOUNT - 1];
 
     const token = getLwAccessToken_();
@@ -252,7 +245,7 @@ function checkTimeouts() {
 // LINE WORKS メッセージ送信
 // =========================================
 
-// 承認依頼（ボタン4つ）
+// 承認依頼（ボタン4つ・message タイプ）
 function sendApprovalRequest_(token, requestId, approverLwId,
                                applicantName, expenseType, purpose, useDate, amount) {
   const text = [
@@ -269,10 +262,10 @@ function sendApprovalRequest_(token, requestId, approverLwId,
       type: 'button_template',
       contentText: text,
       actions: [
-        { type: 'postback', label: '承認',               data: 'approve|' + requestId },
-        { type: 'postback', label: '承認（コメントあり）', data: 'approve_comment|' + requestId },
-        { type: 'postback', label: '却下',               data: 'reject|' + requestId },
-        { type: 'postback', label: '却下（コメントあり）', data: 'reject_comment|' + requestId }
+        { type: 'message', label: '承認',             text: '承認|' + requestId },
+        { type: 'message', label: '承認+コメント',     text: '承認+コメント|' + requestId },
+        { type: 'message', label: '却下',             text: '却下|' + requestId },
+        { type: 'message', label: '却下+コメント',     text: '却下+コメント|' + requestId }
       ]
     }
   };
@@ -296,10 +289,8 @@ function sendResultNotice_(token, applicantLwId, applicantName,
   if (comment) lines.push('コメント: ' + comment);
   const text = lines.join('\n');
 
-  // 申請者に通知
   sendLwMessage_(token, applicantLwId, text);
 
-  // 承認時のみ経理担当者にも通知
   if (approved) {
     const accountingLwId = getSetting_('経理担当者LWユーザーID');
     if (accountingLwId) {
@@ -308,7 +299,7 @@ function sendResultNotice_(token, applicantLwId, applicantName,
   }
 }
 
-// LW メッセージ送信（テキストまたは任意メッセージオブジェクト）
+// LW メッセージ送信
 function sendLwMessage_(token, userId, text, messageObj) {
   const botId   = PropertiesService.getScriptProperties().getProperty('LW_BOT_ID');
   const url     = 'https://www.worksapis.com/v1.0/bots/' + botId + '/users/' + userId + '/messages';
@@ -322,8 +313,8 @@ function sendLwMessage_(token, userId, text, messageObj) {
     muteHttpExceptions: true
   });
 
-  if (res.getResponseCode() !== 200) {
-    Logger.log('LW送信失敗 userId=' + userId + ' : ' + res.getContentText());
+  if (res.getResponseCode() !== 201 && res.getResponseCode() !== 200) {
+    Logger.log('LW送信失敗 userId=' + userId + ' HTTP=' + res.getResponseCode() + ' : ' + res.getContentText());
   }
 }
 
@@ -441,3 +432,14 @@ function base64urlEncode_(str) {
 function base64urlEncodeBytes_(bytes) {
   return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/, '');
 }
+
+function formatDate_(d) {
+  if (!d) return '';
+  const date = (d instanceof Date) ? d : new Date(d);
+  if (isNaN(date.getTime())) return String(d);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + day;
+}
+
