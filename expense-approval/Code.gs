@@ -519,6 +519,14 @@ function formatDateTime_(d) {
   return y + '/' + m + '/' + day + ' ' + h + ':' + min;
 }
 
+// デバッグ用：GASエディタから直接実行してシート名を確認する
+function debugSheets() {
+  const db    = getDb_();
+  const names = db.getSheets().map(s => s.getName());
+  Logger.log('スプレッドシートID: ' + db.getId());
+  Logger.log('シート一覧: ' + names.join(' / '));
+}
+
 function formatDate_(d) {
   if (!d) return '';
   const date = (d instanceof Date) ? d : new Date(d);
