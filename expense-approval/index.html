@@ -308,7 +308,10 @@
     </div>
 
     <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;">
       <div class="list-meta" id="list-meta"></div>
+      <div id="list-total" style="font-size:14px;font-weight:bold;color:#1a73e8;"></div>
+    </div>
       <div class="table-wrap">
         <table>
           <thead>
@@ -427,6 +430,9 @@
     document.getElementById('list-meta').textContent =
       filtered.length + ' 件' +
       (filtered.length < allRequests.length ? '（全 ' + allRequests.length + ' 件中）' : '');
+
+    const total = filtered.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+    document.getElementById('list-total').textContent = '合計 ' + total.toLocaleString() + ' 円';
   }
 
   function resetFilters() {
