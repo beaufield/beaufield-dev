@@ -405,7 +405,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.16.0</span>
+  <span class="header-version">v1.17.0</span>
 </header>
 
 <!-- ============================================================ -->
@@ -1037,8 +1037,21 @@ async function loadProducts() {
   const res = await gasGet('getProducts');
   if (!res.success) return;
   products = res.data;
-  _refreshActiveProducts();
-  _updateProductDropdowns();
+  // GASが返す products は reserved_total=0/remaining=stock_limit のため
+  // ローカルの reservations と突き合わせて再集計する
+  _refreshProductCounts();
+  // キャッシュの商品データも更新（古いデータが残ると画面遷移後に元に戻る現象が起きる）
+  try {
+    const raw = localStorage.getItem(LS_CACHE_KEY);
+    if (raw) {
+      const c = JSON.parse(raw);
+      if (c && c.data) {
+        c.data.products = products;
+        c.expires = Date.now() + LS_CACHE_TTL;
+        localStorage.setItem(LS_CACHE_KEY, JSON.stringify(c));
+      }
+    }
+  } catch(e) {}
 }
 
 /** 予約一覧を再取得（変更操作後に呼ぶ） */
@@ -2285,6 +2298,14 @@ function renderStats() {
   products.forEach(p => { priceMap[p.product_id] = p.unit_price || 0; });
 
   // ---- 商品別集計（ステータスフィルタ適用・商品フィルタなし） ----
+  // 上限・残数はフィルタに関係なく全予約の確定数が必要なので別途集計
+  const confirmedTotalMap = {};
+  reservations.forEach(r => {
+    if (r.status === '確定') {
+      confirmedTotalMap[r.product_id] = (confirmedTotalMap[r.product_id] || 0) + r.quantity;
+    }
+  });
+
   const productMap = {};
   baseRows.forEach(r => {
     const pid = r.product_id;
@@ -2295,12 +2316,29 @@ function renderStats() {
     if (r.status === '確定') productMap[pid].confirmed += r.quantity;
   });
   // 在庫上限・残数・単価を products から補完
+  // フィルタに応じて表示上限(displayLimit)と残数(remaining)を切り替える
+  //   予約のみ: displayLimit = stock_limit - 確定数（予約可能上限）、remaining = displayLimit - 予約数
+  //   確定のみ: displayLimit = null、remaining = null（—表示）
+  //   両方    : displayLimit = stock_limit、remaining = stock_limit - (予約+確定)
   products.forEach(p => {
     if (productMap[p.product_id]) {
-      productMap[p.product_id].stock_limit = p.stock_limit;
-      productMap[p.product_id].remaining   = p.stock_limit > 0
-        ? Math.max(0, p.stock_limit - productMap[p.product_id].total) : null;
-      productMap[p.product_id].unit_price  = p.unit_price || 0;
+      const pm          = productMap[p.product_id];
+      const confirmedAll = confirmedTotalMap[p.product_id] || 0;
+      pm.stock_limit = p.stock_limit;
+      pm.unit_price  = p.unit_price || 0;
+      if (p.stock_limit <= 0) {
+        pm.displayLimit = null;
+        pm.remaining    = null;
+      } else if (statsStatusFilter === '予約') {
+        pm.displayLimit = Math.max(0, p.stock_limit - confirmedAll);
+        pm.remaining    = Math.max(0, pm.displayLimit - pm.total);
+      } else if (statsStatusFilter === '確定') {
+        pm.displayLimit = null;
+        pm.remaining    = null;
+      } else {
+        pm.displayLimit = p.stock_limit;
+        pm.remaining    = Math.max(0, p.stock_limit - pm.total);
+      }
     }
   });
   const byProduct = Object.values(productMap).sort((a, b) => b.total - a.total);
@@ -2378,7 +2416,7 @@ function renderStats() {
               <td class="num">${yoyakuAmt}</td>
               <td class="num">${p.confirmed}</td>
               <td class="num">${confirmedAmt}</td>
-              <td class="num">${p.stock_limit > 0 ? p.stock_limit : '—'}</td>
+              <td class="num">${p.displayLimit !== null && p.displayLimit !== undefined ? p.displayLimit : '—'}</td>
               <td class="num" style="color:${p.remaining !== null && p.remaining <= 5 ? 'var(--danger)' : 'inherit'}">
                 ${p.remaining !== null ? p.remaining : '—'}
               </td>
