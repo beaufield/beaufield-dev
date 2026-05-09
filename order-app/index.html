@@ -451,6 +451,22 @@
       color: #888888;
     }
 
+    /* 推奨発注数バッジ（数量モーダル内） */
+    .qty-recommended {
+      display: none;
+      background: #FFF8E1;
+      border: 1px solid #FFB300;
+      border-radius: 6px;
+      padding: 5px 10px;
+      font-size: 13px;
+      color: #E65100;
+      font-weight: bold;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .qty-recommended.show { display: block; }
+    .qty-recommended:active { background: #FFE082; }
+
     /* 直近注文バッジ（数量モーダル内） */
     .qty-last-order {
       display: none;
@@ -822,7 +838,7 @@
   <div class="nav-item" id="nav-settings" onclick="switchScreen('settings')">
     <span class="nav-icon">⚙️</span><span>設定</span>
   </div>
-  <div class="version-label" id="version-label">v1.22.0</div>
+  <div class="version-label" id="version-label">v1.23.0</div>
 </nav>
 
 <!-- ==============================
@@ -837,6 +853,7 @@
     <div class="qty-info-row" id="qty-info-row">
       <div class="qty-stock" id="qty-stock"></div>
       <div class="qty-reorder" id="qty-reorder"></div>
+      <div class="qty-recommended" id="qty-recommended" onclick="applyRecommendedQty()"></div>
       <div class="qty-last-order" id="qty-last-order"></div>
     </div>
 
@@ -996,7 +1013,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.22.0'; // メーカー発注書テンプレをDrive+GAS認証配信に移行（直接fetch廃止）
+const APP_VERSION    = 'v1.23.0'; // メーカー発注書テンプレをDrive+GAS認証配信に移行（直接fetch廃止）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1662,6 +1679,20 @@ function openQtyModal(product, isHandwritten) {
     reorderEl.className = 'qty-reorder';
   }
 
+  // 推奨発注数バッジ: 発注点 - 在庫数 > 0 のときのみ表示
+  const recEl = document.getElementById('qty-recommended');
+  recEl.classList.remove('show');
+  delete recEl.dataset.recommended;
+  if (hasReorder && hasStock) {
+    const stockNum2 = parseFloat(product.stock) || 0;
+    const recommended = product.reorderPoint - stockNum2;
+    if (recommended > 0) {
+      recEl.textContent = `📋 推奨発注数: ${recommended}`;
+      recEl.dataset.recommended = recommended;
+      recEl.classList.add('show');
+    }
+  }
+
   let hasLastOrder = false;
   if (!isHandwritten) {
     const hist = productHistory[product.code] || productHistory[product.jan] || null;
@@ -1686,6 +1717,19 @@ function openQtyModal(product, isHandwritten) {
   buildUnitOptions(product.unit || '');
   resetQtyButtons();
   openModal('modal-qty');
+}
+
+function applyRecommendedQty() {
+  const recEl = document.getElementById('qty-recommended');
+  const val = parseFloat(recEl.dataset.recommended);
+  if (!val || val <= 0) return;
+  const otherBtn = document.getElementById('btn-other-qty');
+  if (otherBtn) selectOtherQty(otherBtn);
+  // selectOtherQty内の50msタイムアウト後にinp.value=''されるため、その後に値をセット
+  setTimeout(() => {
+    const input = document.getElementById('qty-val');
+    if (input) input.value = val;
+  }, 60);
 }
 
 function resetQtyButtons() {
