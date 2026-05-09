@@ -411,6 +411,7 @@
     .qty-info-row {
       display: none;
       flex-direction: row;
+      flex-wrap: wrap;
       gap: 8px;
       margin-bottom: 12px;
       align-items: stretch;
@@ -477,7 +478,7 @@
       font-size: 12px;
       font-weight: 700;
       color: #CC0000;
-      flex: 1;
+      flex-basis: 100%;
     }
     .qty-last-order.show { display: block; }
 
@@ -838,7 +839,7 @@
   <div class="nav-item" id="nav-settings" onclick="switchScreen('settings')">
     <span class="nav-icon">⚙️</span><span>設定</span>
   </div>
-  <div class="version-label" id="version-label">v1.23.0</div>
+  <div class="version-label" id="version-label">v1.23.1</div>
 </nav>
 
 <!-- ==============================
@@ -1013,7 +1014,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.23.0'; // メーカー発注書テンプレをDrive+GAS認証配信に移行（直接fetch廃止）
+const APP_VERSION    = 'v1.23.1'; // メーカー発注書テンプレをDrive+GAS認証配信に移行（直接fetch廃止）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
