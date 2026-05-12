@@ -839,7 +839,7 @@
   <div class="nav-item" id="nav-settings" onclick="switchScreen('settings')">
     <span class="nav-icon">⚙️</span><span>設定</span>
   </div>
-  <div class="version-label" id="version-label">v1.23.1</div>
+  <div class="version-label" id="version-label">v1.23.2</div>
 </nav>
 
 <!-- ==============================
@@ -1014,7 +1014,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.23.1'; // メーカー発注書テンプレをDrive+GAS認証配信に移行（直接fetch廃止）
+const APP_VERSION    = 'v1.23.2'; // 在庫一覧の商品名を2行まで表示するよう修正
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -3476,7 +3476,7 @@ function renderInventoryList() {
       : '';
     return `<div class="history-item" style="display:flex;align-items:center;${rowBorder}" onclick="openInventoryQtyModal(${idx})">
       <div style="flex:1;min-width:0">
-        <div style="font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isBelow ? '⚠️ ' : ''}${p.name}</div>
+        <div style="font-size:14px;font-weight:500;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.4">${isBelow ? '⚠️ ' : ''}${p.name}</div>
         <div style="font-size:11px;color:var(--text-light);margin-top:2px">${p.supplierName || p.supplierCD}</div>
       </div>
       <div style="text-align:right;flex-shrink:0;margin-left:8px">
