@@ -853,7 +853,7 @@
   <div class="nav-item" id="nav-settings" onclick="switchScreen('settings')">
     <span class="nav-icon">⚙️</span><span>設定</span>
   </div>
-  <div class="version-label" id="version-label">v1.24.0</div>
+  <div class="version-label" id="version-label">v1.24.1</div>
 </nav>
 
 <!-- ==============================
@@ -1030,7 +1030,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.24.0'; // 数量モーダルのバッジ1行化・推奨発注数小数第1位・スクロール不要化
+const APP_VERSION    = 'v1.24.1'; // 発注点→月平均に表記変更・推奨発注数を整数化
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1690,7 +1690,7 @@ function openQtyModal(product, isHandwritten) {
   if (hasReorder) {
     const stockNum = parseFloat(product.stock) || 0;
     const isBelow  = stockNum < product.reorderPoint;
-    reorderEl.textContent = `${isBelow ? '⚠️ ' : ''}発注点: ${product.reorderPoint}`;
+    reorderEl.textContent = `${isBelow ? '⚠️ ' : ''}月平均: ${product.reorderPoint}`;
     reorderEl.className   = `qty-reorder show ${isBelow ? 'warning' : 'normal'}`;
   } else {
     reorderEl.className = 'qty-reorder';
@@ -1702,7 +1702,7 @@ function openQtyModal(product, isHandwritten) {
   delete recEl.dataset.recommended;
   if (hasReorder && hasStock) {
     const stockNum2 = parseFloat(product.stock) || 0;
-    const recommended = Math.round((product.reorderPoint - stockNum2) * 10) / 10;
+    const recommended = Math.round(product.reorderPoint - stockNum2);
     if (recommended > 0) {
       recEl.textContent = `📋 推奨発注数: ${recommended}`;
       recEl.dataset.recommended = recommended;
