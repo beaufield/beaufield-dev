@@ -853,7 +853,7 @@
   <div class="nav-item" id="nav-settings" onclick="switchScreen('settings')">
     <span class="nav-icon">⚙️</span><span>設定</span>
   </div>
-  <div class="version-label" id="version-label">v1.24.1</div>
+  <div class="version-label" id="version-label">v1.24.2</div>
 </nav>
 
 <!-- ==============================
@@ -1030,7 +1030,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.24.1'; // 発注点→月平均に表記変更・推奨発注数を整数化
+const APP_VERSION    = 'v1.24.2'; // 在庫0でもバッジを表示するよう修正
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1676,9 +1676,10 @@ function openQtyModal(product, isHandwritten) {
   const lastOrderEl = document.getElementById('qty-last-order');
   const infoRowEl  = document.getElementById('qty-info-row');
 
-  const hasStock = !isHandwritten && product.stock !== '' && product.stock !== undefined;
+  const parsedStock = parseFloat(product.stock);
+  const hasStock = !isHandwritten && !isNaN(parsedStock);
   if (hasStock) {
-    stockEl.textContent = `📦 在庫: ${product.stock}`;
+    stockEl.textContent = `📦 在庫: ${parsedStock}`;
     stockEl.classList.add('show');
   } else {
     stockEl.classList.remove('show');
