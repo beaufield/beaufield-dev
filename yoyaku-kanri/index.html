@@ -405,7 +405,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.17.0</span>
+  <span class="header-version">v1.17.1</span>
 </header>
 
 <!-- ============================================================ -->
@@ -467,6 +467,12 @@
       <option value="">すべて</option>
       <option value="予約" selected>予約</option>
       <option value="確定">確定</option>
+    </select>
+    <select id="filterDelivery" onchange="renderList()">
+      <option value="">すべての発送</option>
+      <option value="未定">未定</option>
+      <option value="発送">発送</option>
+      <option value="持参">持参</option>
     </select>
     <button class="btn-print" onclick="printReservations()" title="現在のフィルタ条件で印刷（PDF出力）">🖨️ 印刷</button>
     <button class="btn-print admin-only" id="arrivalBtn" style="display:none" onclick="openArrivalModal()" title="入荷処理（事務専用）">📦 入荷処理</button>
@@ -1185,16 +1191,18 @@ function renderList() {
   // 商品フィルタに応じて担当ドロップダウンを先に更新（fstaff はその後で読む）
   _updateStaffFilter(fpid);
 
-  const fstaff = document.getElementById('filterStaff').value;
-  const fst    = document.getElementById('filterStatus').value;
+  const fstaff     = document.getElementById('filterStaff').value;
+  const fst        = document.getElementById('filterStatus').value;
+  const fdelivery  = document.getElementById('filterDelivery').value;
 
   // 商品サマリー表示
   renderProductSummary(fpid);
 
   let list = reservations.slice();
-  if (fpid)   list = list.filter(r => r.product_id === fpid);
-  if (fstaff) list = list.filter(r => r.staff_id   === fstaff);
-  if (fst)    list = list.filter(r => r.status     === fst);
+  if (fpid)      list = list.filter(r => r.product_id      === fpid);
+  if (fstaff)    list = list.filter(r => r.staff_id        === fstaff);
+  if (fst)       list = list.filter(r => r.status          === fst);
+  if (fdelivery) list = list.filter(r => r.delivery_method === fdelivery);
 
   const container = document.getElementById('reservationList');
   if (list.length === 0) {
@@ -1308,23 +1316,26 @@ function renderList() {
 
 /** 予約一覧をA4横PDF用に印刷（新ウィンドウで開いてブラウザ印刷ダイアログを起動） */
 function printReservations() {
-  const fpid   = document.getElementById('filterProduct').value;
-  const fstaff = document.getElementById('filterStaff').value;
-  const fst    = document.getElementById('filterStatus').value;
+  const fpid      = document.getElementById('filterProduct').value;
+  const fstaff    = document.getElementById('filterStaff').value;
+  const fst       = document.getElementById('filterStatus').value;
+  const fdelivery = document.getElementById('filterDelivery').value;
 
   let list = reservations.slice();
-  if (fpid)   list = list.filter(r => r.product_id === fpid);
-  if (fstaff) list = list.filter(r => r.staff_id   === fstaff);
-  if (fst)    list = list.filter(r => r.status      === fst);
+  if (fpid)      list = list.filter(r => r.product_id      === fpid);
+  if (fstaff)    list = list.filter(r => r.staff_id        === fstaff);
+  if (fst)       list = list.filter(r => r.status          === fst);
+  if (fdelivery) list = list.filter(r => r.delivery_method === fdelivery);
 
   // NO昇順（古い予約が上）
   list.sort((a, b) => a.reservation_no - b.reservation_no);
 
   // フィルタ条件の説明文
   const filterParts = [];
-  if (fpid)   { const p = products.find(x => x.product_id === fpid);   if (p) filterParts.push('商品: ' + p.name); }
-  if (fstaff) { const u = allUsers.find(x => x.user_id   === fstaff);  if (u) filterParts.push('担当: ' + u.name); }
-  if (fst)    filterParts.push('ステータス: ' + fst);
+  if (fpid)      { const p = products.find(x => x.product_id === fpid);  if (p) filterParts.push('商品: ' + p.name); }
+  if (fstaff)    { const u = allUsers.find(x => x.user_id   === fstaff); if (u) filterParts.push('担当: ' + u.name); }
+  if (fst)       filterParts.push('ステータス: ' + fst);
+  if (fdelivery) filterParts.push('発送方法: ' + fdelivery);
   const filterStr = filterParts.length > 0 ? filterParts.join('　') : '全件';
 
   const now = new Date();
