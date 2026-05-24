@@ -397,7 +397,7 @@
     document.getElementById('total-amount').textContent    = '—';
     document.getElementById('total-confirmed').textContent = '—';
 
-    fetch(GAS_URL + '?type=list')
+    fetch(GAS_URL + '?type=list&session_token=' + encodeURIComponent(session.token || ''))
       .then(r => r.json())
       .then(data => {
         if (!data.ok) throw new Error(data.error || '取得失敗');
@@ -528,7 +528,7 @@
       mode   : 'no-cors',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body   : JSON.stringify({
-        user_id         : session.user_id,
+        session_token   : session.token || '',
         request_id      : acctTargetId,
         confirmed_amount: Number(amount)
       })
@@ -569,12 +569,12 @@
       mode   : 'no-cors',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body   : JSON.stringify({
-        user_id     : session.user_id,
-        name        : session.name,
-        expense_type: expenseType,
-        purpose     : purpose,
-        use_date    : useDate,
-        amount      : Number(amount)
+        session_token: session.token || '',
+        name         : session.name,
+        expense_type : expenseType,
+        purpose      : purpose,
+        use_date     : useDate,
+        amount       : Number(amount)
       })
     })
     .then(() => {

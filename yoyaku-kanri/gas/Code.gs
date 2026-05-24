@@ -10,7 +10,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.9.0';
+const VERSION  = '1.9.1';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -185,7 +185,8 @@ function doGet(e) {
       default:                return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
-    return _jsonResponse(_err(err.toString()));
+    Logger.log('doGet error: ' + err);
+    return _jsonResponse(_err('INTERNAL_ERROR'));
   }
 }
 
@@ -218,7 +219,8 @@ function doPost(e) {
       default:                    return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
-    return _jsonResponse(_err(err.toString()));
+    Logger.log('doPost error: ' + err);
+    return _jsonResponse(_err('INTERNAL_ERROR'));
   }
 }
 
