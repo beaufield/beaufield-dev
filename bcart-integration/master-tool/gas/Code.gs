@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.4.2';
+const VERSION = 'v2.4.3';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -66,9 +66,15 @@ function doPost(e) {
       case 'updateProduct':        return jsonResponse(updateProductAction(params));
       case 'deleteProduct':        return jsonResponse(deleteProduct(params));
       case 'getHistory':           return jsonResponse(getHistory());
-      case 'debugData':            return jsonResponse(debugData());
-      case 'debugCode':            return jsonResponse(debugCode(params));
-      case 'debugProduct':         return jsonResponse(debugProduct());
+      case 'debugData':
+      case 'debugCode':
+      case 'debugProduct':
+        if (PropertiesService.getScriptProperties().getProperty('DEBUG_ENABLED') !== 'true') {
+          return jsonResponse({ ok: false, error: 'UNAUTHORIZED' });
+        }
+        if (action === 'debugData')    return jsonResponse(debugData());
+        if (action === 'debugCode')    return jsonResponse(debugCode(params));
+        return jsonResponse(debugProduct());
       // 機能A: 新規登録
       case 'getCategories':        return jsonResponse(getCategories());
       case 'getFeatures':          return jsonResponse(getSpecials());
@@ -96,7 +102,8 @@ function doPost(e) {
       default:                         return jsonResponse({ ok: false, error: 'UNKNOWN_ACTION' });
     }
   } catch (err) {
-    return jsonResponse({ ok: false, error: err.message });
+    Logger.log('doPost error: ' + err.message);
+    return jsonResponse({ ok: false, error: 'INTERNAL_ERROR' });
   }
 }
 
@@ -270,7 +277,8 @@ function loadCsvFromDrive() {
 
     return { ok: true, rows: rows, updatedAt: updatedAt, isOld: isOld };
   } catch (e) {
-    return { ok: false, error: e.message };
+    Logger.log('loadCsvFromDrive error: ' + e.message);
+    return { ok: false, error: 'INTERNAL_ERROR' };
   }
 }
 
@@ -435,12 +443,14 @@ function bcartGetAll(path) {
         }
         if (code === 503 || code === 502) {
           if (retry < 3) { Utilities.sleep(5000 * (retry + 1)); continue; }
-          return { ok: false, error: 'BCART_API_ERROR: ' + code + ' 帯域幅エラー（しばらく待ってから再読み込みしてください）\n' + res.getContentText().slice(0, 300) };
+          Logger.log('bcartGetAll 502/503: ' + res.getContentText().slice(0, 300));
+          return { ok: false, error: 'BCART_API_ERROR: ' + code + ' 帯域幅エラー（しばらく待ってから再読み込みしてください）' };
         }
         break;
       }
       if (res.getResponseCode() !== 200) {
-        return { ok: false, error: 'BCART_API_ERROR: ' + res.getResponseCode() + '\n' + res.getContentText().slice(0, 300) };
+        Logger.log('bcartGetAll error: ' + res.getResponseCode() + ' ' + res.getContentText().slice(0, 300));
+        return { ok: false, error: 'BCART_API_ERROR: ' + res.getResponseCode() };
       }
       const parsed = JSON.parse(res.getContentText());
       if (parsed.message || parsed.error) {
@@ -456,7 +466,8 @@ function bcartGetAll(path) {
 
     return { ok: true, data: allData };
   } catch (e) {
-    return { ok: false, error: e.message };
+    Logger.log('bcartGetAll error: ' + e.message);
+    return { ok: false, error: 'INTERNAL_ERROR' };
   }
 }
 
@@ -477,7 +488,8 @@ function bcartGet(path, params) {
     const data = JSON.parse(res.getContentText());
     return { ok: true, data: data.data || data.product_set || data };
   } catch (e) {
-    return { ok: false, error: e.message };
+    Logger.log('bcartGet error: ' + e.message);
+    return { ok: false, error: 'INTERNAL_ERROR' };
   }
 }
 
@@ -495,10 +507,14 @@ function bcartPatch(path, body) {
       muteHttpExceptions: true
     });
     const code = res.getResponseCode();
-    if (code !== 200 && code !== 204) return { ok: false, error: 'BCART_API_ERROR: ' + code + ' ' + res.getContentText() };
+    if (code !== 200 && code !== 204) {
+      Logger.log('bcartPatch error: ' + code + ' ' + res.getContentText().slice(0, 300));
+      return { ok: false, error: 'BCART_API_ERROR: ' + code };
+    }
     return { ok: true };
   } catch (e) {
-    return { ok: false, error: e.message };
+    Logger.log('bcartPatch error: ' + e.message);
+    return { ok: false, error: 'INTERNAL_ERROR' };
   }
 }
 
@@ -514,7 +530,8 @@ function bcartDelete(path) {
     if (code !== 200 && code !== 204) return { ok: false, error: 'BCART_API_ERROR: ' + code };
     return { ok: true };
   } catch (e) {
-    return { ok: false, error: e.message };
+    Logger.log('bcartDelete error: ' + e.message);
+    return { ok: false, error: 'INTERNAL_ERROR' };
   }
 }
 
@@ -533,11 +550,13 @@ function bcartPost(path, body) {
     });
     const code = res.getResponseCode();
     if (code !== 200 && code !== 201) {
-      return { ok: false, error: 'BCART_API_ERROR: ' + code + ' ' + res.getContentText() };
+      Logger.log('bcartPost error: ' + code + ' ' + res.getContentText().slice(0, 300));
+      return { ok: false, error: 'BCART_API_ERROR: ' + code };
     }
     return { ok: true, data: JSON.parse(res.getContentText()) };
   } catch (e) {
-    return { ok: false, error: e.message };
+    Logger.log('bcartPost error: ' + e.message);
+    return { ok: false, error: 'INTERNAL_ERROR' };
   }
 }
 
@@ -1002,7 +1021,8 @@ function getMembers() {
         muteHttpExceptions: true
       });
       if (res.getResponseCode() !== 200) {
-        return { ok: false, error: 'BCART_API_ERROR: ' + res.getResponseCode() + ' ' + res.getContentText().slice(0, 200) };
+        Logger.log('getMembers error: ' + res.getResponseCode() + ' ' + res.getContentText().slice(0, 200));
+        return { ok: false, error: 'BCART_API_ERROR: ' + res.getResponseCode() };
       }
       const parsed = JSON.parse(res.getContentText());
       const page = parsed.customers || parsed.data || (Array.isArray(parsed) ? parsed : null);
@@ -1026,7 +1046,8 @@ function getMembers() {
 
     return { ok: true, members: members };
   } catch(e) {
-    return { ok: false, error: e.message };
+    Logger.log('getMembers error: ' + e.message);
+    return { ok: false, error: 'INTERNAL_ERROR' };
   }
 }
 
@@ -1938,7 +1959,8 @@ function generateDescription(params) {
     const grounding = extractGroundingInfo(data.candidates[0]);
     return { ok: true, text: text.trim(), sources: grounding.sources, queries: grounding.queries };
   } catch(e) {
-    return { ok: false, error: e.message };
+    Logger.log('generateDescription error: ' + e.message);
+    return { ok: false, error: 'INTERNAL_ERROR' };
   }
 }
 
@@ -2010,7 +2032,8 @@ function factCheckDescription(params) {
       queries: grounding.queries
     };
   } catch(e) {
-    return { ok: false, error: e.message };
+    Logger.log('factCheckDescription error: ' + e.message);
+    return { ok: false, error: 'INTERNAL_ERROR' };
   }
 }
 

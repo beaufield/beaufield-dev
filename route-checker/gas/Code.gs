@@ -13,7 +13,7 @@
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS         = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID = _PROPS.getProperty('SPREADSHEET_ID');
-const VERSION        = '1.11.2';
+const VERSION        = '1.11.3';
 
 // beaufield-auth 共通認証設定
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
@@ -143,7 +143,8 @@ function doGet(e) {
       default:                return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
-    return _jsonResponse(_err(err.toString()));
+    Logger.log('doGet error: ' + err);
+    return _jsonResponse(_err('INTERNAL_ERROR'));
   }
 }
 
@@ -183,7 +184,8 @@ function doPost(e) {
       default:                 return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
-    return _jsonResponse(_err(err.toString()));
+    Logger.log('doPost error: ' + err);
+    return _jsonResponse(_err('INTERNAL_ERROR'));
   }
 }
 
@@ -315,7 +317,7 @@ function login(data) {
 
   } catch (e) {
     Logger.log('login error: ' + e);
-    return _err('認証エラー: ' + e.toString());
+    return _err('INTERNAL_ERROR');
   }
 }
 

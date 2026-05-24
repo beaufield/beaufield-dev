@@ -15,7 +15,7 @@
 const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
-const VERSION         = 'v1.9.2';
+const VERSION         = 'v1.9.3';
 
 // Google Drive上の商品マスターCSVファイル名
 // ※ 同名ファイルが複数ある場合はファイルIDで指定（下記コメント参照）
@@ -105,7 +105,8 @@ function doGet(e) {
       default:                  return jsonResponse({ success: false, error: '不明なアクション: ' + action });
     }
   } catch(err) {
-    return jsonResponse({ success: false, error: err.toString() });
+    Logger.log('doGet error: ' + err);
+    return jsonResponse({ success: false, error: 'INTERNAL_ERROR' });
   }
 }
 
@@ -140,7 +141,8 @@ function doPost(e) {
     try {
       return jsonResponse(updateProductMaster(p.data || ''));
     } catch(err) {
-      return jsonResponse({ success: false, error: err.toString() });
+      Logger.log('updateProductMaster error: ' + err);
+      return jsonResponse({ success: false, error: 'INTERNAL_ERROR' });
     }
   }
 
@@ -154,7 +156,8 @@ function doPost(e) {
       const products = p.products || [];
       return jsonResponse(updateReorderPoints(products));
     } catch(err) {
-      return jsonResponse({ success: false, error: err.toString() });
+      Logger.log('updateReorderPoints error: ' + err);
+      return jsonResponse({ success: false, error: 'INTERNAL_ERROR' });
     }
   }
 
@@ -174,7 +177,8 @@ function doPost(e) {
       default:             return jsonResponse({ success: false, error: '不明なアクション: ' + action });
     }
   } catch(err) {
-    return jsonResponse({ success: false, error: err.toString() });
+    Logger.log('doPost error: ' + err);
+    return jsonResponse({ success: false, error: 'INTERNAL_ERROR' });
   }
 }
 
@@ -894,6 +898,7 @@ function getOrderTemplate(makerKey) {
       data: base64
     };
   } catch(err) {
-    return { success: false, error: 'テンプレート取得エラー: ' + err.toString() };
+    Logger.log('getOrderTemplate error: ' + err);
+    return { success: false, error: 'INTERNAL_ERROR' };
   }
 }

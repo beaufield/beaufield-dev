@@ -1,8 +1,13 @@
 // ============================================================
-// シリアルNo管理アプリ (SerialApps) - Code.gs v1.0.0
+// シリアルNo管理アプリ (SerialApps) - Code.gs v1.1.0
 // ============================================================
 
-var VERSION = 'v1.0.0';
+var VERSION = 'v1.1.0';
+
+// ロックアウト設定
+var MAX_ATTEMPTS = 5;
+var LOCK_MINUTES = 10;
+var SESSION_DAYS = 30;
 
 // ---- 設定 --------------------------------------------------
 var SHEET_ID  = '';  // ★ 初回セットアップ後にGoogleSheetsのIDを記入
@@ -52,27 +57,77 @@ function doGet(e) {
 // ============================================================
 // 認証（beaufield-auth 共通）
 // ============================================================
-function loginUser(pin) {
+
+// ログイン前にユーザー一覧を返す（ドロップダウン用・認証不要）
+function getUserList() {
   try {
+    var ss    = SpreadsheetApp.openById(AUTH_SHEET_ID);
+    var users = ss.getSheetByName('users').getDataRange().getValues();
+    var roles = ss.getSheetByName('user_app_roles').getDataRange().getValues();
+    var allowedIds = {};
+    for (var i = 1; i < roles.length; i++) {
+      if (roles[i][1] === APP_NAME && roles[i][2] && roles[i][2] !== 'none') {
+        allowedIds[String(roles[i][0])] = true;
+      }
+    }
+    var result = [];
+    for (var i = 1; i < users.length; i++) {
+      var uid = String(users[i][0]);
+      if (users[i][3] === true && allowedIds[uid]) {
+        result.push({ userId: uid, name: String(users[i][1]) });
+      }
+    }
+    return { success: true, users: result };
+  } catch (e) {
+    Logger.log('getUserList error: ' + e);
+    return { success: false, users: [] };
+  }
+}
+
+// userId + PIN でログイン。5回失敗でロックアウト
+function loginUser(userId, pin) {
+  try {
+    var props   = PropertiesService.getScriptProperties();
+    var lockKey = 'serial_lockout_' + userId;
+    var lockData = JSON.parse(props.getProperty(lockKey) || '{"count":0,"until":0}');
+    var now = Date.now();
+
+    if (lockData.until > now) {
+      var remaining = Math.ceil((lockData.until - now) / 60000);
+      return { success: false, message: 'PINを' + MAX_ATTEMPTS + '回間違えました。' + remaining + '分後に再試行してください。' };
+    }
+
     var ss    = SpreadsheetApp.openById(AUTH_SHEET_ID);
     var users = ss.getSheetByName('users').getDataRange().getValues();
 
     for (var i = 1; i < users.length; i++) {
-      var row     = users[i];
-      var userId  = row[0];
-      var name    = row[1];
-      var userPin = String(row[2]);
-      var active  = row[3];
-
-      if (userPin === String(pin) && active === true) {
-        var role = _getAppRole(ss, userId);
-        if (!role || role === 'none') {
-          return { success: false, message: 'このアプリへのアクセス権限がありません' };
-        }
-        return { success: true, userId: userId, name: name, role: role };
+      if (String(users[i][0]) !== String(userId)) continue;
+      if (users[i][3] !== true) {
+        return { success: false, message: 'このアカウントは無効です' };
       }
+      if (String(users[i][2]) !== String(pin)) {
+        lockData.count = (lockData.count || 0) + 1;
+        if (lockData.count >= MAX_ATTEMPTS) {
+          lockData.until = now + LOCK_MINUTES * 60 * 1000;
+          lockData.count = 0;
+          props.setProperty(lockKey, JSON.stringify(lockData));
+          return { success: false, message: 'PINを' + MAX_ATTEMPTS + '回間違えました。' + LOCK_MINUTES + '分間ロックされます。' };
+        }
+        props.setProperty(lockKey, JSON.stringify(lockData));
+        return { success: false, message: 'PINが正しくありません（残り' + (MAX_ATTEMPTS - lockData.count) + '回）' };
+      }
+      // PIN一致 → ロックリセット・セッション発行
+      props.deleteProperty(lockKey);
+      var role = _getAppRole(ss, userId);
+      if (!role || role === 'none') {
+        return { success: false, message: 'このアプリへのアクセス権限がありません' };
+      }
+      var token     = Utilities.getUuid();
+      var expiresAt = now + SESSION_DAYS * 24 * 60 * 60 * 1000;
+      _saveSession(ss, token, userId, expiresAt);
+      return { success: true, userId: userId, name: String(users[i][1]), role: role, sessionToken: token };
     }
-    return { success: false, message: 'PINが正しくありません' };
+    return { success: false, message: 'ユーザーが見つかりません' };
   } catch (e) {
     Logger.log('loginUser error: ' + e);
     return { success: false, message: '認証サーバーへの接続に失敗しました' };
@@ -89,6 +144,31 @@ function _getAppRole(ss, userId) {
   return null;
 }
 
+// beaufield-auth.sessions シートに保存。構造: [token, userId, expiresAt(ms)]
+function _saveSession(ss, token, userId, expiresAt) {
+  ss.getSheetByName('sessions').appendRow([token, userId, expiresAt]);
+}
+
+// セッショントークンを検証して userId を返す
+function validateSession_(token) {
+  if (!token) return { valid: false };
+  try {
+    var sh   = SpreadsheetApp.openById(AUTH_SHEET_ID).getSheetByName('sessions');
+    if (!sh) return { valid: false };
+    var rows = sh.getDataRange().getValues();
+    var now  = Date.now();
+    for (var i = 1; i < rows.length; i++) {
+      if (String(rows[i][0]) === String(token)) {
+        if (Number(rows[i][2]) < now) return { valid: false };
+        return { valid: true, userId: String(rows[i][1]) };
+      }
+    }
+  } catch (e) {
+    Logger.log('validateSession_ error: ' + e.message);
+  }
+  return { valid: false };
+}
+
 // ============================================================
 // 商品マスタ
 // ============================================================
@@ -97,7 +177,9 @@ function _getAppRole(ss, userId) {
  * 全商品マスタを取得する
  * @returns {Array} 商品オブジェクトの配列
  */
-function getProductMaster() {
+function getProductMaster(sessionToken) {
+  var auth = validateSession_(sessionToken);
+  if (!auth.valid) return { success: false, message: 'SESSION_INVALID' };
   try {
     var ss   = SpreadsheetApp.openById(SHEET_ID);
     var sh   = ss.getSheetByName(SH_PRODUCT);
@@ -119,7 +201,8 @@ function getProductMaster() {
     return { success: true, data: result };
   } catch (e) {
     Logger.log('getProductMaster error: ' + e);
-    return { success: false, message: '商品マスタの取得に失敗しました: ' + e };
+    Logger.log('getProductMaster error: ' + e);
+    return { success: false, message: '商品マスタの取得に失敗しました' };
   }
 }
 
@@ -153,7 +236,8 @@ function checkDuplicates(productCode, serials) {
     return { success: true, duplicates: duplicates };
   } catch (e) {
     Logger.log('checkDuplicates error: ' + e);
-    return { success: false, message: '重複チェックに失敗しました: ' + e };
+    Logger.log('checkDuplicates error: ' + e);
+    return { success: false, message: '重複チェックに失敗しました' };
   }
 }
 
@@ -169,6 +253,8 @@ function checkDuplicates(productCode, serials) {
  * @returns {{ success, registered, skipped, skippedSerials }}
  */
 function registerShipping(params) {
+  var auth = validateSession_(params.sessionToken);
+  if (!auth.valid) return { success: false, message: 'SESSION_INVALID' };
   try {
     var dupResult = checkDuplicates(params.productCode, params.serials);
     if (!dupResult.success) return dupResult;
@@ -208,7 +294,8 @@ function registerShipping(params) {
     return { success: true, registered: registered, skipped: skipped, skippedSerials: skippedSerials };
   } catch (e) {
     Logger.log('registerShipping error: ' + e);
-    return { success: false, message: '出荷登録に失敗しました: ' + e };
+    Logger.log('registerShipping error: ' + e);
+    return { success: false, message: '出荷登録に失敗しました' };
   }
 }
 
@@ -224,6 +311,8 @@ function registerShipping(params) {
  * @returns {{ success, updated, skipped, skippedSerials }}
  */
 function registerReturn(params) {
+  var auth = validateSession_(params.sessionToken);
+  if (!auth.valid) return { success: false, message: 'SESSION_INVALID' };
   try {
     var ss   = SpreadsheetApp.openById(SHEET_ID);
     var sh   = ss.getSheetByName(SH_SHIPPING);
@@ -259,7 +348,8 @@ function registerReturn(params) {
     return { success: true, updated: updated, skipped: skipped, skippedSerials: skippedSerials };
   } catch (e) {
     Logger.log('registerReturn error: ' + e);
-    return { success: false, message: '返品・取消登録に失敗しました: ' + e };
+    Logger.log('registerReturn error: ' + e);
+    return { success: false, message: '返品・取消登録に失敗しました' };
   }
 }
 
@@ -277,6 +367,8 @@ function registerReturn(params) {
  * @returns {{ success, data: Array }}
  */
 function searchRecords(params) {
+  var auth = validateSession_(params.sessionToken);
+  if (!auth.valid) return { success: false, message: 'SESSION_INVALID' };
   try {
     var ss   = SpreadsheetApp.openById(SHEET_ID);
     var sh   = ss.getSheetByName(SH_SHIPPING);
@@ -357,7 +449,8 @@ function searchRecords(params) {
     return { success: true, data: result, total: result.length };
   } catch (e) {
     Logger.log('searchRecords error: ' + e);
-    return { success: false, message: '検索に失敗しました: ' + e };
+    Logger.log('searchRecords error: ' + e);
+    return { success: false, message: '検索に失敗しました' };
   }
 }
 
