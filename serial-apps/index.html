@@ -48,6 +48,20 @@ body {
   color: #888;
   margin-bottom: 28px;
 }
+.user-select {
+  width: 100%;
+  font-size: 16px;
+  padding: 12px;
+  border: 2px solid #ccc;
+  border-radius: 10px;
+  margin-bottom: 14px;
+  outline: none;
+  background: #fff;
+  color: #222;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.user-select:focus { border-color: #2a6acc; }
 .pin-input {
   width: 100%;
   font-size: 32px;
@@ -434,6 +448,9 @@ select:focus { border-color: #2a6acc; }
   <div class="login-box">
     <h1>シリアルNo管理</h1>
     <p class="subtitle">Beaufield SerialApps</p>
+    <select class="user-select" id="userSelect">
+      <option value="">― 名前を選択 ―</option>
+    </select>
     <input type="password" class="pin-input" id="pinInput" maxlength="4"
            placeholder="••••" inputmode="numeric" autocomplete="off">
     <button class="btn btn-primary btn-full" id="loginBtn" onclick="doLogin()">ログイン</button>
@@ -741,10 +758,11 @@ select:focus { border-color: #2a6acc; }
 // アプリ状態
 // ============================================================
 var appState = {
-  loggedIn: false,
-  userId:   '',
-  userName: '',
-  role:     '',
+  loggedIn:     false,
+  userId:       '',
+  userName:     '',
+  role:         '',
+  sessionToken: '',
   products: [],       // 商品マスタキャッシュ
   shSelectedProduct: null,  // 出荷登録 選択中商品
   rtSelectedProduct: null,  // 返品・取消 選択中商品
@@ -784,17 +802,33 @@ window.addEventListener('load', function() {
     try {
       var s = JSON.parse(saved);
       var now = Date.now();
-      if (s.expire && now < s.expire) {
-        appState.loggedIn = true;
-        appState.userId   = s.userId;
-        appState.userName = s.userName;
-        appState.role     = s.role;
+      if (s.expire && now < s.expire && s.sessionToken) {
+        appState.loggedIn     = true;
+        appState.userId       = s.userId;
+        appState.userName     = s.userName;
+        appState.role         = s.role;
+        appState.sessionToken = s.sessionToken;
         showMain();
         return;
       }
     } catch(e) {}
   }
-  showLogin();
+  // ユーザー一覧を取得してログイン画面を表示
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res.success && res.users.length > 0) {
+        var sel = document.getElementById('userSelect');
+        res.users.forEach(function(u) {
+          var opt = document.createElement('option');
+          opt.value = u.userId;
+          opt.textContent = u.name;
+          sel.appendChild(opt);
+        });
+      }
+      showLogin();
+    })
+    .withFailureHandler(function() { showLogin(); })
+    .getUserList();
 });
 
 function showLogin() {
@@ -836,8 +870,10 @@ document.getElementById('pinInput').addEventListener('keyup', function(e) {
 });
 
 function doLogin() {
-  var pin = document.getElementById('pinInput').value.trim();
-  if (!pin) return;
+  var userId = document.getElementById('userSelect').value;
+  var pin    = document.getElementById('pinInput').value.trim();
+  if (!userId) { document.getElementById('loginError').textContent = '名前を選択してください'; return; }
+  if (!pin)    return;
   document.getElementById('loginError').textContent = '';
   showLoading(true);
 
@@ -845,16 +881,17 @@ function doLogin() {
     .withSuccessHandler(function(res) {
       showLoading(false);
       if (res.success) {
-        appState.loggedIn = true;
-        appState.userId   = res.userId;
-        appState.userName = res.name;
-        appState.role     = res.role;
-        // セッション保存（30日）
+        appState.loggedIn     = true;
+        appState.userId       = res.userId;
+        appState.userName     = res.name;
+        appState.role         = res.role;
+        appState.sessionToken = res.sessionToken;
         localStorage.setItem(SESSION_KEY, JSON.stringify({
-          userId:   res.userId,
-          userName: res.name,
-          role:     res.role,
-          expire:   Date.now() + 30 * 24 * 60 * 60 * 1000
+          userId:       res.userId,
+          userName:     res.name,
+          role:         res.role,
+          sessionToken: res.sessionToken,
+          expire:       Date.now() + 30 * 24 * 60 * 60 * 1000
         }));
         showMain();
       } else {
@@ -864,9 +901,9 @@ function doLogin() {
     })
     .withFailureHandler(function(err) {
       showLoading(false);
-      document.getElementById('loginError').textContent = '通信エラー: ' + err;
+      document.getElementById('loginError').textContent = '通信エラー';
     })
-    .loginUser(pin);
+    .loginUser(userId, pin);
 }
 
 function doLogout() {
@@ -905,7 +942,7 @@ function loadProductMaster() {
     .withFailureHandler(function(err) {
       showToast('商品マスタ読込エラー: ' + err, 'error');
     })
-    .getProductMaster();
+    .getProductMaster(appState.sessionToken);
 }
 
 function buildMakerDropdown() {
@@ -1172,13 +1209,14 @@ function doRegisterShipping(method) {
   if (serials.length === 0) { showToast('シリアルNoを追加してください', 'error'); return; }
 
   var params = {
-    productCode: product.code,
-    productName: product.name,
-    jan:         product.jan,
-    shipDate:    shipDate.replace(/-/g, '/'),
-    customer:    customer,
-    method:      (method === 'single') ? '単独' : '連番',
-    serials:     serials.slice()
+    sessionToken: appState.sessionToken,
+    productCode:  product.code,
+    productName:  product.name,
+    jan:          product.jan,
+    shipDate:     shipDate.replace(/-/g, '/'),
+    customer:     customer,
+    method:       (method === 'single') ? '単独' : '連番',
+    serials:      serials.slice()
   };
 
   if (!confirm(params.productName + '\n得意先: ' + customer + '\n' + serials.length + '件を出荷登録しますか？')) return;
@@ -1220,10 +1258,11 @@ function doRegisterReturn(method) {
   if (serials.length === 0) { showToast('シリアルNoを追加してください', 'error'); return; }
 
   var params = {
-    productCode: product.code,
-    returnDate:  returnDate.replace(/-/g, '/'),
-    kind:        kind,
-    serials:     serials.slice()
+    sessionToken: appState.sessionToken,
+    productCode:  product.code,
+    returnDate:   returnDate.replace(/-/g, '/'),
+    kind:         kind,
+    serials:      serials.slice()
   };
 
   var label = kind === '取消' ? '取消' : '返品';
@@ -1281,14 +1320,15 @@ function doSearch() {
   }
 
   var params = {
-    dateFrom:    document.getElementById('sc-from').value.replace(/-/g, '/'),
-    dateTo:      document.getElementById('sc-to').value.replace(/-/g, '/'),
-    statuses:    statuses,
-    maker:       document.getElementById('sc-maker').value,
-    series:      document.getElementById('sc-series').value,
-    productName: document.getElementById('sc-prod-name').value.trim(),
-    serialNo:    document.getElementById('sc-serial').value.trim(),
-    productCode: document.getElementById('sc-prod-code').value.trim()
+    sessionToken: appState.sessionToken,
+    dateFrom:     document.getElementById('sc-from').value.replace(/-/g, '/'),
+    dateTo:       document.getElementById('sc-to').value.replace(/-/g, '/'),
+    statuses:     statuses,
+    maker:        document.getElementById('sc-maker').value,
+    series:       document.getElementById('sc-series').value,
+    productName:  document.getElementById('sc-prod-name').value.trim(),
+    serialNo:     document.getElementById('sc-serial').value.trim(),
+    productCode:  document.getElementById('sc-prod-code').value.trim()
   };
 
   showLoading(true);
