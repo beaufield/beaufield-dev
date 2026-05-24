@@ -1,6 +1,6 @@
 // =========================================
 // 経費承認フロー GAS バックエンド
-// Version: 1.4.0
+// Version: 1.5.0
 //
 // --- スクリプトプロパティに設定する値 ---
 // LW_CLIENT_ID       : LINE WORKS Client ID
@@ -11,9 +11,10 @@
 // TEST_USER_ID       : テスト送信先 LW userId
 // WEBHOOK_SECRET     : LINE WORKS Callback URL に付与するランダム文字列
 // DB_SHEET_ID        : Google スプレッドシートのID
+// AUTH_SHEET_ID      : beaufield-auth スプレッドシートID（portal と共有）
 // =========================================
 
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 
 // --- シート名 ---
 const SHEET_REQUESTS  = '申請一覧';
@@ -59,28 +60,37 @@ const COL_M_APR_LW_ID  = 5;  // E: 承認者LWユーザーID
 
 function doGet(e) {
   try {
-    const type = (e.parameter || {}).type;
-    if (type === 'list') return getRequestList_();
+    const params = e.parameter || {};
+    if (params.type === 'list') {
+      const auth = validateSession_(params.session_token);
+      if (!auth.valid) return jsonResponse_({ ok: false, error: 'SESSION_INVALID' });
+      return getRequestList_();
+    }
   } catch (err) {
-    return jsonResponse_({ ok: false, error: err.message });
+    Logger.log('doGet error: ' + err.message);
+    return jsonResponse_({ ok: false, error: 'INTERNAL_ERROR' });
   }
   return jsonResponse_({ ok: false, error: 'unknown type' });
 }
 
 function doPost(e) {
   try {
-    const type = e.parameter.type;
+    const type = (e.parameter || {}).type;
 
     if (type === 'form') {
       const body = e.postData ? JSON.parse(e.postData.contents) : {};
-      return handleFormSubmit_(body);
+      const auth = validateSession_(body.session_token);
+      if (!auth.valid) return jsonResponse_({ ok: false, error: 'SESSION_INVALID' });
+      return handleFormSubmit_(body, auth);
     } else if (type === 'accounting') {
       const body = e.postData ? JSON.parse(e.postData.contents) : {};
-      return updateAccounting_(body);
+      const auth = validateSession_(body.session_token);
+      if (!auth.valid) return jsonResponse_({ ok: false, error: 'SESSION_INVALID' });
+      return updateAccounting_(body, auth);
     } else {
       // LINE WORKS コールバック：WEBHOOK_SECRET で検証
       const secret = PropertiesService.getScriptProperties().getProperty('WEBHOOK_SECRET');
-      if (e.parameter.secret !== secret) {
+      if ((e.parameter || {}).secret !== secret) {
         return jsonResponse_({ ok: false, error: 'unauthorized' });
       }
       const body = e.postData ? JSON.parse(e.postData.contents) : {};
@@ -88,7 +98,7 @@ function doPost(e) {
     }
   } catch (err) {
     Logger.log('doPost エラー: ' + err.message);
-    return jsonResponse_({ ok: false, error: err.message });
+    return jsonResponse_({ ok: false, error: 'INTERNAL_ERROR' });
   }
 }
 
@@ -96,8 +106,8 @@ function doPost(e) {
 // 申請フォーム受信
 // =========================================
 
-function handleFormSubmit_(data) {
-  const userId        = data.user_id;
+function handleFormSubmit_(data, auth) {
+  const userId        = auth.user_id;   // セッション検証済みの user_id を使用
   const applicantName = data.name;
   const expenseType   = data.expense_type;
   const purpose       = data.purpose;
@@ -450,6 +460,32 @@ function jsonResponse_(obj) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+// beaufield-auth の sessions シートでトークンを検証する
+// sessions シート構造: [token, user_id, expiresAt(ms)]
+function validateSession_(token) {
+  if (!token) return { valid: false };
+  try {
+    const authSheetId = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID');
+    if (!authSheetId) {
+      Logger.log('AUTH_SHEET_ID が未設定です');
+      return { valid: false };
+    }
+    const sh   = SpreadsheetApp.openById(authSheetId).getSheetByName('sessions');
+    if (!sh) return { valid: false };
+    const rows = sh.getDataRange().getValues();
+    const now  = Date.now();
+    for (let i = 1; i < rows.length; i++) {
+      if (String(rows[i][0]) === String(token)) {
+        if (Number(rows[i][2]) < now) return { valid: false };
+        return { valid: true, user_id: String(rows[i][1]) };
+      }
+    }
+  } catch (e) {
+    Logger.log('validateSession_ error: ' + e.message);
+  }
+  return { valid: false };
+}
+
 function base64urlEncode_(str) {
   return Utilities.base64EncodeWebSafe(str).replace(/=+$/, '');
 }
@@ -458,13 +494,17 @@ function base64urlEncodeBytes_(bytes) {
   return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/, '');
 }
 
-function updateAccounting_(data) {
-  const userId          = data.user_id;
+function updateAccounting_(data, auth) {
+  const userId          = auth.user_id;  // セッション検証済みの user_id を使用
   const requestId       = data.request_id;
   const confirmedAmount = Number(data.confirmed_amount) || 0;
 
   const accountingUserId = getSetting_('経理担当者user_id');
-  const adminUserId      = getSetting_('管理者user_id') || 'U050';
+  const adminUserId      = getSetting_('管理者user_id');
+  if (!accountingUserId && !adminUserId) {
+    Logger.log('経理担当者user_id / 管理者user_id が設定シートに未登録です');
+    return jsonResponse_({ ok: false, error: 'CONFIG_ERROR' });
+  }
   if (userId !== accountingUserId && userId !== adminUserId) {
     return jsonResponse_({ ok: false, error: '権限がありません' });
   }
@@ -484,8 +524,8 @@ function getRequestList_() {
   const db    = getDb_();
   const sheet = db.getSheetByName(SHEET_REQUESTS);
   if (!sheet) {
-    const names = db.getSheets().map(s => s.getName()).join(' / ');
-    return jsonResponse_({ ok: false, error: 'シート「' + SHEET_REQUESTS + '」が見つかりません。存在シート: ' + names });
+    Logger.log('シート「' + SHEET_REQUESTS + '」が見つかりません。存在シート: ' + db.getSheets().map(s => s.getName()).join(' / '));
+    return jsonResponse_({ ok: false, error: 'データシートが見つかりません。管理者に連絡してください。' });
   }
   const rows  = sheet.getDataRange().getValues();
   const list  = [];

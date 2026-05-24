@@ -11,7 +11,7 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.5.0';
+const VERSION       = 'v1.5.1';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
 
 // ロックアウト設定
@@ -84,7 +84,8 @@ function doGet(e) {
       default:            return _json({ success: false, error: '不明なアクション: ' + action });
     }
   } catch (err) {
-    return _json({ success: false, error: err.toString() });
+    Logger.log('doGet error: ' + err);
+    return _json({ success: false, error: 'INTERNAL_ERROR' });
   }
 }
 
@@ -118,7 +119,8 @@ function doPost(e) {
       default:                return _json({ success: false, error: '不明なアクション: ' + action });
     }
   } catch (err) {
-    return _json({ success: false, error: err.toString() });
+    Logger.log('doPost error: ' + err);
+    return _json({ success: false, error: 'INTERNAL_ERROR' });
   }
 }
 
