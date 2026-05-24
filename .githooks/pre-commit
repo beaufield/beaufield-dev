@@ -10,10 +10,16 @@
 # ============================================================
 
 # 拒否対象の拡張子（大文字小文字両方カバー）
-BLOCKED_EXT='\.(pdf|PDF|csv|CSV|xlsx|XLSX|xlsm|XLSM|xls|XLS|tsv|TSV)$'
+BLOCKED_EXT='\.(pdf|PDF|csv|CSV|xlsx|XLSX|xlsm|XLSM|xls|XLS|tsv|TSV|docx|DOCX|doc|DOC)$'
+
+# 拒否対象のファイル名
+BLOCKED_FILES='^CLAUDE\.md$'
 
 # ステージされている追加・変更ファイルから対象を抽出
-violations=$(git diff --cached --name-only --diff-filter=ACM | grep -E "$BLOCKED_EXT" || true)
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+violations_ext=$(echo "$staged" | grep -E "$BLOCKED_EXT" || true)
+violations_files=$(echo "$staged" | grep -E "$BLOCKED_FILES" || true)
+violations=$(printf '%s\n%s' "$violations_ext" "$violations_files" | grep -v '^$' || true)
 
 if [ -n "$violations" ]; then
     echo ""
