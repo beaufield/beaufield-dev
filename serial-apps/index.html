@@ -249,8 +249,16 @@ input[type="number"]:focus { border-color: #2a6acc; }
   overflow: hidden;
   width: 90vw;
   max-width: 400px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
 }
-#scannerContainer { width: 100%; }
+#scannerContainer {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
 .scanner-header {
   background: #222;
   color: #fff;
@@ -1162,7 +1170,7 @@ function openScanner(target) {
 function startScanner() {
   if (scannerActive) return;
   document.getElementById('scannerContainer').innerHTML =
-    '<video id="scannerVideo" style="width:100%;" playsinline autoplay muted></video>';
+    '<video id="scannerVideo" style="width:100%;height:100%;object-fit:cover;display:block;" playsinline autoplay muted></video>';
   codeReader = new ZXing.BrowserMultiFormatReader();
   // 背面カメラ・連続オートフォーカスを指定
   codeReader.decodeFromConstraints(
