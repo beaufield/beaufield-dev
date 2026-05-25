@@ -392,7 +392,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.1.0</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.2.0</span>
   </div>
 
   <!-- タブバー -->
@@ -642,7 +642,7 @@ select:focus { border-color: #2a6acc; }
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.1.0</div>
+<div class="version-label">HTML v2.2.0</div>
 
 <!-- ZXing バーコードスキャナー -->
 <script src="https://unpkg.com/@zxing/library@0.18.6/umd/index.min.js"></script>
@@ -873,9 +873,10 @@ function filterProducts(tab) {
   if (filtered.length === 0) { candidatesEl.style.display = 'none'; return; }
 
   candidatesEl.innerHTML = filtered.map(function(p) {
+    var sub = [p.code, p.maker].filter(Boolean).join(' / ');
     return '<div class="product-candidate-item" onclick="selectProductFromList(\'' + tab + '\',\'' + esc(p.code) + '\')">' +
-      '<div class="prod-name">' + esc(p.name) + '</div>' +
-      '<div class="prod-sub">' + esc(p.code) + (p.jan ? ' / JAN:' + esc(p.jan) : '') + (p.maker ? ' / ' + esc(p.maker) : '') + '</div>' +
+      '<span class="prod-name">' + esc(p.name) + '</span>' +
+      (sub ? '<span style="font-size:11px;color:#aaa;margin-left:8px;">' + esc(sub) + '</span>' : '') +
     '</div>';
   }).join('');
   candidatesEl.style.display = 'block';
@@ -1159,6 +1160,7 @@ function renderSearchResults(data, total) {
         '<span class="sri-name">' + esc(r.productName) + '</span>' +
         '<span class="sri-status ' + c + '">' + esc(r.status) + '</span>' +
       '</div>' +
+      '<div style="font-size:12px;color:#888;margin-top:2px;font-family:monospace;">' + esc(r.serial) + '</div>' +
     '</div>';
   }).join('');
 }
