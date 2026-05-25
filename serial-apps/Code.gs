@@ -8,7 +8,7 @@
 //     AUTH_SHEET_ID : beaufield-auth スプレッドシートID（共通）
 // ============================================================
 
-var VERSION = 'v2.0.1';
+var VERSION = 'v2.0.2';
 
 var SHEET_ID      = PropertiesService.getScriptProperties().getProperty('SHEET_ID')      || '';
 var AUTH_SHEET_ID = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID') || '';
@@ -304,13 +304,21 @@ function searchRecords(params) {
     var result = [];
     for (var i = 1; i < data.length; i++) {
       var row = data[i];
-      if (!row[COL.ID]) continue;
+      // UUID がない移行データも対象とするため、シリアルNoで空行判定
+      if (!row[COL.SERIAL]) continue;
 
       var shipDateStr = '';
       if (row[COL.SHIP_DATE]) {
-        shipDateStr = (row[COL.SHIP_DATE] instanceof Date)
-          ? Utilities.formatDate(row[COL.SHIP_DATE], 'Asia/Tokyo', 'yyyy-MM-dd')
-          : String(row[COL.SHIP_DATE]).replace(/\//g, '-').substring(0, 10);
+        if (row[COL.SHIP_DATE] instanceof Date) {
+          // Sheetsがdate型で返した場合（日本時間で YYYY-MM-DD に変換）
+          shipDateStr = Utilities.formatDate(row[COL.SHIP_DATE], 'Asia/Tokyo', 'yyyy-MM-dd');
+        } else {
+          // 文字列で返した場合（"2025/9/19" 形式など 0埋めなしに対応）
+          var parts = String(row[COL.SHIP_DATE]).split(/[\/\-]/);
+          if (parts.length === 3) {
+            shipDateStr = parts[0].padStart(4,'0') + '-' + parts[1].padStart(2,'0') + '-' + parts[2].padStart(2,'0');
+          }
+        }
       }
       if (fromStr && shipDateStr && shipDateStr < fromStr) continue;
       if (toStr   && shipDateStr && shipDateStr > toStr)   continue;
