@@ -424,7 +424,7 @@ select:focus { border-color: #2a6acc; }
         <button class="btn btn-orange" style="min-width:56px;" onclick="openScanner('sh-jan')">③JAN</button>
         <div style="flex:1;display:flex;align-items:center;gap:6px;">
           <span style="font-size:13px;color:#888;white-space:nowrap;">商品検索</span>
-          <input type="text" id="sh-product-search" placeholder="※前方一致のみ"
+          <input type="text" id="sh-product-search" placeholder="商品名・メーカー（部分一致）"
                  oninput="filterProducts('sh')" style="flex:1;font-size:14px;padding:8px;">
         </div>
       </div>
@@ -507,7 +507,7 @@ select:focus { border-color: #2a6acc; }
         <button class="btn btn-orange" style="min-width:56px;" onclick="openScanner('rt-jan')">③JAN</button>
         <div style="flex:1;display:flex;align-items:center;gap:6px;">
           <span style="font-size:13px;color:#888;white-space:nowrap;">商品検索</span>
-          <input type="text" id="rt-product-search" placeholder="※前方一致のみ"
+          <input type="text" id="rt-product-search" placeholder="商品名・メーカー（部分一致）"
                  oninput="filterProducts('rt')" style="flex:1;font-size:14px;padding:8px;">
         </div>
       </div>
@@ -603,7 +603,7 @@ select:focus { border-color: #2a6acc; }
       <div style="margin-bottom:12px;">
         <div style="font-size:13px;color:#666;margin-bottom:6px;">指定して探す</div>
         <div style="display:flex;gap:8px;margin-bottom:8px;">
-          <input type="text" id="sc-prod-name" placeholder="商品名（先頭一致）" style="flex:1;font-size:14px;">
+          <input type="text" id="sc-prod-name" placeholder="商品名（部分一致・スペースでAND）" style="flex:1;font-size:14px;">
         </div>
         <div style="display:flex;gap:8px;">
           <input type="text" id="sc-serial"    placeholder="シリアルNo（完全一致）" style="flex:1;font-size:14px;">
@@ -838,15 +838,27 @@ function onMakerChange() {
 // ============================================================
 // 商品候補フィルタ・選択
 // ============================================================
+// 半角全角・大文字小文字・スペース正規化（NFKC = 全角英数→半角、半角カナ→全角カナ）
+function normalizeText(str) {
+  return String(str || '').normalize('NFKC').toLowerCase().replace(/[\s　]+/g, ' ').trim();
+}
+// スペース区切りAND部分一致
+function matchesQuery(text, queryNorm) {
+  var t = normalizeText(text);
+  var terms = queryNorm.split(' ').filter(Boolean);
+  return terms.length > 0 && terms.every(function(term) { return t.indexOf(term) >= 0; });
+}
+
 function filterProducts(tab) {
-  var q            = document.getElementById(tab + '-product-search').value.trim().toLowerCase();
+  var raw          = document.getElementById(tab + '-product-search').value;
+  var q            = normalizeText(raw);
   var candidatesEl = document.getElementById(tab + '-product-candidates');
 
   if (!q) { candidatesEl.style.display = 'none'; return; }
 
   // JAN or 商品コード完全一致 → 自動選択
   var exact = appState.products.find(function(p) {
-    return p.jan === q || p.code === q || p.jan.toLowerCase() === q || p.code.toLowerCase() === q;
+    return normalizeText(p.jan) === q || normalizeText(p.code) === q;
   });
   if (exact) {
     selectProduct(tab, exact);
@@ -855,8 +867,9 @@ function filterProducts(tab) {
     return;
   }
 
+  // 商品名・商品コード・メーカーをAND部分一致で検索
   var filtered = appState.products.filter(function(p) {
-    return p.name.toLowerCase().indexOf(q) === 0 || p.code.toLowerCase().indexOf(q) === 0;
+    return matchesQuery(p.name, q) || matchesQuery(p.code, q) || matchesQuery(p.maker, q);
   }).slice(0, 20);
 
   if (filtered.length === 0) { candidatesEl.style.display = 'none'; return; }
