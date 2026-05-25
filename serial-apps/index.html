@@ -392,7 +392,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.3.0</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.4.0</span>
   </div>
 
   <!-- タブバー -->
@@ -642,7 +642,7 @@ select:focus { border-color: #2a6acc; }
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.3.0</div>
+<div class="version-label">HTML v2.4.0</div>
 
 <!-- ZXing バーコードスキャナー -->
 <script src="https://unpkg.com/@zxing/library@0.18.6/umd/index.min.js"></script>
@@ -1043,11 +1043,48 @@ async function doRegisterShipping(method) {
       serials:     serials
     });
     if (res.success) {
-      var msg = res.registered + '件登録完了';
-      if (res.skipped > 0) msg += '（' + res.skipped + '件は出荷中のため除外）';
-      showToast(msg, 'success');
-      if (method === 'single') { appState.shSingleSerials = []; renderSingleList('sh'); }
-      else                     { appState.shSeqSerials = [];    renderSeqList('sh'); }
+
+      // ── スキップなし: 全クリアして終了 ──────────────────────
+      if (res.skipped === 0) {
+        showToast(res.registered + '件登録完了', 'success');
+        if (method === 'single') { appState.shSingleSerials = []; renderSingleList('sh'); }
+        else                     { appState.shSeqSerials = [];    renderSeqList('sh'); }
+        return;
+      }
+
+      // ── 一部/全件スキップあり ────────────────────────────────
+      var toastMsg = res.registered > 0
+        ? res.registered + '件登録完了（' + res.skipped + '件は出荷中のためスキップ）'
+        : res.skipped + '件すべてが出荷中のためスキップされました';
+      showToast(toastMsg, res.registered > 0 ? 'success' : 'warn');
+
+      // 登録済み分のみリストから除去・スキップ分は保持（取消後に再登録できるよう）
+      var skippedSet = {};
+      res.skippedSerials.forEach(function(s) { skippedSet[s] = true; });
+      if (method === 'single') {
+        appState.shSingleSerials = appState.shSingleSerials.filter(function(s) { return skippedSet[s]; });
+        renderSingleList('sh');
+      } else {
+        appState.shSeqSerials = appState.shSeqSerials.filter(function(s) { return skippedSet[s]; });
+        renderSeqList('sh');
+      }
+
+      // トースト表示後に確認ダイアログ
+      setTimeout(function() {
+        var list    = res.skippedSerials;
+        var preview = list.length <= 5
+          ? list.join('\n')
+          : list.slice(0, 3).join('\n') + '\n…他 ' + (list.length - 3) + '件';
+        var msg2 =
+          'スキップした ' + res.skipped + '件はすでに出荷中です:\n\n' +
+          preview + '\n\n' +
+          '取消・返品処理へ移動しますか？\n' +
+          '（出荷タブのシリアルリストはそのまま保持されます）';
+        if (confirm(msg2)) {
+          goToReturnFromShipping(res.skippedSerials);
+        }
+      }, 600);
+
     } else {
       showToast('登録失敗: ' + res.message, 'error');
     }
@@ -1056,6 +1093,32 @@ async function doRegisterShipping(method) {
   } finally {
     showLoading(false);
   }
+}
+
+// 出荷登録のスキップ分を返品・取消タブにセットして遷移
+function goToReturnFromShipping(skippedSerials) {
+  var product = appState.shSelectedProduct;
+  if (!product) return;
+
+  // 返品タブに商品をセット（出荷登録と同じ商品）
+  selectProduct('rt', product);
+
+  // スキップされたシリアルを返品リストに追加（重複除外）
+  skippedSerials.forEach(function(serial) {
+    if (appState.rtSingleSerials.indexOf(serial) < 0) {
+      appState.rtSingleSerials.push(serial);
+    }
+  });
+  renderSingleList('rt');
+
+  // 単独モード・今日の日付をセット
+  document.querySelector('input[name="rt-method"][value="単独"]').checked = true;
+  switchMethod('rt', 'single');
+  document.getElementById('rt-date').value = todayStr();
+
+  // 返品・取消タブへ遷移
+  switchTab('return');
+  showToast('取消後、出荷タブに戻るとシリアルが残っています', 'success');
 }
 
 // ============================================================
