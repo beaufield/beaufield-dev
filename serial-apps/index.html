@@ -638,10 +638,8 @@ select:focus { border-color: #2a6acc; }
 <!-- バージョン -->
 <div class="version-label">HTML v2.0.0</div>
 
-<!-- ZXing バーコードスキャナー（SRI付き） -->
-<script src="https://unpkg.com/@zxing/library@0.18.6/umd/index.min.js"
-        integrity="sha384-/9bBHADe+apJVWTamPSaAFRFdxqTmxhZ5bJqKMdVqJvB1SbkVDFM1C3B3UJjy5S"
-        crossorigin="anonymous"></script>
+<!-- ZXing バーコードスキャナー -->
+<script src="https://unpkg.com/@zxing/library@0.18.6/umd/index.min.js"></script>
 
 <script>
 // ============================================================
@@ -802,7 +800,7 @@ async function loadProductMaster() {
       showToast('商品マスタ読込失敗: ' + res.message, 'error');
     }
   } catch(e) {
-    showToast('商品マスタ読込エラー', 'error');
+    showToast('商品マスタ読込エラー: ' + e.message, 'error');
   }
 }
 
