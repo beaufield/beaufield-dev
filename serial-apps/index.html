@@ -1161,11 +1161,17 @@ function openScanner(target) {
 
 function startScanner() {
   if (scannerActive) return;
-  document.getElementById('scannerContainer').innerHTML = '<video id="scannerVideo" style="width:100%;"></video>';
+  document.getElementById('scannerContainer').innerHTML =
+    '<video id="scannerVideo" style="width:100%;" playsinline autoplay muted></video>';
   codeReader = new ZXing.BrowserMultiFormatReader();
-  codeReader.decodeFromVideoDevice(null, 'scannerVideo', function(result, err) {
-    if (result) onScanResult(result.getText());
-  }).catch(function(err) {
+  // 背面カメラ・連続オートフォーカスを指定
+  codeReader.decodeFromConstraints(
+    { video: { facingMode: { ideal: 'environment' }, focusMode: 'continuous', width: { ideal: 1280 }, height: { ideal: 720 } } },
+    'scannerVideo',
+    function(result, err) {
+      if (result) onScanResult(result.getText());
+    }
+  ).catch(function(err) {
     showToast('カメラ起動エラー: ' + err, 'error');
     closeScanner();
   });
