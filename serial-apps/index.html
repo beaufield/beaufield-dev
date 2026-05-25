@@ -392,7 +392,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.2.0</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.3.0</span>
   </div>
 
   <!-- タブバー -->
@@ -642,7 +642,7 @@ select:focus { border-color: #2a6acc; }
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.2.0</div>
+<div class="version-label">HTML v2.3.0</div>
 
 <!-- ZXing バーコードスキャナー -->
 <script src="https://unpkg.com/@zxing/library@0.18.6/umd/index.min.js"></script>
@@ -669,7 +669,8 @@ var appState = {
   shSingleSerials: [],
   shSeqSerials:    [],
   rtSingleSerials: [],
-  rtSeqSerials:    []
+  rtSeqSerials:    [],
+  lastSearchResults: []
 };
 
 var SCAN_TARGET   = '';
@@ -1146,6 +1147,7 @@ async function doSearch() {
 }
 
 function renderSearchResults(data, total) {
+  appState.lastSearchResults = data;
   document.getElementById('sc-result-header').textContent = total + '件見つかりました';
   var listEl = document.getElementById('sc-result-list');
   if (total === 0) {
@@ -1153,16 +1155,52 @@ function renderSearchResults(data, total) {
     return;
   }
   var cls = { '出荷中': 'status-active', '返品済': 'status-returned', '取消': 'status-canceled' };
-  listEl.innerHTML = data.map(function(r) {
+  listEl.innerHTML = data.map(function(r, idx) {
     var c = cls[r.status] || 'status-active';
     return '<div class="search-result-item">' +
       '<div class="sri-header">' +
         '<span class="sri-name">' + esc(r.productName) + '</span>' +
         '<span class="sri-status ' + c + '">' + esc(r.status) + '</span>' +
       '</div>' +
-      '<div style="font-size:12px;color:#888;margin-top:2px;font-family:monospace;">' + esc(r.serial) + '</div>' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:3px;">' +
+        '<span style="font-size:12px;color:#888;font-family:monospace;">' + esc(r.serial) + '</span>' +
+        (r.status === '出荷中'
+          ? '<button class="btn btn-orange" style="padding:3px 10px;font-size:12px;" onclick="goToReturn(' + idx + ')">返品へ</button>'
+          : '') +
+      '</div>' +
     '</div>';
   }).join('');
+}
+
+function goToReturn(idx) {
+  var r = appState.lastSearchResults[idx];
+  if (!r) return;
+
+  // 商品マスタから商品情報を取得（なければ検索結果の情報で代用）
+  var product = appState.products.find(function(p) { return p.code === r.productCode; });
+  if (!product) {
+    product = { code: r.productCode, name: r.productName, jan: r.jan || '', maker: '', series: '', size: '' };
+  }
+
+  // 商品を返品タブにセット
+  selectProduct('rt', product);
+
+  // シリアルを単独リストに追加（重複は除外）
+  if (appState.rtSingleSerials.indexOf(r.serial) < 0) {
+    appState.rtSingleSerials.push(r.serial);
+    renderSingleList('rt');
+    showToast('返品タブに追加: ' + r.serial, 'success');
+  } else {
+    showToast('すでに返品リストにあります: ' + r.serial, 'warn');
+  }
+
+  // 単独モード・今日の日付をセット
+  document.querySelector('input[name="rt-method"][value="単独"]').checked = true;
+  switchMethod('rt', 'single');
+  document.getElementById('rt-date').value = todayStr();
+
+  // 返品・取消タブへ遷移
+  switchTab('return');
 }
 
 // ============================================================
