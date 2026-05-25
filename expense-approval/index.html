@@ -201,7 +201,7 @@
 
 <header>
   <h1>💰 経費事前申請</h1>
-  <span class="version">v1.4.0</span>
+  <span class="version">v1.5.1</span>
 </header>
 
 <div class="tab-bar">
@@ -347,7 +347,7 @@
   </div>
 </div>
 
-<footer>経費事前申請 v1.4.0 | Beaufield</footer>
+<footer>経費事前申請 v1.5.1 | Beaufield</footer>
 
 <script>
   const GAS_URL    = 'https://script.google.com/macros/s/AKfycbyi1oZ3MLdVflBnjkwzwTC9edeRRQM3TTqcw5zkMzpDZp9e5F1TwMH9ApyK_iuJDC1DDQ/exec';
@@ -403,7 +403,7 @@
         if (!data.ok) throw new Error(data.error || '取得失敗');
         allRequests   = data.requests || [];
         listLoaded    = true;
-        isAcctManager = !!(session.is_admin || session.user_id === data.accountingUserId);
+        isAcctManager = !!(session.is_admin || data.isAccountingUser);
         buildNameFilter();
         applyFilters();
       })

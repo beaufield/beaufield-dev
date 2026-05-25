@@ -14,7 +14,7 @@
 // AUTH_SHEET_ID      : beaufield-auth スプレッドシートID（portal と共有）
 // =========================================
 
-const VERSION = '1.5.0';
+const VERSION = '1.5.1';
 
 // --- シート名 ---
 const SHEET_REQUESTS  = '申請一覧';
@@ -64,7 +64,7 @@ function doGet(e) {
     if (params.type === 'list') {
       const auth = validateSession_(params.session_token);
       if (!auth.valid) return jsonResponse_({ ok: false, error: 'SESSION_INVALID' });
-      return getRequestList_();
+      return getRequestList_(auth);
     }
   } catch (err) {
     Logger.log('doGet error: ' + err.message);
@@ -219,6 +219,14 @@ function finalizeRequest_(requestId, approved, comment, fromUser) {
 
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][COL_REQ_ID - 1] !== requestId) continue;
+
+    // 承認者IDの照合：シートに登録された承認者以外の操作を拒否
+    const storedApproverLwId = String(rows[i][COL_APR_LW_ID - 1] || '').trim();
+    if (storedApproverLwId && storedApproverLwId !== fromUser) {
+      Logger.log('不正な承認操作を検知しブロック: requestId=' + requestId
+        + ' fromUser=' + fromUser + ' expected=' + storedApproverLwId);
+      return;
+    }
 
     const status = approved ? '承認' : '却下';
     reqSheet.getRange(i + 1, COL_STATUS).setValue(status);
@@ -520,7 +528,7 @@ function updateAccounting_(data, auth) {
   return jsonResponse_({ ok: false, error: '申請が見つかりません' });
 }
 
-function getRequestList_() {
+function getRequestList_(auth) {
   const db    = getDb_();
   const sheet = db.getSheetByName(SHEET_REQUESTS);
   if (!sheet) {
@@ -551,8 +559,10 @@ function getRequestList_() {
   }
 
   list.reverse();
+  // 経理担当者IDは内部情報のため外部に返さず、呼び出し元ユーザーが経理担当者かどうかの真偽値のみ返す
   const accountingUserId = getSetting_('経理担当者user_id') || '';
-  return jsonResponse_({ ok: true, requests: list, accountingUserId: accountingUserId });
+  const isAccountingUser = !!(auth && auth.user_id && auth.user_id === accountingUserId);
+  return jsonResponse_({ ok: true, requests: list, isAccountingUser: isAccountingUser });
 }
 
 function formatDateTime_(d) {

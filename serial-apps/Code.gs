@@ -10,8 +10,12 @@ var LOCK_MINUTES = 10;
 var SESSION_DAYS = 30;
 
 // ---- 設定 --------------------------------------------------
-var SHEET_ID  = '';  // ★ 初回セットアップ後にGoogleSheetsのIDを記入
-var AUTH_SHEET_ID = '1cCQn16ubEN_Af7XWw8KerBscZtFomBnXHjIIiZUr6V8';
+// [重要] コードに機密値を直書きしない。GASスクリプトプロパティに設定すること。
+//   GASエディタ → プロジェクトの設定 → スクリプトプロパティ → プロパティを追加
+//     SHEET_ID      : このアプリのスプレッドシートID
+//     AUTH_SHEET_ID : beaufield-auth スプレッドシートID（共通）
+var SHEET_ID      = PropertiesService.getScriptProperties().getProperty('SHEET_ID') || '';
+var AUTH_SHEET_ID = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID') || '';
 var APP_NAME  = 'serial-apps';
 
 // シート名
