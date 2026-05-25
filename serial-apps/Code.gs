@@ -311,15 +311,15 @@ function searchRecords(params) {
       if (to   && shipDate && shipDate > to)   continue;
 
       if (statuses.length > 0 && statuses.indexOf(String(row[COL.STATUS])) < 0) continue;
-      if (params.productCode && String(row[COL.PROD_CODE]) !== params.productCode) continue;
-      if (params.serialNo    && String(row[COL.SERIAL])    !== params.serialNo)    continue;
-      if (params.productName && String(row[COL.PROD_NAME]).indexOf(params.productName) !== 0) continue;
+      if (params.productCode && _normalizeText(row[COL.PROD_CODE]) !== _normalizeText(params.productCode)) continue;
+      if (params.serialNo    && _normalizeText(row[COL.SERIAL])    !== _normalizeText(params.serialNo))    continue;
+      if (params.productName && !_matchesQuery(String(row[COL.PROD_NAME]), _normalizeText(params.productName))) continue;
 
       if (params.maker || params.series) {
         var pm = prodMap[String(row[COL.PROD_CODE])];
         if (!pm) continue;
-        if (params.maker  && pm.maker  !== params.maker)  continue;
-        if (params.series && pm.series !== params.series) continue;
+        if (params.maker  && _normalizeText(pm.maker)  !== _normalizeText(params.maker))  continue;
+        if (params.series && _normalizeText(pm.series) !== _normalizeText(params.series)) continue;
       }
 
       result.push({
@@ -355,6 +355,22 @@ function _parseArray(val) {
   if (Array.isArray(val)) return val;
   if (!val) return [];
   try { return JSON.parse(val); } catch (e) { return [String(val)]; }
+}
+
+// 半角全角・大文字小文字・スペース正規化
+function _normalizeText(str) {
+  try {
+    return String(str || '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+  } catch(e) {
+    return String(str || '').toLowerCase().trim();
+  }
+}
+
+// スペース区切りAND部分一致
+function _matchesQuery(text, queryNorm) {
+  var t     = _normalizeText(text);
+  var terms = queryNorm.split(' ').filter(Boolean);
+  return terms.length > 0 && terms.every(function(term) { return t.indexOf(term) >= 0; });
 }
 
 function _formatDate(val) {
