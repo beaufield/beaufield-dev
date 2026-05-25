@@ -202,7 +202,7 @@ input[type="number"]:focus { border-color: #2a6acc; }
 
 /* 検索結果 */
 .search-result-item {
-  padding: 12px 14px;
+  padding: 8px 12px;
   border-bottom: 1px solid #f0f0f0;
 }
 .search-result-item:last-child { border-bottom: none; }
@@ -392,7 +392,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.0.0</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.1.0</span>
   </div>
 
   <!-- タブバー -->
@@ -435,20 +435,19 @@ select:focus { border-color: #2a6acc; }
         <span class="field-label" style="font-size:13px;color:#888;">④登録方法</span>
         <div class="radio-group">
           <label class="radio-label">
-            <input type="radio" name="sh-method" value="単独" onchange="switchMethod('sh','single')"> 単独
+            <input type="radio" name="sh-method" value="単独" onchange="switchMethod('sh','single')" checked> 単独
           </label>
           <label class="radio-label">
-            <input type="radio" name="sh-method" value="連番" onchange="switchMethod('sh','seq')" checked> 連番
+            <input type="radio" name="sh-method" value="連番" onchange="switchMethod('sh','seq')"> 連番
           </label>
         </div>
       </div>
     </div>
 
     <!-- 単独入力エリア -->
-    <div id="sh-single-area" class="card" style="display:none;">
+    <div id="sh-single-area" class="card">
       <div class="return-input-row">
         <button class="btn btn-orange" onclick="openScanner('sh-single-serial')">⑤バーコード</button>
-        <span style="font-size:13px;color:#888;">直接入力</span>
         <input type="text" id="sh-single-serial" placeholder="⑤シリアルNo" style="flex:1;" autocomplete="off">
         <button class="btn btn-blue" onclick="addSingleSerial('sh')">追加</button>
       </div>
@@ -462,7 +461,7 @@ select:focus { border-color: #2a6acc; }
     </div>
 
     <!-- 連番入力エリア -->
-    <div id="sh-seq-area" class="card">
+    <div id="sh-seq-area" class="card" style="display:none;">
       <div class="seq-start-row">
         <button class="btn btn-orange" onclick="openScanner('sh-seq-start')">⑤バーコード</button>
         <span style="font-size:12px;color:#888;">or</span>
@@ -531,7 +530,6 @@ select:focus { border-color: #2a6acc; }
     <div id="rt-single-area" class="card">
       <div class="return-input-row">
         <button class="btn btn-orange" onclick="openScanner('rt-single-serial')">⑤バーコード</button>
-        <span style="font-size:13px;color:#888;">直接入力</span>
         <input type="text" id="rt-single-serial" placeholder="⑤シリアルNo" style="flex:1;" autocomplete="off">
         <button class="btn btn-blue" onclick="addSingleSerial('rt')">追加</button>
       </div>
@@ -644,7 +642,7 @@ select:focus { border-color: #2a6acc; }
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.0.0</div>
+<div class="version-label">HTML v2.1.0</div>
 
 <!-- ZXing バーコードスキャナー -->
 <script src="https://unpkg.com/@zxing/library@0.18.6/umd/index.min.js"></script>
@@ -736,8 +734,8 @@ function showMain() {
   document.getElementById('sc-from').value = today;
   document.getElementById('sc-to').value   = today;
 
-  document.querySelector('input[name="sh-method"][value="連番"]').checked = true;
-  switchMethod('sh', 'seq');
+  document.querySelector('input[name="sh-method"][value="単独"]').checked = true;
+  switchMethod('sh', 'single');
   document.querySelector('input[name="rt-method"][value="単独"]').checked = true;
   switchMethod('rt', 'single');
 
@@ -1155,14 +1153,12 @@ function renderSearchResults(data, total) {
   }
   var cls = { '出荷中': 'status-active', '返品済': 'status-returned', '取消': 'status-canceled' };
   listEl.innerHTML = data.map(function(r) {
-    var c         = cls[r.status] || 'status-active';
-    var dateLabel = r.status === '出荷中' ? r.shipDate : (r.returnDate || r.shipDate);
+    var c = cls[r.status] || 'status-active';
     return '<div class="search-result-item">' +
       '<div class="sri-header">' +
-        '<span class="sri-name">' + esc(r.productName) + '（' + esc(r.productCode) + '）</span>' +
+        '<span class="sri-name">' + esc(r.productName) + '</span>' +
         '<span class="sri-status ' + c + '">' + esc(r.status) + '</span>' +
       '</div>' +
-      '<div class="sri-sub">' + esc(dateLabel) + ' / ' + esc(r.serial) + ' / ' + esc(r.customer || '') + '</div>' +
     '</div>';
   }).join('');
 }

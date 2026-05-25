@@ -8,7 +8,7 @@
 //     AUTH_SHEET_ID : beaufield-auth スプレッドシートID（共通）
 // ============================================================
 
-var VERSION = 'v2.0.0';
+var VERSION = 'v2.0.1';
 
 var SHEET_ID      = PropertiesService.getScriptProperties().getProperty('SHEET_ID')      || '';
 var AUTH_SHEET_ID = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID') || '';
@@ -282,9 +282,9 @@ function searchRecords(params) {
     var sh   = ss.getSheetByName(SH_SHIPPING);
     var data = sh.getDataRange().getValues();
 
-    var from     = params.dateFrom ? new Date(params.dateFrom) : null;
-    var to       = params.dateTo   ? new Date(params.dateTo)   : null;
-    if (to) to.setHours(23, 59, 59);
+    // 日付はYYYY-MM-DD文字列で比較（タイムゾーン問題回避）
+    var fromStr = params.dateFrom ? String(params.dateFrom).replace(/\//g, '-').substring(0, 10) : '';
+    var toStr   = params.dateTo   ? String(params.dateTo).replace(/\//g, '-').substring(0, 10)   : '';
 
     var statuses = _parseArray(params.statuses);
 
@@ -306,9 +306,14 @@ function searchRecords(params) {
       var row = data[i];
       if (!row[COL.ID]) continue;
 
-      var shipDate = row[COL.SHIP_DATE] ? new Date(row[COL.SHIP_DATE]) : null;
-      if (from && shipDate && shipDate < from) continue;
-      if (to   && shipDate && shipDate > to)   continue;
+      var shipDateStr = '';
+      if (row[COL.SHIP_DATE]) {
+        shipDateStr = (row[COL.SHIP_DATE] instanceof Date)
+          ? Utilities.formatDate(row[COL.SHIP_DATE], 'Asia/Tokyo', 'yyyy-MM-dd')
+          : String(row[COL.SHIP_DATE]).replace(/\//g, '-').substring(0, 10);
+      }
+      if (fromStr && shipDateStr && shipDateStr < fromStr) continue;
+      if (toStr   && shipDateStr && shipDateStr > toStr)   continue;
 
       if (statuses.length > 0 && statuses.indexOf(String(row[COL.STATUS])) < 0) continue;
       if (params.productCode && _normalizeText(row[COL.PROD_CODE]) !== _normalizeText(params.productCode)) continue;
