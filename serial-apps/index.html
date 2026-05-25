@@ -392,7 +392,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.5.0</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.6.0</span>
   </div>
 
   <!-- タブバー -->
@@ -683,7 +683,7 @@ select:focus { border-color: #2a6acc; }
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.5.0</div>
+<div class="version-label">HTML v2.6.0</div>
 
 <!-- ZXing バーコードスキャナー -->
 <script src="https://unpkg.com/@zxing/library@0.18.6/umd/index.min.js"></script>
@@ -1399,7 +1399,17 @@ async function openOCRScanner(target) {
   }
 }
 
-/** フレーム撮影 → グレースケール補正 → OCR実行 */
+/**
+ * フレーム撮影 → ガイド枠クロップ → 4倍拡大 → Otsu二値化 → 正像＋反転 両方OCR
+ *
+ * 改善ポイント（v2.6.0）:
+ *   ① ガイド枠領域だけを切り出す（object-fit:coverの座標変換込み）
+ *   ② 4倍拡大でテキストを大きくする
+ *   ③ ぼかし(blur 3px)でドットマトリクスの点を繋ぐ
+ *   ④ Otsu法で最適閾値を算出して白黒二値化
+ *   ⑤ 正像・反転の両方でOCRして結果をマージ（背景色に依存しない）
+ *   ⑥ PSM 7（1行テキスト）でシリアルNoに最適化
+ */
 async function captureAndOCR() {
   var video = document.getElementById('ocrVideo');
   if (!video.videoWidth || !video.videoHeight || video.readyState < 2) {
@@ -1407,58 +1417,115 @@ async function captureAndOCR() {
     return;
   }
 
-  // UIを結果エリアに切り替え
+  // ① UIを隠す前にコンテナサイズを取得（非表示にすると0になるため先に取る）
+  var containerEl = document.getElementById('ocrCameraArea');
+  var containerW  = containerEl.offsetWidth  || 360;
+  var containerH  = containerEl.offsetHeight || 480;
+  var videoW = video.videoWidth;
+  var videoH = video.videoHeight;
+
+  // ② フレームをフル解像度でキャプチャ（カメラ停止より先に実行）
+  var fullCanvas = document.createElement('canvas');
+  fullCanvas.width  = videoW;
+  fullCanvas.height = videoH;
+  fullCanvas.getContext('2d').drawImage(video, 0, 0);
+
+  // ③ カメラ停止・UIを結果エリアに切り替え
+  stopOCRStream();
   document.getElementById('ocrCameraArea').style.display   = 'none';
   document.getElementById('ocrResultArea').style.display   = 'block';
   document.getElementById('ocrFooterScan').style.display   = 'none';
   document.getElementById('ocrFooterResult').style.display = 'flex';
-  document.getElementById('ocrStatus').textContent         = '処理中...';
+  document.getElementById('ocrStatus').textContent         = '前処理中...';
   document.getElementById('ocrCandidates').innerHTML       = '';
   document.getElementById('ocrRawText').textContent        = '';
 
-  // フレームをキャンバスにコピー（ストリーム停止前に実行）
-  var canvas = document.createElement('canvas');
-  canvas.width  = video.videoWidth;
-  canvas.height = video.videoHeight;
-  var ctx = canvas.getContext('2d');
-  ctx.drawImage(video, 0, 0);
-
-  // カメラストリーム停止（キャプチャ後）
-  stopOCRStream();
-
-  // グレースケール＋コントラスト強調（係数1.8）
-  var imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  var pix = imgData.data;
-  for (var i = 0; i < pix.length; i += 4) {
-    var gray = Math.round(0.299 * pix[i] + 0.587 * pix[i+1] + 0.114 * pix[i+2]);
-    gray = Math.min(255, Math.max(0, Math.round((gray - 128) * 1.8 + 128)));
-    pix[i] = pix[i+1] = pix[i+2] = gray;
-    // pix[i+3] = アルファ: 変更しない
+  // ④ object-fit:cover を考慮してガイド枠をビデオのネイティブ座標に変換
+  //    ガイド枠CSS定義: top 22%、bottom 38%（下から）=top 62%、left/right 5%
+  var vidRatio = videoW / videoH;
+  var ctnRatio = containerW / containerH;
+  var scale, offX, offY;
+  if (vidRatio > ctnRatio) {
+    // ビデオが横長 → 高さ基準でスケール、左右がはみ出る
+    scale = containerH / videoH;
+    offX  = (videoW * scale - containerW) / 2;
+    offY  = 0;
+  } else {
+    // ビデオが縦長 → 幅基準でスケール、上下がはみ出る
+    scale = containerW / videoW;
+    offX  = 0;
+    offY  = (videoH * scale - containerH) / 2;
   }
-  ctx.putImageData(imgData, 0, 0);
+  // ガイド枠に少し余白を加えてクロップ（枠の2%分外側まで含める）
+  var PAD = 0.02;
+  var cropX = Math.max(0, Math.round((containerW * (0.05 - PAD) + offX) / scale));
+  var cropY = Math.max(0, Math.round((containerH * (0.22 - PAD) + offY) / scale));
+  var cropR = Math.min(videoW, Math.round((containerW * (0.95 + PAD) + offX) / scale));
+  var cropB = Math.min(videoH, Math.round((containerH * (0.62 + PAD) + offY) / scale));
+  var cropW = Math.max(1, cropR - cropX);
+  var cropH = Math.max(1, cropB - cropY);
 
-  // Tesseract初期化（初回のみ、以降は使い回す）
+  // ⑤ 切り出し領域を4倍に拡大しながら blur でドットを繋ぐ
+  var SCALE = 4;
+  var procCanvas = document.createElement('canvas');
+  procCanvas.width  = cropW * SCALE;
+  procCanvas.height = cropH * SCALE;
+  var procCtx = procCanvas.getContext('2d');
+  procCtx.filter = 'blur(3px)';  // ドットマトリクスの点を繋ぐ（拡大後に適用）
+  procCtx.drawImage(fullCanvas, cropX, cropY, cropW, cropH,
+                    0, 0, cropW * SCALE, cropH * SCALE);
+  procCtx.filter = 'none';
+
+  // ⑥ グレースケール変換 → Otsu閾値で最適二値化（白背景・黒文字に統一）
+  var imgData = procCtx.getImageData(0, 0, procCanvas.width, procCanvas.height);
+  var pix = imgData.data;
+  var grays = new Array(pix.length >> 2);
+  for (var i = 0; i < pix.length; i += 4) {
+    grays[i >> 2] = Math.round(0.299 * pix[i] + 0.587 * pix[i+1] + 0.114 * pix[i+2]);
+  }
+  var thresh = otsuThreshold(grays);
+  for (var j = 0; j < grays.length; j++) {
+    var v = grays[j] > thresh ? 255 : 0;  // 閾値以上→白(背景)、未満→黒(文字)
+    pix[j*4] = pix[j*4+1] = pix[j*4+2] = v;
+    pix[j*4+3] = 255;
+  }
+  procCtx.putImageData(imgData, 0, 0);
+
+  // ⑦ Tesseract初期化（初回のみ、以降は使い回す）
   try {
     if (!tesseractWorker) {
-      document.getElementById('ocrStatus').textContent = 'OCRエンジン初期化中（初回は1分程度かかります）...';
+      document.getElementById('ocrStatus').textContent = 'OCRエンジン初期化中（初回は1分程度）...';
       await initTesseractWorker();
     }
 
-    // OCR実行
-    document.getElementById('ocrStatus').textContent = '認識中...';
-    var result  = await tesseractWorker.recognize(canvas);
-    var rawText = (result.data && result.data.text) ? result.data.text : '';
-    document.getElementById('ocrRawText').textContent = '読取テキスト: ' + rawText.replace(/\n/g,' ').trim();
+    // ⑧ 正像でOCR（白背景・黒数字想定）
+    document.getElementById('ocrStatus').textContent = '認識中（1/2）...';
+    var r1 = await tesseractWorker.recognize(procCanvas);
+    var t1 = (r1.data && r1.data.text) ? r1.data.text : '';
 
-    // 数字シーケンスを抽出（1〜7桁）
-    var allMatches = rawText.match(/\d+/g) || [];
-    var seen = {};
-    var seqs = [];
+    // ⑨ 反転画像でもOCR（黒背景・白数字にも対応）
+    document.getElementById('ocrStatus').textContent = '認識中（2/2）...';
+    var invData = procCtx.getImageData(0, 0, procCanvas.width, procCanvas.height);
+    for (var k = 0; k < invData.data.length; k += 4) {
+      invData.data[k]   = 255 - invData.data[k];
+      invData.data[k+1] = 255 - invData.data[k+1];
+      invData.data[k+2] = 255 - invData.data[k+2];
+    }
+    procCtx.putImageData(invData, 0, 0);
+    var r2 = await tesseractWorker.recognize(procCanvas);
+    var t2 = (r2.data && r2.data.text) ? r2.data.text : '';
+
+    // ⑩ 両結果をマージして候補を整理
+    var combined = t1 + ' ' + t2;
+    document.getElementById('ocrRawText').textContent =
+      '読取: ' + combined.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+
+    var allMatches = combined.match(/\d+/g) || [];
+    var seen = {}, seqs = [];
     allMatches.forEach(function(m) {
-      var trimmed = m.substring(0, 7); // 最大7桁に切り詰め
-      if (trimmed && !seen[trimmed]) { seen[trimmed] = true; seqs.push(trimmed); }
+      var t = m.substring(0, 7);
+      if (t && !seen[t]) { seen[t] = true; seqs.push(t); }
     });
-    // 長い順→同じ長さは辞書順でソート、最大8件
     seqs.sort(function(a, b) { return b.length - a.length || a.localeCompare(b); });
     seqs = seqs.slice(0, 8);
 
@@ -1469,6 +1536,28 @@ async function captureAndOCR() {
     document.getElementById('ocrStatus').textContent = 'OCRエラー: ' + e.message;
     console.error('OCR error:', e);
   }
+}
+
+/** Otsu法で最適二値化閾値を計算（背景と文字の分散が最大になる値） */
+function otsuThreshold(grays) {
+  var hist = new Array(256).fill(0);
+  grays.forEach(function(g) { hist[g]++; });
+  var total = grays.length;
+  var sum = 0;
+  for (var i = 0; i < 256; i++) sum += i * hist[i];
+  var sumB = 0, wB = 0, maxVar = 0, thresh = 128;
+  for (var t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (!wB) continue;
+    var wF = total - wB;
+    if (!wF) break;
+    sumB += t * hist[t];
+    var mB = sumB / wB;
+    var mF = (sum - sumB) / wF;
+    var vari = wB * wF * (mB - mF) * (mB - mF);
+    if (vari > maxVar) { maxVar = vari; thresh = t; }
+  }
+  return thresh;
 }
 
 /** Tesseractワーカーを初期化（初回のみ） */
@@ -1485,22 +1574,18 @@ async function initTesseractWorker() {
     });
   }
 
-  // ワーカー作成（英語モデル、数字のみ・スパーステキストモード）
+  // ワーカー作成（英語モデル）
   tesseractWorker = await Tesseract.createWorker('eng', 1, {
     logger: function(m) {
       var el = document.getElementById('ocrStatus');
       if (!el) return;
       if      (m.status === 'loading language traineddata') el.textContent = '言語データ読み込み中...';
       else if (m.status === 'initializing tesseract')       el.textContent = 'エンジン起動中...';
-      else if (m.status === 'recognizing text') {
-        var pct = Math.round((m.progress || 0) * 100);
-        el.textContent = '認識中... ' + pct + '%';
-      }
     }
   });
   await tesseractWorker.setParameters({
     tessedit_char_whitelist: '0123456789', // 数字のみ認識
-    tessedit_pageseg_mode:   '11'          // PSM_SPARSE_TEXT: 散在テキスト
+    tessedit_pageseg_mode:   '7'           // PSM_SINGLE_LINE: 1行テキスト（シリアルNoに最適）
   });
 }
 
