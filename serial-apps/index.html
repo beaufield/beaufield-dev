@@ -392,7 +392,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.4.0</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.5.0</span>
   </div>
 
   <!-- タブバー -->
@@ -446,9 +446,13 @@ select:focus { border-color: #2a6acc; }
 
     <!-- 単独入力エリア -->
     <div id="sh-single-area" class="card">
-      <div class="return-input-row">
-        <button class="btn btn-orange" onclick="openScanner('sh-single-serial')">⑤バーコード</button>
-        <input type="text" id="sh-single-serial" placeholder="⑤シリアルNo" style="flex:1;" autocomplete="off">
+      <!-- ⑤ バーコード / OCR / 手入力 -->
+      <div style="display:flex;gap:8px;margin-bottom:8px;">
+        <button class="btn btn-orange btn-half" onclick="openScanner('sh-single-serial')">⑤バーコード</button>
+        <button class="btn btn-green btn-half" onclick="openOCRScanner('sh-single-serial')">📷 OCR読取</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+        <input type="text" id="sh-single-serial" placeholder="シリアルNo手入力" style="flex:1;" autocomplete="off">
         <button class="btn btn-blue" onclick="addSingleSerial('sh')">追加</button>
       </div>
       <div class="serial-count" id="sh-single-count">0件</div>
@@ -528,9 +532,13 @@ select:focus { border-color: #2a6acc; }
 
     <!-- 単独入力エリア -->
     <div id="rt-single-area" class="card">
-      <div class="return-input-row">
-        <button class="btn btn-orange" onclick="openScanner('rt-single-serial')">⑤バーコード</button>
-        <input type="text" id="rt-single-serial" placeholder="⑤シリアルNo" style="flex:1;" autocomplete="off">
+      <!-- ⑤ バーコード / OCR / 手入力 -->
+      <div style="display:flex;gap:8px;margin-bottom:8px;">
+        <button class="btn btn-orange btn-half" onclick="openScanner('rt-single-serial')">⑤バーコード</button>
+        <button class="btn btn-green btn-half" onclick="openOCRScanner('rt-single-serial')">📷 OCR読取</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+        <input type="text" id="rt-single-serial" placeholder="シリアルNo手入力" style="flex:1;" autocomplete="off">
         <button class="btn btn-blue" onclick="addSingleSerial('rt')">追加</button>
       </div>
       <div class="serial-count" id="rt-single-count">0件</div>
@@ -633,6 +641,39 @@ select:focus { border-color: #2a6acc; }
   </div>
 </div>
 
+<!-- OCRモーダル（数字シリアル読取） -->
+<div class="scanner-overlay" id="ocrOverlay">
+  <div class="scanner-box">
+    <div class="scanner-header">📷 数字シリアル OCR読取</div>
+    <!-- カメラ表示エリア -->
+    <div id="ocrCameraArea" style="position:relative;flex:1;min-height:0;overflow:hidden;background:#000;">
+      <video id="ocrVideo" style="width:100%;height:100%;object-fit:cover;display:block;" playsinline autoplay muted></video>
+      <!-- ガイド枠（box-shadowで外側マスク） -->
+      <div id="ocrGuideRect" style="position:absolute;top:22%;bottom:38%;left:5%;right:5%;border:3px solid #ffcc00;border-radius:4px;box-shadow:0 0 0 9999px rgba(0,0,0,0.45);pointer-events:none;"></div>
+      <div style="position:absolute;top:14%;left:0;right:0;text-align:center;color:#ffcc00;font-size:13px;font-weight:bold;text-shadow:0 1px 4px rgba(0,0,0,0.9);pointer-events:none;">シリアルNoを枠内に合わせてください</div>
+    </div>
+    <!-- OCR結果表示エリア -->
+    <div id="ocrResultArea" style="display:none;min-height:120px;max-height:220px;overflow-y:auto;background:#1a1a1a;padding:14px;">
+      <div style="color:#ccc;font-size:14px;margin-bottom:10px;font-weight:bold;">番号を選んでください（タップで入力）:</div>
+      <div id="ocrCandidates" style="display:flex;flex-wrap:wrap;gap:10px;"></div>
+      <div id="ocrRawText" style="color:#555;font-size:11px;margin-top:12px;word-break:break-all;"></div>
+    </div>
+    <div class="scanner-footer">
+      <!-- 撮影前フッター -->
+      <div id="ocrFooterScan" style="display:flex;gap:8px;justify-content:center;">
+        <button class="btn btn-gray" onclick="closeOCRScanner()" style="min-width:110px;">キャンセル</button>
+        <button class="btn btn-green" onclick="captureAndOCR()" style="min-width:130px;">📸 撮影する</button>
+      </div>
+      <!-- 結果確認フッター -->
+      <div id="ocrFooterResult" style="display:none;gap:8px;justify-content:center;">
+        <button class="btn btn-gray" onclick="closeOCRScanner()" style="min-width:110px;">キャンセル</button>
+        <button class="btn btn-blue" onclick="retakeOCR()" style="min-width:130px;">↩ 再撮影</button>
+      </div>
+      <div id="ocrStatus" style="color:#aaa;font-size:12px;margin-top:8px;text-align:center;min-height:18px;"></div>
+    </div>
+  </div>
+</div>
+
 <!-- トースト -->
 <div class="toast" id="toast"></div>
 
@@ -642,7 +683,7 @@ select:focus { border-color: #2a6acc; }
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.4.0</div>
+<div class="version-label">HTML v2.5.0</div>
 
 <!-- ZXing バーコードスキャナー -->
 <script src="https://unpkg.com/@zxing/library@0.18.6/umd/index.min.js"></script>
@@ -1324,6 +1365,204 @@ function onScanResult(value) {
     else if (SCAN_TARGET === 'rt-single-serial') addSingleSerial('rt');
     else showToast('開始シリアルをセットしました: ' + value, 'success');
   }
+}
+
+// ============================================================
+// OCR スキャナー（Tesseract.js 数字読取）
+// ============================================================
+var OCR_TARGET      = '';    // 対象inputのid
+var ocrStream       = null;  // MediaStream
+var tesseractWorker = null;  // 使い回しのworker
+
+/** OCRモーダルを開く */
+async function openOCRScanner(target) {
+  OCR_TARGET = target;
+  // UI初期化（撮影前の状態）
+  document.getElementById('ocrOverlay').classList.add('active');
+  document.getElementById('ocrCameraArea').style.display   = 'block';
+  document.getElementById('ocrResultArea').style.display   = 'none';
+  document.getElementById('ocrFooterScan').style.display   = 'flex';
+  document.getElementById('ocrFooterResult').style.display = 'none';
+  document.getElementById('ocrStatus').textContent         = '';
+  document.getElementById('ocrCandidates').innerHTML       = '';
+  document.getElementById('ocrRawText').textContent        = '';
+
+  // 背面カメラ起動
+  try {
+    ocrStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    document.getElementById('ocrVideo').srcObject = ocrStream;
+  } catch (e) {
+    showToast('カメラ起動エラー: ' + e.message, 'error');
+    closeOCRScanner();
+  }
+}
+
+/** フレーム撮影 → グレースケール補正 → OCR実行 */
+async function captureAndOCR() {
+  var video = document.getElementById('ocrVideo');
+  if (!video.videoWidth || !video.videoHeight || video.readyState < 2) {
+    showToast('カメラが準備中です。少し待ってください。', 'warn');
+    return;
+  }
+
+  // UIを結果エリアに切り替え
+  document.getElementById('ocrCameraArea').style.display   = 'none';
+  document.getElementById('ocrResultArea').style.display   = 'block';
+  document.getElementById('ocrFooterScan').style.display   = 'none';
+  document.getElementById('ocrFooterResult').style.display = 'flex';
+  document.getElementById('ocrStatus').textContent         = '処理中...';
+  document.getElementById('ocrCandidates').innerHTML       = '';
+  document.getElementById('ocrRawText').textContent        = '';
+
+  // フレームをキャンバスにコピー（ストリーム停止前に実行）
+  var canvas = document.createElement('canvas');
+  canvas.width  = video.videoWidth;
+  canvas.height = video.videoHeight;
+  var ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0);
+
+  // カメラストリーム停止（キャプチャ後）
+  stopOCRStream();
+
+  // グレースケール＋コントラスト強調（係数1.8）
+  var imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  var pix = imgData.data;
+  for (var i = 0; i < pix.length; i += 4) {
+    var gray = Math.round(0.299 * pix[i] + 0.587 * pix[i+1] + 0.114 * pix[i+2]);
+    gray = Math.min(255, Math.max(0, Math.round((gray - 128) * 1.8 + 128)));
+    pix[i] = pix[i+1] = pix[i+2] = gray;
+    // pix[i+3] = アルファ: 変更しない
+  }
+  ctx.putImageData(imgData, 0, 0);
+
+  // Tesseract初期化（初回のみ、以降は使い回す）
+  try {
+    if (!tesseractWorker) {
+      document.getElementById('ocrStatus').textContent = 'OCRエンジン初期化中（初回は1分程度かかります）...';
+      await initTesseractWorker();
+    }
+
+    // OCR実行
+    document.getElementById('ocrStatus').textContent = '認識中...';
+    var result  = await tesseractWorker.recognize(canvas);
+    var rawText = (result.data && result.data.text) ? result.data.text : '';
+    document.getElementById('ocrRawText').textContent = '読取テキスト: ' + rawText.replace(/\n/g,' ').trim();
+
+    // 数字シーケンスを抽出（1〜7桁）
+    var allMatches = rawText.match(/\d+/g) || [];
+    var seen = {};
+    var seqs = [];
+    allMatches.forEach(function(m) {
+      var trimmed = m.substring(0, 7); // 最大7桁に切り詰め
+      if (trimmed && !seen[trimmed]) { seen[trimmed] = true; seqs.push(trimmed); }
+    });
+    // 長い順→同じ長さは辞書順でソート、最大8件
+    seqs.sort(function(a, b) { return b.length - a.length || a.localeCompare(b); });
+    seqs = seqs.slice(0, 8);
+
+    document.getElementById('ocrStatus').textContent = '';
+    showOCRCandidates(seqs);
+
+  } catch (e) {
+    document.getElementById('ocrStatus').textContent = 'OCRエラー: ' + e.message;
+    console.error('OCR error:', e);
+  }
+}
+
+/** Tesseractワーカーを初期化（初回のみ） */
+async function initTesseractWorker() {
+  // Tesseract.jsが未読込なら動的ロード
+  if (typeof Tesseract === 'undefined') {
+    await new Promise(function(resolve, reject) {
+      var s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+      s.crossOrigin = 'anonymous';
+      s.onload  = resolve;
+      s.onerror = function() { reject(new Error('Tesseract.jsの読み込みに失敗しました')); };
+      document.head.appendChild(s);
+    });
+  }
+
+  // ワーカー作成（英語モデル、数字のみ・スパーステキストモード）
+  tesseractWorker = await Tesseract.createWorker('eng', 1, {
+    logger: function(m) {
+      var el = document.getElementById('ocrStatus');
+      if (!el) return;
+      if      (m.status === 'loading language traineddata') el.textContent = '言語データ読み込み中...';
+      else if (m.status === 'initializing tesseract')       el.textContent = 'エンジン起動中...';
+      else if (m.status === 'recognizing text') {
+        var pct = Math.round((m.progress || 0) * 100);
+        el.textContent = '認識中... ' + pct + '%';
+      }
+    }
+  });
+  await tesseractWorker.setParameters({
+    tessedit_char_whitelist: '0123456789', // 数字のみ認識
+    tessedit_pageseg_mode:   '11'          // PSM_SPARSE_TEXT: 散在テキスト
+  });
+}
+
+/** OCR候補ボタンを表示 */
+function showOCRCandidates(seqs) {
+  var el = document.getElementById('ocrCandidates');
+  if (seqs.length === 0) {
+    el.innerHTML = '<div style="color:#f88;font-size:14px;">数字が検出されませんでした。再撮影してください。</div>';
+    return;
+  }
+  el.innerHTML = seqs.map(function(s) {
+    return '<button class="btn btn-primary" ' +
+      'style="font-family:monospace;font-size:20px;padding:10px 20px;letter-spacing:2px;" ' +
+      'onclick="confirmOCR(\'' + esc(s) + '\')">' + esc(s) + '</button>';
+  }).join('');
+}
+
+/** 候補を選択 → シリアル入力にセットして追加 */
+function confirmOCR(seq) {
+  closeOCRScanner();
+  var inputEl = document.getElementById(OCR_TARGET);
+  if (!inputEl) return;
+  inputEl.value = seq;
+  var tab = OCR_TARGET.startsWith('sh') ? 'sh' : 'rt';
+  addSingleSerial(tab);
+}
+
+/** 再撮影（カメラを再起動して撮影前状態へ） */
+async function retakeOCR() {
+  document.getElementById('ocrCameraArea').style.display   = 'block';
+  document.getElementById('ocrResultArea').style.display   = 'none';
+  document.getElementById('ocrFooterScan').style.display   = 'flex';
+  document.getElementById('ocrFooterResult').style.display = 'none';
+  document.getElementById('ocrStatus').textContent         = '';
+  document.getElementById('ocrCandidates').innerHTML       = '';
+  document.getElementById('ocrRawText').textContent        = '';
+
+  try {
+    ocrStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    document.getElementById('ocrVideo').srcObject = ocrStream;
+  } catch (e) {
+    showToast('カメラ起動エラー: ' + e.message, 'error');
+    closeOCRScanner();
+  }
+}
+
+/** カメラストリームを停止 */
+function stopOCRStream() {
+  if (ocrStream) {
+    ocrStream.getTracks().forEach(function(t) { t.stop(); });
+    ocrStream = null;
+  }
+  var vid = document.getElementById('ocrVideo');
+  if (vid) vid.srcObject = null;
+}
+
+/** OCRモーダルを閉じる */
+function closeOCRScanner() {
+  stopOCRStream();
+  document.getElementById('ocrOverlay').classList.remove('active');
 }
 
 // ============================================================
