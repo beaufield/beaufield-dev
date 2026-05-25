@@ -1,22 +1,17 @@
 // ============================================================
-// シリアルNo管理アプリ (SerialApps) - Code.gs v1.1.0
+// シリアルNo管理アプリ (SerialApps) - Code.gs v2.0.0
+// アーキテクチャ: GitHub Pages (front) + GAS WebApp (API)
 // ============================================================
-
-var VERSION = 'v1.1.0';
-
-// ロックアウト設定
-var MAX_ATTEMPTS = 5;
-var LOCK_MINUTES = 10;
-var SESSION_DAYS = 30;
-
-// ---- 設定 --------------------------------------------------
 // [重要] コードに機密値を直書きしない。GASスクリプトプロパティに設定すること。
 //   GASエディタ → プロジェクトの設定 → スクリプトプロパティ → プロパティを追加
 //     SHEET_ID      : このアプリのスプレッドシートID
 //     AUTH_SHEET_ID : beaufield-auth スプレッドシートID（共通）
-var SHEET_ID      = PropertiesService.getScriptProperties().getProperty('SHEET_ID') || '';
+// ============================================================
+
+var VERSION = 'v2.0.0';
+
+var SHEET_ID      = PropertiesService.getScriptProperties().getProperty('SHEET_ID')      || '';
 var AUTH_SHEET_ID = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID') || '';
-var APP_NAME  = 'serial-apps';
 
 // シート名
 var SH_PRODUCT  = 'ProductMaster';
@@ -50,111 +45,77 @@ var PCOL = {
 };
 
 // ============================================================
-// WebApp エントリポイント
+// エントリーポイント（GET）
+// クエリ: ?action=xxx&session_token=xxx
 // ============================================================
 function doGet(e) {
-  return HtmlService.createHtmlOutputFromFile('index')
-    .setTitle('シリアルNo管理アプリ')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  var p      = (e && e.parameter) ? e.parameter : {};
+  var action = p.action || '';
+  var token  = p.session_token || '';
+
+  // バージョン確認（認証不要）
+  if (action === 'getVersion') {
+    return jsonResponse({ success: true, version: VERSION });
+  }
+
+  var auth = validateSession(token);
+  if (!auth.valid) {
+    return jsonResponse({ success: false, error: 'SESSION_INVALID', message: '認証が必要です' });
+  }
+
+  try {
+    switch (action) {
+      case 'getProductMaster': return jsonResponse(getProductMaster());
+      case 'search':           return jsonResponse(searchRecords(p));
+      default:                 return jsonResponse({ success: false, error: '不明なアクション: ' + action });
+    }
+  } catch (err) {
+    Logger.log('doGet error: ' + err);
+    return jsonResponse({ success: false, error: 'INTERNAL_ERROR' });
+  }
 }
 
 // ============================================================
-// 認証（beaufield-auth 共通）
+// エントリーポイント（POST）
+// application/x-www-form-urlencoded または application/json を受け付ける
 // ============================================================
+function doPost(e) {
+  var p      = {};
+  var action = '';
 
-// ログイン前にユーザー一覧を返す（ドロップダウン用・認証不要）
-function getUserList() {
+  if (e && e.postData && e.postData.contents) {
+    try {
+      var body = JSON.parse(e.postData.contents);
+      p      = body;
+      action = body.action || '';
+    } catch (ex) { /* JSON解析失敗 → form-encodedにフォールバック */ }
+  }
+  if (!action && e && e.parameter) {
+    p      = e.parameter;
+    action = p.action || '';
+  }
+
+  var auth = validateSession(p.session_token || '');
+  if (!auth.valid) {
+    return jsonResponse({ success: false, error: 'SESSION_INVALID', message: '認証が必要です' });
+  }
+
   try {
-    var ss    = SpreadsheetApp.openById(AUTH_SHEET_ID);
-    var users = ss.getSheetByName('users').getDataRange().getValues();
-    var roles = ss.getSheetByName('user_app_roles').getDataRange().getValues();
-    var allowedIds = {};
-    for (var i = 1; i < roles.length; i++) {
-      if (roles[i][1] === APP_NAME && roles[i][2] && roles[i][2] !== 'none') {
-        allowedIds[String(roles[i][0])] = true;
-      }
+    switch (action) {
+      case 'registerShipping': return jsonResponse(registerShipping(p));
+      case 'registerReturn':   return jsonResponse(registerReturn(p));
+      default:                 return jsonResponse({ success: false, error: '不明なアクション: ' + action });
     }
-    var result = [];
-    for (var i = 1; i < users.length; i++) {
-      var uid = String(users[i][0]);
-      if (users[i][3] === true && allowedIds[uid]) {
-        result.push({ userId: uid, name: String(users[i][1]) });
-      }
-    }
-    return { success: true, users: result };
-  } catch (e) {
-    Logger.log('getUserList error: ' + e);
-    return { success: false, users: [] };
+  } catch (err) {
+    Logger.log('doPost error: ' + err);
+    return jsonResponse({ success: false, error: 'INTERNAL_ERROR' });
   }
 }
 
-// userId + PIN でログイン。5回失敗でロックアウト
-function loginUser(userId, pin) {
-  try {
-    var props   = PropertiesService.getScriptProperties();
-    var lockKey = 'serial_lockout_' + userId;
-    var lockData = JSON.parse(props.getProperty(lockKey) || '{"count":0,"until":0}');
-    var now = Date.now();
-
-    if (lockData.until > now) {
-      var remaining = Math.ceil((lockData.until - now) / 60000);
-      return { success: false, message: 'PINを' + MAX_ATTEMPTS + '回間違えました。' + remaining + '分後に再試行してください。' };
-    }
-
-    var ss    = SpreadsheetApp.openById(AUTH_SHEET_ID);
-    var users = ss.getSheetByName('users').getDataRange().getValues();
-
-    for (var i = 1; i < users.length; i++) {
-      if (String(users[i][0]) !== String(userId)) continue;
-      if (users[i][3] !== true) {
-        return { success: false, message: 'このアカウントは無効です' };
-      }
-      if (String(users[i][2]) !== String(pin)) {
-        lockData.count = (lockData.count || 0) + 1;
-        if (lockData.count >= MAX_ATTEMPTS) {
-          lockData.until = now + LOCK_MINUTES * 60 * 1000;
-          lockData.count = 0;
-          props.setProperty(lockKey, JSON.stringify(lockData));
-          return { success: false, message: 'PINを' + MAX_ATTEMPTS + '回間違えました。' + LOCK_MINUTES + '分間ロックされます。' };
-        }
-        props.setProperty(lockKey, JSON.stringify(lockData));
-        return { success: false, message: 'PINが正しくありません（残り' + (MAX_ATTEMPTS - lockData.count) + '回）' };
-      }
-      // PIN一致 → ロックリセット・セッション発行
-      props.deleteProperty(lockKey);
-      var role = _getAppRole(ss, userId);
-      if (!role || role === 'none') {
-        return { success: false, message: 'このアプリへのアクセス権限がありません' };
-      }
-      var token     = Utilities.getUuid();
-      var expiresAt = now + SESSION_DAYS * 24 * 60 * 60 * 1000;
-      _saveSession(ss, token, userId, expiresAt);
-      return { success: true, userId: userId, name: String(users[i][1]), role: role, sessionToken: token };
-    }
-    return { success: false, message: 'ユーザーが見つかりません' };
-  } catch (e) {
-    Logger.log('loginUser error: ' + e);
-    return { success: false, message: '認証サーバーへの接続に失敗しました' };
-  }
-}
-
-function _getAppRole(ss, userId) {
-  var roles = ss.getSheetByName('user_app_roles').getDataRange().getValues();
-  for (var i = 1; i < roles.length; i++) {
-    if (roles[i][0] === userId && roles[i][1] === APP_NAME) {
-      return roles[i][2];
-    }
-  }
-  return null;
-}
-
-// beaufield-auth.sessions シートに保存。構造: [token, userId, expiresAt(ms)]
-function _saveSession(ss, token, userId, expiresAt) {
-  ss.getSheetByName('sessions').appendRow([token, userId, expiresAt]);
-}
-
-// セッショントークンを検証して userId を返す
-function validateSession_(token) {
+// ============================================================
+// セッション検証（beaufield-auth 共通）
+// ============================================================
+function validateSession(token) {
   if (!token) return { valid: false };
   try {
     var sh   = SpreadsheetApp.openById(AUTH_SHEET_ID).getSheetByName('sessions');
@@ -163,36 +124,31 @@ function validateSession_(token) {
     var now  = Date.now();
     for (var i = 1; i < rows.length; i++) {
       if (String(rows[i][0]) === String(token)) {
-        if (Number(rows[i][2]) < now) return { valid: false };
+        if (Number(rows[i][2]) < now) {
+          sh.deleteRow(i + 1); // 期限切れ行を削除
+          return { valid: false };
+        }
         return { valid: true, userId: String(rows[i][1]) };
       }
     }
   } catch (e) {
-    Logger.log('validateSession_ error: ' + e.message);
+    Logger.log('validateSession error: ' + e.message);
   }
   return { valid: false };
 }
 
 // ============================================================
-// 商品マスタ
+// 商品マスタ取得
 // ============================================================
-
-/**
- * 全商品マスタを取得する
- * @returns {Array} 商品オブジェクトの配列
- */
-function getProductMaster(sessionToken) {
-  var auth = validateSession_(sessionToken);
-  if (!auth.valid) return { success: false, message: 'SESSION_INVALID' };
+function getProductMaster() {
   try {
     var ss   = SpreadsheetApp.openById(SHEET_ID);
     var sh   = ss.getSheetByName(SH_PRODUCT);
     var data = sh.getDataRange().getValues();
     var result = [];
-
     for (var i = 1; i < data.length; i++) {
       var row = data[i];
-      if (!row[PCOL.CODE]) continue; // 空行スキップ
+      if (!row[PCOL.CODE]) continue;
       result.push({
         code:   String(row[PCOL.CODE]),
         name:   String(row[PCOL.NAME]),
@@ -205,29 +161,19 @@ function getProductMaster(sessionToken) {
     return { success: true, data: result };
   } catch (e) {
     Logger.log('getProductMaster error: ' + e);
-    Logger.log('getProductMaster error: ' + e);
     return { success: false, message: '商品マスタの取得に失敗しました' };
   }
 }
 
 // ============================================================
-// 重複チェック
+// 重複チェック（内部用）
 // ============================================================
-
-/**
- * 指定した商品コード×シリアルNo のうち「出荷中」が存在するものを返す
- * @param {string} productCode
- * @param {Array}  serials - シリアルNoの配列
- * @returns {{ duplicates: Array }} 出荷中が既存のシリアルNo一覧
- */
-function checkDuplicates(productCode, serials) {
+function checkDuplicates_(productCode, serials) {
   try {
-    var ss   = SpreadsheetApp.openById(SHEET_ID);
-    var sh   = ss.getSheetByName(SH_SHIPPING);
+    var sh   = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SH_SHIPPING);
     var data = sh.getDataRange().getValues();
     var serialSet = {};
     serials.forEach(function(s) { serialSet[s] = true; });
-
     var duplicates = [];
     for (var i = 1; i < data.length; i++) {
       var row = data[i];
@@ -239,58 +185,43 @@ function checkDuplicates(productCode, serials) {
     }
     return { success: true, duplicates: duplicates };
   } catch (e) {
-    Logger.log('checkDuplicates error: ' + e);
-    Logger.log('checkDuplicates error: ' + e);
+    Logger.log('checkDuplicates_ error: ' + e);
     return { success: false, message: '重複チェックに失敗しました' };
   }
 }
 
 // ============================================================
 // 出荷登録
+// params: productCode, productName, jan, shipDate (YYYY/MM/DD),
+//         customer, method (単独|連番), serials (JSON文字列 or 配列)
 // ============================================================
-
-/**
- * 出荷を登録する
- * @param {object} params
- *   productCode, productName, jan, shipDate (YYYY/MM/DD),
- *   customer, method (単独|連番), serials: Array<string>
- * @returns {{ success, registered, skipped, skippedSerials }}
- */
 function registerShipping(params) {
-  var auth = validateSession_(params.sessionToken);
-  if (!auth.valid) return { success: false, message: 'SESSION_INVALID' };
   try {
-    var dupResult = checkDuplicates(params.productCode, params.serials);
+    var serials   = _parseArray(params.serials);
+    var dupResult = checkDuplicates_(params.productCode, serials);
     if (!dupResult.success) return dupResult;
 
     var dupSet = {};
     dupResult.duplicates.forEach(function(s) { dupSet[s] = true; });
 
-    var ss  = SpreadsheetApp.openById(SHEET_ID);
-    var sh  = ss.getSheetByName(SH_SHIPPING);
+    var sh  = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SH_SHIPPING);
     var now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
 
-    var registered = 0;
-    var skipped    = 0;
-    var skippedSerials = [];
+    var registered = 0, skipped = 0, skippedSerials = [];
 
-    params.serials.forEach(function(serial) {
-      if (dupSet[serial]) {
-        skipped++;
-        skippedSerials.push(serial);
-        return;
-      }
+    serials.forEach(function(serial) {
+      if (dupSet[serial]) { skipped++; skippedSerials.push(serial); return; }
       var row = new Array(13).fill('');
-      row[COL.ID]          = Utilities.getUuid();
-      row[COL.SHIP_DATE]   = params.shipDate;
-      row[COL.PROD_CODE]   = params.productCode;
-      row[COL.PROD_NAME]   = params.productName;
-      row[COL.JAN]         = params.jan || '';
-      row[COL.SERIAL]      = serial;
-      row[COL.STATUS]      = '出荷中';
-      row[COL.METHOD]      = params.method || '単独';
-      row[COL.CUSTOMER]    = params.customer || '';
-      row[COL.CREATED_AT]  = now;
+      row[COL.ID]         = Utilities.getUuid();
+      row[COL.SHIP_DATE]  = params.shipDate;
+      row[COL.PROD_CODE]  = params.productCode;
+      row[COL.PROD_NAME]  = params.productName;
+      row[COL.JAN]        = params.jan || '';
+      row[COL.SERIAL]     = serial;
+      row[COL.STATUS]     = '出荷中';
+      row[COL.METHOD]     = params.method || '単独';
+      row[COL.CUSTOMER]   = params.customer || '';
+      row[COL.CREATED_AT] = now;
       sh.appendRow(row);
       registered++;
     });
@@ -298,51 +229,35 @@ function registerShipping(params) {
     return { success: true, registered: registered, skipped: skipped, skippedSerials: skippedSerials };
   } catch (e) {
     Logger.log('registerShipping error: ' + e);
-    Logger.log('registerShipping error: ' + e);
     return { success: false, message: '出荷登録に失敗しました' };
   }
 }
 
 // ============================================================
 // 返品・取消登録
+// params: productCode, returnDate (YYYY/MM/DD),
+//         kind (返品|取消), serials (JSON文字列 or 配列)
 // ============================================================
-
-/**
- * 返品または取消を登録する
- * @param {object} params
- *   productCode, returnDate (YYYY/MM/DD),
- *   kind (返品|取消), serials: Array<string>
- * @returns {{ success, updated, skipped, skippedSerials }}
- */
 function registerReturn(params) {
-  var auth = validateSession_(params.sessionToken);
-  if (!auth.valid) return { success: false, message: 'SESSION_INVALID' };
   try {
-    var ss   = SpreadsheetApp.openById(SHEET_ID);
-    var sh   = ss.getSheetByName(SH_SHIPPING);
-    var data = sh.getDataRange().getValues();
-
+    var serials   = _parseArray(params.serials);
+    var sh        = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SH_SHIPPING);
+    var data      = sh.getDataRange().getValues();
     var newStatus = (params.kind === '取消') ? '取消' : '返品済';
     var serialSet = {};
-    params.serials.forEach(function(s) { serialSet[s] = true; });
+    serials.forEach(function(s) { serialSet[s] = true; });
 
-    var updated  = 0;
-    var skipped  = 0;
-    var skippedSerials = [];
+    var updated = 0, skipped = 0, skippedSerials = [];
 
-    // 行番号は1始まり（0行目はヘッダー）
     for (var i = 1; i < data.length; i++) {
       var row = data[i];
       if (String(row[COL.PROD_CODE]) !== String(params.productCode)) continue;
       if (!serialSet[String(row[COL.SERIAL])]) continue;
-
       if (row[COL.STATUS] !== '出荷中') {
         skipped++;
         skippedSerials.push(String(row[COL.SERIAL]));
         continue;
       }
-
-      // G列（状態）= i+1行目（1始まり）
       sh.getRange(i + 1, COL.STATUS + 1).setValue(newStatus);
       sh.getRange(i + 1, COL.RETURN_DATE + 1).setValue(params.returnDate);
       sh.getRange(i + 1, COL.REASON + 1).setValue(params.kind);
@@ -352,27 +267,16 @@ function registerReturn(params) {
     return { success: true, updated: updated, skipped: skipped, skippedSerials: skippedSerials };
   } catch (e) {
     Logger.log('registerReturn error: ' + e);
-    Logger.log('registerReturn error: ' + e);
     return { success: false, message: '返品・取消登録に失敗しました' };
   }
 }
 
 // ============================================================
 // 検索
+// params: dateFrom, dateTo, statuses (JSON文字列 or 配列),
+//         productCode, serialNo, productName, maker, series
 // ============================================================
-
-/**
- * 出荷履歴を検索する
- * @param {object} params
- *   dateFrom, dateTo (YYYY/MM/DD),
- *   statuses: Array<string> (空=全件),
- *   productCode, serialNo, productName (前方一致),
- *   maker, series
- * @returns {{ success, data: Array }}
- */
 function searchRecords(params) {
-  var auth = validateSession_(params.sessionToken);
-  if (!auth.valid) return { success: false, message: 'SESSION_INVALID' };
   try {
     var ss   = SpreadsheetApp.openById(SHEET_ID);
     var sh   = ss.getSheetByName(SH_SHIPPING);
@@ -382,7 +286,9 @@ function searchRecords(params) {
     var to       = params.dateTo   ? new Date(params.dateTo)   : null;
     if (to) to.setHours(23, 59, 59);
 
-    // ProductMaster をメモリに読む（メーカー・シリーズ絞り込み用）
+    var statuses = _parseArray(params.statuses);
+
+    // メーカー・シリーズ絞り込み用にProductMasterをメモリ展開
     var prodMap = {};
     if (params.maker || params.series) {
       var pData = ss.getSheetByName(SH_PRODUCT).getDataRange().getValues();
@@ -398,30 +304,17 @@ function searchRecords(params) {
     var result = [];
     for (var i = 1; i < data.length; i++) {
       var row = data[i];
-      if (!row[COL.ID]) continue; // 空行スキップ
+      if (!row[COL.ID]) continue;
 
-      // 日付フィルタ（出荷日 or 返品日）
-      var shipDate   = row[COL.SHIP_DATE]   ? new Date(row[COL.SHIP_DATE])   : null;
-      var returnDate = row[COL.RETURN_DATE] ? new Date(row[COL.RETURN_DATE]) : null;
-      var targetDate = shipDate; // 基本は出荷日
-      if (from && targetDate && targetDate < from) continue;
-      if (to   && targetDate && targetDate > to)   continue;
+      var shipDate = row[COL.SHIP_DATE] ? new Date(row[COL.SHIP_DATE]) : null;
+      if (from && shipDate && shipDate < from) continue;
+      if (to   && shipDate && shipDate > to)   continue;
 
-      // 状態フィルタ
-      if (params.statuses && params.statuses.length > 0) {
-        if (params.statuses.indexOf(String(row[COL.STATUS])) < 0) continue;
-      }
-
-      // 商品コード完全一致
+      if (statuses.length > 0 && statuses.indexOf(String(row[COL.STATUS])) < 0) continue;
       if (params.productCode && String(row[COL.PROD_CODE]) !== params.productCode) continue;
-
-      // シリアルNo完全一致
-      if (params.serialNo && String(row[COL.SERIAL]) !== params.serialNo) continue;
-
-      // 商品名前方一致
+      if (params.serialNo    && String(row[COL.SERIAL])    !== params.serialNo)    continue;
       if (params.productName && String(row[COL.PROD_NAME]).indexOf(params.productName) !== 0) continue;
 
-      // メーカー・シリーズ絞り込み
       if (params.maker || params.series) {
         var pm = prodMap[String(row[COL.PROD_CODE])];
         if (!pm) continue;
@@ -430,29 +323,24 @@ function searchRecords(params) {
       }
 
       result.push({
-        id:         String(row[COL.ID]),
-        shipDate:   _formatDate(row[COL.SHIP_DATE]),
+        id:          String(row[COL.ID]),
+        shipDate:    _formatDate(row[COL.SHIP_DATE]),
         productCode: String(row[COL.PROD_CODE]),
         productName: String(row[COL.PROD_NAME]),
-        jan:        String(row[COL.JAN]),
-        serial:     String(row[COL.SERIAL]),
-        status:     String(row[COL.STATUS]),
-        returnDate: _formatDate(row[COL.RETURN_DATE]),
-        reason:     String(row[COL.REASON] || ''),
-        method:     String(row[COL.METHOD] || ''),
-        customer:   String(row[COL.CUSTOMER] || ''),
-        createdAt:  String(row[COL.CREATED_AT] || '')
+        jan:         String(row[COL.JAN]),
+        serial:      String(row[COL.SERIAL]),
+        status:      String(row[COL.STATUS]),
+        returnDate:  _formatDate(row[COL.RETURN_DATE]),
+        reason:      String(row[COL.REASON]    || ''),
+        method:      String(row[COL.METHOD]    || ''),
+        customer:    String(row[COL.CUSTOMER]  || ''),
+        createdAt:   String(row[COL.CREATED_AT] || '')
       });
     }
 
-    // 登録日時の新しい順に並び替え
-    result.sort(function(a, b) {
-      return b.createdAt.localeCompare(a.createdAt);
-    });
-
+    result.sort(function(a, b) { return b.createdAt.localeCompare(a.createdAt); });
     return { success: true, data: result, total: result.length };
   } catch (e) {
-    Logger.log('searchRecords error: ' + e);
     Logger.log('searchRecords error: ' + e);
     return { success: false, message: '検索に失敗しました' };
   }
@@ -461,20 +349,25 @@ function searchRecords(params) {
 // ============================================================
 // ユーティリティ
 // ============================================================
+
+// form-encoded で渡ってくる配列はJSON文字列になることがあるため両対応
+function _parseArray(val) {
+  if (Array.isArray(val)) return val;
+  if (!val) return [];
+  try { return JSON.parse(val); } catch (e) { return [String(val)]; }
+}
+
 function _formatDate(val) {
   if (!val) return '';
   try {
     var d = (val instanceof Date) ? val : new Date(val);
     if (isNaN(d.getTime())) return String(val);
     return Utilities.formatDate(d, 'Asia/Tokyo', 'yyyy/MM/dd');
-  } catch (e) {
-    return String(val);
-  }
+  } catch (e) { return String(val); }
 }
 
-/**
- * バージョン確認用
- */
-function getVersion() {
-  return VERSION;
+function jsonResponse(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
 }
