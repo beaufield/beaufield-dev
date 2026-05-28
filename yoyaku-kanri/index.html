@@ -405,7 +405,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.17.1</span>
+  <span class="header-version">v1.18.0</span>
 </header>
 
 <!-- ============================================================ -->
@@ -705,10 +705,10 @@
   <div class="modal-sheet">
     <div class="modal-title">🚚 出荷一覧</div>
     <div class="filter-row" style="margin-bottom:10px">
-      <select id="shippingProduct" class="form-control" onchange="renderShippingList()" style="flex:2;min-width:120px">
+      <select id="shippingProduct" class="form-control" onchange="_onShippingFilterChange()" style="flex:2;min-width:120px">
         <option value="">商品を選択...</option>
       </select>
-      <select id="shippingPeriod" class="form-control" onchange="renderShippingList()" style="flex:1;min-width:80px">
+      <select id="shippingPeriod" class="form-control" onchange="_onShippingFilterChange()" style="flex:1;min-width:80px">
         <option value="all">全期間</option>
         <option value="today">今日</option>
         <option value="week" selected>今週</option>
@@ -716,7 +716,15 @@
       </select>
       <button class="btn-print" onclick="printShipping()">🖨️ 印刷</button>
     </div>
-    <div id="shippingListContainer" style="overflow-x:auto;max-height:55vh;overflow-y:auto"></div>
+    <div id="shippingStaffFilter" style="display:none;margin-bottom:8px;padding:8px 10px;background:#f9fafb;border:1.5px solid #e5e7eb;border-radius:6px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span style="font-size:11px;font-weight:700;color:#6b7280;flex:1">👤 担当者を選んで印刷</span>
+        <button onclick="_toggleAllShippingStaff(true)"  class="btn-select-all" style="font-size:11px;padding:2px 8px">全選択</button>
+        <button onclick="_toggleAllShippingStaff(false)" class="btn-select-all" style="font-size:11px;padding:2px 8px">全解除</button>
+      </div>
+      <div id="shippingStaffCheckboxes" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+    </div>
+    <div id="shippingListContainer" style="overflow-x:auto;max-height:50vh;overflow-y:auto"></div>
     <div class="modal-actions" style="margin-top:14px">
       <button class="btn btn-gray btn-full" onclick="closeModal('shippingModal')">閉じる</button>
     </div>
@@ -1974,7 +1982,7 @@ function openShippingModal() {
     });
   if (cur) sel.value = cur;
 
-  renderShippingList();
+  _onShippingFilterChange();
   openModal('shippingModal');
 }
 
@@ -2004,7 +2012,7 @@ function _getShippingPeriodRange(period) {
  * 集計キー: staff × delivery_method × salon_name
  * ソート: 担当者名 → 発送方法（発送→持参→未定）→ サロン名
  */
-function _buildShippingData(productId, period) {
+function _buildShippingData(productId, period, staffFilter) {
   const DELIVERY_ORDER = { '発送': 0, '持参': 1, '未定': 2 };
   const DELIVERY_LIST  = ['発送', '持参', '未定'];
 
@@ -2016,6 +2024,9 @@ function _buildShippingData(productId, period) {
       const d = new Date(r.updated_at.replace(' ', 'T'));
       return d >= range.from && d <= range.to;
     });
+  }
+  if (staffFilter !== null && staffFilter !== undefined) {
+    list = list.filter(r => staffFilter.has(r.staff_id));
   }
   if (list.length === 0) return null;
 
@@ -2074,11 +2085,83 @@ function _buildShippingData(productId, period) {
   };
 }
 
+/** 商品・期間フィルタ変更時：担当チェックボックスを再構築してリスト再描画 */
+function _onShippingFilterChange() {
+  _updateShippingStaffFilter();
+  renderShippingList();
+}
+
+/** 現在の商品・期間に存在する担当者のチェックボックスを生成（全選択状態で初期化） */
+function _updateShippingStaffFilter() {
+  const productId   = document.getElementById('shippingProduct').value;
+  const period      = document.getElementById('shippingPeriod').value;
+  const filterEl    = document.getElementById('shippingStaffFilter');
+  const cbContainer = document.getElementById('shippingStaffCheckboxes');
+
+  if (!productId) { filterEl.style.display = 'none'; return; }
+
+  const range = _getShippingPeriodRange(period);
+  let list = reservations.filter(r => r.product_id === productId && r.status === '確定');
+  if (range) {
+    list = list.filter(r => {
+      if (!r.updated_at) return false;
+      const d = new Date(r.updated_at.replace(' ', 'T'));
+      return d >= range.from && d <= range.to;
+    });
+  }
+
+  const staffMap = {};
+  list.forEach(r => { staffMap[r.staff_id] = getShortName(r.staff_id, r.staff_name); });
+  const entries = Object.entries(staffMap);
+
+  // 担当者が1人以下なら絞り込み不要なので非表示
+  if (entries.length <= 1) { filterEl.style.display = 'none'; return; }
+
+  // allUsers の並び順でソート
+  entries.sort((a, b) => {
+    const ia = allUsers.findIndex(u => u.user_id === a[0]);
+    const ib = allUsers.findIndex(u => u.user_id === b[0]);
+    if (ia === -1 && ib === -1) return 0;
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+
+  cbContainer.innerHTML = entries.map(([id, name]) =>
+    `<label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px;white-space:nowrap;
+       padding:3px 9px;background:#fff;border:1.5px solid #e5e7eb;border-radius:6px">
+       <input type="checkbox" class="shipping-staff-cb"
+         data-staff-id="${esc(id)}" data-staff-name="${esc(name)}"
+         style="accent-color:var(--primary)" checked
+         onchange="renderShippingList()">
+       ${esc(name)}
+     </label>`
+  ).join('');
+
+  filterEl.style.display = '';
+}
+
+/** 担当者チェックボックスの選択状態を Set で返す（全選択時は null = フィルタなし） */
+function _getShippingSelectedStaff() {
+  const cbs = document.querySelectorAll('.shipping-staff-cb');
+  if (!cbs.length) return null;
+  const selected = new Set();
+  cbs.forEach(cb => { if (cb.checked) selected.add(cb.dataset.staffId); });
+  return selected.size === cbs.length ? null : selected;
+}
+
+/** 担当者チェックボックスを一括 ON/OFF */
+function _toggleAllShippingStaff(checked) {
+  document.querySelectorAll('.shipping-staff-cb').forEach(cb => { cb.checked = checked; });
+  renderShippingList();
+}
+
 /** 出荷一覧テーブルを画面に描画 */
 function renderShippingList() {
-  const productId = document.getElementById('shippingProduct').value;
-  const period    = document.getElementById('shippingPeriod').value;
-  const container = document.getElementById('shippingListContainer');
+  const productId     = document.getElementById('shippingProduct').value;
+  const period        = document.getElementById('shippingPeriod').value;
+  const container     = document.getElementById('shippingListContainer');
+  const selectedStaff = _getShippingSelectedStaff();
 
   if (!productId) {
     container.innerHTML = '<p style="color:#9ca3af;padding:20px;text-align:center">商品を選択してください</p>';
@@ -2086,7 +2169,7 @@ function renderShippingList() {
   }
 
   const productName = products.find(p => p.product_id === productId)?.name || '';
-  const data = _buildShippingData(productId, period);
+  const data = _buildShippingData(productId, period, selectedStaff);
 
   if (!data) {
     container.innerHTML = '<p style="color:#9ca3af;padding:20px;text-align:center">該当する確定予約がありません</p>';
@@ -2150,16 +2233,24 @@ function renderShippingList() {
 
 /** 出荷一覧を印刷（新ウィンドウ） */
 function printShipping() {
-  const productId = document.getElementById('shippingProduct').value;
-  const period    = document.getElementById('shippingPeriod').value;
+  const productId     = document.getElementById('shippingProduct').value;
+  const period        = document.getElementById('shippingPeriod').value;
+  const selectedStaff = _getShippingSelectedStaff();
 
   if (!productId) { showToast('商品を選択してください', 'error'); return; }
 
   const productName  = products.find(p => p.product_id === productId)?.name || '';
   const periodLabels = { all: '全期間', today: '今日', week: '今週', month: '今月' };
-  const data = _buildShippingData(productId, period);
+  const data = _buildShippingData(productId, period, selectedStaff);
 
   if (!data) { showToast('印刷対象がありません', 'warning'); return; }
+
+  // 担当者フィルタラベル（全選択でない場合のみ表示）
+  const allCbs     = [...document.querySelectorAll('.shipping-staff-cb')];
+  const checkedCbs = allCbs.filter(cb => cb.checked);
+  const staffLabel = (allCbs.length > 0 && checkedCbs.length < allCbs.length)
+    ? '担当: ' + checkedCbs.map(cb => cb.dataset.staffName).join('・')
+    : '';
 
   const now = new Date();
   const pad = n => String(n).padStart(2, '0');
@@ -2223,6 +2314,7 @@ function printShipping() {
   <div class="meta">
     <span>商品: <b>${e(productName)}</b></span>
     <span>期間: ${e(periodLabels[period] || period)}</span>
+    ${staffLabel ? `<span>${e(staffLabel)}</span>` : ''}
     <span>総合計: ${data.grandTotal}個</span>
     <span>出力日時: ${printDate}</span>
   </div>
