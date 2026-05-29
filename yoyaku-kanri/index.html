@@ -495,7 +495,7 @@
   <div class="stored-row">
     <label class="stored-toggle">
       <input type="checkbox" id="toggleStored" onchange="onToggleStored()">
-      保管済みを含む（確定から60日以上）
+      過去分を含む（確定から30日以上）
     </label>
     <span id="storedCount" class="stored-count"></span>
   </div>
@@ -536,7 +536,7 @@
     </select>
     <label class="stored-toggle" style="white-space:nowrap">
       <input type="checkbox" id="toggleStatsStored" onchange="onToggleStatsStored()">
-      保管済みを含む
+      過去分を含む
     </label>
   </div>
 
@@ -1246,7 +1246,7 @@ function renderList() {
   // 保管済みフィルタ（確定から STORED_DAYS 日以上を非表示）
   const storedAll = reservations.filter(r => isStored(r)).length;
   const storedCountEl = document.getElementById('storedCount');
-  storedCountEl.textContent = storedAll > 0 ? `（保管済み ${storedAll}件 非表示中）` : '';
+  storedCountEl.textContent = storedAll > 0 ? `（過去分 ${storedAll}件 非表示中）` : '';
 
   let list = reservations.slice();
   if (!showStored) list = list.filter(r => !isStored(r));
