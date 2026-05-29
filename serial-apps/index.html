@@ -267,7 +267,53 @@ input[type="number"]:focus { border-color: #2a6acc; }
   font-size: 15px;
   font-weight: bold;
 }
-.scanner-footer { background: #222; padding: 14px; text-align: center; }
+.scanner-footer { background: #222; padding: 14px; display: flex; gap: 10px; justify-content: center; }
+
+/* スキャン枠（ファインダー）*/
+#scannerContainer { position: relative; }
+.scanner-finder {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 70%;
+  padding-top: 35%;
+  pointer-events: none;
+}
+.scanner-finder::before,
+.scanner-finder::after,
+.sf-br,
+.sf-bl {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border-color: #00e676;
+  border-style: solid;
+}
+.scanner-finder::before { content: ''; top: 0; left: 0; border-width: 3px 0 0 3px; }
+.scanner-finder::after  { content: ''; top: 0; right: 0; border-width: 3px 3px 0 0; }
+.sf-br { content: ''; bottom: 0; right: 0; border-width: 0 3px 3px 0; }
+.sf-bl { content: ''; bottom: 0; left: 0; border-width: 0 0 3px 3px; }
+/* ライブデコード結果 */
+.scanner-live-result {
+  background: #111;
+  color: #4cff91;
+  font-size: 13px;
+  font-family: monospace;
+  padding: 8px 12px;
+  text-align: center;
+  min-height: 34px;
+  word-break: break-all;
+}
+/* 連続スキャン件数 */
+.scanner-count {
+  background: #1a4a8a;
+  color: #fff;
+  font-size: 14px;
+  font-weight: bold;
+  padding: 8px 12px;
+  text-align: center;
+}
 
 /* トースト通知 */
 .toast {
@@ -627,8 +673,11 @@ select:focus { border-color: #2a6acc; }
   <div class="scanner-box">
     <div class="scanner-header" id="scannerTitle">バーコードをかざしてください</div>
     <div id="scannerContainer"></div>
+    <div class="scanner-live-result" id="scannerLiveResult">— 認識待ち —</div>
+    <div class="scanner-count" id="scannerCount" style="display:none;"></div>
     <div class="scanner-footer">
-      <button class="btn btn-gray" onclick="closeScanner()" style="min-width:160px;">キャンセル</button>
+      <button class="btn btn-gray" onclick="closeScanner()" style="min-width:120px;">キャンセル</button>
+      <button class="btn btn-primary" id="scannerDoneBtn" onclick="finishMultiScan()" style="min-width:120px;display:none;">完了</button>
     </div>
   </div>
 </div>
@@ -642,7 +691,7 @@ select:focus { border-color: #2a6acc; }
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.7.0</div>
+<div class="version-label">HTML v2.8.0</div>
 
 <!-- ZXing バーコードスキャナー -->
 <script src="https://unpkg.com/@zxing/library@0.18.6/umd/index.min.js"></script>
@@ -673,9 +722,13 @@ var appState = {
   lastSearchResults: []
 };
 
-var SCAN_TARGET   = '';
-var codeReader    = null;
-var scannerActive = false;
+var SCAN_TARGET    = '';
+var codeReader     = null;
+var scannerActive  = false;
+var scanMultiMode  = false;
+var scanMultiCount = 0;
+var scanLastValue  = '';
+var scanLastTime   = 0;
 
 // ============================================================
 // スマホズーム補正（GAS WebApp固定幅対策 — GitHub Pagesでは不要だが残す）
@@ -1270,26 +1323,48 @@ function goToReturn(idx) {
 // バーコードスキャナー
 // ============================================================
 function openScanner(target) {
-  SCAN_TARGET = target;
-  var isJan   = target.endsWith('-jan');
+  SCAN_TARGET    = target;
+  scanLastValue  = '';
+  scanLastTime   = 0;
+  var isJan      = target.endsWith('-jan');
+  var isMulti    = target === 'sh-single-serial' || target === 'rt-single-serial';
+  scanMultiMode  = isMulti;
+  scanMultiCount = 0;
   document.getElementById('scannerTitle').textContent = isJan
     ? '商品JANコードをかざしてください'
     : 'シリアルNoバーコードをかざしてください';
+  document.getElementById('scannerLiveResult').textContent = '— 認識待ち —';
+  var countEl = document.getElementById('scannerCount');
+  var doneBtn = document.getElementById('scannerDoneBtn');
+  if (isMulti) {
+    countEl.textContent  = 'スキャン済み 0件';
+    countEl.style.display = 'block';
+    doneBtn.style.display = 'inline-block';
+  } else {
+    countEl.style.display = 'none';
+    doneBtn.style.display = 'none';
+  }
   document.getElementById('scannerOverlay').classList.add('active');
   startScanner();
 }
 
 function startScanner() {
   if (scannerActive) return;
+  // ビデオ + スキャン枠オーバーレイ
   document.getElementById('scannerContainer').innerHTML =
-    '<video id="scannerVideo" style="width:100%;height:100%;object-fit:cover;display:block;" playsinline autoplay muted></video>';
+    '<video id="scannerVideo" style="width:100%;height:100%;object-fit:cover;display:block;" playsinline autoplay muted></video>' +
+    '<div class="scanner-finder"><span class="sf-br"></span><span class="sf-bl"></span></div>';
   codeReader = new ZXing.BrowserMultiFormatReader();
   // 背面カメラ・連続オートフォーカスを指定
   codeReader.decodeFromConstraints(
     { video: { facingMode: { ideal: 'environment' }, focusMode: 'continuous', width: { ideal: 1280 }, height: { ideal: 720 } } },
     'scannerVideo',
     function(result, err) {
-      if (result) onScanResult(result.getText());
+      if (result) {
+        var val = result.getText();
+        document.getElementById('scannerLiveResult').textContent = val;
+        onScanResult(val);
+      }
     }
   ).catch(function(err) {
     showToast('カメラ起動エラー: ' + err, 'error');
@@ -1301,15 +1376,45 @@ function startScanner() {
 function closeScanner() {
   if (codeReader) { try { codeReader.reset(); } catch(e) {} codeReader = null; }
   scannerActive = false;
+  scanMultiMode = false;
   document.getElementById('scannerContainer').innerHTML = '';
   document.getElementById('scannerOverlay').classList.remove('active');
 }
 
-function onScanResult(value) {
+function finishMultiScan() {
   closeScanner();
-  if (!value) return;
+}
 
+function playBeep() {
+  try {
+    var ctx  = new (window.AudioContext || window.webkitAudioContext)();
+    var osc  = ctx.createOscillator();
+    var gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'sine';
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.15);
+  } catch(e) {}
+}
+
+function onScanResult(value) {
+  if (!value) return;
+  // 同じ値が500ms以内に再度来た場合は無視（連続フレームの多重検知防止）
+  var now = Date.now();
+  if (value === scanLastValue && now - scanLastTime < 500) return;
+  scanLastValue = value;
+  scanLastTime  = now;
+
+  playBeep();
+  if (navigator.vibrate) navigator.vibrate(80);
+
+  // ========== JANコード（1件でモーダルを閉じる） ==========
   if (SCAN_TARGET === 'sh-jan' || SCAN_TARGET === 'rt-jan') {
+    closeScanner();
     var tab = SCAN_TARGET === 'sh-jan' ? 'sh' : 'rt';
     var p   = appState.products.find(function(x) { return x.jan === value || x.code === value; });
     if (p) selectProduct(tab, p);
@@ -1317,12 +1422,26 @@ function onScanResult(value) {
     return;
   }
 
-  var inputEl = document.getElementById(SCAN_TARGET);
-  if (inputEl) {
-    inputEl.value = value;
-    if      (SCAN_TARGET === 'sh-single-serial') addSingleSerial('sh');
-    else if (SCAN_TARGET === 'rt-single-serial') addSingleSerial('rt');
-    else showToast('開始シリアルをセットしました: ' + value, 'success');
+  // ========== シリアルNo 連続スキャンモード ==========
+  if (scanMultiMode) {
+    var inputEl = document.getElementById(SCAN_TARGET);
+    if (inputEl) {
+      inputEl.value = value;
+      if      (SCAN_TARGET === 'sh-single-serial') addSingleSerial('sh');
+      else if (SCAN_TARGET === 'rt-single-serial') addSingleSerial('rt');
+    }
+    scanMultiCount++;
+    document.getElementById('scannerCount').textContent = 'スキャン済み ' + scanMultiCount + '件';
+    document.getElementById('scannerLiveResult').textContent = '✓ ' + value;
+    return;  // モーダルを閉じない
+  }
+
+  // ========== シリアルNo 通常モード（連番開始など） ==========
+  closeScanner();
+  var inputEl2 = document.getElementById(SCAN_TARGET);
+  if (inputEl2) {
+    inputEl2.value = value;
+    showToast('開始シリアルをセットしました: ' + value, 'success');
   }
 }
 
