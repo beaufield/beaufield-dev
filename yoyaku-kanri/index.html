@@ -206,6 +206,19 @@
     }
     .btn-print:active { background: #f3f4f6; }
 
+    /* 保管済みトグル */
+    .stored-row {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+    }
+    .stored-toggle {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 12px; color: #6b7280; cursor: pointer; user-select: none;
+    }
+    .stored-toggle input[type="checkbox"] { cursor: pointer; }
+    .stored-count {
+      font-size: 11px; color: #9ca3af;
+    }
+
     /* 入荷処理モーダル */
     .arrival-table { width: 100%; border-collapse: collapse; font-size: 13px; }
     .arrival-table th, .arrival-table td {
@@ -405,7 +418,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.18.0</span>
+  <span class="header-version">v1.19.0</span>
 </header>
 
 <!-- ============================================================ -->
@@ -478,6 +491,13 @@
     <button class="btn-print admin-only" id="arrivalBtn" style="display:none" onclick="openArrivalModal()" title="入荷処理（事務専用）">📦 入荷処理</button>
     <button class="btn-print admin-only" id="shippingBtn" style="display:none" onclick="openShippingModal()" title="出荷一覧（事務専用）">🚚 出荷一覧</button>
   </div>
+  <div class="stored-row">
+    <label class="stored-toggle">
+      <input type="checkbox" id="toggleStored" onchange="onToggleStored()">
+      保管済みを含む（確定から60日以上）
+    </label>
+    <span id="storedCount" class="stored-count"></span>
+  </div>
 
   <!-- 商品別サマリー（商品フィルタ選択時に表示） -->
   <div id="productSummary"></div>
@@ -513,6 +533,10 @@
       <option value="確定">確定のみ</option>
       <option value="all">すべて</option>
     </select>
+    <label class="stored-toggle" style="white-space:nowrap">
+      <input type="checkbox" id="toggleStatsStored" onchange="onToggleStatsStored()">
+      保管済みを含む
+    </label>
   </div>
 
   <div class="section-title">📦 商品別集計</div>
@@ -764,6 +788,8 @@ let reservations   = [];    // 予約一覧（現在ロード済み）
 let currentTab     = 'register';
 let confirmCallback = null;
 let selectedNos    = new Set(); // 一括操作チェック済み予約No
+let showStored      = false; // 保管済み（確定から STORED_DAYS 日以上）を一覧に表示するか
+let showStatsStored = false; // 集計タブで保管済みを含めるか
 
 // ============================================================
 // ローカルキャッシュ（localStorage）
@@ -771,8 +797,15 @@ let selectedNos    = new Set(); // 一括操作チェック済み予約No
 // ── 仕組み: キャッシュがある場合は即表示、バックグラウンドで予約を最新化
 // ── キーにバージョンを含めることで大幅な変更時に古いキャッシュが自動無効化される
 // ============================================================
-const LS_CACHE_KEY = 'bf_yoyaku_v1120';  // バージョン変更時はここも更新
+const LS_CACHE_KEY = 'bf_yoyaku_v1190';  // バージョン変更時はここも更新
 const LS_CACHE_TTL = 5 * 60 * 1000;     // 5分（商品・ユーザー情報の鮮度を保つ）
+const STORED_DAYS  = 60;                 // この日数以上前の確定済みを「保管済み」扱いにする
+
+/** 保管済み判定: status=確定 かつ updated_at が STORED_DAYS 日以上前 */
+function isStored(r) {
+  if (r.status !== '確定') return false;
+  return new Date(r.updated_at) < new Date(Date.now() - STORED_DAYS * 86400000);
+}
 
 function _loadLocalCache(userId) {
   try {
@@ -1206,7 +1239,13 @@ function renderList() {
   // 商品サマリー表示
   renderProductSummary(fpid);
 
+  // 保管済みフィルタ（確定から STORED_DAYS 日以上を非表示）
+  const storedAll = reservations.filter(r => isStored(r)).length;
+  const storedCountEl = document.getElementById('storedCount');
+  storedCountEl.textContent = storedAll > 0 ? `（保管済み ${storedAll}件 非表示中）` : '';
+
   let list = reservations.slice();
+  if (!showStored) list = list.filter(r => !isStored(r));
   if (fpid)      list = list.filter(r => r.product_id      === fpid);
   if (fstaff)    list = list.filter(r => r.staff_id        === fstaff);
   if (fst)       list = list.filter(r => r.status          === fst);
@@ -1334,6 +1373,8 @@ function printReservations() {
   if (fstaff)    list = list.filter(r => r.staff_id        === fstaff);
   if (fst)       list = list.filter(r => r.status          === fst);
   if (fdelivery) list = list.filter(r => r.delivery_method === fdelivery);
+
+  if (!showStored) list = list.filter(r => !isStored(r));
 
   // NO昇順（古い予約が上）
   list.sort((a, b) => a.reservation_no - b.reservation_no);
@@ -2352,6 +2393,16 @@ function printShipping() {
 let statsProductFilter = '';   // product_id | ''
 let statsStatusFilter  = '予約'; // '予約' | '確定' | 'all'
 
+function onToggleStored() {
+  showStored = document.getElementById('toggleStored').checked;
+  renderList();
+}
+
+function onToggleStatsStored() {
+  showStatsStored = document.getElementById('toggleStatsStored').checked;
+  renderStats();
+}
+
 function onStatsStatusChange() {
   statsStatusFilter = document.getElementById('statsStatusSel').value;
   renderStats();
@@ -2388,10 +2439,13 @@ function renderStats() {
     banner.classList.remove('show');
   }
 
-  // ステータスフィルタを適用した基底データ
-  const baseRows = statsStatusFilter === 'all'
+  // ステータスフィルタ＋保管済みフィルタを適用した基底データ
+  const allStatusRows = statsStatusFilter === 'all'
     ? reservations
     : reservations.filter(r => r.status === statsStatusFilter);
+  const baseRows = showStatsStored
+    ? allStatusRows
+    : allStatusRows.filter(r => !isStored(r));
 
   // 商品フィルタをさらに適用
   const filteredRows = filterPid ? baseRows.filter(r => r.product_id === filterPid) : baseRows;
