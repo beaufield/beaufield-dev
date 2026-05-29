@@ -10,7 +10,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.9.1';
+const VERSION  = '1.9.2';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -551,7 +551,35 @@ function saveReservation(data) {
         if (Number(rows[i][0]) === Number(data.reservation_no)) {
           if (userInfo.yoyaku_role !== 'admin') {
             if (String(rows[i][6]) !== String(data._userId)) return _err('他の担当者の予約は変更できません');
-            if (String(rows[i][5]) !== '予約') return _err('確定済みの予約は変更できません');
+            if (String(rows[i][5]) === '確定') {
+              // 確定済みは発送方法・備考のみ更新可
+              rs.getRange(i + 2, 9, 1, 2).setValues([[String(data._userId), userInfo.name]]);
+              rs.getRange(i + 2, 11).setValue(deliveryMethod);
+              rs.getRange(i + 2, 13).setValue(now);
+              rs.getRange(i + 2, 14).setValue(notes);
+              return _ok({
+                reservation_no: Number(data.reservation_no),
+                message: '更新しました',
+                reservation: {
+                  reservation_no:  Number(data.reservation_no),
+                  salon_name:      String(rows[i][1]),
+                  product_id:      String(rows[i][2]),
+                  product_name:    String(rows[i][3]),
+                  quantity:        Number(rows[i][4]),
+                  status:          String(rows[i][5]),
+                  staff_id:        String(rows[i][6]),
+                  staff_name:      String(rows[i][7]),
+                  operator_id:     String(data._userId),
+                  operator_name:   userInfo.name,
+                  delivery_method: deliveryMethod,
+                  reserved_at:     rows[i][11]
+                    ? Utilities.formatDate(new Date(rows[i][11]), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm')
+                    : nowFmt,
+                  updated_at: nowFmt,
+                  notes: notes
+                }
+              });
+            }
           }
           // 数量増加は予約優先度の公平性を損なうため拒否（admin含む全ユーザー）
           const originalQty = Number(rows[i][4]);
