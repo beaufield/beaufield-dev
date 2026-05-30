@@ -634,12 +634,20 @@ select:focus { border-color: #2a6acc; }
 
       <div style="margin-bottom:12px;">
         <div style="font-size:13px;color:#666;margin-bottom:6px;">メーカー・シリーズから探す</div>
-        <div style="display:flex;gap:8px;">
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
           <select id="sc-maker" onchange="onMakerChange()" style="flex:1;">
             <option value="">（メーカー）</option>
           </select>
-          <select id="sc-series" style="flex:1;">
+          <select id="sc-series" onchange="onSeriesChange()" style="flex:1;">
             <option value="">（シリーズ）</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <select id="sc-size" onchange="onSizeChange()" style="flex:1;">
+            <option value="">（サイズ）</option>
+          </select>
+          <select id="sc-product-sel" style="flex:1;">
+            <option value="">（品名）</option>
           </select>
         </div>
       </div>
@@ -877,7 +885,8 @@ function buildMakerDropdown() {
 
 function onMakerChange() {
   var maker = document.getElementById('sc-maker').value;
-  var sel   = document.getElementById('sc-series');
+  // シリーズを絞り込む
+  var sel = document.getElementById('sc-series');
   sel.innerHTML = '<option value="">（シリーズ）</option>';
   var series = {};
   appState.products.forEach(function(p) {
@@ -885,6 +894,47 @@ function onMakerChange() {
   });
   Object.keys(series).sort().forEach(function(s) {
     sel.innerHTML += '<option value="' + esc(s) + '">' + esc(s) + '</option>';
+  });
+  // サイズ・品名をリセット
+  document.getElementById('sc-size').innerHTML        = '<option value="">（サイズ）</option>';
+  document.getElementById('sc-product-sel').innerHTML = '<option value="">（品名）</option>';
+}
+
+function onSeriesChange() {
+  var maker  = document.getElementById('sc-maker').value;
+  var series = document.getElementById('sc-series').value;
+  // サイズを絞り込む
+  var sel = document.getElementById('sc-size');
+  sel.innerHTML = '<option value="">（サイズ）</option>';
+  var sizes = {};
+  appState.products.forEach(function(p) {
+    if ((!maker  || p.maker  === maker) &&
+        (!series || p.series === series)) {
+      if (p.size) sizes[p.size] = true;
+    }
+  });
+  Object.keys(sizes).sort().forEach(function(s) {
+    sel.innerHTML += '<option value="' + esc(s) + '">' + esc(s) + '</option>';
+  });
+  // 品名をリセット
+  document.getElementById('sc-product-sel').innerHTML = '<option value="">（品名）</option>';
+}
+
+function onSizeChange() {
+  var maker  = document.getElementById('sc-maker').value;
+  var series = document.getElementById('sc-series').value;
+  var size   = document.getElementById('sc-size').value;
+  // 品名（商品）を絞り込む
+  var sel = document.getElementById('sc-product-sel');
+  sel.innerHTML = '<option value="">（品名）</option>';
+  var prods = appState.products.filter(function(p) {
+    return (!maker  || p.maker  === maker) &&
+           (!series || p.series === series) &&
+           (!size   || p.size   === size);
+  });
+  prods.sort(function(a, b) { return a.name.localeCompare(b.name, 'ja'); });
+  prods.forEach(function(p) {
+    sel.innerHTML += '<option value="' + esc(p.code) + '">' + esc(p.name) + '</option>';
   });
 }
 
@@ -1226,7 +1276,9 @@ function resetSearchConditions() {
   document.getElementById('sc-status-returned').checked = true;
   document.getElementById('sc-status-canceled').checked = false;
   document.getElementById('sc-maker').value    = '';
-  document.getElementById('sc-series').innerHTML = '<option value="">（シリーズ）</option>';
+  document.getElementById('sc-series').innerHTML     = '<option value="">（シリーズ）</option>';
+  document.getElementById('sc-size').innerHTML       = '<option value="">（サイズ）</option>';
+  document.getElementById('sc-product-sel').innerHTML = '<option value="">（品名）</option>';
   document.getElementById('sc-prod-name').value  = '';
   document.getElementById('sc-serial').value     = '';
   document.getElementById('sc-prod-code').value  = '';
@@ -1250,9 +1302,12 @@ async function doSearch() {
       statuses:    statuses,
       maker:       document.getElementById('sc-maker').value,
       series:      document.getElementById('sc-series').value,
+      size:        document.getElementById('sc-size').value,
       productName: document.getElementById('sc-prod-name').value.trim(),
       serialNo:    document.getElementById('sc-serial').value.trim(),
-      productCode: document.getElementById('sc-prod-code').value.trim()
+      // 品名ドロップダウン選択を優先、なければテキスト入力の商品コード
+      productCode: document.getElementById('sc-product-sel').value ||
+                   document.getElementById('sc-prod-code').value.trim()
     });
     if (res.success) renderSearchResults(res.data, res.total);
     else showToast('検索失敗: ' + res.message, 'error');
@@ -1279,8 +1334,12 @@ function renderSearchResults(data, total) {
         '<span class="sri-name">' + esc(r.productName) + '</span>' +
         '<span class="sri-status ' + c + '">' + esc(r.status) + '</span>' +
       '</div>' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:3px;">' +
-        '<span style="font-size:12px;color:#888;font-family:monospace;">' + esc(r.serial) + '</span>' +
+      '<div style="font-size:12px;color:#888;font-family:monospace;margin-top:3px;">' + esc(r.serial) + '</div>' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">' +
+        '<span style="font-size:12px;color:#666;">' +
+          (r.shipDate ? esc(r.shipDate) : '—') + '　' +
+          (r.customer ? esc(r.customer) : '—') +
+        '</span>' +
         (r.status === '出荷中'
           ? '<button class="btn btn-orange" style="padding:3px 10px;font-size:12px;" onclick="goToReturn(' + idx + ')">返品へ</button>'
           : '') +
