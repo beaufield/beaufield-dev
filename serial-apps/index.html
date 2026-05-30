@@ -438,7 +438,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.7.0</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.8.0</span>
   </div>
 
   <!-- タブバー -->
@@ -1356,22 +1356,27 @@ function startScanner() {
   document.getElementById('scannerContainer').innerHTML =
     '<video id="scannerVideo" style="width:100%;height:100%;object-fit:cover;display:block;" playsinline autoplay muted></video>' +
     '<div class="scanner-finder"><span class="sf-br"></span><span class="sf-bl"></span></div>';
-  // UPC-A（北米製品の先頭0バーコード）も確実に読み取るためhints設定
-  var hints = new Map();
-  hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-    ZXing.BarcodeFormat.EAN_13,
-    ZXing.BarcodeFormat.EAN_8,
-    ZXing.BarcodeFormat.UPC_A,
-    ZXing.BarcodeFormat.UPC_E,
-    ZXing.BarcodeFormat.CODE_128,
-    ZXing.BarcodeFormat.CODE_39,
-    ZXing.BarcodeFormat.ITF,
-  ]);
-  hints.set(ZXing.DecodeHintType.TRY_HARDER, true);  // 認識精度を上げる
-  codeReader = new ZXing.BrowserMultiFormatReader(hints);
-  // 背面カメラ・連続オートフォーカスを指定
+  // hints設定（エラー時はデフォルトにフォールバック）
+  try {
+    var hints = new Map();
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      ZXing.BarcodeFormat.EAN_13,
+      ZXing.BarcodeFormat.EAN_8,
+      ZXing.BarcodeFormat.UPC_A,
+      ZXing.BarcodeFormat.UPC_E,
+      ZXing.BarcodeFormat.CODE_128,
+      ZXing.BarcodeFormat.CODE_39,
+      ZXing.BarcodeFormat.ITF,
+    ]);
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+    codeReader = new ZXing.BrowserMultiFormatReader(hints);
+  } catch(e) {
+    // hintsが使えない環境ではデフォルト設定で起動
+    codeReader = new ZXing.BrowserMultiFormatReader();
+  }
+  // 背面カメラ指定（解像度は縦向きiPhoneに合わせてデフォルトに任せる）
   codeReader.decodeFromConstraints(
-    { video: { facingMode: { ideal: 'environment' }, focusMode: 'continuous', width: { ideal: 1920 }, height: { ideal: 1080 } } },
+    { video: { facingMode: { ideal: 'environment' } } },
     'scannerVideo',
     function(result, err) {
       if (result) {
