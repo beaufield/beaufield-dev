@@ -725,10 +725,11 @@ var appState = {
 var SCAN_TARGET    = '';
 var codeReader     = null;
 var scannerActive  = false;
-var scanMultiMode  = false;
-var scanMultiCount = 0;
-var scanLastValue  = '';
-var scanLastTime   = 0;
+var scanMultiMode   = false;
+var scanMultiCount  = 0;
+var scanLastValue   = '';
+var scanLastTime    = 0;
+var scanScannedSet  = new Set();  // 連続スキャンモードでスキャン済みの値を記憶
 
 // ============================================================
 // スマホズーム補正（GAS WebApp固定幅対策 — GitHub Pagesでは不要だが残す）
@@ -1326,6 +1327,7 @@ function openScanner(target) {
   SCAN_TARGET    = target;
   scanLastValue  = '';
   scanLastTime   = 0;
+  scanScannedSet = new Set();  // スキャン済みセットをリセット
   var isJan      = target.endsWith('-jan');
   var isMulti    = target === 'sh-single-serial' || target === 'rt-single-serial';
   scanMultiMode  = isMulti;
@@ -1403,17 +1405,16 @@ function playBeep() {
 
 function onScanResult(value) {
   if (!value) return;
-  // 同じ値が500ms以内に再度来た場合は無視（連続フレームの多重検知防止）
+  // 連続フレームの多重検知防止（500ms以内の同値は処理しない）
   var now = Date.now();
   if (value === scanLastValue && now - scanLastTime < 500) return;
   scanLastValue = value;
   scanLastTime  = now;
 
-  playBeep();
-  if (navigator.vibrate) navigator.vibrate(80);
-
   // ========== JANコード（1件でモーダルを閉じる） ==========
   if (SCAN_TARGET === 'sh-jan' || SCAN_TARGET === 'rt-jan') {
+    playBeep();
+    if (navigator.vibrate) navigator.vibrate(80);
     closeScanner();
     var tab = SCAN_TARGET === 'sh-jan' ? 'sh' : 'rt';
     var p   = appState.products.find(function(x) { return x.jan === value || x.code === value; });
@@ -1424,12 +1425,20 @@ function onScanResult(value) {
 
   // ========== シリアルNo 連続スキャンモード ==========
   if (scanMultiMode) {
+    // 既にスキャン済みの値は無視（同バーコードの再読み込み防止）
+    if (scanScannedSet.has(value)) {
+      document.getElementById('scannerLiveResult').textContent = '⚠ スキャン済み: ' + value;
+      return;
+    }
+    playBeep();
+    if (navigator.vibrate) navigator.vibrate(80);
     var inputEl = document.getElementById(SCAN_TARGET);
     if (inputEl) {
       inputEl.value = value;
       if      (SCAN_TARGET === 'sh-single-serial') addSingleSerial('sh');
       else if (SCAN_TARGET === 'rt-single-serial') addSingleSerial('rt');
     }
+    scanScannedSet.add(value);  // スキャン済みとして記録
     scanMultiCount++;
     document.getElementById('scannerCount').textContent = 'スキャン済み ' + scanMultiCount + '件';
     document.getElementById('scannerLiveResult').textContent = '✓ ' + value;
@@ -1437,6 +1446,8 @@ function onScanResult(value) {
   }
 
   // ========== シリアルNo 通常モード（連番開始など） ==========
+  playBeep();
+  if (navigator.vibrate) navigator.vibrate(80);
   closeScanner();
   var inputEl2 = document.getElementById(SCAN_TARGET);
   if (inputEl2) {
