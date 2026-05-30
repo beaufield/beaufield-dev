@@ -1387,6 +1387,18 @@ function finishMultiScan() {
   closeScanner();
 }
 
+// JANコード比較（UPC-A 12桁 ↔ EAN-13 13桁 の先頭0差異を吸収）
+function janMatch(dbVal, scanned) {
+  if (!dbVal || !scanned) return false;
+  var a = String(dbVal).replace(/\D/g, '');    // 数字のみ抽出
+  var b = String(scanned).replace(/\D/g, '');  // 数字のみ抽出
+  if (a === b) return true;
+  // 片方が13桁で先頭0、もう片方が12桁 → 先頭0を除いた12桁で比較
+  if (a.length === 13 && b.length === 12 && a.charAt(0) === '0' && a.slice(1) === b) return true;
+  if (b.length === 13 && a.length === 12 && b.charAt(0) === '0' && b.slice(1) === a) return true;
+  return false;
+}
+
 function playBeep() {
   try {
     var ctx  = new (window.AudioContext || window.webkitAudioContext)();
@@ -1417,7 +1429,8 @@ function onScanResult(value) {
     if (navigator.vibrate) navigator.vibrate(80);
     closeScanner();
     var tab = SCAN_TARGET === 'sh-jan' ? 'sh' : 'rt';
-    var p   = appState.products.find(function(x) { return x.jan === value || x.code === value; });
+    // UPC-A(12桁)とJAN(13桁・先頭0)の差異を吸収して検索
+    var p   = appState.products.find(function(x) { return janMatch(x.jan, value) || janMatch(x.code, value); });
     if (p) selectProduct(tab, p);
     else   showToast('商品が見つかりません: ' + value, 'error');
     return;
