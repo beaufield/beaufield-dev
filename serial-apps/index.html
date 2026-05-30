@@ -694,7 +694,7 @@ select:focus { border-color: #2a6acc; }
 <div class="version-label">HTML v2.8.0</div>
 
 <!-- ZXing バーコードスキャナー -->
-<script src="https://unpkg.com/@zxing/library@0.18.6/umd/index.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 
 <script>
 // ============================================================
@@ -1352,52 +1352,66 @@ function openScanner(target) {
 
 function startScanner() {
   if (scannerActive) return;
-  // ビデオ + スキャン枠オーバーレイ
-  document.getElementById('scannerContainer').innerHTML =
-    '<video id="scannerVideo" style="width:100%;height:100%;object-fit:cover;display:block;" playsinline autoplay muted></video>' +
-    '<div class="scanner-finder"><span class="sf-br"></span><span class="sf-bl"></span></div>';
-  // hints設定（エラー時はデフォルトにフォールバック）
+  document.getElementById('scannerContainer').innerHTML = '';
+
+  // フォーマット指定（EAN-13・UPC-A等）
+  var readerConfig = { verbose: false };
   try {
-    var hints = new Map();
-    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-      ZXing.BarcodeFormat.EAN_13,
-      ZXing.BarcodeFormat.EAN_8,
-      ZXing.BarcodeFormat.UPC_A,
-      ZXing.BarcodeFormat.UPC_E,
-      ZXing.BarcodeFormat.CODE_128,
-      ZXing.BarcodeFormat.CODE_39,
-      ZXing.BarcodeFormat.ITF,
-    ]);
-    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-    codeReader = new ZXing.BrowserMultiFormatReader(hints);
-  } catch(e) {
-    // hintsが使えない環境ではデフォルト設定で起動
-    codeReader = new ZXing.BrowserMultiFormatReader();
-  }
-  // 背面カメラ指定（解像度は縦向きiPhoneに合わせてデフォルトに任せる）
-  codeReader.decodeFromConstraints(
-    { video: { facingMode: { ideal: 'environment' } } },
-    'scannerVideo',
-    function(result, err) {
-      if (result) {
-        var val = result.getText();
-        document.getElementById('scannerLiveResult').textContent = val;
-        onScanResult(val);
-      }
-    }
-  ).catch(function(err) {
+    readerConfig.formatsToSupport = [
+      Html5QrcodeSupportedFormats.EAN_13,
+      Html5QrcodeSupportedFormats.EAN_8,
+      Html5QrcodeSupportedFormats.UPC_A,
+      Html5QrcodeSupportedFormats.UPC_E,
+      Html5QrcodeSupportedFormats.CODE_128,
+      Html5QrcodeSupportedFormats.CODE_39,
+      Html5QrcodeSupportedFormats.ITF,
+    ];
+  } catch(e) { /* formatsToSupportが使えない場合はデフォルト */ }
+
+  codeReader = new Html5Qrcode('scannerContainer', readerConfig);
+
+  codeReader.start(
+    { facingMode: 'environment' },
+    { fps: 15 },
+    function(decodedText) {
+      // ライブ表示更新 & スキャン結果処理
+      var liveEl = document.getElementById('scannerLiveResult');
+      if (liveEl) liveEl.textContent = decodedText;
+      onScanResult(decodedText);
+    },
+    null  // フレームごとのエラーは無視
+  ).then(function() {
+    // カメラ起動後にスキャン枠オーバーレイを追加
+    var container = document.getElementById('scannerContainer');
+    var finder = document.createElement('div');
+    finder.className = 'scanner-finder';
+    finder.innerHTML = '<span class="sf-br"></span><span class="sf-bl"></span>';
+    container.appendChild(finder);
+  }).catch(function(err) {
     showToast('カメラ起動エラー: ' + err, 'error');
     closeScanner();
   });
+
   scannerActive = true;
 }
 
 function closeScanner() {
-  if (codeReader) { try { codeReader.reset(); } catch(e) {} codeReader = null; }
+  // フラグを先に落として多重コールバックを防ぐ
   scannerActive = false;
   scanMultiMode = false;
-  document.getElementById('scannerContainer').innerHTML = '';
   document.getElementById('scannerOverlay').classList.remove('active');
+  if (codeReader) {
+    var reader = codeReader;
+    codeReader = null;
+    // html5-qrcodeのstopは非同期 — 完了後にコンテナをクリア
+    reader.stop().then(function() {
+      document.getElementById('scannerContainer').innerHTML = '';
+    }).catch(function() {
+      document.getElementById('scannerContainer').innerHTML = '';
+    });
+  } else {
+    document.getElementById('scannerContainer').innerHTML = '';
+  }
 }
 
 function finishMultiScan() {
