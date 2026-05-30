@@ -1360,7 +1360,7 @@ function startScanner() {
 
   codeReader.start(
     { facingMode: 'environment' },
-    { fps: 10 },
+    { fps: 15 },
     function(decodedText) {
       // ライブ表示更新 & スキャン結果処理
       var liveEl = document.getElementById('scannerLiveResult');
@@ -1423,17 +1423,42 @@ function janMatch(dbVal, scanned) {
 function playBeep() {
   try {
     var ctx  = new (window.AudioContext || window.webkitAudioContext)();
-    var osc  = ctx.createOscillator();
     var gain = ctx.createGain();
-    osc.connect(gain);
     gain.connect(ctx.destination);
-    osc.type = 'sine';
-    osc.frequency.value = 880;
-    gain.gain.setValueAtTime(0.3, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.15);
+    // 1音目（高め・短め）
+    var o1 = ctx.createOscillator();
+    o1.connect(gain);
+    o1.type = 'sine';
+    o1.frequency.value = 1046;  // C6
+    gain.gain.setValueAtTime(0.5, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+    o1.start(ctx.currentTime);
+    o1.stop(ctx.currentTime + 0.18);
   } catch(e) {}
+}
+
+// スキャン成功フィードバック（音 + バイブ + 画面フラッシュ）
+function scanFeedback() {
+  // 音
+  playBeep();
+  // バイブ（Android対応、iPhone非対応だがエラーにはならない）
+  if (navigator.vibrate) navigator.vibrate(80);
+  // 映像エリアを白くフラッシュ（iPhoneでのバイブ代替 + 視覚的確認）
+  var container = document.getElementById('scannerContainer');
+  if (container) {
+    var flash = document.createElement('div');
+    flash.style.cssText =
+      'position:absolute;inset:0;background:rgba(255,255,255,0.85);' +
+      'z-index:200;pointer-events:none;border-radius:4px;';
+    container.appendChild(flash);
+    setTimeout(function() {
+      flash.style.transition = 'opacity 0.25s';
+      flash.style.opacity = '0';
+      setTimeout(function() {
+        if (flash.parentNode) flash.parentNode.removeChild(flash);
+      }, 260);
+    }, 80);
+  }
 }
 
 function onScanResult(value) {
@@ -1446,8 +1471,7 @@ function onScanResult(value) {
 
   // ========== JANコード（1件でモーダルを閉じる） ==========
   if (SCAN_TARGET === 'sh-jan' || SCAN_TARGET === 'rt-jan') {
-    playBeep();
-    if (navigator.vibrate) navigator.vibrate(80);
+    scanFeedback();
     closeScanner();
     var tab = SCAN_TARGET === 'sh-jan' ? 'sh' : 'rt';
     // UPC-A(12桁)とJAN(13桁・先頭0)の差異を吸収して検索
@@ -1464,8 +1488,7 @@ function onScanResult(value) {
       document.getElementById('scannerLiveResult').textContent = '⚠ スキャン済み: ' + value;
       return;
     }
-    playBeep();
-    if (navigator.vibrate) navigator.vibrate(80);
+    scanFeedback();
     var inputEl = document.getElementById(SCAN_TARGET);
     if (inputEl) {
       inputEl.value = value;
@@ -1480,8 +1503,7 @@ function onScanResult(value) {
   }
 
   // ========== シリアルNo 通常モード（連番開始など） ==========
-  playBeep();
-  if (navigator.vibrate) navigator.vibrate(80);
+  scanFeedback();
   closeScanner();
   var inputEl2 = document.getElementById(SCAN_TARGET);
   if (inputEl2) {
