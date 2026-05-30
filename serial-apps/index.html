@@ -1356,10 +1356,22 @@ function startScanner() {
   document.getElementById('scannerContainer').innerHTML =
     '<video id="scannerVideo" style="width:100%;height:100%;object-fit:cover;display:block;" playsinline autoplay muted></video>' +
     '<div class="scanner-finder"><span class="sf-br"></span><span class="sf-bl"></span></div>';
-  codeReader = new ZXing.BrowserMultiFormatReader();
+  // UPC-A（北米製品の先頭0バーコード）も確実に読み取るためhints設定
+  var hints = new Map();
+  hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+    ZXing.BarcodeFormat.EAN_13,
+    ZXing.BarcodeFormat.EAN_8,
+    ZXing.BarcodeFormat.UPC_A,
+    ZXing.BarcodeFormat.UPC_E,
+    ZXing.BarcodeFormat.CODE_128,
+    ZXing.BarcodeFormat.CODE_39,
+    ZXing.BarcodeFormat.ITF,
+  ]);
+  hints.set(ZXing.DecodeHintType.TRY_HARDER, true);  // 認識精度を上げる
+  codeReader = new ZXing.BrowserMultiFormatReader(hints);
   // 背面カメラ・連続オートフォーカスを指定
   codeReader.decodeFromConstraints(
-    { video: { facingMode: { ideal: 'environment' }, focusMode: 'continuous', width: { ideal: 1280 }, height: { ideal: 720 } } },
+    { video: { facingMode: { ideal: 'environment' }, focusMode: 'continuous', width: { ideal: 1920 }, height: { ideal: 1080 } } },
     'scannerVideo',
     function(result, err) {
       if (result) {
@@ -1387,16 +1399,18 @@ function finishMultiScan() {
   closeScanner();
 }
 
-// JANコード比較（UPC-A 12桁 ↔ EAN-13 13桁 の先頭0差異を吸収）
+// JANコード正規化（先頭0を除いた12桁に統一）
+// UPC-A(12桁)・EAN-13(13桁・先頭0あり) どちらで来ても同じ12桁になる
+function normalizeJan(val) {
+  var v = String(val || '').replace(/\D/g, '');  // 数字のみ抽出
+  // 13桁で先頭0の場合は12桁に変換（UPC-A互換）
+  if (v.length === 13 && v.charAt(0) === '0') return v.slice(1);
+  return v;
+}
+// janMatchは normalizeJan を使って比較
 function janMatch(dbVal, scanned) {
   if (!dbVal || !scanned) return false;
-  var a = String(dbVal).replace(/\D/g, '');    // 数字のみ抽出
-  var b = String(scanned).replace(/\D/g, '');  // 数字のみ抽出
-  if (a === b) return true;
-  // 片方が13桁で先頭0、もう片方が12桁 → 先頭0を除いた12桁で比較
-  if (a.length === 13 && b.length === 12 && a.charAt(0) === '0' && a.slice(1) === b) return true;
-  if (b.length === 13 && a.length === 12 && b.charAt(0) === '0' && b.slice(1) === a) return true;
-  return false;
+  return normalizeJan(dbVal) === normalizeJan(scanned);
 }
 
 function playBeep() {
