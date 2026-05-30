@@ -1354,25 +1354,13 @@ function startScanner() {
   if (scannerActive) return;
   document.getElementById('scannerContainer').innerHTML = '';
 
-  // フォーマット指定（EAN-13・UPC-A等）
-  var readerConfig = { verbose: false };
-  try {
-    readerConfig.formatsToSupport = [
-      Html5QrcodeSupportedFormats.EAN_13,
-      Html5QrcodeSupportedFormats.EAN_8,
-      Html5QrcodeSupportedFormats.UPC_A,
-      Html5QrcodeSupportedFormats.UPC_E,
-      Html5QrcodeSupportedFormats.CODE_128,
-      Html5QrcodeSupportedFormats.CODE_39,
-      Html5QrcodeSupportedFormats.ITF,
-    ];
-  } catch(e) { /* formatsToSupportが使えない場合はデフォルト */ }
-
-  codeReader = new Html5Qrcode('scannerContainer', readerConfig);
+  // formatsToSupportを指定しない → html5-qrcodeが全フォーマット対応になる
+  // （EAN-13・UPC-A・Code 128・QRコード等すべて読める）
+  codeReader = new Html5Qrcode('scannerContainer', { verbose: false });
 
   codeReader.start(
-    { facingMode: 'environment' },
-    { fps: 15 },
+    { facingMode: { ideal: 'environment' }, focusMode: 'continuous' },
+    { fps: 10 },
     function(decodedText) {
       // ライブ表示更新 & スキャン結果処理
       var liveEl = document.getElementById('scannerLiveResult');
