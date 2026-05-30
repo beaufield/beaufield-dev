@@ -1359,7 +1359,7 @@ function startScanner() {
   codeReader = new Html5Qrcode('scannerContainer', { verbose: false });
 
   codeReader.start(
-    { facingMode: { ideal: 'environment' }, focusMode: 'continuous' },
+    { facingMode: 'environment' },
     { fps: 10 },
     function(decodedText) {
       // ライブ表示更新 & スキャン結果処理
