@@ -4,6 +4,8 @@
 # ============================================================
 # 2026-04-28 PDF漏洩事案を受けて新設。
 # 業務情報（卸価格・取引先・顧客データ等）が Public リポジトリに混入するのを物理的に防ぐ。
+# 2026-06-01 内部ドキュメント（SPEC.md等）を BLOCKED_FILES に追加。
+#            SPEC.md にはシステム構成・認証方式・エンドポイント設計が含まれるため非公開必須。
 #
 # 初回セットアップ:
 #   git config core.hooksPath .githooks
@@ -12,8 +14,8 @@
 # 拒否対象の拡張子（大文字小文字両方カバー）
 BLOCKED_EXT='\.(pdf|PDF|csv|CSV|xlsx|XLSX|xlsm|XLSM|xls|XLS|tsv|TSV|docx|DOCX|doc|DOC)$'
 
-# 拒否対象のファイル名
-BLOCKED_FILES='^CLAUDE\.md$'
+# 拒否対象のファイル名（内部ドキュメント・機密設定）
+BLOCKED_FILES='(^|/)CLAUDE\.md$|(^|/)SPEC\.md$'
 
 # ステージされている追加・変更ファイルから対象を抽出
 staged=$(git diff --cached --name-only --diff-filter=ACM)
@@ -31,14 +33,16 @@ if [ -n "$violations" ]; then
     echo ""
     echo "$violations" | sed 's/^/    /'
     echo ""
-    echo "理由: PDF/CSV/Excel は業務情報（価格・取引先・顧客等）を含むため"
-    echo "      Publicリポジトリにコミットすると全世界に公開されます。"
+    echo "理由: 以下のファイルは Public リポジトリに公開できません。"
+    echo "  - PDF/CSV/Excel: 業務情報（価格・取引先・顧客等）を含むため"
+    echo "  - SPEC.md: システム構成・認証方式・エンドポイント設計を含む内部仕様書"
+    echo "  - CLAUDE.md: 経営・組織情報を含む内部設定ファイル"
     echo ""
     echo "対処方法:"
     echo "  1. ステージから取り除く:"
     echo "     git restore --staged <ファイル名>"
     echo ""
-    echo "  2. 業務PDF・CSVは Drive/SharePoint に保管し、GAS経由配信パターンを使う"
+    echo "  2. .gitignore に追加してGit管理対象から除外する"
     echo "     詳細: 開発・自動化/CLAUDE.md「GitHub投入ルール」セクション参照"
     echo ""
     echo "  3. どうしても必要な場合（例: アプリのアイコンPNG）はチェックを一時無効化:"
