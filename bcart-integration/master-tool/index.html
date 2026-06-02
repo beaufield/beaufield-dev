@@ -315,6 +315,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
           <button class="btn btn-primary btn-sm" id="bulkAllBtn"  onclick="bulkUpdateByType('all')"   disabled title="チェックした商品の全差異をまとめて更新">▶ まとめて更新</button>
           <button class="btn btn-wip btn-sm" id="bulkWipBtn" onclick="bulkMarkWipAll()" disabled style="display:none;" title="チェックした未登録商品をまとめて作業中にする">📝 一括作業中にする</button>
           <button class="btn btn-gray btn-sm" id="bulkAddSetBtn" onclick="openBulkAddSetSearch()" disabled style="display:none;" title="チェックした作業中の商品を既存のBCART商品にまとめて追加">📦 既存の商品にまとめて追加</button>
+          <button class="btn btn-primary btn-sm" id="bulkRegisterBtn" onclick="openBulkRegisterModal()" disabled style="display:none;" title="チェックした作業中の商品を新規BCART商品のセットとしてまとめて登録">🆕 新規商品にまとめて登録</button>
         </div>
         <button class="btn btn-gray btn-sm" id="bulkIgnoreBtn" onclick="openBulkIgnoreModal()" disabled>🚫 一括対応不要</button>
       </div>
@@ -712,6 +713,96 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
   </div>
 </div>
 
+<!-- 機能D: 一括新規商品登録モーダル -->
+<div class="modal-overlay" id="bulkRegisterModal">
+  <div class="modal register-modal">
+    <h3>🆕 <span id="bRegTitle"></span>を新規BCART商品に登録</h3>
+    <div id="bRegError" class="register-error"></div>
+
+    <div class="form-section">
+      <div class="form-section-title">商品</div>
+      <div class="form-row">
+        <div class="form-field" style="flex:2;min-width:180px;">
+          <label>商品名 *</label>
+          <input type="text" id="bRegProductName" placeholder="商品名を入力" class="editable-auto">
+        </div>
+        <div class="form-field" style="min-width:160px;">
+          <label>名前をコピー</label>
+          <select id="bRegCopySelect" onchange="setBulkRegProductName(this.value);this.selectedIndex=0;"
+            style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;background:#fff;">
+            <option value="">-- 選択して入力欄にコピー --</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>公開設定</label>
+          <select id="bRegProductFlag">
+            <option value="非表示" selected>非表示</option>
+            <option value="表示">表示</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>カテゴリー *</label>
+          <select id="bRegCategoryId"><option value="">読み込み中...</option></select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>特集1（シリーズ）</label>
+          <select id="bRegFeatureId1" size="5"><option value="">なし</option></select>
+        </div>
+        <div class="form-field">
+          <label>特集2（メーカー）</label>
+          <select id="bRegFeatureId2" size="5"><option value="">なし</option></select>
+        </div>
+        <div class="form-field">
+          <label>特集3（キャンペーン）</label>
+          <select id="bRegFeatureId3" size="5"><option value="">なし</option></select>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <div class="form-section-title">商品セット一覧</div>
+      <div style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;margin-bottom:10px;max-height:220px;overflow-y:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="background:#f9fafb;">
+              <th style="padding:7px 10px;text-align:left;border-bottom:2px solid #e5e7eb;white-space:nowrap;">品番</th>
+              <th style="padding:7px 10px;text-align:left;border-bottom:2px solid #e5e7eb;">セット名（編集可）</th>
+              <th style="padding:7px 10px;text-align:right;border-bottom:2px solid #e5e7eb;white-space:nowrap;">売上単価</th>
+            </tr>
+          </thead>
+          <tbody id="bRegSetRows"></tbody>
+        </table>
+      </div>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <label style="font-size:13px;color:#6b7280;white-space:nowrap;">税区分（全件）:</label>
+          <select id="bRegTaxTypeId" style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">
+            <option value="1" selected>標準税率（10%）</option>
+            <option value="2">軽減税率（8%）</option>
+            <option value="3">非課税</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <label style="font-size:13px;color:#6b7280;white-space:nowrap;">公開設定（全件）:</label>
+          <select id="bRegSetFlag" style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">
+            <option value="非表示" selected>非表示</option>
+            <option value="表示">表示</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-gray" onclick="closeModal('bulkRegisterModal')">キャンセル</button>
+      <button class="btn btn-primary" id="bRegSubmitBtn" onclick="confirmBulkRegister()">🆕 <span id="bRegSubmitLabel"></span>のセットで新規登録</button>
+    </div>
+  </div>
+</div>
+
 <!-- 機能C: 既存商品にセット追加 — 一括Step2 レビューモーダル -->
 <div class="modal-overlay" id="addSetBulkFormModal">
   <div class="modal" style="width:680px;max-width:95vw;max-height:90vh;display:flex;flex-direction:column;">
@@ -894,6 +985,9 @@ let spPendingApplyItems = [];
 let addSetDiff = null;
 let addSetTargetProduct = null;
 let addSetBulkItems = [];
+
+// 機能D: 一括新規商品登録
+let regBulkItems = [];
 
 // ===================== 初期化 =====================
 window.onload = function() {
@@ -1235,6 +1329,7 @@ function updateBulkBtn() {
   const allBtn   = document.getElementById('bulkAllBtn');
   const wipBtn       = document.getElementById('bulkWipBtn');
   const addSetBtn    = document.getElementById('bulkAddSetBtn');
+  const regBulkBtn   = document.getElementById('bulkRegisterBtn');
 
   if (currentFilter === 'unregistered' || currentFilter === 'wip') {
     priceBtn.style.display = 'none';
@@ -1243,19 +1338,24 @@ function updateBulkBtn() {
     wipBtn.style.display   = '';
     wipBtn.disabled = count === 0;
     wipBtn.textContent = count > 0 ? '📝 ' + count + '件を作業中にする' : '📝 一括作業中にする';
-    // 「既存の商品にまとめて追加」はWIPフィルター時のみ表示
+    // WIPフィルター時のみ「既存商品に追加」「新規商品に登録」を表示
     if (currentFilter === 'wip') {
       addSetBtn.style.display = '';
       addSetBtn.disabled = count === 0;
       addSetBtn.textContent = count > 0 ? '📦 ' + count + '件を既存商品に追加' : '📦 既存の商品にまとめて追加';
+      regBulkBtn.style.display = '';
+      regBulkBtn.disabled = count === 0;
+      regBulkBtn.textContent = count > 0 ? '🆕 ' + count + '件を新規商品に登録' : '🆕 新規商品にまとめて登録';
     } else {
-      addSetBtn.style.display = 'none';
+      addSetBtn.style.display  = 'none';
+      regBulkBtn.style.display = 'none';
     }
     return;
   }
 
-  wipBtn.style.display    = 'none';
-  addSetBtn.style.display = 'none';
+  wipBtn.style.display     = 'none';
+  addSetBtn.style.display  = 'none';
+  regBulkBtn.style.display = 'none';
   priceBtn.style.display = '';
   jodaiBtn.style.display = '';
   allBtn.style.display   = '';
@@ -2254,6 +2354,148 @@ async function confirmBulkAddSet() {
     ? successCount + '件成功、' + failCount + '件失敗'
     : items.length + '件をすべて追加しました';
   finishProgressOverlay(resultMsg, failCount > 0, failedItems);
+}
+
+// ===================== 機能D: 一括新規商品登録 =====================
+function openBulkRegisterModal() {
+  const checked = [...document.querySelectorAll('.diff-check:checked')];
+  regBulkItems = checked.map(c => allDiffs.find(d => d.code === c.dataset.code)).filter(d => d && d.isWip);
+  if (regBulkItems.length === 0) return;
+
+  const countLabel = regBulkItems.length + '件';
+  document.getElementById('bRegTitle').textContent = countLabel;
+  document.getElementById('bRegSubmitLabel').textContent = countLabel;
+  document.getElementById('bRegProductName').value = '';
+  document.getElementById('bRegProductFlag').value = '非表示';
+  document.getElementById('bRegTaxTypeId').value = '1';
+  document.getElementById('bRegSetFlag').value = '非表示';
+  document.getElementById('bRegError').style.display = 'none';
+  document.getElementById('bRegSubmitBtn').disabled = false;
+
+  document.getElementById('bRegCopySelect').innerHTML =
+    '<option value="">-- 選択して入力欄にコピー --</option>' +
+    regBulkItems.map(d =>
+      '<option value="' + esc(hankakuToZenkakuKana(d.name || '')) + '">' + esc(d.name || '') + '</option>'
+    ).join('');
+
+  document.getElementById('bRegSetRows').innerHTML = regBulkItems.map(d =>
+    '<tr>' +
+      '<td style="padding:6px 10px;border-bottom:1px solid #f3f4f6;white-space:nowrap;font-family:monospace;font-size:12px;color:#6b7280;">' + esc(d.code) + '</td>' +
+      '<td style="padding:4px 6px;border-bottom:1px solid #f3f4f6;">' +
+        '<input type="text" data-code="' + esc(d.code) + '" class="bulk-reg-set-name-input"' +
+        ' value="' + esc(hankakuToZenkakuKana(d.name || '')) + '"' +
+        ' style="width:100%;padding:5px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;">' +
+      '</td>' +
+      '<td style="padding:6px 10px;border-bottom:1px solid #f3f4f6;text-align:right;white-space:nowrap;">' +
+        (d.csvPrice ? d.csvPrice.toLocaleString() + '円' : '—') +
+      '</td>' +
+    '</tr>'
+  ).join('');
+
+  document.getElementById('bulkRegisterModal').classList.add('open');
+
+  populateBulkRegCategorySelect();
+  if (regCategories.length === 0) {
+    document.getElementById('bRegCategoryId').innerHTML = '<option value="">読み込み中...</option>';
+    gasPost({ action: 'getCategories' }, function(res) {
+      if (res.ok && res.categories) { regCategories = res.categories; populateBulkRegCategorySelect(); }
+      else { document.getElementById('bRegCategoryId').innerHTML = '<option value="">取得失敗</option>'; }
+    });
+  }
+  if (regFeatures.length === 0) {
+    gasPost({ action: 'getFeatures' }, function(res) {
+      if (res.ok && res.specials) { regFeatures = res.specials; populateBulkRegFeatureSelects(); }
+    });
+  } else {
+    populateBulkRegFeatureSelects();
+  }
+}
+
+function populateBulkRegCategorySelect() {
+  const sel = document.getElementById('bRegCategoryId');
+  if (!sel || regCategories.length === 0) return;
+  sel.innerHTML = '<option value="">カテゴリーを選択 *</option>' +
+    regCategories.map(c => '<option value="' + c.id + '">' + esc(c.name) + '</option>').join('');
+}
+
+function populateBulkRegFeatureSelects() {
+  const opts = '<option value="">なし</option>' +
+    regFeatures.map(f => '<option value="' + f.id + '">' + esc(f.name) + '</option>').join('');
+  ['bRegFeatureId1','bRegFeatureId2','bRegFeatureId3'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = opts;
+  });
+}
+
+function setBulkRegProductName(name) {
+  if (!name) return;
+  document.getElementById('bRegProductName').value = name;
+  document.getElementById('bRegProductName').focus();
+}
+
+async function confirmBulkRegister() {
+  const errorEl     = document.getElementById('bRegError');
+  const productName = document.getElementById('bRegProductName').value.trim();
+  const categoryId  = parseInt(document.getElementById('bRegCategoryId').value);
+  if (!productName) { errorEl.textContent = '商品名を入力してください'; errorEl.style.display = 'block'; return; }
+  if (!categoryId)  { errorEl.textContent = 'カテゴリーを選択してください'; errorEl.style.display = 'block'; return; }
+  errorEl.style.display = 'none';
+
+  const inputs = [...document.querySelectorAll('.bulk-reg-set-name-input')];
+  const sets = regBulkItems.map(d => {
+    const input = inputs.find(el => el.dataset.code === d.code);
+    return {
+      code:      d.code,
+      setName:   input ? input.value.trim() : hankakuToZenkakuKana(d.name || ''),
+      janCode:   d.csvJan || '',
+      csvUnit:   d.csvUnit || '',
+      csvPrice:  d.csvPrice || 0,
+      csvKouri:  d.csvKouri || 0,
+      csvShiire: d.csvShiire || 0
+    };
+  });
+
+  const emptyNames = sets.filter(s => !s.setName);
+  if (emptyNames.length > 0) {
+    errorEl.textContent = 'セット名が空の行があります: ' + emptyNames.map(s => s.code).join(', ');
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  const btn = document.getElementById('bRegSubmitBtn');
+  btn.disabled = true;
+  btn.textContent = '登録中...';
+
+  const res = await gasPostAsync({
+    action:      'bulkRegisterProduct',
+    productName: productName,
+    categoryId:  categoryId,
+    productFlag: document.getElementById('bRegProductFlag').value,
+    featureId1:  parseInt(document.getElementById('bRegFeatureId1').value) || null,
+    featureId2:  parseInt(document.getElementById('bRegFeatureId2').value) || null,
+    featureId3:  parseInt(document.getElementById('bRegFeatureId3').value) || null,
+    taxTypeId:   parseInt(document.getElementById('bRegTaxTypeId').value) || 1,
+    setFlag:     document.getElementById('bRegSetFlag').value,
+    sets:        sets
+  });
+
+  btn.disabled = false;
+  btn.textContent = '🆕 ' + regBulkItems.length + '件のセットで新規登録';
+
+  if (!res.ok) {
+    errorEl.textContent = '登録失敗: ' + (res.error || '不明なエラー');
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  const failedSets = (res.results || []).filter(r => !r.ok);
+  closeModal('bulkRegisterModal');
+  if (failedSets.length > 0) {
+    showToast('商品登録完了（一部セット失敗: ' + failedSets.map(r => r.code).join(', ') + '）', true);
+  } else {
+    showToast('新規商品に ' + sets.length + '件のセットを登録しました');
+  }
+  loadData();
 }
 
 function populateCategorySelect() {
