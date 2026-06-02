@@ -314,6 +314,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
           <button class="btn btn-jodai btn-sm" id="bulkJodaiBtn" onclick="bulkUpdateByType('jodai')" disabled title="チェックした商品の上代差異のみ更新">💴 上代のみ</button>
           <button class="btn btn-primary btn-sm" id="bulkAllBtn"  onclick="bulkUpdateByType('all')"   disabled title="チェックした商品の全差異をまとめて更新">▶ まとめて更新</button>
           <button class="btn btn-wip btn-sm" id="bulkWipBtn" onclick="bulkMarkWipAll()" disabled style="display:none;" title="チェックした未登録商品をまとめて作業中にする">📝 一括作業中にする</button>
+          <button class="btn btn-gray btn-sm" id="bulkAddSetBtn" onclick="openBulkAddSetSearch()" disabled style="display:none;" title="チェックした作業中の商品を既存のBCART商品にまとめて追加">📦 既存の商品にまとめて追加</button>
         </div>
         <button class="btn btn-gray btn-sm" id="bulkIgnoreBtn" onclick="openBulkIgnoreModal()" disabled>🚫 一括対応不要</button>
       </div>
@@ -711,6 +712,52 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
   </div>
 </div>
 
+<!-- 機能C: 既存商品にセット追加 — 一括Step2 レビューモーダル -->
+<div class="modal-overlay" id="addSetBulkFormModal">
+  <div class="modal" style="width:680px;max-width:95vw;max-height:90vh;display:flex;flex-direction:column;">
+    <h3>📦 既存の商品にセットをまとめて追加</h3>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:10px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;flex-wrap:wrap;">
+      <span style="font-size:13px;color:#0369a1;">追加先:</span>
+      <strong id="bulkAddSetTargetName" style="font-size:13px;"></strong>
+      <span id="bulkAddSetTargetId" style="font-size:11px;color:#9ca3af;font-family:monospace;"></span>
+      <button class="btn btn-gray btn-sm" style="margin-left:auto;" onclick="reopenAddSetSearch()">変更</button>
+    </div>
+    <div style="flex:1;overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px;margin-bottom:12px;">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead>
+          <tr style="background:#f9fafb;">
+            <th style="padding:8px 12px;text-align:left;border-bottom:2px solid #e5e7eb;white-space:nowrap;">品番</th>
+            <th style="padding:8px 12px;text-align:left;border-bottom:2px solid #e5e7eb;">セット名（編集可）</th>
+            <th style="padding:8px 12px;text-align:right;border-bottom:2px solid #e5e7eb;white-space:nowrap;">売上単価</th>
+          </tr>
+        </thead>
+        <tbody id="bulkAddSetRows"></tbody>
+      </table>
+    </div>
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <label style="font-size:13px;color:#6b7280;white-space:nowrap;">税区分（全件）:</label>
+        <select id="bulkAddSetTaxTypeId" style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">
+          <option value="1" selected>標準税率（10%）</option>
+          <option value="2">軽減税率（8%）</option>
+          <option value="3">非課税</option>
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <label style="font-size:13px;color:#6b7280;white-space:nowrap;">公開設定（全件）:</label>
+        <select id="bulkAddSetFlag" style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">
+          <option value="非表示" selected>非表示</option>
+          <option value="表示">表示</option>
+        </select>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-gray" onclick="closeModal('addSetBulkFormModal')">キャンセル</button>
+      <button class="btn btn-primary" id="bulkAddSetSubmitBtn" onclick="confirmBulkAddSet()">📦 まとめて追加する</button>
+    </div>
+  </div>
+</div>
+
 <!-- 機能C: 既存商品にセット追加 — Step1 商品検索モーダル -->
 <div class="modal-overlay" id="addSetSearchModal">
   <div class="modal" style="width:540px;max-width:95vw;">
@@ -846,6 +893,7 @@ let spPendingApplyItems = [];
 // 機能C: 既存商品へのセット追加
 let addSetDiff = null;
 let addSetTargetProduct = null;
+let addSetBulkItems = [];
 
 // ===================== 初期化 =====================
 window.onload = function() {
@@ -1185,7 +1233,8 @@ function updateBulkBtn() {
   const priceBtn = document.getElementById('bulkPriceBtn');
   const jodaiBtn = document.getElementById('bulkJodaiBtn');
   const allBtn   = document.getElementById('bulkAllBtn');
-  const wipBtn   = document.getElementById('bulkWipBtn');
+  const wipBtn       = document.getElementById('bulkWipBtn');
+  const addSetBtn    = document.getElementById('bulkAddSetBtn');
 
   if (currentFilter === 'unregistered' || currentFilter === 'wip') {
     priceBtn.style.display = 'none';
@@ -1194,10 +1243,19 @@ function updateBulkBtn() {
     wipBtn.style.display   = '';
     wipBtn.disabled = count === 0;
     wipBtn.textContent = count > 0 ? '📝 ' + count + '件を作業中にする' : '📝 一括作業中にする';
+    // 「既存の商品にまとめて追加」はWIPフィルター時のみ表示
+    if (currentFilter === 'wip') {
+      addSetBtn.style.display = '';
+      addSetBtn.disabled = count === 0;
+      addSetBtn.textContent = count > 0 ? '📦 ' + count + '件を既存商品に追加' : '📦 既存の商品にまとめて追加';
+    } else {
+      addSetBtn.style.display = 'none';
+    }
     return;
   }
 
-  wipBtn.style.display = 'none';
+  wipBtn.style.display    = 'none';
+  addSetBtn.style.display = 'none';
   priceBtn.style.display = '';
   jodaiBtn.style.display = '';
   allBtn.style.display   = '';
@@ -1994,8 +2052,11 @@ function setPattern(pattern) {
 
 
 // ===================== 機能C: 既存商品へのセット追加 =====================
+
+// 単品: 差異一覧の「既存の商品に追加」ボタンから起動
 function openAddSetSearchModal(code) {
   addSetDiff = allDiffs.find(d => d.code === code);
+  addSetBulkItems = [];
   if (!addSetDiff) return;
   document.getElementById('addSetSearchTarget').textContent =
     '追加対象: ' + addSetDiff.code + '　' + (addSetDiff.name || '');
@@ -2005,8 +2066,23 @@ function openAddSetSearchModal(code) {
   document.getElementById('addSetSearchModal').classList.add('open');
 }
 
+// 一括: 一括バーの「N件を既存商品に追加」ボタンから起動
+function openBulkAddSetSearch() {
+  const checked = [...document.querySelectorAll('.diff-check:checked')];
+  addSetBulkItems = checked.map(c => allDiffs.find(d => d.code === c.dataset.code)).filter(d => d && d.isWip);
+  addSetDiff = null;
+  if (addSetBulkItems.length === 0) return;
+  document.getElementById('addSetSearchTarget').textContent =
+    '追加対象: ' + addSetBulkItems.length + '件の作業中商品';
+  document.getElementById('addSetSearchInput').value = '';
+  document.getElementById('addSetSearchResults').innerHTML =
+    '<div style="text-align:center;padding:24px;color:#9ca3af;font-size:13px;">キーワードを入力して検索してください</div>';
+  document.getElementById('addSetSearchModal').classList.add('open');
+}
+
+// Step1「変更」ボタン: 適切なStep2モーダルを閉じて検索に戻る
 function reopenAddSetSearch() {
-  closeModal('addSetFormModal');
+  closeModal(addSetBulkItems.length > 0 ? 'addSetBulkFormModal' : 'addSetFormModal');
   document.getElementById('addSetSearchModal').classList.add('open');
 }
 
@@ -2039,25 +2115,54 @@ function doAddSetSearch() {
   });
 }
 
+// 商品選択後: 単品/一括を自動判別してStep2を開く
 function selectAddSetProduct(productId, productName) {
   addSetTargetProduct = { id: productId, name: productName };
   closeModal('addSetSearchModal');
-  document.getElementById('addSetTargetName').textContent = productName;
-  document.getElementById('addSetTargetId').textContent = 'ID: ' + productId;
-  const converted = addSetDiff ? hankakuToZenkakuKana(addSetDiff.name || '') : '';
-  document.getElementById('addSetName').value = converted;
-  document.getElementById('addSetCode').value = addSetDiff ? addSetDiff.code : '';
-  document.getElementById('addSetJanCode').value = addSetDiff ? (addSetDiff.csvJan || '') : '';
-  document.getElementById('addSetUnit').value = addSetDiff ? (addSetDiff.csvUnit || '') : '';
-  document.getElementById('addSetPrice').value = addSetDiff ? (addSetDiff.csvPrice || '') : '';
-  document.getElementById('addSetKouri').value = addSetDiff ? (addSetDiff.csvKouri || '') : '';
-  document.getElementById('addSetShiire').value = addSetDiff ? (addSetDiff.csvShiire || '') : '';
-  document.getElementById('addSetTaxTypeId').value = '1';
-  document.getElementById('addSetFlag').value = '非表示';
-  document.getElementById('addSetFormError').style.display = 'none';
-  document.getElementById('addSetFormModal').classList.add('open');
+  if (addSetBulkItems.length > 0) {
+    showBulkAddSetForm();
+  } else {
+    document.getElementById('addSetTargetName').textContent = productName;
+    document.getElementById('addSetTargetId').textContent = 'ID: ' + productId;
+    const converted = addSetDiff ? hankakuToZenkakuKana(addSetDiff.name || '') : '';
+    document.getElementById('addSetName').value = converted;
+    document.getElementById('addSetCode').value = addSetDiff ? addSetDiff.code : '';
+    document.getElementById('addSetJanCode').value = addSetDiff ? (addSetDiff.csvJan || '') : '';
+    document.getElementById('addSetUnit').value = addSetDiff ? (addSetDiff.csvUnit || '') : '';
+    document.getElementById('addSetPrice').value = addSetDiff ? (addSetDiff.csvPrice || '') : '';
+    document.getElementById('addSetKouri').value = addSetDiff ? (addSetDiff.csvKouri || '') : '';
+    document.getElementById('addSetShiire').value = addSetDiff ? (addSetDiff.csvShiire || '') : '';
+    document.getElementById('addSetTaxTypeId').value = '1';
+    document.getElementById('addSetFlag').value = '非表示';
+    document.getElementById('addSetFormError').style.display = 'none';
+    document.getElementById('addSetFormModal').classList.add('open');
+  }
 }
 
+// 一括Step2: テーブル行を生成してモーダルを開く
+function showBulkAddSetForm() {
+  document.getElementById('bulkAddSetTargetName').textContent = addSetTargetProduct.name;
+  document.getElementById('bulkAddSetTargetId').textContent = 'ID: ' + addSetTargetProduct.id;
+  document.getElementById('bulkAddSetTaxTypeId').value = '1';
+  document.getElementById('bulkAddSetFlag').value = '非表示';
+  document.getElementById('bulkAddSetSubmitBtn').textContent = '📦 ' + addSetBulkItems.length + '件をまとめて追加する';
+  document.getElementById('bulkAddSetRows').innerHTML = addSetBulkItems.map(d =>
+    '<tr>' +
+      '<td style="padding:7px 12px;border-bottom:1px solid #f3f4f6;white-space:nowrap;font-family:monospace;font-size:12px;color:#6b7280;">' + esc(d.code) + '</td>' +
+      '<td style="padding:5px 8px;border-bottom:1px solid #f3f4f6;">' +
+        '<input type="text" data-code="' + esc(d.code) + '" class="bulk-set-name-input"' +
+        ' value="' + esc(hankakuToZenkakuKana(d.name || '')) + '"' +
+        ' style="width:100%;padding:5px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;">' +
+      '</td>' +
+      '<td style="padding:7px 12px;border-bottom:1px solid #f3f4f6;text-align:right;white-space:nowrap;">' +
+        (d.csvPrice ? d.csvPrice.toLocaleString() + '円' : '—') +
+      '</td>' +
+    '</tr>'
+  ).join('');
+  document.getElementById('addSetBulkFormModal').classList.add('open');
+}
+
+// 単品: 登録実行
 async function confirmAddSet() {
   const setName = document.getElementById('addSetName').value.trim();
   const price = parseFloat(document.getElementById('addSetPrice').value);
@@ -2095,6 +2200,60 @@ async function confirmAddSet() {
   closeModal('addSetFormModal');
   showToast('セットを追加しました: ' + setName);
   loadData();
+}
+
+// 一括: 進捗バーを使って順次登録
+async function confirmBulkAddSet() {
+  const taxTypeId = parseInt(document.getElementById('bulkAddSetTaxTypeId').value) || 1;
+  const setFlag   = document.getElementById('bulkAddSetFlag').value;
+  const inputs    = [...document.querySelectorAll('.bulk-set-name-input')];
+
+  const items = addSetBulkItems.map(d => {
+    const input = inputs.find(el => el.dataset.code === d.code);
+    return { d, setName: input ? input.value.trim() : hankakuToZenkakuKana(d.name || '') };
+  });
+
+  const emptyNames = items.filter(i => !i.setName);
+  if (emptyNames.length > 0) {
+    showToast('セット名が空の行があります: ' + emptyNames.map(i => i.d.code).join(', '), true);
+    return;
+  }
+
+  closeModal('addSetBulkFormModal');
+  showProgressOverlay(items.length);
+
+  let successCount = 0, failCount = 0;
+  const failedItems = [];
+
+  for (let i = 0; i < items.length; i++) {
+    const { d, setName } = items[i];
+    updateProgressOverlay(i + 1, items.length, d.code + ' ' + setName);
+    try {
+      const res = await gasPostAsync({
+        action:    'addSetToProduct',
+        productId: addSetTargetProduct.id,
+        code:      d.code,
+        setName:   setName,
+        janCode:   d.csvJan || '',
+        csvUnit:   d.csvUnit || '',
+        csvPrice:  d.csvPrice || 0,
+        csvKouri:  d.csvKouri || 0,
+        csvShiire: d.csvShiire || 0,
+        taxTypeId: taxTypeId,
+        setFlag:   setFlag
+      });
+      if (res.ok) successCount++;
+      else { failCount++; failedItems.push({ code: d.code, name: setName, error: res.error || '' }); }
+    } catch(e) {
+      failCount++;
+      failedItems.push({ code: d.code, name: setName, error: e.message || '' });
+    }
+  }
+
+  const resultMsg = failCount > 0
+    ? successCount + '件成功、' + failCount + '件失敗'
+    : items.length + '件をすべて追加しました';
+  finishProgressOverlay(resultMsg, failCount > 0, failedItems);
 }
 
 function populateCategorySelect() {
