@@ -79,6 +79,7 @@ function doPost(e) {
       case 'getCategories':        return jsonResponse(getCategories());
       case 'getFeatures':          return jsonResponse(getSpecials());
       case 'registerProduct':      return jsonResponse(registerProduct(params));
+      case 'addSetToProduct':      return jsonResponse(addSetToProduct(params));
       // 機能B: 特別価格管理
       case 'getSpecialPriceData':       return jsonResponse(getSpecialPriceData());
       case 'saveCustomerGroup':         return jsonResponse(saveCustomerGroup(params));
@@ -1003,6 +1004,60 @@ function registerProduct(params) {
   });
 
   return { ok: true, productId: createdProductId, setId: createdSetId };
+}
+
+// 既存のBCART商品にセットを追加
+function addSetToProduct(params) {
+  const setBody = {
+    product_sets: [{
+      product_id:  params.productId,
+      product_no:  params.code,
+      name:        params.setName,
+      jan_code:    params.janCode || '',
+      unit_price:  params.csvPrice,
+      jodai:       params.csvKouri || 0,
+      group_price: {
+        '1':  { fixed_price: params.csvKouri || 0 },
+        '10': { fixed_price: params.csvShiire || 0 }
+      },
+      unit:        params.csvUnit || '',
+      quantity:    1,
+      min_order:   1,
+      stock_flag:  1,
+      tax_type_id: params.taxTypeId || 1,
+      set_flag:    params.setFlag || '非表示'
+    }]
+  };
+
+  const res = bcartPost('/product_sets', setBody);
+  if (!res.ok) {
+    addHistory({
+      userName: params._userName,
+      code: params.code || '',
+      name: params.setName || '',
+      type: '既存商品にセット追加（失敗）',
+      before: '', after: '',
+      result: '失敗: ' + res.error
+    });
+    return res;
+  }
+
+  const createdSetId = res.data && res.data.product_sets && res.data.product_sets[0]
+    ? res.data.product_sets[0].id : null;
+
+  unmarkWip({ code: params.code });
+
+  addHistory({
+    userName: params._userName,
+    code: params.code || '',
+    name: params.setName || '',
+    type: '既存商品にセット追加',
+    before: '',
+    after: '商品ID: ' + params.productId + ' / セットID: ' + createdSetId,
+    result: '成功'
+  });
+
+  return { ok: true, setId: createdSetId };
 }
 
 // ===================== 会員取得 =====================

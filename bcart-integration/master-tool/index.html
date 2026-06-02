@@ -711,6 +711,100 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
   </div>
 </div>
 
+<!-- 機能C: 既存商品にセット追加 — Step1 商品検索モーダル -->
+<div class="modal-overlay" id="addSetSearchModal">
+  <div class="modal" style="width:540px;max-width:95vw;">
+    <h3>📦 既存の商品に追加 — 商品を選択</h3>
+    <div style="font-size:12px;color:#6b7280;margin-bottom:10px;" id="addSetSearchTarget"></div>
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+      <input type="text" id="addSetSearchInput" placeholder="商品名またはコードで検索"
+        style="flex:1;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;"
+        onkeydown="if(event.key==='Enter')doAddSetSearch()">
+      <button class="btn btn-primary" onclick="doAddSetSearch()">検索</button>
+    </div>
+    <div id="addSetSearchResults" style="max-height:340px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px;margin-bottom:12px;">
+      <div style="text-align:center;padding:24px;color:#9ca3af;font-size:13px;">キーワードを入力して検索してください</div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-gray" onclick="closeModal('addSetSearchModal')">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<!-- 機能C: 既存商品にセット追加 — Step2 セット登録フォームモーダル -->
+<div class="modal-overlay" id="addSetFormModal">
+  <div class="modal register-modal">
+    <h3>📦 既存の商品にセットを追加</h3>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:10px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;flex-wrap:wrap;">
+      <span style="font-size:13px;color:#0369a1;">追加先:</span>
+      <strong id="addSetTargetName" style="font-size:13px;"></strong>
+      <span id="addSetTargetId" style="font-size:11px;color:#9ca3af;font-family:monospace;"></span>
+      <button class="btn btn-gray btn-sm" style="margin-left:auto;" onclick="reopenAddSetSearch()">変更</button>
+    </div>
+    <div id="addSetFormError" class="register-error"></div>
+
+    <div class="form-section">
+      <div class="form-section-title">商品セット</div>
+      <div class="form-row">
+        <div class="form-field" style="flex:2;min-width:200px;">
+          <label>セット名 *</label>
+          <input type="text" id="addSetName" placeholder="セット名を入力" class="editable-auto">
+        </div>
+        <div class="form-field">
+          <label>品番</label>
+          <input type="text" id="addSetCode" readonly>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>JANコード</label>
+          <input type="text" id="addSetJanCode">
+        </div>
+        <div class="form-field">
+          <label>単位</label>
+          <input type="text" id="addSetUnit">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>売上単価 *</label>
+          <input type="number" id="addSetPrice" min="0">
+        </div>
+        <div class="form-field">
+          <label>上代（定価1）</label>
+          <input type="number" id="addSetKouri" min="0">
+        </div>
+        <div class="form-field">
+          <label>仕入単価</label>
+          <input type="number" id="addSetShiire" min="0">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>税区分</label>
+          <select id="addSetTaxTypeId">
+            <option value="1" selected>標準税率（10%）</option>
+            <option value="2">軽減税率（8%）</option>
+            <option value="3">非課税</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>公開設定</label>
+          <select id="addSetFlag">
+            <option value="非表示" selected>非表示</option>
+            <option value="表示">表示</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-gray" onclick="closeModal('addSetFormModal')">キャンセル</button>
+      <button class="btn btn-primary" id="addSetSubmitBtn" onclick="confirmAddSet()">📦 セットを追加する</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -748,6 +842,10 @@ let pendingMemberGroupId = null;
 let spVfFeatureSets = [];
 let spPendingVfItems = [];
 let spPendingApplyItems = [];
+
+// 機能C: 既存商品へのセット追加
+let addSetDiff = null;
+let addSetTargetProduct = null;
 
 // ===================== 初期化 =====================
 window.onload = function() {
@@ -972,6 +1070,7 @@ function renderDiffItem(d) {
     if (!isIgnored) {
       if (isWip) {
         actionBtns += '<button class="btn btn-primary btn-sm" onclick="openRegisterModal(\'' + esc(d.code) + '\')">🆕 BCARTに登録</button>';
+        actionBtns += '<button class="btn btn-gray btn-sm" onclick="openAddSetSearchModal(\'' + esc(d.code) + '\')">📦 既存の商品に追加</button>';
         actionBtns += '<button class="btn btn-gray btn-sm" onclick="unmarkWipConfirm(\'' + esc(d.code) + '\',\'' + esc(d.name) + '\')">作業中解除</button>';
       } else {
         actionBtns += '<button class="btn btn-wip btn-sm" onclick="markWip(\'' + esc(d.code) + '\',\'' + esc(d.name) + '\')">📝 作業中にする</button>';
@@ -1893,6 +1992,110 @@ function setPattern(pattern) {
   }
 }
 
+
+// ===================== 機能C: 既存商品へのセット追加 =====================
+function openAddSetSearchModal(code) {
+  addSetDiff = allDiffs.find(d => d.code === code);
+  if (!addSetDiff) return;
+  document.getElementById('addSetSearchTarget').textContent =
+    '追加対象: ' + addSetDiff.code + '　' + (addSetDiff.name || '');
+  document.getElementById('addSetSearchInput').value = '';
+  document.getElementById('addSetSearchResults').innerHTML =
+    '<div style="text-align:center;padding:24px;color:#9ca3af;font-size:13px;">キーワードを入力して検索してください</div>';
+  document.getElementById('addSetSearchModal').classList.add('open');
+}
+
+function reopenAddSetSearch() {
+  closeModal('addSetFormModal');
+  document.getElementById('addSetSearchModal').classList.add('open');
+}
+
+function doAddSetSearch() {
+  const kw = document.getElementById('addSetSearchInput').value.trim();
+  if (!kw) return;
+  const resultsEl = document.getElementById('addSetSearchResults');
+  resultsEl.innerHTML = '<div style="text-align:center;padding:24px;color:#9ca3af;"><div class="spinner" style="margin:0 auto 8px;"></div>検索中...</div>';
+  gasPost({ action: 'searchProducts', keyword: kw }, function(res) {
+    if (!res.ok) {
+      resultsEl.innerHTML = '<div style="padding:12px;color:#dc2626;">検索エラー: ' + esc(res.error || '') + '</div>';
+      return;
+    }
+    const products = res.products || [];
+    if (products.length === 0) {
+      resultsEl.innerHTML = '<div style="text-align:center;padding:24px;color:#9ca3af;font-size:13px;">該当なし</div>';
+      return;
+    }
+    resultsEl.innerHTML = products.slice(0, 50).map(p =>
+      '<div style="padding:10px 14px;border-bottom:1px solid #f3f4f6;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;"' +
+        ' onmouseover="this.style.background=\'#f9fafb\'" onmouseout="this.style.background=\'\'"' +
+        ' onclick="selectAddSetProduct(' + p.id + ',\'' + esc(p.name) + '\')">' +
+        '<div>' +
+          '<div style="font-weight:600;font-size:13px;">' + esc(p.name) + '</div>' +
+          '<div style="font-size:11px;color:#9ca3af;">ID: ' + p.id + (p.flag ? '　' + esc(p.flag) : '') + '</div>' +
+        '</div>' +
+        '<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();selectAddSetProduct(' + p.id + ',\'' + esc(p.name) + '\')">選択</button>' +
+      '</div>'
+    ).join('');
+  });
+}
+
+function selectAddSetProduct(productId, productName) {
+  addSetTargetProduct = { id: productId, name: productName };
+  closeModal('addSetSearchModal');
+  document.getElementById('addSetTargetName').textContent = productName;
+  document.getElementById('addSetTargetId').textContent = 'ID: ' + productId;
+  const converted = addSetDiff ? hankakuToZenkakuKana(addSetDiff.name || '') : '';
+  document.getElementById('addSetName').value = converted;
+  document.getElementById('addSetCode').value = addSetDiff ? addSetDiff.code : '';
+  document.getElementById('addSetJanCode').value = addSetDiff ? (addSetDiff.csvJan || '') : '';
+  document.getElementById('addSetUnit').value = addSetDiff ? (addSetDiff.csvUnit || '') : '';
+  document.getElementById('addSetPrice').value = addSetDiff ? (addSetDiff.csvPrice || '') : '';
+  document.getElementById('addSetKouri').value = addSetDiff ? (addSetDiff.csvKouri || '') : '';
+  document.getElementById('addSetShiire').value = addSetDiff ? (addSetDiff.csvShiire || '') : '';
+  document.getElementById('addSetTaxTypeId').value = '1';
+  document.getElementById('addSetFlag').value = '非表示';
+  document.getElementById('addSetFormError').style.display = 'none';
+  document.getElementById('addSetFormModal').classList.add('open');
+}
+
+async function confirmAddSet() {
+  const setName = document.getElementById('addSetName').value.trim();
+  const price = parseFloat(document.getElementById('addSetPrice').value);
+  const errorEl = document.getElementById('addSetFormError');
+  if (!setName) { errorEl.textContent = 'セット名を入力してください'; errorEl.style.display = 'block'; return; }
+  if (!price) { errorEl.textContent = '売上単価を入力してください'; errorEl.style.display = 'block'; return; }
+  errorEl.style.display = 'none';
+
+  const btn = document.getElementById('addSetSubmitBtn');
+  btn.disabled = true;
+  btn.textContent = '登録中...';
+
+  const res = await gasPostAsync({
+    action:    'addSetToProduct',
+    productId: addSetTargetProduct.id,
+    code:      addSetDiff.code,
+    setName:   setName,
+    janCode:   document.getElementById('addSetJanCode').value.trim(),
+    csvUnit:   document.getElementById('addSetUnit').value.trim(),
+    csvPrice:  parseFloat(document.getElementById('addSetPrice').value) || 0,
+    csvKouri:  parseFloat(document.getElementById('addSetKouri').value) || 0,
+    csvShiire: parseFloat(document.getElementById('addSetShiire').value) || 0,
+    taxTypeId: parseInt(document.getElementById('addSetTaxTypeId').value) || 1,
+    setFlag:   document.getElementById('addSetFlag').value
+  });
+
+  btn.disabled = false;
+  btn.textContent = '📦 セットを追加する';
+
+  if (!res.ok) {
+    errorEl.textContent = '登録失敗: ' + (res.error || '不明なエラー');
+    errorEl.style.display = 'block';
+    return;
+  }
+  closeModal('addSetFormModal');
+  showToast('セットを追加しました: ' + setName);
+  loadData();
+}
 
 function populateCategorySelect() {
   const sel = document.getElementById('regCategoryId');
