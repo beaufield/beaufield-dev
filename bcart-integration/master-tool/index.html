@@ -933,7 +933,10 @@ function renderDiffs() {
     return;
   }
 
-  filtered.sort((a, b) => sortOrder === 'asc' ? a.code.localeCompare(b.code) : b.code.localeCompare(a.code));
+  filtered.sort((a, b) => {
+    const cmp = a.code.localeCompare(b.code, undefined, { numeric: true });
+    return sortOrder === 'asc' ? cmp : -cmp;
+  });
   container.innerHTML = filtered.map(d => renderDiffItem(d)).join('');
   document.getElementById('diffCount').textContent = filtered.length + '件表示中';
   updateBulkBtn();
