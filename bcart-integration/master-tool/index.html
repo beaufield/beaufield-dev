@@ -1783,6 +1783,47 @@ function esc(str) {
   return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+// 半角カナ → 全角カナ変換（濁点・半濁点の合成も対応）
+function hankakuToZenkakuKana(str) {
+  const map = {
+    'ｦ':'ヲ','ｧ':'ァ','ｨ':'ィ','ｩ':'ゥ','ｪ':'ェ','ｫ':'ォ',
+    'ｬ':'ャ','ｭ':'ュ','ｮ':'ョ','ｯ':'ッ','ｰ':'ー',
+    'ｱ':'ア','ｲ':'イ','ｳ':'ウ','ｴ':'エ','ｵ':'オ',
+    'ｶ':'カ','ｷ':'キ','ｸ':'ク','ｹ':'ケ','ｺ':'コ',
+    'ｻ':'サ','ｼ':'シ','ｽ':'ス','ｾ':'セ','ｿ':'ソ',
+    'ﾀ':'タ','ﾁ':'チ','ﾂ':'ツ','ﾃ':'テ','ﾄ':'ト',
+    'ﾅ':'ナ','ﾆ':'ニ','ﾇ':'ヌ','ﾈ':'ネ','ﾉ':'ノ',
+    'ﾊ':'ハ','ﾋ':'ヒ','ﾌ':'フ','ﾍ':'ヘ','ﾎ':'ホ',
+    'ﾏ':'マ','ﾐ':'ミ','ﾑ':'ム','ﾒ':'メ','ﾓ':'モ',
+    'ﾔ':'ヤ','ﾕ':'ユ','ﾖ':'ヨ',
+    'ﾗ':'ラ','ﾘ':'リ','ﾙ':'ル','ﾚ':'レ','ﾛ':'ロ',
+    'ﾜ':'ワ','ﾝ':'ン','ﾞ':'゛','ﾟ':'゜'
+  };
+  const dakuten = {
+    'カ':'ガ','キ':'ギ','ク':'グ','ケ':'ゲ','コ':'ゴ',
+    'サ':'ザ','シ':'ジ','ス':'ズ','セ':'ゼ','ソ':'ゾ',
+    'タ':'ダ','チ':'ヂ','ツ':'ヅ','テ':'デ','ト':'ド',
+    'ハ':'バ','ヒ':'ビ','フ':'ブ','ヘ':'ベ','ホ':'ボ',
+    'ウ':'ヴ'
+  };
+  const handakuten = {
+    'ハ':'パ','ヒ':'ピ','フ':'プ','ヘ':'ペ','ホ':'ポ'
+  };
+  let result = '';
+  for (let i = 0; i < str.length; i++) {
+    const converted = map[str[i]] || str[i];
+    const next = str[i + 1];
+    if (next === 'ﾞ' && dakuten[converted]) {
+      result += dakuten[converted]; i++;
+    } else if (next === 'ﾟ' && handakuten[converted]) {
+      result += handakuten[converted]; i++;
+    } else {
+      result += converted;
+    }
+  }
+  return result;
+}
+
 // ===================== 機能A: 新規登録 =====================
 function openRegisterModal(code) {
   regModalDiff = allDiffs.find(d => d.code === code);
@@ -1834,7 +1875,7 @@ function setPattern(pattern) {
   document.getElementById('patternBtnB').classList.toggle('active', pattern === 'B');
   const nameInput = document.getElementById('regProductName');
   if (pattern === 'A') {
-    nameInput.value = regModalDiff ? (regModalDiff.name || '') : '';
+    nameInput.value = regModalDiff ? hankakuToZenkakuKana(regModalDiff.name || '') : '';
     nameInput.readOnly = true;
     nameInput.classList.remove('editable-auto');
   } else {
