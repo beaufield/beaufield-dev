@@ -1873,14 +1873,22 @@ function openRegisterModal(code) {
 function setPattern(pattern) {
   document.getElementById('patternBtnA').classList.toggle('active', pattern === 'A');
   document.getElementById('patternBtnB').classList.toggle('active', pattern === 'B');
-  const nameInput = document.getElementById('regProductName');
+  const nameInput    = document.getElementById('regProductName');
+  const setNameInput = document.getElementById('regSetName');
+  const convertedName = regModalDiff ? hankakuToZenkakuKana(regModalDiff.name || '') : '';
   if (pattern === 'A') {
-    nameInput.value = regModalDiff ? hankakuToZenkakuKana(regModalDiff.name || '') : '';
+    nameInput.value = convertedName;
     nameInput.readOnly = true;
     nameInput.classList.remove('editable-auto');
+    setNameInput.value = convertedName;
+    setNameInput.readOnly = true;
+    setNameInput.classList.remove('editable-auto');
   } else {
     nameInput.readOnly = false;
     nameInput.classList.add('editable-auto');
+    setNameInput.value = convertedName;
+    setNameInput.readOnly = false;
+    setNameInput.classList.add('editable-auto');
     nameInput.focus();
   }
 }
