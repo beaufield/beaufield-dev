@@ -299,7 +299,10 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
         </select>
       </div>
 
-      <div style="font-size:12px;color:#6b7280;margin-bottom:8px;" id="diffCount"></div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <span style="font-size:12px;color:#6b7280;" id="diffCount"></span>
+        <button class="btn btn-gray btn-sm" id="sortOrderBtn" onclick="toggleSortOrder()">↑ コード昇順</button>
+      </div>
 
       <!-- 一括操作バー -->
       <div class="bulk-bar">
@@ -723,6 +726,7 @@ let csvSupplierMap = {};
 let currentFilter = 'all';
 let currentSupplier = '';
 let stockFilter = 'する';
+let sortOrder = 'asc';
 let pendingIgnoreCode = null;
 let pendingIgnoreName = null;
 let pendingJodaiCallback = null;
@@ -929,9 +933,17 @@ function renderDiffs() {
     return;
   }
 
+  filtered.sort((a, b) => sortOrder === 'asc' ? a.code.localeCompare(b.code) : b.code.localeCompare(a.code));
   container.innerHTML = filtered.map(d => renderDiffItem(d)).join('');
   document.getElementById('diffCount').textContent = filtered.length + '件表示中';
   updateBulkBtn();
+}
+
+function toggleSortOrder() {
+  sortOrder = sortOrder === 'asc' ? 'desc' : 'asc';
+  const btn = document.getElementById('sortOrderBtn');
+  btn.textContent = sortOrder === 'asc' ? '↑ コード昇順' : '↓ コード降順';
+  renderDiffs();
 }
 
 function bcartLinks(d) {
