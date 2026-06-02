@@ -80,6 +80,7 @@ function doPost(e) {
       case 'getFeatures':          return jsonResponse(getSpecials());
       case 'registerProduct':      return jsonResponse(registerProduct(params));
       case 'addSetToProduct':      return jsonResponse(addSetToProduct(params));
+      case 'bulkRegisterProduct':  return jsonResponse(bulkRegisterProduct(params));
       // 機能B: 特別価格管理
       case 'getSpecialPriceData':       return jsonResponse(getSpecialPriceData());
       case 'saveCustomerGroup':         return jsonResponse(saveCustomerGroup(params));
@@ -1058,6 +1059,100 @@ function addSetToProduct(params) {
   });
 
   return { ok: true, setId: createdSetId };
+}
+
+// 複数商品セットを紐付けた新規BCART商品を一括登録
+function bulkRegisterProduct(params) {
+  const productBody = {
+    products: [{
+      name:        params.productName,
+      category_id: params.categoryId,
+      flag:        params.productFlag || '非表示',
+      feature_id1: params.featureId1 || null,
+      feature_id2: params.featureId2 || null,
+      feature_id3: params.featureId3 || null
+    }]
+  };
+
+  const step1 = bcartPost('/products', productBody);
+  if (!step1.ok) {
+    addHistory({
+      userName: params._userName,
+      code: (params.sets || []).map(s => s.code).join(','),
+      name: params.productName,
+      type: '一括新規登録（商品作成失敗）',
+      before: '', after: '', result: '失敗: ' + step1.error
+    });
+    return step1;
+  }
+
+  const createdProductId = step1.data && step1.data.products && step1.data.products[0]
+    ? step1.data.products[0].id : null;
+  if (!createdProductId) {
+    return { ok: false, error: '商品IDが取得できませんでした' };
+  }
+
+  // 各セットを順次登録
+  const sets = params.sets || [];
+  const results = [];
+  let successCount = 0;
+
+  for (const s of sets) {
+    const setBody = {
+      product_sets: [{
+        product_id:  createdProductId,
+        product_no:  s.code,
+        name:        s.setName,
+        jan_code:    s.janCode || '',
+        unit_price:  s.csvPrice,
+        jodai:       s.csvKouri || 0,
+        group_price: {
+          '1':  { fixed_price: s.csvKouri || 0 },
+          '10': { fixed_price: s.csvShiire || 0 }
+        },
+        unit:        s.csvUnit || '',
+        quantity:    1,
+        min_order:   1,
+        stock_flag:  1,
+        tax_type_id: params.taxTypeId || 1,
+        set_flag:    params.setFlag || '非表示'
+      }]
+    };
+    const res = bcartPost('/product_sets', setBody);
+    const setId = res.ok && res.data && res.data.product_sets && res.data.product_sets[0]
+      ? res.data.product_sets[0].id : null;
+    results.push({ code: s.code, ok: res.ok, setId, error: res.ok ? null : (res.error || '') });
+    if (res.ok) successCount++;
+  }
+
+  // 全セット失敗時はロールバック
+  if (successCount === 0 && sets.length > 0) {
+    bcartDelete('/products/' + createdProductId);
+    addHistory({
+      userName: params._userName,
+      code: sets.map(s => s.code).join(','),
+      name: params.productName,
+      type: '一括新規登録（ロールバック完了）',
+      before: '', after: '商品ID: ' + createdProductId + ' を削除',
+      result: '失敗: 全セット登録失敗'
+    });
+    return { ok: false, error: '全セットの登録に失敗したため商品を削除しました' };
+  }
+
+  // 成功したセットのWIPを解除
+  results.filter(r => r.ok).forEach(r => unmarkWip({ code: r.code }));
+
+  addHistory({
+    userName: params._userName,
+    code: sets.map(s => s.code).join(','),
+    name: params.productName,
+    type: '一括新規登録',
+    before: '',
+    after: '商品ID: ' + createdProductId + ' / ' + successCount + '/' + sets.length + 'セット成功',
+    result: successCount === sets.length ? '成功' : '一部失敗'
+  });
+
+  return { ok: true, productId: createdProductId, results };
 }
 
 // ===================== 会員取得 =====================
