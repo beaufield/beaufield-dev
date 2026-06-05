@@ -216,6 +216,23 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .sp-product-search { display: flex; gap: 8px; margin-bottom: 12px; }
 .sp-product-search input { flex: 1; padding: 7px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
 .sp-search-result { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; margin-bottom: 8px; }
+/* 特集管理タブ */
+.feature-table { width:100%; border-collapse:collapse; }
+.feature-table th, .feature-table td { padding:10px 12px; border-bottom:1px solid #e5e7eb; font-size:13px; text-align:left; vertical-align:middle; }
+.feature-table th { background:#f9fafb; font-weight:600; color:#374151; }
+.feature-row { background:#fff; }
+.feature-row.dragging { opacity:0.4; background:#eff6ff; }
+.feature-row.drag-over-top { box-shadow:inset 0 2px 0 0 #1a56db; }
+.feature-flag-on  { color:#059669; font-weight:600; }
+.feature-flag-off { color:#9ca3af; }
+.feature-order-changed { background:#fffbeb !important; }
+.feature-type-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+.feature-type-series   { background:#ede9fe; color:#5b21b6; }
+.feature-type-maker    { background:#dbeafe; color:#1e40af; }
+.feature-type-campaign { background:#fce7f3; color:#9d174d; }
+.feature-type-none     { background:#f3f4f6; color:#9ca3af; }
+.feature-drag-handle { cursor:grab; color:#9ca3af; padding:0 8px; font-size:16px; }
+.feature-drag-handle:active { cursor:grabbing; }
 /* 説明文生成タブ */
 .desc-product-card { background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:16px; margin-bottom:12px; transition:opacity 0.3s; }
 .desc-product-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; gap:12px; }
@@ -244,7 +261,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.6.1</span>
+    <span class="version">HTML v2.7.0</span>
   </div>
 
   <div class="tabs">
@@ -254,6 +271,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <div class="tab" onclick="switchTab('special-price',this)">💎 特別価格</div>
     <div class="tab" onclick="switchTab('history',this)">📋 更新履歴</div>
     <div class="tab" onclick="switchTab('description',this)">✏️ 説明文生成</div>
+    <div class="tab" onclick="switchTab('feature',this)">🏷️ 特集管理</div>
   </div>
 
   <div class="content">
@@ -426,6 +444,26 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
   </div>
 </div>
 
+    <!-- タブ8: 特集管理 -->
+    <div class="tab-panel" id="tab-feature">
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:16px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;gap:12px;">
+          <div>
+            <p style="font-size:13px;color:#374151;margin-bottom:4px;">BCARTの特集一覧を管理します。ドラッグ&amp;ドロップまたは ↑↓ ボタンで表示順を変更できます。</p>
+            <p style="font-size:12px;color:#9ca3af;">表示順を変更した後は「順序を保存」ボタンを押してBCARTに反映してください。</p>
+          </div>
+          <div style="display:flex;gap:8px;flex-shrink:0;">
+            <button onclick="loadFeatureList()" style="padding:7px 14px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">🔄 再読み込み</button>
+            <button id="feature-order-save-btn" onclick="saveFeatureOrder()" style="padding:7px 14px;border:1px solid #f59e0b;border-radius:6px;background:#fffbeb;color:#92400e;cursor:pointer;font-size:13px;display:none;">💾 順序を保存</button>
+            <button onclick="openNewFeatureModal()" style="padding:7px 14px;border:none;border-radius:6px;background:#1a56db;color:#fff;cursor:pointer;font-size:13px;">＋ 新規作成</button>
+          </div>
+        </div>
+        <div id="feature-list-container">
+          <p style="color:#9ca3af;font-size:13px;text-align:center;padding:24px 0;">「再読み込み」ボタンで特集一覧を表示します。</p>
+        </div>
+      </div>
+    </div>
+
 <!-- 一括対応不要モーダル -->
 <div class="modal-overlay" id="bulkIgnoreModal">
   <div class="modal">
@@ -435,6 +473,48 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <div class="actions">
       <button class="btn btn-gray" onclick="closeModal('bulkIgnoreModal')">キャンセル</button>
       <button class="btn btn-primary" onclick="confirmBulkIgnore()">対応不要にする</button>
+    </div>
+  </div>
+</div>
+
+<!-- 特集管理モーダル -->
+<div class="modal-overlay" id="featureModal">
+  <div class="modal" style="width:480px;max-width:95vw;">
+    <h3 id="featureModalTitle" style="margin-bottom:16px;">特集を作成</h3>
+    <div style="margin-bottom:12px;">
+      <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px;color:#374151;">特集名 <span style="color:#ef4444;">*</span></label>
+      <input type="text" id="featureModalName" placeholder="特集名を入力" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;box-sizing:border-box;">
+    </div>
+    <div style="margin-bottom:12px;">
+      <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px;color:#374151;">特集説明（HTML可）</label>
+      <textarea id="featureModalDesc" rows="4" placeholder="特集の説明文（HTMLタグ使用可）" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;box-sizing:border-box;resize:vertical;min-height:80px;"></textarea>
+    </div>
+    <div style="display:flex;gap:12px;margin-bottom:12px;">
+      <div style="flex:1;">
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px;color:#374151;">表示優先度</label>
+        <input type="number" id="featureModalPriority" min="0" value="0" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;box-sizing:border-box;">
+        <p style="font-size:11px;color:#9ca3af;margin-top:3px;">小さい数字が上位表示</p>
+      </div>
+      <div style="flex:1;">
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px;color:#374151;">状態</label>
+        <select id="featureModalFlag" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;box-sizing:border-box;">
+          <option value="1">表示</option>
+          <option value="0">非表示</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-bottom:16px;">
+      <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px;color:#374151;">種類 <span style="font-weight:400;color:#9ca3af;">（アプリ内管理のみ・BCARTには連動しません）</span></label>
+      <select id="featureModalType" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;box-sizing:border-box;">
+        <option value="">— 未設定 —</option>
+        <option value="シリーズ">シリーズ</option>
+        <option value="メーカー">メーカー</option>
+        <option value="キャンペーン">キャンペーン</option>
+      </select>
+    </div>
+    <div class="actions">
+      <button class="btn btn-gray" onclick="closeModal('featureModal')">キャンセル</button>
+      <button class="btn btn-primary" onclick="submitFeatureModal()">保存</button>
     </div>
   </div>
 </div>
@@ -1066,6 +1146,7 @@ function switchTab(tab, el) {
   if (tab === 'special-price') openSpecialPriceTab();
   if (tab === 'history') loadHistory();
   if (tab === 'description') initDescriptionTab();
+  if (tab === 'feature') initFeatureTab();
 }
 
 // ===================== データ読み込み =====================
@@ -3837,6 +3918,212 @@ function batchGenerateDesc() {
     setTimeout(function() { processNext(idx + 1); }, interval);
   }
   processNext(0);
+}
+
+// ===================== 機能D: 特集管理 =====================
+
+var featureList = [];
+var featureOrderChanged = false;
+var featureDragSrcIdx = -1;
+var featureEditId = null;
+
+function initFeatureTab() {
+  if (featureList.length === 0) loadFeatureList();
+}
+
+function loadFeatureList() {
+  var container = document.getElementById('feature-list-container');
+  container.innerHTML = '<p style="color:#9ca3af;font-size:13px;text-align:center;padding:24px 0;">読み込み中...</p>';
+  featureOrderChanged = false;
+  document.getElementById('feature-order-save-btn').style.display = 'none';
+
+  gasPost({ action: 'getFeatureList' }, function(res) {
+    if (!res.ok) { showToast('特集一覧の取得に失敗しました: ' + res.error, true); return; }
+    featureList = res.features || [];
+    renderFeatureTable(featureList);
+  });
+}
+
+function renderFeatureTable(list) {
+  var container = document.getElementById('feature-list-container');
+  if (!list.length) {
+    container.innerHTML = '<p style="color:#9ca3af;font-size:13px;text-align:center;padding:24px 0;">特集が登録されていません。</p>';
+    return;
+  }
+
+  var html = '<table class="feature-table"><thead><tr>'
+    + '<th style="width:36px;"></th>'
+    + '<th style="width:60px;">優先度</th>'
+    + '<th>特集名</th>'
+    + '<th style="width:90px;">種類</th>'
+    + '<th style="width:70px;">状態</th>'
+    + '<th style="width:120px;text-align:center;">操作</th>'
+    + '</tr></thead><tbody id="feature-tbody">';
+
+  list.forEach(function(f, idx) {
+    var typeLabel = f.type || '';
+    var typeBadge = '';
+    if (typeLabel === 'シリーズ')    typeBadge = '<span class="feature-type-badge feature-type-series">シリーズ</span>';
+    else if (typeLabel === 'メーカー') typeBadge = '<span class="feature-type-badge feature-type-maker">メーカー</span>';
+    else if (typeLabel === 'キャンペーン') typeBadge = '<span class="feature-type-badge feature-type-campaign">キャンペーン</span>';
+    else typeBadge = '<span class="feature-type-badge feature-type-none">未設定</span>';
+
+    var flagHtml = Number(f.flag) === 1
+      ? '<span class="feature-flag-on">表示</span>'
+      : '<span class="feature-flag-off">非表示</span>';
+
+    var isChanged = featureOrderChanged ? ' feature-order-changed' : '';
+    html += '<tr class="feature-row' + isChanged + '" id="frow-' + idx + '"'
+      + ' draggable="true"'
+      + ' ondragstart="featureDragStart(event,' + idx + ')"'
+      + ' ondragover="featureDragOver(event,' + idx + ')"'
+      + ' ondragleave="featureDragLeave(event,' + idx + ')"'
+      + ' ondrop="featureDrop(event,' + idx + ')"'
+      + ' ondragend="featureDragEnd()">'
+      + '<td><span class="feature-drag-handle" title="ドラッグして並び替え">⠿</span></td>'
+      + '<td style="color:#6b7280;">' + f.priority + '</td>'
+      + '<td style="font-weight:500;">' + escHtml(f.name) + '</td>'
+      + '<td>' + typeBadge + '</td>'
+      + '<td>' + flagHtml + '</td>'
+      + '<td style="text-align:center;white-space:nowrap;">'
+      + '<button onclick="moveFeatureRow(' + idx + ',-1)" style="padding:3px 7px;border:1px solid #e5e7eb;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;margin-right:2px;" title="上へ">↑</button>'
+      + '<button onclick="moveFeatureRow(' + idx + ',1)" style="padding:3px 7px;border:1px solid #e5e7eb;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;margin-right:4px;" title="下へ">↓</button>'
+      + '<button onclick="openEditFeatureModal(' + idx + ')" style="padding:4px 10px;border:1px solid #d1d5db;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;">編集</button>'
+      + '</td></tr>';
+  });
+
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ---- ドラッグ&ドロップ ----
+function featureDragStart(e, idx) {
+  featureDragSrcIdx = idx;
+  e.dataTransfer.effectAllowed = 'move';
+  document.getElementById('frow-' + idx).classList.add('dragging');
+}
+
+function featureDragOver(e, idx) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  document.querySelectorAll('.feature-row').forEach(function(r) { r.classList.remove('drag-over-top'); });
+  if (idx !== featureDragSrcIdx) {
+    document.getElementById('frow-' + idx).classList.add('drag-over-top');
+  }
+}
+
+function featureDragLeave(e, idx) {
+  document.getElementById('frow-' + idx).classList.remove('drag-over-top');
+}
+
+function featureDrop(e, idx) {
+  e.preventDefault();
+  if (featureDragSrcIdx === -1 || featureDragSrcIdx === idx) return;
+  var moved = featureList.splice(featureDragSrcIdx, 1)[0];
+  featureList.splice(idx, 0, moved);
+  recalcFeaturePriority();
+  featureDragSrcIdx = -1;
+  renderFeatureTable(featureList);
+}
+
+function featureDragEnd() {
+  featureDragSrcIdx = -1;
+  document.querySelectorAll('.feature-row').forEach(function(r) {
+    r.classList.remove('dragging', 'drag-over-top');
+  });
+}
+
+// ---- ↑↓ボタン ----
+function moveFeatureRow(idx, dir) {
+  var newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= featureList.length) return;
+  var tmp = featureList[idx];
+  featureList[idx] = featureList[newIdx];
+  featureList[newIdx] = tmp;
+  recalcFeaturePriority();
+  renderFeatureTable(featureList);
+}
+
+function recalcFeaturePriority() {
+  featureList.forEach(function(f, i) { f.priority = i + 1; });
+  featureOrderChanged = true;
+  document.getElementById('feature-order-save-btn').style.display = '';
+}
+
+// ---- 順序保存 ----
+function saveFeatureOrder() {
+  if (!featureOrderChanged) return;
+  var payload = featureList.map(function(f) { return { id: f.id, priority: f.priority }; });
+  gasPost({ action: 'bulkUpdateFeatureOrder', features: payload }, function(res) {
+    if (!res.ok) { showToast('順序の保存に失敗しました: ' + res.error, true); return; }
+    featureOrderChanged = false;
+    document.getElementById('feature-order-save-btn').style.display = 'none';
+    showToast('表示順を保存しました');
+    renderFeatureTable(featureList);
+  });
+}
+
+// ---- 新規作成・編集モーダル ----
+function openNewFeatureModal() {
+  featureEditId = null;
+  document.getElementById('featureModalTitle').textContent = '特集を作成';
+  document.getElementById('featureModalName').value = '';
+  document.getElementById('featureModalDesc').value = '';
+  document.getElementById('featureModalPriority').value = featureList.length ? featureList[featureList.length - 1].priority + 1 : 1;
+  document.getElementById('featureModalFlag').value = '1';
+  document.getElementById('featureModalType').value = '';
+  document.getElementById('featureModal').classList.add('open');
+}
+
+function openEditFeatureModal(idx) {
+  var f = featureList[idx];
+  featureEditId = f.id;
+  document.getElementById('featureModalTitle').textContent = '特集を編集';
+  document.getElementById('featureModalName').value = f.name;
+  document.getElementById('featureModalDesc').value = f.rv_description || '';
+  document.getElementById('featureModalPriority').value = f.priority;
+  document.getElementById('featureModalFlag').value = String(Number(f.flag));
+  document.getElementById('featureModalType').value = f.type || '';
+  document.getElementById('featureModal').classList.add('open');
+}
+
+function closeFeatureModal() {
+  closeModal('featureModal');
+}
+
+function submitFeatureModal() {
+  var name = document.getElementById('featureModalName').value.trim();
+  if (!name) { showToast('特集名を入力してください', true); return; }
+  var params = {
+    name: name,
+    rv_description: document.getElementById('featureModalDesc').value,
+    priority: Number(document.getElementById('featureModalPriority').value) || 0,
+    flag: Number(document.getElementById('featureModalFlag').value),
+    type: document.getElementById('featureModalType').value
+  };
+
+  if (featureEditId !== null) {
+    params.action = 'updateFeature';
+    params.id = featureEditId;
+    gasPost(params, function(res) {
+      if (!res.ok) { showToast('更新に失敗しました: ' + res.error, true); return; }
+      closeModal('featureModal');
+      showToast('特集を更新しました');
+      loadFeatureList();
+    });
+  } else {
+    params.action = 'createFeature';
+    gasPost(params, function(res) {
+      if (!res.ok) { showToast('作成に失敗しました: ' + res.error, true); return; }
+      closeModal('featureModal');
+      showToast('特集を作成しました');
+      loadFeatureList();
+    });
+  }
 }
 </script>
 </body>
