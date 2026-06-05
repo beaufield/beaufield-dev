@@ -1496,6 +1496,35 @@ function playBeep() {
   } catch(e) {}
 }
 
+function playErrorBeep() {
+  try {
+    var ctx  = new (window.AudioContext || window.webkitAudioContext)();
+    var gain = ctx.createGain();
+    gain.connect(ctx.destination);
+    var o1 = ctx.createOscillator();
+    o1.connect(gain);
+    o1.type = 'square';
+    o1.frequency.value = 220;  // A3（低め・エラー感）
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+    o1.start(ctx.currentTime);
+    o1.stop(ctx.currentTime + 0.35);
+  } catch(e) {}
+}
+
+// JANコード誤読時のエラーフィードバック（音 + バイブ + ライブ結果欄赤字 + トースト）
+function janErrorFeedback() {
+  playErrorBeep();
+  if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
+  var liveEl = document.getElementById('scannerLiveResult');
+  if (liveEl) {
+    liveEl.style.color = '#ff4444';
+    liveEl.textContent = '⚠ JANコードです！ シリアルNoを読み取ってください';
+    setTimeout(function() { liveEl.style.color = ''; }, 2500);
+  }
+  showToast('JANコードは登録できません', 'error');
+}
+
 // スキャン成功フィードバック（音 + バイブ + 画面フラッシュ）
 function scanFeedback() {
   // 音
@@ -1542,6 +1571,11 @@ function onScanResult(value) {
 
   // ========== シリアルNo 連続スキャンモード ==========
   if (scanMultiMode) {
+    // JANコード（13桁の数字のみ）は弾く
+    if (/^\d{13}$/.test(value)) {
+      janErrorFeedback();
+      return;
+    }
     // 既にスキャン済みの値は無視（同バーコードの再読み込み防止）
     if (scanScannedSet.has(value)) {
       document.getElementById('scannerLiveResult').textContent = '⚠ スキャン済み: ' + value;
@@ -1562,6 +1596,11 @@ function onScanResult(value) {
   }
 
   // ========== シリアルNo 通常モード（連番開始など） ==========
+  // JANコード（13桁の数字のみ）は弾く
+  if (/^\d{13}$/.test(value)) {
+    janErrorFeedback();
+    return;
+  }
   scanFeedback();
   closeScanner();
   var inputEl2 = document.getElementById(SCAN_TARGET);
