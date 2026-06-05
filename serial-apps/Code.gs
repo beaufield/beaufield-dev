@@ -288,15 +288,16 @@ function searchRecords(params) {
 
     var statuses = _parseArray(params.statuses);
 
-    // メーカー・シリーズ絞り込み用にProductMasterをメモリ展開
+    // メーカー・シリーズ・サイズ絞り込み用にProductMasterをメモリ展開
     var prodMap = {};
-    if (params.maker || params.series) {
+    if (params.maker || params.series || params.size) {
       var pData = ss.getSheetByName(SH_PRODUCT).getDataRange().getValues();
       for (var p = 1; p < pData.length; p++) {
         var pr = pData[p];
         prodMap[String(pr[PCOL.CODE])] = {
           maker:  String(pr[PCOL.MAKER]),
-          series: String(pr[PCOL.SERIES])
+          series: String(pr[PCOL.SERIES]),
+          size:   String(pr[PCOL.SIZE])
         };
       }
     }
@@ -328,11 +329,12 @@ function searchRecords(params) {
       if (params.serialNo    && _normalizeText(row[COL.SERIAL])    !== _normalizeText(params.serialNo))    continue;
       if (params.productName && !_matchesQuery(String(row[COL.PROD_NAME]), _normalizeText(params.productName))) continue;
 
-      if (params.maker || params.series) {
+      if (params.maker || params.series || params.size) {
         var pm = prodMap[String(row[COL.PROD_CODE])];
         if (!pm) continue;
         if (params.maker  && _normalizeText(pm.maker)  !== _normalizeText(params.maker))  continue;
         if (params.series && _normalizeText(pm.series) !== _normalizeText(params.series)) continue;
+        if (params.size   && _normalizeText(pm.size)   !== _normalizeText(params.size))   continue;
       }
 
       result.push({
