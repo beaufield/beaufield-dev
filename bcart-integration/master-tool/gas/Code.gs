@@ -948,6 +948,7 @@ function registerProduct(params) {
       jan_code:    params.janCode || '',
       unit_price:  params.csvPrice,
       jodai:       params.csvKouri || 0,
+      jodai_type:  params.jodaiType || 'メーカー希望小売価格',
       group_price: {
         '1':  { fixed_price: params.csvKouri || 0 },
         '10': { fixed_price: params.csvShiire || 0 }
@@ -1017,6 +1018,7 @@ function addSetToProduct(params) {
       jan_code:    params.janCode || '',
       unit_price:  params.csvPrice,
       jodai:       params.csvKouri || 0,
+      jodai_type:  params.jodaiType || 'メーカー希望小売価格',
       group_price: {
         '1':  { fixed_price: params.csvKouri || 0 },
         '10': { fixed_price: params.csvShiire || 0 }
@@ -1106,6 +1108,7 @@ function bulkRegisterProduct(params) {
         jan_code:    s.janCode || '',
         unit_price:  s.csvPrice,
         jodai:       s.csvKouri || 0,
+        jodai_type:  params.jodaiType || 'メーカー希望小売価格',
         group_price: {
           '1':  { fixed_price: s.csvKouri || 0 },
           '10': { fixed_price: s.csvShiire || 0 }
