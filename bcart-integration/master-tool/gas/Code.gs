@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.4.3';
+const VERSION = 'v2.5.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -26,6 +26,7 @@ const SHEET_HISTORY     = '更新履歴';
 const SHEET_SP_GROUPS   = '特別価格_顧客グループ';
 const SHEET_SP_DETAILS  = '特別価格_明細';
 const SHEET_VF_DETAILS  = '例外表示_明細';
+const SHEET_FEATURES    = '特集_管理';
 
 // ===================== エントリポイント =====================
 function doPost(e) {
@@ -101,6 +102,12 @@ function doPost(e) {
       case 'generateDescription':       return jsonResponse(generateDescription(params));
       case 'factCheckDescription':      return jsonResponse(factCheckDescription(params));
       case 'applyDescription':          return jsonResponse(applyDescription(params));
+      // 機能D: 特集管理
+      case 'getFeatureList':          return jsonResponse(getFeatureList());
+      case 'createFeature':           return jsonResponse(createFeature(params));
+      case 'updateFeature':           return jsonResponse(updateFeature(params));
+      case 'bulkUpdateFeatureOrder':  return jsonResponse(bulkUpdateFeatureOrder(params));
+      case 'saveFeatureType':         return jsonResponse(saveFeatureType(params));
       default:                         return jsonResponse({ ok: false, error: 'UNKNOWN_ACTION' });
     }
   } catch (err) {
@@ -2236,4 +2243,122 @@ function weeklyCheck() {
   } catch (e) {
     Logger.log('LINE WORKS通知エラー: ' + e);
   }
+}
+
+// ===================== 機能D: 特集管理 =====================
+
+function getFeatureList() {
+  const res = bcartGetAll('/product_features');
+  if (!res.ok) return res;
+  const raw = res.data;
+  const list = (Array.isArray(raw) ? raw : []).map(f => ({
+    id: f.id,
+    name: f.name || '',
+    rv_description: f.rv_description || '',
+    priority: f.priority !== undefined ? Number(f.priority) : 0,
+    flag: f.flag !== undefined ? Number(f.flag) : 1,
+    type: ''
+  }));
+
+  // スプレッドシートから種類情報をマージ
+  const typeMap = getFeatureTypeMap_();
+  list.forEach(f => { f.type = typeMap[String(f.id)] || ''; });
+  list.sort((a, b) => a.priority - b.priority);
+  return { ok: true, features: list };
+}
+
+function createFeature(params) {
+  if (!params.name) return { ok: false, error: '特集名は必須です' };
+  const payload = {
+    product_features: [{
+      name: params.name,
+      priority: Number(params.priority || 0),
+      flag: Number(params.flag !== undefined ? params.flag : 1),
+      rv_description: params.rv_description || ''
+    }]
+  };
+  const res = bcartPost('/product_features', payload);
+  if (!res.ok) return res;
+
+  // 作成された特集IDを取得して種類を保存
+  try {
+    const created = res.data && res.data.product_features;
+    const newId = created && created[0] && created[0].id;
+    if (newId && params.type) saveFeatureTypeInternal_(newId, params.type);
+  } catch (e) {
+    Logger.log('createFeature: 種類保存エラー ' + e.message);
+  }
+
+  addHistory({ userName: params._userName, code: '', name: params.name, type: '特集作成', before: '', after: params.name, result: '成功' });
+  return { ok: true };
+}
+
+function updateFeature(params) {
+  if (!params.id) return { ok: false, error: 'IDが指定されていません' };
+  const payload = {
+    name: params.name,
+    priority: Number(params.priority || 0),
+    flag: Number(params.flag !== undefined ? params.flag : 1),
+    rv_description: params.rv_description || ''
+  };
+  const res = bcartPatch('/product_features/' + params.id, payload);
+  if (!res.ok) return res;
+
+  if (params.type !== undefined) saveFeatureTypeInternal_(params.id, params.type);
+  addHistory({ userName: params._userName, code: '', name: params.name, type: '特集更新', before: '', after: params.name, result: '成功' });
+  return { ok: true };
+}
+
+function bulkUpdateFeatureOrder(params) {
+  if (!params.features || !params.features.length) return { ok: false, error: 'featuresが空です' };
+  const payload = {
+    product_features: params.features.map(f => ({ id: Number(f.id), priority: Number(f.priority) }))
+  };
+  const res = bcartPatch('/product_features/', payload);
+  if (!res.ok) return res;
+  addHistory({ userName: params._userName, code: '', name: '', type: '特集順序変更', before: '', after: params.features.length + '件', result: '成功' });
+  return { ok: true };
+}
+
+function saveFeatureType(params) {
+  if (!params.featureId) return { ok: false, error: 'featureIdが指定されていません' };
+  saveFeatureTypeInternal_(params.featureId, params.type || '');
+  return { ok: true };
+}
+
+// ---- 内部ヘルパー ----
+
+function getFeatureTypeMap_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(SHEET_FEATURES);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_FEATURES);
+    sheet.appendRow(['feature_id', 'type', 'updated_at']);
+    return {};
+  }
+  const data = sheet.getDataRange().getValues();
+  const map = {};
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] !== '') map[String(data[i][0])] = data[i][1];
+  }
+  return map;
+}
+
+function saveFeatureTypeInternal_(featureId, type) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(SHEET_FEATURES);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_FEATURES);
+    sheet.appendRow(['feature_id', 'type', 'updated_at']);
+  }
+  const data = sheet.getDataRange().getValues();
+  const now = new Date().toISOString();
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === String(featureId)) {
+      sheet.getRange(i + 1, 2).setValue(type);
+      sheet.getRange(i + 1, 3).setValue(now);
+      return;
+    }
+  }
+  sheet.appendRow([featureId, type, now]);
 }
