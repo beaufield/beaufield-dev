@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.5.1';
+const VERSION = 'v2.5.2';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -837,7 +837,11 @@ function getSpecials() {
             id:   f.id         || f.feature_id   || f.featureId,
             name: f.name       || f.feature_name || f.title || f.featureName || String(f.id || f.feature_id || '')
           })).filter(f => f.id);
-          if (specials.length > 0) return { ok: true, specials: specials };
+          if (specials.length > 0) {
+            const typeMap = getFeatureTypeMap_();
+            specials.forEach(f => { f.type = typeMap[String(f.id)] || ''; });
+            return { ok: true, specials: specials };
+          }
         }
       }
     } catch(e) {}

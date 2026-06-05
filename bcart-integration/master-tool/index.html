@@ -234,7 +234,18 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .feature-drag-handle { cursor:grab; color:#9ca3af; padding:0 8px; font-size:16px; }
 .feature-drag-handle:active { cursor:grabbing; }
 .feature-type-select { padding:4px 6px; border:1px solid #d1d5db; border-radius:4px; font-size:12px; background:#fff; width:90px; }
-.feature-type-select.changed { border-color:#f59e0b; background:#fffbeb; }
+.feature-type-select.changed    { border-color:#f59e0b !important; }
+.feature-type-select.type-series   { background:#ede9fe; color:#5b21b6; border-color:#a78bfa; }
+.feature-type-select.type-maker    { background:#dbeafe; color:#1e40af; border-color:#93c5fd; }
+.feature-type-select.type-campaign { background:#fce7f3; color:#9d174d; border-color:#f9a8d4; }
+.feature-filter-btn { padding:5px 12px; border:1px solid #e5e7eb; border-radius:14px; background:#fff; cursor:pointer; font-size:12px; color:#6b7280; }
+.feature-filter-btn.active { font-weight:600; }
+.feature-filter-btn.filter-all      { }
+.feature-filter-btn.filter-series.active   { border-color:#a78bfa; background:#ede9fe; color:#5b21b6; }
+.feature-filter-btn.filter-maker.active    { border-color:#93c5fd; background:#dbeafe; color:#1e40af; }
+.feature-filter-btn.filter-campaign.active { border-color:#f9a8d4; background:#fce7f3; color:#9d174d; }
+.feature-filter-btn.filter-none.active     { border-color:#9ca3af; background:#f3f4f6; color:#374151; }
+.feature-search-input { width:100%; padding:5px 8px; border:1px solid #d1d5db; border-radius:4px; font-size:12px; margin-bottom:4px; box-sizing:border-box; }
 /* 説明文生成タブ */
 .desc-product-card { background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:16px; margin-bottom:12px; transition:opacity 0.3s; }
 .desc-product-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; gap:12px; }
@@ -263,7 +274,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.7.1</span>
+    <span class="version">HTML v2.7.2</span>
   </div>
 
   <div class="tabs">
@@ -461,6 +472,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
             <button onclick="openNewFeatureModal()" style="padding:7px 14px;border:none;border-radius:6px;background:#1a56db;color:#fff;cursor:pointer;font-size:13px;">＋ 新規作成</button>
           </div>
         </div>
+        <div id="feature-filter-bar" style="display:none;margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <span style="font-size:12px;color:#6b7280;margin-right:4px;">絞り込み:</span>
+          <button class="feature-filter-btn filter-all active"       onclick="filterFeatureByType('',this)">すべて</button>
+          <button class="feature-filter-btn filter-series"           onclick="filterFeatureByType('シリーズ',this)">シリーズ</button>
+          <button class="feature-filter-btn filter-maker"            onclick="filterFeatureByType('メーカー',this)">メーカー</button>
+          <button class="feature-filter-btn filter-campaign"         onclick="filterFeatureByType('キャンペーン',this)">キャンペーン</button>
+          <button class="feature-filter-btn filter-none"             onclick="filterFeatureByType('__none__',this)">未設定</button>
+        </div>
         <div id="feature-list-container">
           <p style="color:#9ca3af;font-size:13px;text-align:center;padding:24px 0;">「再読み込み」ボタンで特集一覧を表示します。</p>
         </div>
@@ -620,14 +639,17 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
       <div class="form-row">
         <div class="form-field">
           <label>特集1（シリーズ）</label>
+          <input type="text" id="regFeature1Search" class="feature-search-input" placeholder="検索..." oninput="filterFeatureSelect(1,'reg')">
           <select id="regFeatureId1" size="6"><option value="">なし</option></select>
         </div>
         <div class="form-field">
           <label>特集2（メーカー）</label>
+          <input type="text" id="regFeature2Search" class="feature-search-input" placeholder="検索..." oninput="filterFeatureSelect(2,'reg')">
           <select id="regFeatureId2" size="6"><option value="">なし</option></select>
         </div>
         <div class="form-field">
           <label>特集3（キャンペーン）</label>
+          <input type="text" id="regFeature3Search" class="feature-search-input" placeholder="検索..." oninput="filterFeatureSelect(3,'reg')">
           <select id="regFeatureId3" size="6"><option value="">なし</option></select>
         </div>
       </div>
@@ -845,14 +867,17 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
       <div class="form-row">
         <div class="form-field">
           <label>特集1（シリーズ）</label>
+          <input type="text" id="bRegFeature1Search" class="feature-search-input" placeholder="検索..." oninput="filterFeatureSelect(1,'bReg')">
           <select id="bRegFeatureId1" size="5"><option value="">なし</option></select>
         </div>
         <div class="form-field">
           <label>特集2（メーカー）</label>
+          <input type="text" id="bRegFeature2Search" class="feature-search-input" placeholder="検索..." oninput="filterFeatureSelect(2,'bReg')">
           <select id="bRegFeatureId2" size="5"><option value="">なし</option></select>
         </div>
         <div class="form-field">
           <label>特集3（キャンペーン）</label>
+          <input type="text" id="bRegFeature3Search" class="feature-search-input" placeholder="検索..." oninput="filterFeatureSelect(3,'bReg')">
           <select id="bRegFeatureId3" size="5"><option value="">なし</option></select>
         </div>
       </div>
@@ -2558,10 +2583,12 @@ function populateBulkRegCategorySelect() {
 }
 
 function populateBulkRegFeatureSelects() {
-  const opts = '<option value="">なし</option>' +
-    regFeatures.map(f => '<option value="' + f.id + '">' + esc(f.name) + '</option>').join('');
-  ['bRegFeatureId1','bRegFeatureId2','bRegFeatureId3'].forEach(id => {
-    const el = document.getElementById(id);
+  var typeMap = {1: 'シリーズ', 2: 'メーカー', 3: 'キャンペーン'};
+  [1, 2, 3].forEach(function(num) {
+    var filtered = regFeatures.filter(function(f) { return f.type === typeMap[num]; });
+    var opts = '<option value="">なし</option>' +
+      filtered.map(function(f) { return '<option value="' + f.id + '">' + esc(f.name) + '</option>'; }).join('');
+    var el = document.getElementById('bRegFeatureId' + num);
     if (el) el.innerHTML = opts;
   });
 }
@@ -2646,11 +2673,26 @@ function populateCategorySelect() {
 }
 
 function populateFeatureSelects() {
-  const opts = '<option value="">なし</option>' +
-    regFeatures.map(f => '<option value="' + f.id + '">' + esc(f.name) + '</option>').join('');
-  ['regFeatureId1','regFeatureId2','regFeatureId3'].forEach(id => {
-    document.getElementById(id).innerHTML = opts;
+  var typeMap = {1: 'シリーズ', 2: 'メーカー', 3: 'キャンペーン'};
+  [1, 2, 3].forEach(function(num) {
+    var filtered = regFeatures.filter(function(f) { return f.type === typeMap[num]; });
+    var opts = '<option value="">なし</option>' +
+      filtered.map(function(f) { return '<option value="' + f.id + '">' + esc(f.name) + '</option>'; }).join('');
+    document.getElementById('regFeatureId' + num).innerHTML = opts;
   });
+}
+
+function filterFeatureSelect(num, prefix) {
+  var searchEl = document.getElementById(prefix + 'Feature' + num + 'Search');
+  var keyword = searchEl ? searchEl.value.toLowerCase() : '';
+  var typeMap = {1: 'シリーズ', 2: 'メーカー', 3: 'キャンペーン'};
+  var filtered = regFeatures.filter(function(f) {
+    return f.type === typeMap[num] && f.name.toLowerCase().indexOf(keyword) !== -1;
+  });
+  var opts = '<option value="">なし</option>' +
+    filtered.map(function(f) { return '<option value="' + f.id + '">' + esc(f.name) + '</option>'; }).join('');
+  var selId = (prefix === 'bReg' ? 'bRegFeatureId' : 'regFeatureId') + num;
+  document.getElementById(selId).innerHTML = opts;
 }
 
 function confirmRegister() {
@@ -3928,8 +3970,28 @@ function batchGenerateDesc() {
 var featureList = [];
 var featureOrderChanged = false;
 var featureTypeChanged = false;
+var featureFilterType = '';
 var featureDragSrcIdx = -1;
 var featureEditId = null;
+
+function getFeatureTypeClass(type) {
+  if (type === 'シリーズ')    return 'type-series';
+  if (type === 'メーカー')    return 'type-maker';
+  if (type === 'キャンペーン') return 'type-campaign';
+  return '';
+}
+
+function filterFeatureByType(type, el) {
+  featureFilterType = type;
+  document.querySelectorAll('.feature-filter-btn').forEach(function(b) { b.classList.remove('active'); });
+  el.classList.add('active');
+  var isFiltered = type !== '';
+  document.getElementById('feature-order-save-btn').style.display = (isFiltered || !featureOrderChanged) ? 'none' : '';
+  var list = type === '' ? featureList
+    : type === '__none__' ? featureList.filter(function(f) { return !f.type; })
+    : featureList.filter(function(f) { return f.type === type; });
+  renderFeatureTable(list);
+}
 
 function initFeatureTab() {
   if (featureList.length === 0) loadFeatureList();
@@ -3946,6 +4008,11 @@ function loadFeatureList() {
   gasPost({ action: 'getFeatureList' }, function(res) {
     if (!res.ok) { showToast('特集一覧の取得に失敗しました: ' + res.error, true); return; }
     featureList = res.features || [];
+    featureFilterType = '';
+    document.querySelectorAll('.feature-filter-btn').forEach(function(b) {
+      b.classList.toggle('active', b.classList.contains('filter-all'));
+    });
+    document.getElementById('feature-filter-bar').style.display = featureList.length ? 'flex' : 'none';
     renderFeatureTable(featureList);
   });
 }
@@ -3966,37 +4033,43 @@ function renderFeatureTable(list) {
     + '<th style="width:120px;text-align:center;">操作</th>'
     + '</tr></thead><tbody id="feature-tbody">';
 
-  list.forEach(function(f, idx) {
+  var isFiltered = featureFilterType !== '';
+  list.forEach(function(f, displayIdx) {
+    var realIdx = featureList.indexOf(f);
     var typeLabel = f.type || '';
+    var typeClass = getFeatureTypeClass(typeLabel);
 
     var flagHtml = Number(f.flag) === 1
       ? '<span class="feature-flag-on">表示</span>'
       : '<span class="feature-flag-off">非表示</span>';
 
-    var isChanged = featureOrderChanged ? ' feature-order-changed' : '';
-    html += '<tr class="feature-row' + isChanged + '" id="frow-' + idx + '"'
-      + ' draggable="true"'
-      + ' ondragstart="featureDragStart(event,' + idx + ')"'
-      + ' ondragover="featureDragOver(event,' + idx + ')"'
-      + ' ondragleave="featureDragLeave(event,' + idx + ')"'
-      + ' ondrop="featureDrop(event,' + idx + ')"'
-      + ' ondragend="featureDragEnd()">'
-      + '<td><span class="feature-drag-handle" title="ドラッグして並び替え">⠿</span></td>'
+    var dragAttrs = isFiltered ? '' :
+        ' draggable="true"'
+      + ' ondragstart="featureDragStart(event,' + realIdx + ')"'
+      + ' ondragover="featureDragOver(event,' + realIdx + ')"'
+      + ' ondragleave="featureDragLeave(event,' + realIdx + ')"'
+      + ' ondrop="featureDrop(event,' + realIdx + ')"'
+      + ' ondragend="featureDragEnd()"';
+
+    var orderChanged = featureOrderChanged && !isFiltered ? ' feature-order-changed' : '';
+    html += '<tr class="feature-row' + orderChanged + '" id="frow-' + displayIdx + '"' + dragAttrs + '>'
+      + '<td>' + (isFiltered ? '' : '<span class="feature-drag-handle" title="ドラッグして並び替え">⠿</span>') + '</td>'
       + '<td style="color:#6b7280;">' + f.priority + '</td>'
       + '<td style="font-weight:500;">' + escHtml(f.name) + '</td>'
       + '<td>'
-      + '<select class="feature-type-select" onchange="onFeatureTypeChange(' + idx + ',this.value)">'
-      + '<option value=""'           + (typeLabel === ''          ? ' selected' : '') + '>— 未設定 —</option>'
-      + '<option value="シリーズ"'   + (typeLabel === 'シリーズ'   ? ' selected' : '') + '>シリーズ</option>'
-      + '<option value="メーカー"'   + (typeLabel === 'メーカー'   ? ' selected' : '') + '>メーカー</option>'
+      + '<select class="feature-type-select ' + typeClass + '" onchange="onFeatureTypeChange(' + realIdx + ',this.value)">'
+      + '<option value=""'            + (typeLabel === ''           ? ' selected' : '') + '>— 未設定 —</option>'
+      + '<option value="シリーズ"'    + (typeLabel === 'シリーズ'    ? ' selected' : '') + '>シリーズ</option>'
+      + '<option value="メーカー"'    + (typeLabel === 'メーカー'    ? ' selected' : '') + '>メーカー</option>'
       + '<option value="キャンペーン"' + (typeLabel === 'キャンペーン' ? ' selected' : '') + '>キャンペーン</option>'
       + '</select>'
       + '</td>'
       + '<td>' + flagHtml + '</td>'
       + '<td style="text-align:center;white-space:nowrap;">'
-      + '<button onclick="moveFeatureRow(' + idx + ',-1)" style="padding:3px 7px;border:1px solid #e5e7eb;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;margin-right:2px;" title="上へ">↑</button>'
-      + '<button onclick="moveFeatureRow(' + idx + ',1)" style="padding:3px 7px;border:1px solid #e5e7eb;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;margin-right:4px;" title="下へ">↓</button>'
-      + '<button onclick="openEditFeatureModal(' + idx + ')" style="padding:4px 10px;border:1px solid #d1d5db;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;">編集</button>'
+      + (isFiltered ? '' :
+          '<button onclick="moveFeatureRow(' + realIdx + ',-1)" style="padding:3px 7px;border:1px solid #e5e7eb;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;margin-right:2px;" title="上へ">↑</button>'
+        + '<button onclick="moveFeatureRow(' + realIdx + ',1)"  style="padding:3px 7px;border:1px solid #e5e7eb;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;margin-right:4px;" title="下へ">↓</button>')
+      + '<button onclick="openEditFeatureModal(' + realIdx + ')" style="padding:4px 10px;border:1px solid #d1d5db;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;">編集</button>'
       + '</td></tr>';
   });
 
@@ -4068,8 +4141,14 @@ function onFeatureTypeChange(idx, value) {
   featureList[idx].type = value;
   featureTypeChanged = true;
   document.getElementById('feature-type-save-btn').style.display = '';
-  var sel = document.querySelectorAll('.feature-type-select')[idx];
-  if (sel) sel.classList.add('changed');
+  // 変更した select 要素を特定して色クラスを更新
+  var selects = document.querySelectorAll('.feature-type-select');
+  for (var i = 0; i < selects.length; i++) {
+    if (selects[i].onchange && selects[i].getAttribute('onchange') && selects[i].getAttribute('onchange').indexOf('(' + idx + ',') !== -1) {
+      selects[i].className = 'feature-type-select changed ' + getFeatureTypeClass(value);
+      break;
+    }
+  }
 }
 
 function saveFeatureTypes() {
