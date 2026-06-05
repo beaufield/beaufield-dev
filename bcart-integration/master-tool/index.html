@@ -233,6 +233,8 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .feature-type-none     { background:#f3f4f6; color:#9ca3af; }
 .feature-drag-handle { cursor:grab; color:#9ca3af; padding:0 8px; font-size:16px; }
 .feature-drag-handle:active { cursor:grabbing; }
+.feature-type-select { padding:4px 6px; border:1px solid #d1d5db; border-radius:4px; font-size:12px; background:#fff; width:90px; }
+.feature-type-select.changed { border-color:#f59e0b; background:#fffbeb; }
 /* 説明文生成タブ */
 .desc-product-card { background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:16px; margin-bottom:12px; transition:opacity 0.3s; }
 .desc-product-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; gap:12px; }
@@ -261,7 +263,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.7.0</span>
+    <span class="version">HTML v2.7.1</span>
   </div>
 
   <div class="tabs">
@@ -454,6 +456,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
           </div>
           <div style="display:flex;gap:8px;flex-shrink:0;">
             <button onclick="loadFeatureList()" style="padding:7px 14px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">🔄 再読み込み</button>
+            <button id="feature-type-save-btn" onclick="saveFeatureTypes()" style="padding:7px 14px;border:1px solid #10b981;border-radius:6px;background:#ecfdf5;color:#065f46;cursor:pointer;font-size:13px;display:none;">🏷️ 種類を保存</button>
             <button id="feature-order-save-btn" onclick="saveFeatureOrder()" style="padding:7px 14px;border:1px solid #f59e0b;border-radius:6px;background:#fffbeb;color:#92400e;cursor:pointer;font-size:13px;display:none;">💾 順序を保存</button>
             <button onclick="openNewFeatureModal()" style="padding:7px 14px;border:none;border-radius:6px;background:#1a56db;color:#fff;cursor:pointer;font-size:13px;">＋ 新規作成</button>
           </div>
@@ -3924,6 +3927,7 @@ function batchGenerateDesc() {
 
 var featureList = [];
 var featureOrderChanged = false;
+var featureTypeChanged = false;
 var featureDragSrcIdx = -1;
 var featureEditId = null;
 
@@ -3935,7 +3939,9 @@ function loadFeatureList() {
   var container = document.getElementById('feature-list-container');
   container.innerHTML = '<p style="color:#9ca3af;font-size:13px;text-align:center;padding:24px 0;">読み込み中...</p>';
   featureOrderChanged = false;
+  featureTypeChanged = false;
   document.getElementById('feature-order-save-btn').style.display = 'none';
+  document.getElementById('feature-type-save-btn').style.display = 'none';
 
   gasPost({ action: 'getFeatureList' }, function(res) {
     if (!res.ok) { showToast('特集一覧の取得に失敗しました: ' + res.error, true); return; }
@@ -3962,11 +3968,6 @@ function renderFeatureTable(list) {
 
   list.forEach(function(f, idx) {
     var typeLabel = f.type || '';
-    var typeBadge = '';
-    if (typeLabel === 'シリーズ')    typeBadge = '<span class="feature-type-badge feature-type-series">シリーズ</span>';
-    else if (typeLabel === 'メーカー') typeBadge = '<span class="feature-type-badge feature-type-maker">メーカー</span>';
-    else if (typeLabel === 'キャンペーン') typeBadge = '<span class="feature-type-badge feature-type-campaign">キャンペーン</span>';
-    else typeBadge = '<span class="feature-type-badge feature-type-none">未設定</span>';
 
     var flagHtml = Number(f.flag) === 1
       ? '<span class="feature-flag-on">表示</span>'
@@ -3983,7 +3984,14 @@ function renderFeatureTable(list) {
       + '<td><span class="feature-drag-handle" title="ドラッグして並び替え">⠿</span></td>'
       + '<td style="color:#6b7280;">' + f.priority + '</td>'
       + '<td style="font-weight:500;">' + escHtml(f.name) + '</td>'
-      + '<td>' + typeBadge + '</td>'
+      + '<td>'
+      + '<select class="feature-type-select" onchange="onFeatureTypeChange(' + idx + ',this.value)">'
+      + '<option value=""'           + (typeLabel === ''          ? ' selected' : '') + '>— 未設定 —</option>'
+      + '<option value="シリーズ"'   + (typeLabel === 'シリーズ'   ? ' selected' : '') + '>シリーズ</option>'
+      + '<option value="メーカー"'   + (typeLabel === 'メーカー'   ? ' selected' : '') + '>メーカー</option>'
+      + '<option value="キャンペーン"' + (typeLabel === 'キャンペーン' ? ' selected' : '') + '>キャンペーン</option>'
+      + '</select>'
+      + '</td>'
       + '<td>' + flagHtml + '</td>'
       + '<td style="text-align:center;white-space:nowrap;">'
       + '<button onclick="moveFeatureRow(' + idx + ',-1)" style="padding:3px 7px;border:1px solid #e5e7eb;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;margin-right:2px;" title="上へ">↑</button>'
@@ -4055,6 +4063,31 @@ function recalcFeaturePriority() {
 }
 
 // ---- 順序保存 ----
+// ---- 種類インライン変更 ----
+function onFeatureTypeChange(idx, value) {
+  featureList[idx].type = value;
+  featureTypeChanged = true;
+  document.getElementById('feature-type-save-btn').style.display = '';
+  var sel = document.querySelectorAll('.feature-type-select')[idx];
+  if (sel) sel.classList.add('changed');
+}
+
+function saveFeatureTypes() {
+  var btn = document.getElementById('feature-type-save-btn');
+  btn.disabled = true;
+  btn.textContent = '保存中...';
+  var items = featureList.map(function(f) { return { featureId: f.id, type: f.type }; });
+  gasPost({ action: 'bulkSaveFeatureTypes', items: items }, function(res) {
+    btn.disabled = false;
+    btn.textContent = '🏷️ 種類を保存';
+    if (!res.ok) { showToast('種類の保存に失敗しました: ' + res.error, true); return; }
+    featureTypeChanged = false;
+    btn.style.display = 'none';
+    document.querySelectorAll('.feature-type-select').forEach(function(s) { s.classList.remove('changed'); });
+    showToast('種類を保存しました');
+  });
+}
+
 function saveFeatureOrder() {
   if (!featureOrderChanged) return;
   var payload = featureList.map(function(f) { return { id: f.id, priority: f.priority }; });
@@ -4098,6 +4131,11 @@ function closeFeatureModal() {
 function submitFeatureModal() {
   var name = document.getElementById('featureModalName').value.trim();
   if (!name) { showToast('特集名を入力してください', true); return; }
+
+  var saveBtn = document.querySelector('#featureModal .btn-primary');
+  saveBtn.disabled = true;
+  saveBtn.textContent = '保存中...';
+
   var params = {
     name: name,
     rv_description: document.getElementById('featureModalDesc').value,
@@ -4106,21 +4144,38 @@ function submitFeatureModal() {
     type: document.getElementById('featureModalType').value
   };
 
+  function resetBtn() {
+    saveBtn.disabled = false;
+    saveBtn.textContent = '保存';
+  }
+
   if (featureEditId !== null) {
     params.action = 'updateFeature';
     params.id = featureEditId;
     gasPost(params, function(res) {
-      if (!res.ok) { showToast('更新に失敗しました: ' + res.error, true); return; }
+      if (!res.ok) { resetBtn(); showToast('更新に失敗しました: ' + res.error, true); return; }
+      // ローカル状態を直接更新して再描画（GAS再フェッチなし）
+      var idx = -1;
+      for (var i = 0; i < featureList.length; i++) {
+        if (featureList[i].id === featureEditId) { idx = i; break; }
+      }
+      if (idx !== -1) {
+        featureList[idx].name         = params.name;
+        featureList[idx].rv_description = params.rv_description;
+        featureList[idx].priority     = params.priority;
+        featureList[idx].flag         = params.flag;
+        featureList[idx].type         = params.type;
+      }
       closeModal('featureModal');
-      showToast('特集を更新しました');
-      loadFeatureList();
+      showToast('特集を更新しました ✓');
+      renderFeatureTable(featureList);
     });
   } else {
     params.action = 'createFeature';
     gasPost(params, function(res) {
-      if (!res.ok) { showToast('作成に失敗しました: ' + res.error, true); return; }
+      if (!res.ok) { resetBtn(); showToast('作成に失敗しました: ' + res.error, true); return; }
       closeModal('featureModal');
-      showToast('特集を作成しました');
+      showToast('特集を作成しました ✓');
       loadFeatureList();
     });
   }
