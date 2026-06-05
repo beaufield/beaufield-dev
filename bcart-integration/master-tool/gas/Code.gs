@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.5.0';
+const VERSION = 'v2.5.1';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -108,6 +108,7 @@ function doPost(e) {
       case 'updateFeature':           return jsonResponse(updateFeature(params));
       case 'bulkUpdateFeatureOrder':  return jsonResponse(bulkUpdateFeatureOrder(params));
       case 'saveFeatureType':         return jsonResponse(saveFeatureType(params));
+      case 'bulkSaveFeatureTypes':    return jsonResponse(bulkSaveFeatureTypes(params));
       default:                         return jsonResponse({ ok: false, error: 'UNKNOWN_ACTION' });
     }
   } catch (err) {
@@ -1842,6 +1843,10 @@ function getOrCreateSheet(sheetName) {
       sheet.appendRow(['detail_id', 'group_id', 'product_set_id', 'product_no', 'product_set_name', 'unit_price', 'updated_at', 'applied_at']);
       sheet.setFrozenRows(1);
       sheet.getRange(1, 1, 1, 8).setFontWeight('bold').setBackground('#f3f4f6');
+    } else if (sheetName === SHEET_FEATURES) {
+      sheet.appendRow(['feature_id', 'type', 'updated_at']);
+      sheet.setFrozenRows(1);
+      sheet.getRange(1, 1, 1, 3).setFontWeight('bold').setBackground('#f3f4f6');
     }
   } else {
     // 既存シートのマイグレーション処理
@@ -2260,7 +2265,6 @@ function getFeatureList() {
     type: ''
   }));
 
-  // スプレッドシートから種類情報をマージ
   const typeMap = getFeatureTypeMap_();
   list.forEach(f => { f.type = typeMap[String(f.id)] || ''; });
   list.sort((a, b) => a.priority - b.priority);
@@ -2326,16 +2330,18 @@ function saveFeatureType(params) {
   return { ok: true };
 }
 
+function bulkSaveFeatureTypes(params) {
+  if (!params.items || !params.items.length) return { ok: false, error: 'itemsが空です' };
+  params.items.forEach(item => {
+    if (item.featureId) saveFeatureTypeInternal_(item.featureId, item.type || '');
+  });
+  return { ok: true };
+}
+
 // ---- 内部ヘルパー ----
 
 function getFeatureTypeMap_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName(SHEET_FEATURES);
-  if (!sheet) {
-    sheet = ss.insertSheet(SHEET_FEATURES);
-    sheet.appendRow(['feature_id', 'type', 'updated_at']);
-    return {};
-  }
+  const sheet = getOrCreateSheet(SHEET_FEATURES);
   const data = sheet.getDataRange().getValues();
   const map = {};
   for (let i = 1; i < data.length; i++) {
@@ -2345,12 +2351,7 @@ function getFeatureTypeMap_() {
 }
 
 function saveFeatureTypeInternal_(featureId, type) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName(SHEET_FEATURES);
-  if (!sheet) {
-    sheet = ss.insertSheet(SHEET_FEATURES);
-    sheet.appendRow(['feature_id', 'type', 'updated_at']);
-  }
+  const sheet = getOrCreateSheet(SHEET_FEATURES);
   const data = sheet.getDataRange().getValues();
   const now = new Date().toISOString();
   for (let i = 1; i < data.length; i++) {
