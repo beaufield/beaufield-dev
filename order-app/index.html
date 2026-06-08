@@ -1546,25 +1546,78 @@ function switchTab(el, name) {
 =================================================== */
 function setupScanInput() {
   const input = document.getElementById('scan-input');
+
+  // JAN-13 / JAN-8 チェックサム検証（GS1標準）
+  function isValidJan(code) {
+    if (!/^\d+$/.test(code)) return false;
+    if (code.length === 13) {
+      let sum = 0;
+      for (let i = 0; i < 12; i++) sum += parseInt(code[i]) * (i % 2 === 0 ? 1 : 3);
+      return (10 - (sum % 10)) % 10 === parseInt(code[12]);
+    }
+    if (code.length === 8) {
+      let sum = 0;
+      for (let i = 0; i < 7; i++) sum += parseInt(code[i]) * (i % 2 === 0 ? 3 : 1);
+      return (10 - (sum % 10)) % 10 === parseInt(code[7]);
+    }
+    return false;
+  }
+
+  function onScanComplete(raw) {
+    clearTimeout(scanTimer);
+    input.value = '';
+    if (!raw) return;
+    if (isValidJan(raw)) {
+      processJanCode(raw);
+    } else {
+      showToast('スキャンエラー: 再度お試しください', 'error');
+      setTimeout(focusScanInput, 100);
+    }
+  }
+
+  function onScanError(msg) {
+    clearTimeout(scanTimer);
+    input.value = '';
+    showToast(msg, 'error');
+    setTimeout(focusScanInput, 100);
+  }
+
+  // Enterキー（PCブラウザ・一部BTリーダー対応）
   input.addEventListener('keydown', function(e) {
     if (e.key === 'Enter') {
       e.preventDefault();
-      clearTimeout(scanTimer);
-      const val = this.value.trim(); this.value = '';
-      scanProcessed = true;
-      if (val) processJanCode(val);
-      setTimeout(() => { scanProcessed = false; }, 200);
+      onScanComplete(this.value.replace(/[\r\n\s]/g, ''));
     }
   });
+
+  // inputイベント：桁数が揃い次第即処理（iOS BT遅延対策）
   input.addEventListener('input', function() {
-    if (scanProcessed) return;
     clearTimeout(scanTimer);
-    const el = this;
+    const raw = this.value.replace(/[\r\n\s]/g, '');
+
+    // 8桁または13桁の数字が揃った → 即時処理
+    if ((raw.length === 13 || raw.length === 8) && /^\d+$/.test(raw)) {
+      onScanComplete(raw);
+      return;
+    }
+
+    // 13桁超 → 連続読取ミス → 即エラー・クリア
+    if (raw.length > 13) {
+      onScanError('スキャンエラー（連続読取）: 再度お試しください');
+      return;
+    }
+
+    // 数字以外が混入 → 即エラー・クリア
+    if (raw.length > 0 && !/^\d+$/.test(raw)) {
+      onScanError('スキャンエラー: 再度お試しください');
+      return;
+    }
+
+    // 桁数不足のまま500ms経過 → BTパケット分割による途中読取
     scanTimer = setTimeout(() => {
-      if (scanProcessed) return;
-      const val = el.value.trim(); el.value = '';
-      if (val) processJanCode(val);
-    }, 150);
+      const v = input.value.replace(/[\r\n\s]/g, '');
+      if (v.length > 0) onScanError('スキャンエラー（桁数不足）: 再度お試しください');
+    }, 500);
   });
 }
 
