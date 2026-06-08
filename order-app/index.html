@@ -1590,13 +1590,15 @@ function setupScanInput() {
     }
   });
 
-  // inputイベント：桁数が揃い次第即処理（iOS BT遅延対策）
+  // inputイベント：13桁が揃い次第即処理（iOS BT連続読取防止）
+  // ※ 8桁JAN は inputイベントでは処理しない（13桁JANの先頭8桁がJAN-8チェックサムを通過する誤発動防止）
+  //   8桁JAN は Enterキー(keydown) または 500msタイマーで処理される
   input.addEventListener('input', function() {
     clearTimeout(scanTimer);
     const raw = this.value.replace(/[\r\n\s]/g, '');
 
-    // 8桁または13桁の数字が揃った → 即時処理
-    if ((raw.length === 13 || raw.length === 8) && /^\d+$/.test(raw)) {
+    // 13桁の数字が揃った → 即時処理
+    if (raw.length === 13 && /^\d+$/.test(raw)) {
       onScanComplete(raw);
       return;
     }
@@ -1613,10 +1615,14 @@ function setupScanInput() {
       return;
     }
 
-    // 桁数不足のまま500ms経過 → BTパケット分割による途中読取
+    // 桁数不足のまま500ms経過 → BTパケット分割による途中読取 or JAN-8
     scanTimer = setTimeout(() => {
       const v = input.value.replace(/[\r\n\s]/g, '');
-      if (v.length > 0) onScanError('スキャンエラー（桁数不足）: 再度お試しください');
+      if (v.length === 8 && /^\d+$/.test(v)) {
+        onScanComplete(v); // JAN-8 はタイマーで処理
+      } else if (v.length > 0) {
+        onScanError('スキャンエラー（桁数不足）: 再度お試しください');
+      }
     }, 500);
   });
 }
