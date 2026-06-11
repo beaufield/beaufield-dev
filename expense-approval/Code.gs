@@ -1,6 +1,6 @@
 // =========================================
 // 経費承認フロー GAS バックエンド
-// Version: 1.5.0
+// Version: 1.5.1
 //
 // --- スクリプトプロパティに設定する値 ---
 // LW_CLIENT_ID       : LINE WORKS Client ID
@@ -594,4 +594,3 @@ function formatDate_(d) {
   const day = String(date.getDate()).padStart(2, '0');
   return y + '-' + m + '-' + day;
 }
-

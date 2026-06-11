@@ -16,7 +16,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.9.4';
+const VERSION         = 'v1.9.5';
 
 // Google Drive上の商品マスターCSVファイル名
 // ※ 同名ファイルが複数ある場合はファイルIDで指定（下記コメント参照）
@@ -601,53 +601,65 @@ function saveOrder(p, user_id) {
     return { success: false, error: '必須項目が不足しています (date, supplierCode, supplierName, staff)' };
   }
 
-  const orderNo = generateOrderNo(date);
-  const now     = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
-
-  const histSh = getSheet(SHEET_HISTORY);
-  // user_id をサーバー側から記録（フロントから渡されたstaffとは別に監査用として保持）
-  histSh.appendRow([orderNo, date, supplierCode, supplierName, fax, staff, items.length, outputType, now, user_id]);
-
-  const itemsSh = getSheet(SHEET_ITEMS);
-  items.forEach(item => {
-    itemsSh.appendRow([
-      orderNo,
-      item.janCode       || '',
-      item.code          || '',
-      item.name          || '',
-      item.qty           || 0,
-      item.unit          || '',
-      item.memo          || '',
-      item.isHandwritten ? 'TRUE' : 'FALSE',
-      now
-    ]);
-  });
-
-  // 修正発注の場合：新規保存が完了してから元の発注を削除する
-  if (revisionBaseOrderNo) {
-    try {
-      // 発注履歴から削除
-      const histData = histSh.getDataRange().getValues();
-      for (let i = histData.length - 1; i >= 1; i--) {
-        if (String(histData[i][0]).trim() === revisionBaseOrderNo) {
-          histSh.deleteRow(i + 1);
-          break;
-        }
-      }
-      // 発注明細から削除
-      const itemsData = itemsSh.getDataRange().getValues();
-      for (let i = itemsData.length - 1; i >= 1; i--) {
-        if (String(itemsData[i][0]).trim() === revisionBaseOrderNo) {
-          itemsSh.deleteRow(i + 1);
-        }
-      }
-    } catch(e) {
-      // 削除エラーは無視して保存成功として返す
-      Logger.log('修正前履歴削除エラー（無視）: ' + e);
-    }
+  // 同時保存による発注No重複を防ぐため、採番〜履歴書き込みをロックで保護
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+  } catch(e) {
+    return { success: false, error: '現在別の処理が実行中です。数秒後に再度お試しください。' };
   }
 
-  return { success: true, orderNo };
+  try {
+    const orderNo = generateOrderNo(date);
+    const now     = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+
+    const histSh = getSheet(SHEET_HISTORY);
+    // user_id をサーバー側から記録（フロントから渡されたstaffとは別に監査用として保持）
+    histSh.appendRow([orderNo, date, supplierCode, supplierName, fax, staff, items.length, outputType, now, user_id]);
+
+    const itemsSh = getSheet(SHEET_ITEMS);
+    if (items.length > 0) {
+      const rows = items.map(item => [
+        orderNo,
+        item.janCode       || '',
+        item.code          || '',
+        item.name          || '',
+        item.qty           || 0,
+        item.unit          || '',
+        item.memo          || '',
+        item.isHandwritten ? 'TRUE' : 'FALSE',
+        now
+      ]);
+      itemsSh.getRange(itemsSh.getLastRow() + 1, 1, rows.length, 9).setValues(rows);
+    }
+
+    // 修正発注の場合：新規保存が完了してから元の発注を削除する
+    if (revisionBaseOrderNo) {
+      try {
+        // 発注履歴から削除
+        const histData = histSh.getDataRange().getValues();
+        for (let i = histData.length - 1; i >= 1; i--) {
+          if (String(histData[i][0]).trim() === revisionBaseOrderNo) {
+            histSh.deleteRow(i + 1);
+            break;
+          }
+        }
+        // 発注明細から削除
+        const itemsData = itemsSh.getDataRange().getValues();
+        for (let i = itemsData.length - 1; i >= 1; i--) {
+          if (String(itemsData[i][0]).trim() === revisionBaseOrderNo) {
+            itemsSh.deleteRow(i + 1);
+          }
+        }
+      } catch(e) {
+        Logger.log('修正前履歴削除エラー（無視）: ' + e);
+      }
+    }
+
+    return { success: true, orderNo };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // ============================================================

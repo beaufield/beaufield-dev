@@ -15,7 +15,7 @@
 BLOCKED_EXT='\.(pdf|PDF|csv|CSV|xlsx|XLSX|xlsm|XLSM|xls|XLS|tsv|TSV|docx|DOCX|doc|DOC)$'
 
 # 拒否対象のファイル名（内部ドキュメント・機密設定）
-BLOCKED_FILES='(^|/)CLAUDE\.md$|(^|/)SPEC\.md$'
+BLOCKED_FILES='(^|/)CLAUDE\.md$|(^|/)AGENTS\.md$|(^|/)SPEC\.md$|(^|/)HANDOVER\.md$'
 
 # ステージされている追加・変更ファイルから対象を抽出
 staged=$(git diff --cached --name-only --diff-filter=ACM)
