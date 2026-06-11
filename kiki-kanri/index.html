@@ -1,0 +1,2972 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>ビューフィールド貸出管理</title>
+<!-- jsQR: jsdelivr → unpkg の順でフォールバック読み込み -->
+<script>
+(function(){
+  var cdns = [
+    'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js',
+    'https://unpkg.com/jsqr@1.4.0/dist/jsQR.js'
+  ];
+  var i = 0;
+  function tryLoad() {
+    if (i >= cdns.length) return;
+    var s = document.createElement('script');
+    s.src = cdns[i++];
+    s.onerror = tryLoad; // 失敗したら次のCDNを試す
+    document.head.appendChild(s);
+  }
+  tryLoad();
+})();
+</script>
+<style>
+  :root {
+    --bg: #f0f2f5;
+    --card: #ffffff;
+    --primary: #1a56db;
+    --primary-dark: #1340a8;
+    --danger: #e02424;
+    --success: #057a55;
+    --warning: #c27803;
+    --text: #111928;
+    --text-sub: #6b7280;
+    --border: #e5e7eb;
+    --loan: #fef3c7;
+    --loan-text: #92400e;
+    --in: #d1fae5;
+    --in-text: #065f46;
+    --radius: 12px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
+    --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  body {
+    font-family: 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+
+  /* Header */
+  .header {
+    background: var(--primary);
+    color: white;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: var(--shadow-lg);
+  }
+  .header h1 { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
+  .header-back {
+    background: rgba(255,255,255,0.2);
+    border: none;
+    color: white;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  /* Nav */
+  .nav {
+    background: white;
+    display: flex;
+    border-top: 1px solid var(--border);
+    position: fixed;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100%;
+    max-width: 480px;
+    z-index: 100;
+  }
+  .nav-btn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 10px 4px 14px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: var(--text-sub);
+    font-size: 10px;
+    gap: 4px;
+    transition: color 0.15s;
+  }
+  .nav-btn.active { color: var(--primary); }
+  .nav-btn svg { width: 22px; height: 22px; }
+  .nav-scan {
+    background: var(--primary);
+    border-radius: 50%;
+    width: 52px;
+    height: 52px;
+    margin-top: -16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(26,86,219,0.4);
+    flex-direction: column;
+    color: white;
+    font-size: 9px;
+    gap: 2px;
+  }
+
+  /* Content */
+  .content {
+    padding: 16px 16px 100px;
+  }
+
+  /* Cards */
+  .card {
+    background: var(--card);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    margin-bottom: 12px;
+  }
+  .card-header {
+    padding: 14px 16px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .card-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-sub);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* Stats */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .stat-card {
+    background: white;
+    border-radius: var(--radius);
+    padding: 14px 12px;
+    text-align: center;
+    box-shadow: var(--shadow);
+  }
+  .stat-num { font-size: 28px; font-weight: 800; color: var(--primary); line-height: 1; }
+  .stat-label { font-size: 11px; color: var(--text-sub); margin-top: 4px; }
+  .stat-card.warn .stat-num { color: var(--warning); }
+  .stat-card.danger .stat-num { color: var(--danger); }
+
+  /* Device items */
+  .device-item {
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .device-item:last-child { border-bottom: none; }
+  .device-item:active { background: var(--bg); }
+  .device-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+  }
+  .device-icon.loan { background: var(--loan); }
+  .device-icon.in { background: var(--in); }
+  .device-info { flex: 1; min-width: 0; }
+  .device-name { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .device-meta { font-size: 12px; color: var(--text-sub); margin-top: 2px; }
+  .device-label { font-size: 11px; font-family: monospace; color: var(--text-sub); }
+  .badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 20px;
+    flex-shrink: 0;
+  }
+  .badge.loan { background: var(--loan); color: var(--loan-text); }
+  .badge.in { background: var(--in); color: var(--in-text); }
+  .badge.overdue { background: #fde8e8; color: var(--danger); }
+
+  /* Search */
+  .search-box {
+    background: white;
+    border-radius: var(--radius);
+    padding: 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    box-shadow: var(--shadow);
+    margin-bottom: 12px;
+  }
+  .search-box svg { color: var(--text-sub); flex-shrink: 0; width: 18px; height: 18px; }
+  .search-box input {
+    flex: 1;
+    border: none;
+    outline: none;
+    padding: 13px 0;
+    font-size: 15px;
+    font-family: inherit;
+    color: var(--text);
+    background: none;
+  }
+
+  /* Filter tabs */
+  .filter-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .filter-tabs::-webkit-scrollbar { display: none; }
+  .filter-tab {
+    border: none;
+    padding: 7px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    background: white;
+    color: var(--text-sub);
+    box-shadow: var(--shadow);
+    transition: all 0.15s;
+  }
+  .filter-tab.active { background: var(--primary); color: white; }
+
+  /* Forms */
+  .form-section {
+    margin-bottom: 20px;
+  }
+  .form-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-sub);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .required { color: var(--danger); }
+  .form-input {
+    width: 100%;
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 15px;
+    font-family: inherit;
+    color: var(--text);
+    outline: none;
+    background: white;
+    transition: border-color 0.15s;
+    -webkit-appearance: none;
+  }
+  .form-input:focus { border-color: var(--primary); }
+  .form-select {
+    width: 100%;
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 15px;
+    font-family: inherit;
+    color: var(--text);
+    outline: none;
+    background: white;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 40px;
+  }
+  .form-radio-group {
+    display: flex;
+    gap: 10px;
+  }
+  .radio-btn {
+    flex: 1;
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    text-align: center;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    color: var(--text-sub);
+    background: white;
+  }
+  .radio-btn.selected { border-color: var(--primary); color: var(--primary); background: #eff6ff; }
+
+  /* Buttons */
+  .btn {
+    width: 100%;
+    padding: 15px;
+    border-radius: 12px;
+    border: none;
+    font-size: 16px;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .btn-primary { background: var(--primary); color: white; }
+  .btn-primary:active { background: var(--primary-dark); transform: scale(0.98); }
+  .btn-danger { background: var(--danger); color: white; }
+  .btn-danger:active { transform: scale(0.98); }
+  .btn-secondary { background: var(--bg); color: var(--text); }
+  .btn-secondary:active { transform: scale(0.98); }
+  .btn-outline {
+    background: white;
+    border: 1.5px solid var(--primary);
+    color: var(--primary);
+  }
+
+  /* QR Scanner */
+  .scanner-wrap {
+    position: relative;
+    background: black;
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 16px;
+    aspect-ratio: 1;
+  }
+  #qr-video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .scanner-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+  .scanner-frame {
+    width: 60%;
+    aspect-ratio: 1;
+    border: 3px solid white;
+    border-radius: 16px;
+    box-shadow: 0 0 0 9999px rgba(0,0,0,0.4);
+  }
+  .scanner-label-input {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .scanner-label-input input { flex: 1; }
+  .scanner-label-input button {
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 0 16px;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  /* Detail */
+  .detail-hero {
+    background: linear-gradient(135deg, var(--primary) 0%, #1340a8 100%);
+    color: white;
+    padding: 24px 20px;
+    border-radius: var(--radius);
+    margin-bottom: 12px;
+  }
+  .detail-hero-label { font-size: 12px; opacity: 0.7; margin-bottom: 4px; font-family: monospace; }
+  .detail-hero-name { font-size: 22px; font-weight: 800; margin-bottom: 12px; }
+  .detail-hero-badges { display: flex; gap: 8px; flex-wrap: wrap; }
+  .detail-hero-badge {
+    background: rgba(255,255,255,0.2);
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .detail-hero-badge.status-loan { background: #fbbf24; color: #78350f; }
+  .detail-hero-badge.status-in { background: #34d399; color: #064e3b; }
+
+  .info-row {
+    display: flex;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    gap: 12px;
+  }
+  .info-row:last-child { border-bottom: none; }
+  .info-key { font-size: 13px; color: var(--text-sub); width: 90px; flex-shrink: 0; padding-top: 1px; }
+  .info-val { font-size: 14px; font-weight: 500; flex: 1; }
+
+  .history-item {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .history-item:last-child { border-bottom: none; }
+  .history-type {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 20px;
+    margin-bottom: 4px;
+  }
+  .history-type.loan { background: var(--loan); color: var(--loan-text); }
+  .history-type.ret { background: var(--in); color: var(--in-text); }
+  .history-type.ext { background: #dbeafe; color: #1e40af; }
+  .history-detail { font-size: 13px; color: var(--text-sub); }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    top: 70px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1f2937;
+    color: white;
+    padding: 12px 20px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 500;
+    z-index: 1000;
+    box-shadow: var(--shadow-lg);
+    opacity: 0;
+    transition: opacity 0.3s;
+    white-space: pre-wrap;
+    word-break: break-all;
+    pointer-events: none;
+    max-width: calc(100vw - 32px);
+  }
+  .toast.show { opacity: 1; }
+  .toast.success { background: var(--success); }
+  .toast.error { background: var(--danger); }
+  .toast.warn { background: var(--warning); }
+
+  /* Empty state */
+  .empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-sub);
+  }
+  .empty svg { width: 48px; height: 48px; margin-bottom: 12px; opacity: 0.3; }
+  .empty p { font-size: 14px; }
+
+  /* Quick actions */
+  .quick-actions {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .quick-btn {
+    background: white;
+    border: none;
+    border-radius: var(--radius);
+    padding: 16px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+    transition: all 0.15s;
+    text-align: left;
+  }
+  .quick-btn:active { transform: scale(0.97); }
+  .quick-btn-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .quick-btn-text { font-size: 13px; font-weight: 600; }
+  .quick-btn-sub { font-size: 11px; color: var(--text-sub); margin-top: 2px; }
+
+  /* Settings */
+  .settings-item {
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .settings-item:last-child { border-bottom: none; }
+  .settings-item:active { background: var(--bg); }
+  .settings-label { font-size: 15px; font-weight: 500; }
+  .settings-arrow { color: var(--text-sub); }
+
+  .section-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-sub);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 0 4px;
+    margin: 16px 0 8px;
+  }
+
+  .overdue-banner {
+    background: #fde8e8;
+    border: 1px solid #f98080;
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    margin-bottom: 12px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    cursor: pointer;
+  }
+  .overdue-banner svg { color: var(--danger); flex-shrink: 0; }
+  .overdue-banner-text { font-size: 13px; color: #9b1c1c; font-weight: 500; flex: 1; }
+  .warning-banner {
+    background: #fffbeb;
+    border: 1px solid #f6d860;
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    margin-bottom: 12px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    cursor: pointer;
+  }
+  .warning-banner svg { color: var(--warning); flex-shrink: 0; }
+  .warning-banner-text { font-size: 13px; color: #92400e; font-weight: 500; flex: 1; }
+
+  .loading-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(255,255,255,0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    font-size: 15px;
+    color: var(--text-sub);
+    font-weight: 600;
+    gap: 10px;
+    flex-direction: column;
+  }
+  .loading-spinner {
+    width: 32px; height: 32px;
+    border: 3px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .form-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.45);
+    z-index: 300;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  .form-modal {
+    background: #ffffff;
+    border-radius: 16px 16px 0 0;
+    padding: 24px 20px 32px;
+    width: 100%;
+    max-width: 480px;
+    box-shadow: 0 -4px 24px rgba(0,0,0,0.2);
+  }
+  .form-modal-title {
+    font-size: 17px;
+    font-weight: 700;
+    margin-bottom: 20px;
+    text-align: center;
+  }
+  .form-modal-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+  }
+</style>
+</head>
+<body>
+
+<div id="app"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ========== APP VERSION ==========
+const APP_VERSION = '1.9.2';
+const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
+
+// ========== DATA STORE ==========
+const API_URL = 'https://script.google.com/macros/s/AKfycbzWQEPQ89DwT7n38vtLFf1COx0rz13-qKC7GM1dZBiEBYP5GV5H_3J-Olz_rR2ckr4o/exec';
+
+let db = {
+  devices: [],
+  loans: [],
+  salesReps: [],
+  makers: [],
+  labels: [],
+  nextDeviceId: 1,
+  nextLoanId: 1,
+  nextRepId: 1,
+  nextMakerId: 1,
+};
+
+function showLoading() {
+  let el = document.getElementById('loading-overlay');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'loading-overlay';
+    el.className = 'loading-overlay';
+    el.innerHTML = '<div class="loading-spinner"></div><span>読み込み中...</span>';
+    document.body.appendChild(el);
+  }
+  el.style.display = 'flex';
+}
+
+function hideLoading() {
+  const el = document.getElementById('loading-overlay');
+  if (el) el.style.display = 'none';
+}
+
+async function apiGet() {
+  const s     = _getBfSession();
+  const token = (s && s.token) ? s.token : '';
+  const url   = API_URL + (API_URL.includes('?') ? '&' : '?') + 'session_token=' + encodeURIComponent(token);
+  const res   = await fetch(url);
+  if (!res.ok) throw new Error('API error');
+  const json = await res.json();
+  if (json && json.error === 'SESSION_INVALID') { _handleSessionInvalid(); throw new Error('SESSION_INVALID'); }
+  return json;
+}
+
+function _handleSessionInvalid() {
+  localStorage.removeItem(SESSION_KEY);
+  currentUser = null;
+  render(); // ログイン画面へ戻す
+}
+
+async function apiPost(action, data) {
+  // URLSearchParams形式で送信（GASのe.parameterで受け取り可能、CORSプリフライト不要）
+  const params = new URLSearchParams();
+  params.append('action', action);
+  params.append('data', JSON.stringify(data));
+
+  // login / getAuthUsers 以外はセッショントークンを付与
+  const PUBLIC_ACTIONS = ['login', 'getAuthUsers'];
+  if (!PUBLIC_ACTIONS.includes(action)) {
+    const s = _getBfSession();
+    params.append('session_token', (s && s.token) ? s.token : '');
+  }
+
+  const requestBody = params.toString();
+
+  let res;
+  try {
+    res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: requestBody,
+    });
+  } catch (networkErr) {
+    throw new Error('ネットワークエラー: ' + networkErr.message);
+  }
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '(本文取得不可)');
+    throw new Error(`HTTPエラー ${res.status}: ${errText}`);
+  }
+
+  let json;
+  try {
+    const rawText = await res.text();
+    json = JSON.parse(rawText);
+  } catch (parseErr) {
+    throw new Error('レスポンスのJSONパースに失敗: ' + parseErr.message);
+  }
+
+  // POSTがGETにリダイレクトされた場合の検出:
+  // doGetのレスポンス（devicesキーがある）が返ってきた場合はエラー扱い
+  if (json && 'devices' in json && !('status' in json)) {
+    throw new Error('POSTがGETにリダイレクトされました（GAS設定エラー）');
+  }
+
+  // セッション無効の場合はログイン画面へ
+  if (json && json.error === 'SESSION_INVALID') {
+    _handleSessionInvalid();
+    throw new Error('SESSION_INVALID');
+  }
+
+  return json;
+}
+
+// ========== AUTH ==========
+const SESSION_KEY = 'bf_session'; // ポータルと共通キー
+const SESSION_MS  = 30 * 24 * 60 * 60 * 1000; // 30日
+
+let currentUser = null;
+let authUsers   = [];
+let selectedUser = null;
+let pinValue     = '';
+
+// PIN変更
+let changePinStep    = 0;   // 0=現在PIN入力中, 1=新PIN入力中
+let changePinCurrent = '';  // ステップ0で入力した現在PIN
+let changePinValue   = '';  // 入力中のPIN
+
+function _getBfSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    if (!s.user_id) return null;
+    // expires（ポータル形式）またはsaved_at（旧形式）で期限チェック
+    const expiry = s.expires || (s.saved_at ? s.saved_at + SESSION_MS : 0);
+    if (Date.now() > expiry) { localStorage.removeItem(SESSION_KEY); return null; }
+    return s;
+  } catch(e) { return null; }
+}
+
+function saveSession(user) {
+  try {
+    const existing = _getBfSession() || {};
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ ...existing, ...user }));
+  } catch(e) {}
+}
+
+function tryAutoLogin() {
+  const s = _getBfSession();
+  if (!s) return false;
+  currentUser = { user_id: s.user_id, name: s.name, role: s.role || 'user' };
+  return true;
+}
+
+function logout() {
+  localStorage.removeItem(SESSION_KEY); // bf_session削除（全アプリ共通ログアウト）
+  location.replace(PORTAL_URL);         // ポータルへリダイレクト
+}
+
+async function loadAuthUsers() {
+  try {
+    const json = await apiPost('getAuthUsers', {});
+    if (json.status === 'ok') authUsers = json.result.users || [];
+  } catch(e) { authUsers = []; }
+  render();
+}
+
+function renderLogin() {
+  const grid = authUsers.length === 0
+    ? `<div style="text-align:center;color:#9ca3af;padding:32px 0;">ユーザー情報を読み込み中...</div>`
+    : `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        ${authUsers.map(u => `
+          <button onclick="openLoginPinModal('${u.user_id}','${u.name.replace(/'/g,"\\'")}')"
+            style="padding:16px 8px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;font-size:15px;font-weight:600;cursor:pointer;">
+            ${u.name}
+          </button>`).join('')}
+       </div>`;
+
+  return `
+  <div style="background:#1a56db;color:#fff;padding:28px 16px 24px;text-align:center;">
+    <div style="font-size:22px;font-weight:900;letter-spacing:0.04em;">Beaufield</div>
+    <div style="font-size:13px;opacity:0.8;margin-top:4px;">貸出管理アプリ</div>
+  </div>
+  <div style="padding:24px 16px;">
+    <div style="font-size:12px;font-weight:700;color:#6b7280;letter-spacing:0.06em;margin-bottom:12px;">ログインするユーザーを選択</div>
+    ${grid}
+  </div>`;
+}
+
+function openLoginPinModal(userId, userName) {
+  selectedUser = { user_id: userId, name: userName };
+  pinValue = '';
+  updateLoginPinDots();
+  document.getElementById('login-pin-title').textContent = userName + ' のPINを入力';
+  document.getElementById('login-pin-error').textContent = '';
+  document.getElementById('login-pin-modal').style.display = 'flex';
+}
+
+function closeLoginPinModal() {
+  document.getElementById('login-pin-modal').style.display = 'none';
+  selectedUser = null;
+  pinValue = '';
+}
+
+function loginPinInput(digit) {
+  if (pinValue.length >= 4) return;
+  pinValue += digit;
+  updateLoginPinDots();
+  if (pinValue.length === 4) setTimeout(submitLoginPin, 150);
+}
+
+function loginPinBackspace() {
+  pinValue = pinValue.slice(0, -1);
+  updateLoginPinDots();
+}
+
+function updateLoginPinDots() {
+  for (var i = 0; i < 4; i++) {
+    const el = document.getElementById('lpd' + i);
+    if (el) el.style.background = i < pinValue.length ? '#1a56db' : '#e5e7eb';
+  }
+}
+
+async function submitLoginPin() {
+  if (!selectedUser || pinValue.length !== 4) return;
+  showLoading();
+  document.getElementById('login-pin-error').textContent = '';
+  const pin = pinValue;
+  try {
+    const json = await apiPost('login', { user_id: selectedUser.user_id, pin: pin });
+    if (json.status === 'error') throw new Error(json.error);
+    const result = json.result;
+    currentUser = { user_id: result.user_id, name: result.name, role: result.role || 'user' };
+    // session_token と有効期限もセッションに保存
+    saveSession({
+      user_id: result.user_id,
+      name:    result.name,
+      role:    result.role || 'user',
+      token:   result.session_token || '',
+      expires: result.expires || (Date.now() + SESSION_MS)
+    });
+    closeLoginPinModal();
+    await loadDB();
+  } catch(e) {
+    document.getElementById('login-pin-error').textContent = 'PINが正しくありません';
+    pinValue = '';
+    updateLoginPinDots();
+  } finally {
+    hideLoading();
+  }
+}
+
+// ─── PIN変更 ───────────────────────────────────────────────
+function openChangePinModal() {
+  changePinStep    = 0;
+  changePinCurrent = '';
+  changePinValue   = '';
+  document.getElementById('change-pin-step-label').textContent = '現在のPINを入力してください';
+  document.getElementById('change-pin-error').textContent = '';
+  updateChangePinDots();
+  document.getElementById('change-pin-modal').style.display = 'flex';
+}
+function closeChangePinModal() {
+  document.getElementById('change-pin-modal').style.display = 'none';
+  changePinStep = 0; changePinCurrent = ''; changePinValue = '';
+}
+function changePinInput(digit) {
+  if (changePinValue.length >= 4) return;
+  changePinValue += digit;
+  updateChangePinDots();
+  if (changePinValue.length === 4) setTimeout(processChangePinStep, 150);
+}
+function changePinBackspace() {
+  changePinValue = changePinValue.slice(0, -1);
+  updateChangePinDots();
+}
+function updateChangePinDots() {
+  for (var i = 0; i < 4; i++) {
+    var el = document.getElementById('cpd' + i);
+    if (el) el.style.background = i < changePinValue.length ? '#1a56db' : '#e5e7eb';
+  }
+}
+async function processChangePinStep() {
+  if (changePinStep === 0) {
+    // ステップ0：現在PINを記録してステップ1へ
+    changePinCurrent = changePinValue;
+    changePinValue   = '';
+    changePinStep    = 1;
+    document.getElementById('change-pin-step-label').textContent = '新しいPINを入力してください';
+    document.getElementById('change-pin-error').textContent = '';
+    updateChangePinDots();
+  } else {
+    // ステップ1：新PINでAPIコール
+    const newPin = changePinValue;
+    showLoading();
+    try {
+      const json = await apiPost('changePin', {
+        user_id:     currentUser.user_id,
+        current_pin: changePinCurrent,
+        new_pin:     newPin
+      });
+      if (json.status === 'error') throw new Error(json.error);
+      closeChangePinModal();
+      showToast('PINを変更しました ✅');
+    } catch(e) {
+      changePinValue   = '';
+      changePinStep    = 0;
+      changePinCurrent = '';
+      document.getElementById('change-pin-step-label').textContent = '現在のPINを入力してください';
+      document.getElementById('change-pin-error').textContent = '現在のPINが正しくありません';
+      updateChangePinDots();
+    } finally {
+      hideLoading();
+    }
+  }
+}
+
+const DB_CACHE_KEY = 'kiki_db_v1';
+
+function saveDBCache() {
+  try { localStorage.setItem(DB_CACHE_KEY, JSON.stringify(db)); } catch(e) {}
+}
+
+async function loadDB() {
+  // キャッシュがあれば即レンダリング（体感速度を上げる）
+  const cached = localStorage.getItem(DB_CACHE_KEY);
+  if (cached) {
+    try { db = JSON.parse(cached); render(); } catch(e) {}
+  }
+  showLoading();
+  try {
+    const data = await apiGet();
+    db = data;
+    saveDBCache();
+    render();
+  } catch(e) {
+    if (!cached) showToast('通信エラーが発生しました', 'error');
+    if (!cached) render();
+  } finally {
+    hideLoading();
+  }
+}
+
+async function saveDB() {
+  try {
+    await apiPost('saveDB', db);
+  } catch(e) {
+    showToast('保存失敗: ' + e.message, 'error');
+    throw e;
+  }
+}
+
+// ========== HELPERS ==========
+function genId(prefix, num) {
+  return prefix + String(num).padStart(6, '0');
+}
+
+function today() {
+  return new Date().toISOString().split('T')[0];
+}
+
+function getDeviceInfo() {
+  const ua = navigator.userAgent;
+  let os = 'Unknown OS';
+  let browser = 'Unknown Browser';
+  if (/iPhone/.test(ua)) os = 'iPhone';
+  else if (/iPad/.test(ua)) os = 'iPad';
+  else if (/Android/.test(ua)) os = 'Android';
+  else if (/Windows/.test(ua)) os = 'Windows';
+  else if (/Mac/.test(ua)) os = 'Mac';
+  if (/CriOS|Chrome/.test(ua) && !/Edg/.test(ua)) browser = 'Chrome';
+  else if (/Safari/.test(ua) && !/Chrome/.test(ua)) browser = 'Safari';
+  else if (/Firefox/.test(ua)) browser = 'Firefox';
+  else if (/Edg/.test(ua)) browser = 'Edge';
+  return `${os} / ${browser}`;
+}
+
+function getLastOperator() {
+  return localStorage.getItem('lastOperator') || '';
+}
+
+function saveLastOperator(name) {
+  localStorage.setItem('lastOperator', name);
+}
+
+function fmtDate(d) {
+  if (!d) return '—';
+  return d.split('T')[0].replace(/-/g, '/');
+}
+
+function isOverdue(device) {
+  if (device.status !== '貸出中') return false;
+  if (!device.returnDueDate) return false;
+  return device.returnDueDate < today();
+}
+
+function isMakerOverdue(device) {
+  if (device.type !== 'メーカー借入') return false;
+  if (!device.makerReturnDueDate) return false;
+  if (device.status === '廃棄' || device.status === 'メーカー返却済') return false;
+  return device.makerReturnDueDate < today();
+}
+
+function getStats() {
+  const active = db.devices.filter(d => d.status !== '廃棄' && d.status !== 'メーカー返却済');
+  const total = active.length;
+  const loan = active.filter(d => d.status === '貸出中').length;
+  const overdue = active.filter(d => isOverdue(d)).length;
+  return { total, loan, overdue };
+}
+
+// ========== TOASTS ==========
+let toastTimer;
+function showToast(msg, type = '') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + type;
+  clearTimeout(toastTimer);
+  // エラー時は長めに表示（8秒）、それ以外は3秒
+  const duration = type === 'error' ? 8000 : 2800;
+  toastTimer = setTimeout(() => { t.className = 'toast'; }, duration);
+}
+
+// ========== ROUTER ==========
+let currentView = 'home';
+let viewStack = [];
+let viewData = {};
+let pendingImages = {}; // { reg: [img0,img1,img2], loan: img, edit: [img0,img1,img2] }
+let clearedSlots  = {}; // edit用: { 0:true, 1:true, 2:true } 削除済みスロット追跡
+
+function navigate(view, data = {}) {
+  viewStack.push({ view: currentView, data: viewData });
+  currentView = view;
+  viewData = data;
+  render();
+}
+
+function goBack() {
+  if (viewStack.length === 0) return;
+  const prev = viewStack.pop();
+  currentView = prev.view;
+  viewData = prev.data;
+  render();
+}
+
+function resetTo(view) {
+  viewStack = [];
+  currentView = view;
+  viewData = {};
+  render();
+}
+
+// ========== RENDER ==========
+function render() {
+  const app = document.getElementById('app');
+  // Stop any running QR scanner
+  stopScanner();
+  
+  const views = {
+    home: renderHome,
+    devices: renderDevices,
+    scanner: renderScanner,
+    deviceDetail: renderDeviceDetail,
+    loanForm: renderLoanForm,
+    returnForm: renderReturnForm,
+    registerForm: renderRegisterForm,
+    editDevice: renderEditDevice,
+    settings: renderSettings,
+    salesReps: renderSalesReps,
+    makers: renderMakers,
+    labelPool: renderLabelPool,
+    disposedDevices: renderDisposedDevices,
+    makerReturnedDevices: renderMakerReturnedDevices,
+  };
+
+  if (!currentUser) {
+    app.innerHTML = renderLogin();
+    afterRender();
+    return;
+  }
+
+  const fn = views[currentView] || renderHome;
+  app.innerHTML = fn();
+  afterRender();
+  window.scrollTo(0, 0);
+}
+
+function renderNav() {
+  const tabs = [
+    { id: 'home', label: 'ホーム', icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>` },
+    { id: 'devices', label: '商品一覧', icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>` },
+    { id: 'scanner', label: 'スキャン', icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></svg>` },
+    { id: 'settings', label: '設定', icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>` },
+  ];
+
+  const logoutBtn = `<button class="nav-btn" onclick="logout()" style="color:#dc2626;">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+    <span>退出</span>
+  </button>`;
+
+  return `
+  <nav class="nav">
+    ${tabs.map((t, i) => {
+      if (i === 2) {
+        return `<button class="nav-btn" onclick="resetTo('scanner')">
+          <div class="nav-scan">
+            ${t.icon}
+            <span>${t.label}</span>
+          </div>
+        </button>`;
+      }
+      return `<button class="nav-btn ${currentView === t.id ? 'active' : ''}" onclick="resetTo('${t.id}')">
+        ${t.icon}
+        <span>${t.label}</span>
+      </button>`;
+    }).join('')}
+    ${logoutBtn}
+  </nav>`;
+}
+
+// ========== HOME ==========
+function renderHome() {
+  const stats = getStats();
+  const loanDevices = db.devices.filter(d => d.status === '貸出中').slice(0, 5);
+  const overdueDevices = db.devices.filter(d => isOverdue(d));
+  const todayStr = today();
+  const limit = new Date(todayStr);
+  limit.setDate(limit.getDate() + 3);
+  const limitStr = limit.toISOString().split('T')[0];
+  const soonDevices = db.devices.filter(d =>
+    d.status === '貸出中' && d.returnDueDate && d.returnDueDate > todayStr && d.returnDueDate <= limitStr
+  );
+  const makerOverdueDevices = db.devices.filter(d => isMakerOverdue(d));
+  const makerLimit = new Date(todayStr);
+  makerLimit.setDate(makerLimit.getDate() + 7);
+  const makerLimitStr = makerLimit.toISOString().split('T')[0];
+  const makerSoonDevices = db.devices.filter(d =>
+    d.type === 'メーカー借入' && d.makerReturnDueDate &&
+    d.makerReturnDueDate >= todayStr && d.makerReturnDueDate <= makerLimitStr &&
+    d.status !== '廃棄' && d.status !== 'メーカー返却済'
+  );
+
+  return `
+  <div class="header">
+    <h1>ビューフィールド貸出管理</h1>
+    <div style="text-align:right;line-height:1.5;">
+      <div style="font-size:13px;font-weight:600;">${currentUser ? currentUser.name : ''}</div>
+      <div style="font-size:11px;opacity:0.7;">${today().replace(/-/g,'/')}</div>
+    </div>
+  </div>
+  <div class="content">
+    <div class="stats">
+      <div class="stat-card warn">
+        <div class="stat-num">${stats.loan}</div>
+        <div class="stat-label">貸出中</div>
+      </div>
+      <div class="stat-card ${stats.overdue > 0 ? 'danger' : ''}">
+        <div class="stat-num">${stats.overdue}</div>
+        <div class="stat-label">期限超過</div>
+      </div>
+    </div>
+
+    ${overdueDevices.length > 0 ? `
+    <div class="overdue-banner" onclick="navigate('devices', {filter:'overdue'})">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <div class="overdue-banner-text">返却期限を超過している商品が ${overdueDevices.length} 件あります</div>
+      <span style="color:#9b1c1c;font-size:18px;">›</span>
+    </div>` : ''}
+    ${soonDevices.length > 0 ? `
+    <div class="warning-banner" onclick="navigate('devices', {filter:'soon'})">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <div class="warning-banner-text">返却期限が3日以内の商品が ${soonDevices.length} 件あります</div>
+      <span style="color:#92400e;font-size:18px;">›</span>
+    </div>` : ''}
+    ${makerOverdueDevices.length > 0 ? `
+    <div class="overdue-banner" onclick="navigate('devices', {filter:'maker'})">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <div class="overdue-banner-text">メーカー返却期限を超過している商品が ${makerOverdueDevices.length} 件あります</div>
+      <span style="color:#9b1c1c;font-size:18px;">›</span>
+    </div>` : ''}
+    ${makerSoonDevices.length > 0 ? `
+    <div class="warning-banner" onclick="navigate('devices', {filter:'maker'})">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <div class="warning-banner-text">メーカー返却期限が7日以内の商品が ${makerSoonDevices.length} 件あります</div>
+      <span style="color:#92400e;font-size:18px;">›</span>
+    </div>` : ''}
+
+    <div class="quick-actions">
+      <button class="quick-btn" onclick="navigate('scanner', {mode:'loan'})">
+        <div class="quick-btn-icon" style="background:#eff6ff;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#1a56db" stroke-width="2" width="22" height="22"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></svg>
+        </div>
+        <div>
+          <div class="quick-btn-text">貸出登録</div>
+          <div class="quick-btn-sub">QRをスキャン</div>
+        </div>
+      </button>
+      <button class="quick-btn" onclick="navigate('scanner', {mode:'return'})">
+        <div class="quick-btn-icon" style="background:#f0fdf4;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#057a55" stroke-width="2" width="22" height="22"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></svg>
+        </div>
+        <div>
+          <div class="quick-btn-text">返却登録</div>
+          <div class="quick-btn-sub">QRをスキャン</div>
+        </div>
+      </button>
+    </div>
+
+    ${loanDevices.length > 0 ? `
+    <div class="section-title">貸出中の商品</div>
+    <div class="card">
+      ${loanDevices.map(d => `
+      <div class="device-item" onclick="navigate('deviceDetail', {deviceId:${d.id}})">
+        <div class="device-icon loan">📦</div>
+        <div class="device-info">
+          <div class="device-name">${d.name}</div>
+          <div class="device-meta">${d.loanTo || '—'} / ${d.salesRep || '—'}</div>
+          <div class="device-label">${d.labelId}</div>
+        </div>
+        <span class="badge ${isOverdue(d) ? 'overdue' : 'loan'}">${isOverdue(d) ? '期限超過' : '貸出中'}</span>
+      </div>`).join('')}
+    </div>` : `
+    <div class="card">
+      <div class="empty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        <p>現在貸出中の商品はありません</p>
+      </div>
+    </div>`}
+
+    ${(() => {
+      const makerDueDevices = db.devices
+        .filter(d => d.type === 'メーカー借入' && d.makerReturnDueDate && d.status !== '廃棄' && d.status !== 'メーカー返却済')
+        .sort((a, b) => a.makerReturnDueDate.localeCompare(b.makerReturnDueDate));
+      if (makerDueDevices.length === 0) return '';
+      return `
+    <div class="section-title">メーカー返却期限あり</div>
+    <div class="card">
+      ${makerDueDevices.map(d => {
+        const overdue = isMakerOverdue(d);
+        const dateColor = overdue ? 'color:var(--danger);font-weight:700;' : '';
+        return `
+      <div class="device-item" onclick="navigate('deviceDetail', {deviceId:${d.id}})">
+        <div class="device-icon ${d.status==='貸出中'?'loan':'in'}">🔧</div>
+        <div class="device-info">
+          <div class="device-name">${d.name}</div>
+          <div class="device-meta" style="${dateColor}">${fmtDate(d.makerReturnDueDate)} 返却期限${overdue ? ' ⚠️' : ''}</div>
+          <div class="device-label">${d.labelId}</div>
+        </div>
+        <span class="badge ${overdue?'overdue':d.status==='貸出中'?'loan':'in'}">${overdue?'期限超過':d.status}</span>
+      </div>`;
+      }).join('')}
+    </div>`;
+    })()}
+  </div>
+  ${renderNav()}`;
+}
+
+// ========== DEVICES ==========
+function renderDevices() {
+  const filter = viewData.filter || 'all';
+  const makerFilter = viewData.makerFilter || '';
+  const search = viewData.search || '';
+  const activeDevices = db.devices.filter(d => d.status !== '廃棄' && d.status !== 'メーカー返却済');
+
+  let devices = [...activeDevices];
+  if (filter === 'loan') {
+    devices = devices.filter(d => d.status === '貸出中');
+    // 返却期限が近い順（未設定は末尾）
+    devices.sort((a, b) => {
+      if (!a.returnDueDate && !b.returnDueDate) return 0;
+      if (!a.returnDueDate) return 1;
+      if (!b.returnDueDate) return -1;
+      return a.returnDueDate.localeCompare(b.returnDueDate);
+    });
+  }
+  if (filter === 'in') devices = devices.filter(d => d.status === '社内');
+  if (filter === 'overdue') {
+    devices = devices.filter(d => isOverdue(d));
+    devices.sort((a, b) => (a.returnDueDate||'').localeCompare(b.returnDueDate||''));
+  }
+  if (filter === 'soon') {
+    const todayStr2 = today();
+    const lim = new Date(todayStr2); lim.setDate(lim.getDate() + 3);
+    const limStr = lim.toISOString().split('T')[0];
+    devices = devices.filter(d => d.status === '貸出中' && d.returnDueDate && d.returnDueDate > todayStr2 && d.returnDueDate <= limStr);
+    devices.sort((a, b) => a.returnDueDate.localeCompare(b.returnDueDate));
+  }
+  if (filter === 'nodate') devices = devices.filter(d => d.status === '貸出中' && !d.returnDueDate);
+  if (filter === 'maker') devices = devices.filter(d => d.type === 'メーカー借入');
+  if (filter === 'byMaker') {
+    if (makerFilter) devices = devices.filter(d => d.maker === makerFilter);
+  }
+  if (search) {
+    const q = search.toLowerCase();
+    devices = devices.filter(d => d.name.toLowerCase().includes(q) || d.labelId.toLowerCase().includes(q) || (d.loanTo||'').toLowerCase().includes(q) || (d.salesRep||'').toLowerCase().includes(q));
+  }
+
+  // メーカー別サブフィルター用: 有効なメーカー一覧（商品に紐づくもの）
+  const makerNames = [...new Set(activeDevices.map(d => d.maker).filter(Boolean))].sort();
+
+  return `
+  <div class="header">
+    <h1>商品一覧</h1>
+    <button class="header-back" onclick="navigate('registerForm', {})">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      商品登録
+    </button>
+  </div>
+  <div class="content">
+    <div class="search-box">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="search" placeholder="商品名・LabelID・貸出先" value="${search}" oninput="viewData.search=this.value;render()">
+    </div>
+    <div class="filter-tabs">
+      <button class="filter-tab ${filter==='all'?'active':''}" onclick="viewData.filter='all';viewData.makerFilter='';render()">すべて(${activeDevices.length})</button>
+      <button class="filter-tab ${filter==='loan'?'active':''}" onclick="viewData.filter='loan';viewData.makerFilter='';render()">貸出中</button>
+      <button class="filter-tab ${filter==='overdue'?'active':''}" onclick="viewData.filter='overdue';viewData.makerFilter='';render()">期限超過</button>
+      <button class="filter-tab ${filter==='soon'?'active':''}" onclick="viewData.filter='soon';viewData.makerFilter='';render()">もうすぐ期限</button>
+      <button class="filter-tab ${filter==='nodate'?'active':''}" onclick="viewData.filter='nodate';viewData.makerFilter='';render()">返却日未定</button>
+      <button class="filter-tab ${filter==='maker'?'active':''}" onclick="viewData.filter='maker';viewData.makerFilter='';render()">メーカー借入</button>
+      <button class="filter-tab ${filter==='in'?'active':''}" onclick="viewData.filter='in';viewData.makerFilter='';render()">社内</button>
+      <button class="filter-tab ${filter==='byMaker'?'active':''}" onclick="viewData.filter='byMaker';viewData.makerFilter='';render()">メーカー別</button>
+    </div>
+    ${filter === 'byMaker' ? `
+    <div class="filter-tabs" style="margin-top:4px;">
+      <button class="filter-tab ${makerFilter===''?'active':''}" onclick="viewData.makerFilter='';render()">すべて</button>
+      ${makerNames.map(m => `<button class="filter-tab ${makerFilter===m?'active':''}" onclick="viewData.makerFilter='${m.replace(/'/g,"\\'")}';render()">${m}</button>`).join('')}
+    </div>` : ''}
+    ${devices.length > 0 ? `
+    <div class="card">
+      ${devices.map(d => `
+      <div class="device-item" onclick="navigate('deviceDetail', {deviceId:${d.id}})">
+        <div class="device-icon ${d.status==='貸出中'?'loan':'in'}">${d.type==='メーカー借入'?'🔧':'📦'}</div>
+        <div class="device-info">
+          <div class="device-name">${d.name}</div>
+          <div class="device-meta">${d.status==='貸出中' ? (d.loanTo||'—') : '社内保管'}${d.returnDueDate ? ' ・ ' + fmtDate(d.returnDueDate) + '返却予定' : ''}</div>
+          ${d.type==='メーカー借入' && d.makerReturnDueDate ? `<div class="device-meta" style="color:${isMakerOverdue(d)?'var(--danger)':'var(--text-sub)'};font-weight:${isMakerOverdue(d)?'700':'400'};">🔧 MK返却期限: ${fmtDate(d.makerReturnDueDate)}${isMakerOverdue(d)?' ⚠️':''}</div>` : ''}
+          <div class="device-label">${d.labelId}</div>
+        </div>
+        <span class="badge ${isOverdue(d)?'overdue':d.status==='貸出中'?'loan':'in'}">${isOverdue(d)?'期限超過':d.status}</span>
+      </div>`).join('')}
+    </div>` : `
+    <div class="card">
+      <div class="empty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <p>該当する商品がありません</p>
+      </div>
+    </div>`}
+  </div>
+  ${renderNav()}`;
+}
+
+// ========== SCANNER ==========
+let scannerActive = false;
+let scannerStream = null;
+let scannerMode = '';
+let scannerCanvas = null;
+let scannerCtx = null;
+let barcodeDetector = null;   // ネイティブBarcodeDetector（iOS17+）
+const SCAN_INTERVAL_MS = 150; // スキャン間隔（ms）
+
+function dbgLog(msg) {
+  console.log('[SCAN]', msg);
+}
+
+function stopScanner() {
+  scannerActive = false;
+  if (scannerStream) {
+    scannerStream.getTracks().forEach(t => t.stop());
+    scannerStream = null;
+  }
+  scannerCanvas = null;
+  scannerCtx = null;
+  barcodeDetector = null;
+}
+
+function renderScanner() {
+  const mode = viewData.mode || '';
+  scannerMode = mode;
+  const title = mode === 'loan' ? '貸出登録スキャン' : mode === 'return' ? '返却登録スキャン' : 'QRスキャン';
+
+  return `
+  <div class="header">
+    ${viewStack.length > 0 ? `<div style="display:flex;gap:6px;"><button class="header-back" onclick="goBack()">← 戻る</button><button class="header-back" onclick="resetTo('home')">🏠</button></div>` : '<div></div>'}
+    <h1>${title}</h1>
+    <div></div>
+  </div>
+  <div class="content">
+    <div class="scanner-wrap">
+      <video id="qr-video" autoplay playsinline muted></video>
+      <div class="scanner-overlay"><div class="scanner-frame"></div></div>
+    </div>
+    <p style="text-align:center;color:var(--text-sub);font-size:13px;margin-bottom:16px;">カメラをQRコードに向けてください</p>
+    <div style="text-align:center;margin-bottom:8px;font-size:13px;color:var(--text-sub);">― または LabelIDを直接入力 ―</div>
+    <div class="scanner-label-input">
+      <input class="form-input" id="manual-label" placeholder="例: BF-000001" style="text-transform:uppercase;">
+      <button onclick="handleManualLabel()">確認</button>
+    </div>
+    ${!mode ? `
+    <div class="section-title" style="margin-top:20px;">直接登録</div>
+    <button class="btn btn-primary" onclick="navigate('registerForm', {})">
+      ＋ 新規商品を登録する
+    </button>` : ''}
+
+  </div>
+  ${renderNav()}`;
+}
+
+function handleManualLabel() {
+  const val = document.getElementById('manual-label').value.trim().toUpperCase();
+  if (!val) return;
+  handleScannedLabel(val);
+}
+
+function handleScannedLabel(labelId) {
+  stopScanner();
+  const device = db.devices.find(d => d.labelId === labelId);
+  
+  if (scannerMode === 'loan') {
+    if (!device) {
+      if (confirm(`LabelID「${labelId}」は未登録です。\n新規商品として登録しますか？`)) {
+        navigate('registerForm', { labelId });
+      }
+      return;
+    }
+    if (device.status === '貸出中') {
+      showToast('この商品は現在貸出中です', 'error');
+      navigate('deviceDetail', { deviceId: device.id });
+      return;
+    }
+    navigate('loanForm', { deviceId: device.id });
+  } else if (scannerMode === 'return') {
+    if (!device) {
+      showToast('登録されていない商品です', 'error');
+      return;
+    }
+    if (device.status === '社内') {
+      showToast('この商品は既に社内にあります', 'error');
+      navigate('deviceDetail', { deviceId: device.id });
+      return;
+    }
+    navigate('returnForm', { deviceId: device.id });
+  } else {
+    if (!device) {
+      if (confirm(`LabelID「${labelId}」は未登録です。\n新規商品として登録しますか？`)) {
+        navigate('registerForm', { labelId });
+      }
+      return;
+    }
+    navigate('deviceDetail', { deviceId: device.id });
+  }
+}
+
+// ========== DEVICE DETAIL ==========
+function renderDeviceDetail() {
+  const device = db.devices.find(d => d.id === viewData.deviceId);
+  if (!device) return '<div class="content"><p>商品が見つかりません</p></div>';
+
+  const history = db.loans.filter(l => l.deviceId === device.id).sort((a,b) => b.date.localeCompare(a.date));
+
+  return `
+  <div class="header">
+    <div style="display:flex;gap:6px;"><button class="header-back" onclick="goBack()">← 戻る</button><button class="header-back" onclick="resetTo('home')">🏠</button></div>
+    <h1>商品詳細</h1>
+    <div></div>
+  </div>
+  <div class="content">
+    <div class="detail-hero">
+      <div class="detail-hero-label">${device.labelId}</div>
+      <div class="detail-hero-name">${device.name}</div>
+      <div class="detail-hero-badges">
+        <span class="detail-hero-badge status-${device.status==='貸出中'?'loan':'in'}">${isOverdue(device)?'期限超過':device.status}</span>
+        <span class="detail-hero-badge">${device.type}</span>
+        ${device.maker ? `<span class="detail-hero-badge">${device.maker}</span>` : ''}
+      </div>
+      ${[device.imageUrl, device.imageUrl2, device.imageUrl3].filter(Boolean).map((url, i) => `<a href="${url}" target="_blank" rel="noopener" style="display:inline-block;margin-top:8px;margin-right:6px;padding:8px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;font-size:14px;color:var(--text-main);text-decoration:none;">📷 画像${i+1}</a>`).join('')}
+    </div>
+
+    ${device.status === '貸出中' ? `
+    <div class="card" style="margin-bottom:12px;">
+      <div class="card-header"><span class="card-title">貸出情報</span></div>
+      <div class="info-row"><span class="info-key">貸出先</span><span class="info-val">${device.loanTo||'—'}</span></div>
+      <div class="info-row"><span class="info-key">担当者</span><span class="info-val">${device.salesRep||'—'}</span></div>
+      <div class="info-row"><span class="info-key">貸出日</span><span class="info-val">${fmtDate(device.loanDate)}</span></div>
+      <div class="info-row"><span class="info-key">返却予定</span><span class="info-val" style="${isOverdue(device)?'color:var(--danger);font-weight:700;':''}">${device.returnDueDate ? fmtDate(device.returnDueDate) : '未定'}</span></div>
+      ${device.notes ? `<div class="info-row"><span class="info-key">備考</span><span class="info-val">${device.notes}</span></div>` : ''}
+    </div>
+    <button class="btn btn-primary" style="margin-bottom:8px;" onclick="navigate('returnForm', {deviceId:${device.id}})">返却登録する</button>
+    <button class="btn" style="margin-bottom:8px;background:none;border:1px solid var(--primary);color:var(--primary);width:100%;" onclick="showExtendDueDateModal(${device.id})">📅 返却予定日を延長する</button>
+    ` : `
+    <button class="btn btn-outline" style="margin-bottom:8px;" onclick="navigate('loanForm', {deviceId:${device.id}})">この商品を貸出登録する</button>
+    ${device.type === 'メーカー借入' ? `<button class="btn" style="margin-bottom:8px;background:none;border:1px solid var(--primary);color:var(--primary);width:100%;" onclick="showMakerReturnModal(${device.id})">メーカーへ返却する</button>` : ''}
+    <button class="btn" style="margin-bottom:12px;background:none;border:1px solid var(--danger);color:var(--danger);width:100%;" onclick="showDisposeModal(${device.id})">この商品を廃棄登録する</button>
+    `}
+
+    ${history.length > 0 ? `
+    <div class="section-title">貸出履歴</div>
+    <div class="card">
+      ${history.map(l => `
+      <div class="history-item">
+        <span class="history-type ${l.type==='貸出'?'loan':l.type==='延長'?'ext':'ret'}">${l.type}</span>
+        <div class="history-detail">
+          ${l.type==='貸出' ? `${fmtDate(l.date)} ・ ${l.loanTo||'—'} ・ ${l.salesRep||'—'}` : l.type==='延長' ? `${fmtDate(l.date)} ・ 延長後: ${l.returnDueDate ? fmtDate(l.returnDueDate) : '—'}` : `${fmtDate(l.date)} 返却`}
+        </div>
+      </div>`).join('')}
+    </div>` : ''}
+    <div style="margin-top:12px;">
+      <button class="btn" style="background:none;border:1px solid var(--border);color:var(--text-main);width:100%;" onclick="navigate('editDevice', {deviceId:${device.id}})">✏️ 商品情報を編集する</button>
+    </div>
+  </div>`;
+}
+
+// ========== LOAN FORM ==========
+function renderLoanForm() {
+  const device = db.devices.find(d => d.id === viewData.deviceId);
+  if (!device) return '';
+  const activeReps = db.salesReps.filter(r => r.active);       // 操作者：全員
+  const salesReps  = activeReps.filter(r => r.isSales === true); // 営業担当：営業フラグONのみ
+  const lastOp = getLastOperator();
+
+  return `
+  <div class="header">
+    <div style="display:flex;gap:6px;"><button class="header-back" onclick="goBack()">← 戻る</button><button class="header-back" onclick="resetTo('home')">🏠</button></div>
+    <h1>貸出登録</h1>
+    <div></div>
+  </div>
+  <div class="content">
+    <div class="card" style="padding:14px 16px;margin-bottom:16px;">
+      <div style="font-size:12px;color:var(--text-sub);margin-bottom:2px;">${device.labelId}</div>
+      <div style="font-size:17px;font-weight:700;">${device.name}</div>
+    </div>
+
+    <div class="form-section">
+      <div class="form-label">操作者</div>
+      <div style="padding:10px 12px;background:#f3f4f6;border-radius:8px;font-size:15px;font-weight:600;">${currentUser ? currentUser.name : ''}</div>
+    </div>
+    <div class="form-section">
+      <div class="form-label">貸出先サロン名 <span class="required">*</span></div>
+      <input class="form-input" id="f-salon" placeholder="例: ○○サロン 渋谷店" autocomplete="off">
+    </div>
+    <div class="form-section">
+      <div class="form-label">営業担当 <span class="required">*</span></div>
+      <select class="form-select" id="f-rep">
+        <option value="">選択してください</option>
+        ${salesReps.map(r => `<option value="${r.name}">${r.name}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-section">
+      <div class="form-label">返却予定日 <span style="color:var(--text-sub);font-weight:400;">(未定の場合は空欄)</span></div>
+      <input class="form-input" id="f-duedate" type="date" min="${today()}">
+    </div>
+    <div class="form-section">
+      <div class="form-label">備考</div>
+      <input class="form-input" id="f-notes" placeholder="任意">
+    </div>
+    <div class="form-section">
+      <div class="form-label">画像 <span style="color:var(--text-sub);font-weight:400;">(任意)</span></div>
+      <input type="file" id="f-img-loan" accept="image/*" style="display:none" onchange="handleImageSelect('loan', this)">
+      <div id="img-preview-loan" style="display:none;margin-bottom:8px;">
+        <img id="img-thumb-loan" style="max-width:100%;max-height:200px;border-radius:8px;object-fit:contain;display:block;">
+        <button class="btn" style="margin-top:6px;background:var(--danger);color:#fff;font-size:13px;padding:6px 14px;" onclick="clearImage('loan')">✕ 削除</button>
+      </div>
+      <button class="btn" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-main);" onclick="document.getElementById('f-img-loan').click()">📷 画像を追加</button>
+    </div>
+    <button class="btn btn-primary" onclick="submitLoan(${device.id})">貸出登録する</button>
+  </div>`;
+}
+
+async function submitLoan(deviceId) {
+  const operator = currentUser ? currentUser.name : '';
+  const salon = document.getElementById('f-salon').value.trim();
+  const rep = document.getElementById('f-rep').value;
+  const duedate = document.getElementById('f-duedate').value;
+  const notes = document.getElementById('f-notes').value.trim();
+
+  if (!salon) { showToast('貸出先サロン名を入力してください', 'error'); return; }
+  if (!rep) { showToast('営業担当を選択してください', 'error'); return; }
+
+  const salonLoanCount = db.devices.filter(d => d.status === '貸出中' && d.loanTo === salon).length;
+  if (salonLoanCount > 0) {
+    showToast(`このサロンには現在 ${salonLoanCount} 点貸出中です`, 'warn');
+    await new Promise(r => setTimeout(r, 1800));
+  }
+
+  const device = db.devices.find(d => d.id === deviceId);
+  device.status = '貸出中';
+  device.loanTo = salon;
+  device.salesRep = rep;
+  device.loanDate = today();
+  device.returnDueDate = duedate || null;
+  device.notes = notes;
+
+  const newLoan = {
+    id: db.nextLoanId++,
+    deviceId,
+    labelId: device.labelId,
+    deviceName: device.name,
+    type: '貸出',
+    loanTo: salon,
+    salesRep: rep,
+    date: today(),
+    returnDueDate: duedate || null,
+    notes,
+    registeredBy: operator,
+    deviceInfo: getDeviceInfo(),
+  };
+  db.loans.push(newLoan);
+
+  showLoading();
+  try {
+    const imageUrl = await uploadPendingImage('loan');
+    if (imageUrl) { device.imageUrl = imageUrl; newLoan.imageUrl = imageUrl; }
+    // saveDevice + saveLoan（LINE WORKS通知含む）を1回のGASコールで処理
+    await apiPost('saveLoanTransaction', { device, loan: newLoan });
+    pendingImages['loan'] = null;
+    saveDBCache();
+    showToast('貸出登録しました ✓', 'success');
+    currentView = 'home';
+    viewData = {};
+    viewStack = [];
+    navigate('deviceDetail', { deviceId });
+  } catch(e) {} finally {
+    hideLoading();
+  }
+}
+
+// ========== RETURN FORM ==========
+function renderReturnForm() {
+  const device = db.devices.find(d => d.id === viewData.deviceId);
+  if (!device) return '';
+  const activeReps = db.salesReps.filter(r => r.active);
+  const lastOp = getLastOperator();
+
+  return `
+  <div class="header">
+    <div style="display:flex;gap:6px;"><button class="header-back" onclick="goBack()">← 戻る</button><button class="header-back" onclick="resetTo('home')">🏠</button></div>
+    <h1>返却登録</h1>
+    <div></div>
+  </div>
+  <div class="content">
+    <div class="card" style="padding:14px 16px;margin-bottom:16px;">
+      <div style="font-size:12px;color:var(--text-sub);margin-bottom:2px;">${device.labelId}</div>
+      <div style="font-size:17px;font-weight:700;">${device.name}</div>
+      <div style="font-size:13px;color:var(--text-sub);margin-top:4px;">${device.loanTo||''} より返却</div>
+    </div>
+
+    <div class="form-section">
+      <div class="form-label">操作者</div>
+      <div style="padding:10px 12px;background:#f3f4f6;border-radius:8px;font-size:15px;font-weight:600;">${currentUser ? currentUser.name : ''}</div>
+    </div>
+    <div class="form-section">
+      <div class="form-label">返却日</div>
+      <input class="form-input" id="f-retdate" type="date" value="${today()}">
+    </div>
+    <div class="form-section">
+      <div class="form-label">備考</div>
+      <input class="form-input" id="f-notes" placeholder="任意">
+    </div>
+    <button class="btn btn-danger" onclick="submitReturn(${device.id})">返却登録する</button>
+  </div>`;
+}
+
+async function submitReturn(deviceId) {
+  const operator = currentUser ? currentUser.name : '';
+  const retdate = document.getElementById('f-retdate').value || today();
+  const notes = document.getElementById('f-notes').value.trim();
+
+  const device = db.devices.find(d => d.id === deviceId);
+  const prevLoanTo = device.loanTo;
+  device.status = '社内';
+  device.returnDate = retdate;
+  device.loanTo = null;
+  device.returnDueDate = null;
+  device.salesRep = null;
+
+  const returnLoan = {
+    id: db.nextLoanId++,
+    deviceId,
+    labelId: device.labelId,
+    deviceName: device.name,
+    type: '返却',
+    loanTo: prevLoanTo,
+    date: retdate,
+    notes,
+    registeredBy: operator,
+    deviceInfo: getDeviceInfo(),
+  };
+  db.loans.push(returnLoan);
+
+  showLoading();
+  try {
+    // saveDevice + saveLoan（LINE WORKS通知含む）を1回のGASコールで処理
+    await apiPost('saveLoanTransaction', { device, loan: returnLoan });
+    saveDBCache();
+    showToast('返却登録しました ✓', 'success');
+    currentView = 'home';
+    viewData = {};
+    viewStack = [];
+    navigate('deviceDetail', { deviceId });
+  } catch(e) {} finally {
+    hideLoading();
+  }
+}
+
+// ========== REGISTER FORM ==========
+function renderRegisterForm() {
+  const availableLabels = (db.labels || []).filter(l => l.status === '印刷済');
+  const preselected = viewData.labelId || ''; // スキャン画面から渡されたLabelID
+
+  return `
+  <div class="header">
+    <div style="display:flex;gap:6px;"><button class="header-back" onclick="goBack()">← 戻る</button><button class="header-back" onclick="resetTo('home')">🏠</button></div>
+    <h1>新規商品登録</h1>
+    <div></div>
+  </div>
+  <div class="content">
+    <div class="form-section">
+      <div class="form-label">LabelID <span class="required">*</span></div>
+      ${availableLabels.length > 0
+        ? `<select class="form-select" id="f-labelid">
+        <option value="">ラベルを選択してください</option>
+        ${availableLabels.map(l => `<option value="${l.labelId}" ${l.labelId === preselected ? 'selected' : ''}>${l.labelId}</option>`).join('')}
+      </select>`
+        : `<div style="padding:12px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:14px;color:var(--text-sub);background:white;">使用可能なラベルがありません。ラベル管理から発行してください。</div><input type="hidden" id="f-labelid" value="">`
+      }
+    </div>
+    <div class="form-section">
+      <div class="form-label">商品名 <span class="required">*</span></div>
+      <input class="form-input" id="f-name" placeholder="例: ドライヤー Pro-X" autocomplete="off">
+    </div>
+    <div class="form-section">
+      <div class="form-label">区分 <span class="required">*</span></div>
+      <div class="form-radio-group">
+        <div class="radio-btn selected" id="type-own" onclick="selectType('自社資産')">自社資産</div>
+        <div class="radio-btn" id="type-maker" onclick="selectType('メーカー借入')">メーカー借入</div>
+      </div>
+      <input type="hidden" id="f-type" value="自社資産">
+    </div>
+    <div class="form-section">
+      <div class="form-label">メーカー名</div>
+      <select class="form-select" id="f-maker" onchange="onMakerSelectChange('f-maker','f-maker-new')">
+        <option value="">選択してください</option>
+        ${(db.makers||[]).filter(m => m.active).map(m => `<option value="${m.name}">${m.name}</option>`).join('')}
+        <option value="__new__">＋ 新しいメーカーを追加...</option>
+      </select>
+      <input class="form-input" id="f-maker-new" placeholder="メーカー名を入力" style="display:none;margin-top:8px;">
+    </div>
+    <div class="form-section" id="maker-due-section" style="display:none;">
+      <div class="form-label">メーカー返却期限 <span style="color:var(--text-sub);font-weight:400;">(未定の場合は空欄)</span></div>
+      <input class="form-input" id="f-maker-due" type="date">
+    </div>
+    <div class="form-section">
+      <div class="form-label">備考（付属品等）</div>
+      <input class="form-input" id="f-notes" placeholder="任意">
+    </div>
+    <div class="form-section">
+      <div class="form-label">画像 <span style="color:var(--text-sub);font-weight:400;">(任意・最大3枚)</span></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">${renderImageSlots('reg', [])}</div>
+    </div>
+    <button class="btn btn-primary" onclick="submitRegister()">商品を登録する</button>
+  </div>`;
+}
+
+// ========== IMAGE UPLOAD ==========
+
+// 3枚スロットのHTML生成（reg/edit共通）
+// existingUrls: [url0, url1, url2] 既存画像URL（nullは空スロット）
+function renderImageSlots(type, existingUrls) {
+  const urls = existingUrls || [];
+  let html = '';
+  for (let i = 0; i < 3; i++) {
+    const ex = urls[i] || null;
+    html += `
+      <input type="file" id="f-img-${type}-${i}" accept="image/*" style="display:none" onchange="handleImageSelect('${type}', this, ${i})">
+      <div style="width:88px;height:88px;border:1.5px dashed var(--border);border-radius:10px;position:relative;overflow:hidden;background:var(--bg-card);cursor:pointer;flex-shrink:0;" onclick="document.getElementById('f-img-${type}-${i}').click()">
+        <img id="img-thumb-${type}-${i}" src="${ex || ''}" style="width:100%;height:100%;object-fit:cover;border-radius:9px;${ex ? '' : 'display:none;'}">
+        <div id="img-label-${type}-${i}" style="${ex ? 'display:none;' : ''}position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:11px;color:var(--text-sub);gap:2px;pointer-events:none;"><span style="font-size:20px;">📷</span><span>${i + 1}枚目</span></div>
+        <button id="img-del-${type}-${i}" style="display:${ex ? '' : 'none'};position:absolute;top:3px;right:3px;background:rgba(220,38,38,0.85);color:#fff;border:none;border-radius:50%;width:22px;height:22px;font-size:11px;cursor:pointer;padding:0;line-height:1;" onclick="event.stopPropagation();clearImage('${type}',${i})">✕</button>
+      </div>`;
+  }
+  return html;
+}
+
+function handleImageSelect(type, input, index) {
+  const file = input.files[0];
+  if (!file) { console.log('[IMAGE] ファイル未選択'); return; }
+  console.log('[IMAGE] ファイル選択:', file.name, file.type, file.size, 'bytes');
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const dataUrl = e.target.result;
+    const base64 = dataUrl.split(',')[1];
+    if (index !== undefined) {
+      // 複数画像モード（reg / edit）
+      if (!Array.isArray(pendingImages[type])) pendingImages[type] = [null, null, null];
+      pendingImages[type][index] = { base64, mimeType: file.type || 'image/jpeg', fileName: file.name || 'upload.jpg' };
+      if (clearedSlots[type]) delete clearedSlots[type][index];
+      const thumb  = document.getElementById('img-thumb-'  + type + '-' + index);
+      const label  = document.getElementById('img-label-'  + type + '-' + index);
+      const delBtn = document.getElementById('img-del-'    + type + '-' + index);
+      if (thumb)  { thumb.src = dataUrl; thumb.style.display = ''; }
+      if (label)  label.style.display = 'none';
+      if (delBtn) delBtn.style.display = '';
+    } else {
+      // 単一画像モード（loan）
+      pendingImages[type] = { base64, mimeType: file.type || 'image/jpeg', fileName: file.name || 'upload.jpg' };
+      console.log('[IMAGE] base64変換成功 type=' + type + ' base64length=' + base64.length);
+      const thumb   = document.getElementById('img-thumb-'   + type);
+      const preview = document.getElementById('img-preview-' + type);
+      if (thumb)   thumb.src = dataUrl;
+      if (preview) preview.style.display = '';
+    }
+  };
+  reader.onerror = function(err) { console.error('[IMAGE] FileReader エラー:', err); };
+  reader.readAsDataURL(file);
+}
+
+function clearImage(type, index) {
+  if (index !== undefined) {
+    // 複数画像モード（reg / edit）
+    if (Array.isArray(pendingImages[type])) pendingImages[type][index] = null;
+    if (!clearedSlots[type]) clearedSlots[type] = {};
+    clearedSlots[type][index] = true;
+    const input  = document.getElementById('f-img-'   + type + '-' + index);
+    const thumb  = document.getElementById('img-thumb-' + type + '-' + index);
+    const label  = document.getElementById('img-label-' + type + '-' + index);
+    const delBtn = document.getElementById('img-del-'   + type + '-' + index);
+    if (input)  input.value = '';
+    if (thumb)  { thumb.src = ''; thumb.style.display = 'none'; }
+    if (label)  label.style.display = '';
+    if (delBtn) delBtn.style.display = 'none';
+  } else {
+    // 単一画像モード（loan）
+    pendingImages[type] = null;
+    const input   = document.getElementById('f-img-'     + type);
+    const preview = document.getElementById('img-preview-' + type);
+    if (input)   input.value = '';
+    if (preview) preview.style.display = 'none';
+  }
+}
+
+// 単一画像アップロード（loanフォーム用）
+async function uploadPendingImage(type) {
+  const img = pendingImages[type];
+  if (!img) { console.log('[IMAGE] アップロードスキップ（画像なし） type=' + type); return null; }
+  console.log('[IMAGE] GASへPOST送信開始 action=uploadImage mimeType=' + img.mimeType + ' fileName=' + img.fileName + ' base64length=' + img.base64.length);
+  try {
+    const res = await apiPost('uploadImage', img);
+    console.log('[IMAGE] GASレスポンス:', JSON.stringify(res));
+    const url = (res && res.result && res.result.imageUrl) ? res.result.imageUrl : null;
+    console.log('[IMAGE] imageUrl:', url);
+    return url;
+  } catch(e) {
+    console.error('[IMAGE] アップロードエラー:', e.message);
+    throw e;
+  }
+}
+
+// 複数画像アップロード（reg / editフォーム用）最大3枚
+async function uploadPendingImages(type) {
+  const slots = Array.isArray(pendingImages[type]) ? pendingImages[type] : [null, null, null];
+  const results = [];
+  for (let i = 0; i < 3; i++) {
+    const img = slots[i];
+    if (!img) { results.push(null); continue; }
+    try {
+      const res = await apiPost('uploadImage', img);
+      const url = (res && res.result && res.result.imageUrl) ? res.result.imageUrl : null;
+      results.push(url);
+    } catch(e) {
+      console.error('[IMAGE] アップロードエラー slot=' + i, e.message);
+      results.push(null);
+    }
+  }
+  return results;
+}
+
+function selectType(type) {
+  document.getElementById('f-type').value = type;
+  document.getElementById('type-own').className = 'radio-btn' + (type === '自社資産' ? ' selected' : '');
+  document.getElementById('type-maker').className = 'radio-btn' + (type === 'メーカー借入' ? ' selected' : '');
+  document.getElementById('maker-due-section').style.display = type === 'メーカー借入' ? '' : 'none';
+}
+
+function onMakerSelectChange(selectId, inputId) {
+  const sel = document.getElementById(selectId);
+  const inp = document.getElementById(inputId);
+  if (sel.value === '__new__') {
+    inp.style.display = '';
+    inp.focus();
+  } else {
+    inp.style.display = 'none';
+    inp.value = '';
+  }
+}
+
+// 新規メーカーをMakerMasterに保存して名前を返す。既存なら何もしない。
+async function saveNewMakerIfNeeded(selectId, inputId) {
+  const sel = document.getElementById(selectId);
+  if (sel.value !== '__new__') return sel.value.trim();
+  const name = document.getElementById(inputId).value.trim();
+  if (!name) return '';
+  if (!db.makers) db.makers = [];
+  // 同名が既にあれば追加しない
+  if (!db.makers.find(m => m.name === name)) {
+    const newMaker = { id: db.nextMakerId++, name, active: true };
+    db.makers.push(newMaker);
+    await apiPost('saveMaker', newMaker);
+  }
+  return name;
+}
+
+async function submitRegister() {
+  const labelId = document.getElementById('f-labelid').value.trim().toUpperCase();
+  const name = document.getElementById('f-name').value.trim();
+  const type = document.getElementById('f-type').value;
+  const makerDue = document.getElementById('f-maker-due').value;
+  const notes = document.getElementById('f-notes').value.trim();
+
+  if (!labelId) { showToast('使用可能なラベルを選択してください', 'error'); return; }
+  if (!name) { showToast('商品名を入力してください', 'error'); return; }
+  if (db.devices.find(d => d.labelId === labelId)) {
+    showToast('このLabelIDはすでに使用されています', 'error'); return;
+  }
+
+  showLoading();
+  try {
+    const maker = await saveNewMakerIfNeeded('f-maker', 'f-maker-new');
+
+    const newDevice = {
+      labelId, name, type, maker,
+      status: '社内',
+      loanTo: null, loanDate: null, returnDueDate: null,
+      returnDate: null, salesRep: null, notes,
+      makerReturnDueDate: makerDue || null,
+      createdAt: today(),
+    };
+
+    const imageUrls = await uploadPendingImages('reg');
+    if (imageUrls[0]) newDevice.imageUrl  = imageUrls[0];
+    if (imageUrls[1]) newDevice.imageUrl2 = imageUrls[1];
+    if (imageUrls[2]) newDevice.imageUrl3 = imageUrls[2];
+
+    // saveDevice + assignLabel を1回のGASコールで処理（通信往復を削減）
+    const result = await apiPost('registerDevice', { device: newDevice, labelId });
+    const serverDevice = result?.result?.device || newDevice;
+    db.devices.push(serverDevice);
+    pendingImages['reg'] = [null, null, null];
+    saveDBCache();
+    showToast('商品を登録しました ✓', 'success');
+    currentView = 'home';
+    viewData = {};
+    viewStack = [];
+    navigate('deviceDetail', { deviceId: serverDevice.id });
+  } catch(e) {
+  } finally {
+    hideLoading();
+  }
+}
+
+// ========== EDIT DEVICE ==========
+function renderEditDevice() {
+  const device = db.devices.find(d => d.id === viewData.deviceId);
+  if (!device) return '<div class="content"><p>商品が見つかりません</p></div>';
+  // 編集フォーム表示時に画像スロット状態をリセット
+  pendingImages['edit'] = [null, null, null];
+  clearedSlots['edit'] = {};
+  const isMaker = device.type === 'メーカー借入';
+  return `
+  <div class="header">
+    <div style="display:flex;gap:6px;"><button class="header-back" onclick="goBack()">← 戻る</button><button class="header-back" onclick="resetTo('home')">🏠</button></div>
+    <h1>商品情報を編集</h1>
+    <div></div>
+  </div>
+  <div class="content">
+    <div class="form-section">
+      <div class="form-label">LabelID（変更不可）</div>
+      <div style="padding:12px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:15px;color:var(--text-sub);background:#f5f5f5;">${device.labelId}</div>
+    </div>
+    <div class="form-section">
+      <div class="form-label">ステータス（変更不可）</div>
+      <div style="padding:12px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:15px;color:var(--text-sub);background:#f5f5f5;">${device.status}</div>
+    </div>
+    <div class="form-section">
+      <div class="form-label">商品名 <span class="required">*</span></div>
+      <input class="form-input" id="f-edit-name" value="${(device.name||'').replace(/"/g,'&quot;')}" autocomplete="off">
+    </div>
+    <div class="form-section">
+      <div class="form-label">区分 <span class="required">*</span></div>
+      <div class="form-radio-group">
+        <div class="radio-btn${!isMaker ? ' selected' : ''}" id="edit-type-own" onclick="selectTypeEdit('自社資産')">自社資産</div>
+        <div class="radio-btn${isMaker ? ' selected' : ''}" id="edit-type-maker" onclick="selectTypeEdit('メーカー借入')">メーカー借入</div>
+      </div>
+      <input type="hidden" id="f-edit-type" value="${device.type || '自社資産'}">
+    </div>
+    <div class="form-section">
+      <div class="form-label">メーカー名</div>
+      <select class="form-select" id="f-edit-maker" onchange="onMakerSelectChange('f-edit-maker','f-edit-maker-new')">
+        <option value="">選択してください</option>
+        ${(db.makers||[]).filter(m => m.active).map(m => `<option value="${m.name}"${m.name === (device.maker||'') ? ' selected' : ''}>${m.name}</option>`).join('')}
+        <option value="__new__">＋ 新しいメーカーを追加...</option>
+      </select>
+      <input class="form-input" id="f-edit-maker-new" placeholder="メーカー名を入力" style="display:none;margin-top:8px;">
+    </div>
+    <div class="form-section" id="edit-maker-due-section" style="${isMaker ? '' : 'display:none;'}">
+      <div class="form-label">メーカー返却期限 <span style="color:var(--text-sub);font-weight:400;">(未定の場合は空欄)</span></div>
+      <input class="form-input" id="f-edit-maker-due" type="date" value="${device.makerReturnDueDate ? String(device.makerReturnDueDate).split('T')[0].replace(/\//g,'-') : ''}">
+    </div>
+    <div class="form-section">
+      <div class="form-label">備考（付属品等）</div>
+      <input class="form-input" id="f-edit-notes" value="${(device.notes||'').replace(/"/g,'&quot;')}" placeholder="任意">
+    </div>
+    <div class="form-section">
+      <div class="form-label">画像 <span style="color:var(--text-sub);font-weight:400;">(最大3枚)</span></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">${renderImageSlots('edit', [device.imageUrl||null, device.imageUrl2||null, device.imageUrl3||null])}</div>
+    </div>
+    <button class="btn btn-primary" onclick="submitEditDevice(${device.id})">保存する</button>
+  </div>`;
+}
+
+function selectTypeEdit(type) {
+  document.getElementById('f-edit-type').value = type;
+  document.getElementById('edit-type-own').className = 'radio-btn' + (type === '自社資産' ? ' selected' : '');
+  document.getElementById('edit-type-maker').className = 'radio-btn' + (type === 'メーカー借入' ? ' selected' : '');
+  document.getElementById('edit-maker-due-section').style.display = type === 'メーカー借入' ? '' : 'none';
+}
+
+async function submitEditDevice(deviceId) {
+  const name = document.getElementById('f-edit-name').value.trim();
+  const type = document.getElementById('f-edit-type').value;
+  const makerDue = document.getElementById('f-edit-maker-due').value;
+  const notes = document.getElementById('f-edit-notes').value.trim();
+  if (!name) { showToast('商品名を入力してください', 'error'); return; }
+  const device = db.devices.find(d => d.id === deviceId);
+  showLoading();
+  try {
+    const maker = await saveNewMakerIfNeeded('f-edit-maker', 'f-edit-maker-new');
+    device.name = name;
+    device.type = type;
+    device.maker = maker;
+    device.makerReturnDueDate = makerDue || null;
+    device.notes = notes;
+    const imageUrls = await uploadPendingImages('edit');
+    const urlKeys = ['imageUrl', 'imageUrl2', 'imageUrl3'];
+    const cleared  = clearedSlots['edit'] || {};
+    urlKeys.forEach((key, i) => {
+      if (imageUrls[i])   device[key] = imageUrls[i];
+      else if (cleared[i]) device[key] = null;
+    });
+    pendingImages['edit'] = [null, null, null];
+    clearedSlots['edit']  = {};
+    await apiPost('saveDevice', device);
+    showToast('更新しました ✓', 'success');
+    goBack();
+  } catch(e) {
+    showToast('エラーが発生しました', 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// ========== DISPOSE / MAKER RETURN ==========
+function closeFormModal() {
+  const el = document.getElementById('form-modal-overlay');
+  if (el) el.remove();
+}
+
+function showDisposeModal(deviceId) {
+  const activeReps = db.salesReps.filter(r => r.active);
+  const lastOp = getLastOperator();
+  const el = document.createElement('div');
+  el.id = 'form-modal-overlay';
+  el.className = 'form-modal-overlay';
+  el.innerHTML = `
+    <div class="form-modal">
+      <div class="form-modal-title">廃棄登録</div>
+      <div class="form-section">
+        <div class="form-label">操作者 <span class="required" style="color:var(--danger);">*</span></div>
+        <select class="form-select" id="modal-dispose-operator">
+          <option value="">選択してください</option>
+          ${activeReps.map(r => `<option value="${r.name}"${r.name === lastOp ? ' selected' : ''}>${r.name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-section">
+        <div class="form-label">廃棄日 <span class="required" style="color:var(--danger);">*</span></div>
+        <input class="form-input" id="modal-dispose-date" type="date" value="${today()}">
+      </div>
+      <div class="form-section">
+        <div class="form-label">備考</div>
+        <input class="form-input" id="modal-dispose-notes" placeholder="任意">
+      </div>
+      <div class="form-modal-actions">
+        <button class="btn" style="flex:1;background:#ffffff;border:1px solid var(--border);color:var(--text);" onclick="closeFormModal()">キャンセル</button>
+        <button class="btn btn-primary" style="flex:1;background:var(--danger);border-color:var(--danger);" onclick="submitDispose(${deviceId})">廃棄登録する</button>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+}
+
+async function submitDispose(deviceId) {
+  const operator = document.getElementById('modal-dispose-operator').value;
+  const date = document.getElementById('modal-dispose-date').value;
+  const notes = document.getElementById('modal-dispose-notes').value.trim();
+  if (!operator) { showToast('操作者を選択してください', 'error'); return; }
+  if (!date) { showToast('廃棄日を入力してください', 'error'); return; }
+  saveLastOperator(operator);
+  closeFormModal();
+  const device = db.devices.find(d => d.id === deviceId);
+  if (!device) return;
+  device.status = '廃棄';
+  device.disposalDate = date;
+  device.disposeNotes = notes || null;
+  device.disposalBy = operator;
+  showLoading();
+  try {
+    await apiPost('saveDevice', device);
+    showToast('廃棄登録しました', 'success');
+    currentView = 'home';
+    viewData = {};
+    viewStack = [];
+    navigate('home', {});
+  } catch(e) {
+    showToast('エラーが発生しました', 'error');
+    device.status = '社内';
+    device.disposalDate = null;
+    device.disposeNotes = null;
+    device.disposalBy = null;
+  } finally {
+    hideLoading();
+  }
+}
+
+async function confirmRestore(deviceId) {
+  if (!confirm('廃棄を取り消して「社内」に戻しますか？')) return;
+  const device = db.devices.find(d => d.id === deviceId);
+  if (!device) return;
+  const prevStatus = device.status;
+  device.status = '社内';
+  device.disposalDate = null;
+  device.disposeNotes = null;
+  showLoading();
+  try {
+    await apiPost('saveDevice', device);
+    showToast('廃棄を取り消しました', 'success');
+    render();
+  } catch(e) {
+    showToast('エラーが発生しました', 'error');
+    device.status = prevStatus;
+  } finally {
+    hideLoading();
+  }
+}
+
+function showMakerReturnModal(deviceId) {
+  const activeReps = db.salesReps.filter(r => r.active);
+  const lastOp = getLastOperator();
+  const el = document.createElement('div');
+  el.id = 'form-modal-overlay';
+  el.className = 'form-modal-overlay';
+  el.innerHTML = `
+    <div class="form-modal">
+      <div class="form-modal-title">メーカー返却登録</div>
+      <div class="form-section">
+        <div class="form-label">操作者 <span class="required" style="color:var(--danger);">*</span></div>
+        <select class="form-select" id="modal-maker-operator">
+          <option value="">選択してください</option>
+          ${activeReps.map(r => `<option value="${r.name}"${r.name === lastOp ? ' selected' : ''}>${r.name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-section">
+        <div class="form-label">返却日 <span class="required" style="color:var(--danger);">*</span></div>
+        <input class="form-input" id="modal-maker-date" type="date" value="${today()}">
+      </div>
+      <div class="form-section">
+        <div class="form-label">備考</div>
+        <input class="form-input" id="modal-maker-notes" placeholder="任意">
+      </div>
+      <div class="form-modal-actions">
+        <button class="btn" style="flex:1;background:#ffffff;border:1px solid var(--border);color:var(--text);" onclick="closeFormModal()">キャンセル</button>
+        <button class="btn btn-primary" style="flex:1;" onclick="submitMakerReturn(${deviceId})">返却登録する</button>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+}
+
+async function submitMakerReturn(deviceId) {
+  const operator = document.getElementById('modal-maker-operator').value;
+  const date = document.getElementById('modal-maker-date').value;
+  const notes = document.getElementById('modal-maker-notes').value.trim();
+  if (!operator) { showToast('操作者を選択してください', 'error'); return; }
+  if (!date) { showToast('返却日を入力してください', 'error'); return; }
+  saveLastOperator(operator);
+  closeFormModal();
+  const device = db.devices.find(d => d.id === deviceId);
+  if (!device) return;
+  device.status = 'メーカー返却済';
+  device.makerReturnDate = date;
+  device.makerReturnNotes = notes || null;
+  device.makerReturnBy = operator;
+  showLoading();
+  try {
+    await apiPost('saveDevice', device);
+    showToast('メーカー返却済みとして登録しました', 'success');
+    currentView = 'home';
+    viewData = {};
+    viewStack = [];
+    navigate('home', {});
+  } catch(e) {
+    showToast('エラーが発生しました', 'error');
+    device.status = '社内';
+    device.makerReturnDate = null;
+    device.makerReturnNotes = null;
+    device.makerReturnBy = null;
+  } finally {
+    hideLoading();
+  }
+}
+
+async function confirmRestoreMaker(deviceId) {
+  if (!confirm('メーカー返却を取り消して「社内」に戻しますか？')) return;
+  const device = db.devices.find(d => d.id === deviceId);
+  if (!device) return;
+  const prevStatus = device.status;
+  device.status = '社内';
+  device.makerReturnDate = null;
+  device.makerReturnNotes = null;
+  showLoading();
+  try {
+    await apiPost('saveDevice', device);
+    showToast('メーカー返却を取り消しました', 'success');
+    render();
+  } catch(e) {
+    showToast('エラーが発生しました', 'error');
+    device.status = prevStatus;
+  } finally {
+    hideLoading();
+  }
+}
+
+
+// ========== EXTEND DUE DATE ==========
+function showExtendDueDateModal(deviceId) {
+  const device = db.devices.find(d => d.id === deviceId);
+  const el = document.createElement('div');
+  el.id = 'form-modal-overlay';
+  el.className = 'form-modal-overlay';
+  el.innerHTML = `
+    <div class="form-modal">
+      <div class="form-modal-title">返却予定日の延長</div>
+      <div style="text-align:center;font-size:14px;color:var(--text-sub);margin-bottom:16px;">
+        現在: ${device.returnDueDate ? fmtDate(device.returnDueDate) : '未設定'}
+      </div>
+      <div class="form-section">
+        <div class="form-label">新しい返却予定日 <span class="required">*</span></div>
+        <input class="form-input" id="modal-extend-duedate" type="date" min="${today()}" value="${device.returnDueDate || ''}">
+      </div>
+      <div class="form-modal-actions">
+        <button class="btn" style="flex:1;background:#ffffff;border:1px solid var(--border);color:var(--text);" onclick="closeFormModal()">キャンセル</button>
+        <button class="btn btn-primary" style="flex:1;" onclick="submitExtendDueDate(${deviceId})">延長する</button>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+}
+
+async function submitExtendDueDate(deviceId) {
+  const newDueDate = document.getElementById('modal-extend-duedate').value;
+  if (!newDueDate) { showToast('新しい返却予定日を入力してください', 'error'); return; }
+
+  const device = db.devices.find(d => d.id === deviceId);
+  showLoading();
+  try {
+    const oldDueDate = device.returnDueDate || '';
+    await apiPost('extendDueDate', {
+      deviceId,
+      labelId: device.labelId || '',
+      deviceName: device.name || '',
+      loanTo: device.loanTo || '',
+      salesRep: device.salesRep || '',
+      oldDueDate,
+      newDueDate,
+      registeredBy: currentUser ? currentUser.name : ''
+    });
+    // ローカルDBを即時更新
+    device.returnDueDate = newDueDate;
+    const loanEntry = {
+      id: Date.now(),
+      type: '延長',
+      deviceId,
+      labelId: device.labelId || '',
+      deviceName: device.name || '',
+      loanTo: device.loanTo || '',
+      date: today(),
+      returnDueDate: newDueDate,
+      salesRep: device.salesRep || '',
+      notes: oldDueDate ? '変更前: ' + oldDueDate : '新規設定',
+      registeredBy: currentUser ? currentUser.name : ''
+    };
+    db.loans.push(loanEntry);
+    closeFormModal();
+    showToast('返却予定日を延長しました');
+    render();
+  } catch(e) {
+    showToast('保存に失敗しました: ' + e.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+function renderMakerReturnedDevices() {
+  const list = db.devices.filter(d => d.status === 'メーカー返却済');
+  return `
+  <div class="header">
+    <div style="display:flex;gap:6px;"><button class="header-back" onclick="goBack()">← 戻る</button><button class="header-back" onclick="resetTo('home')">🏠</button></div>
+    <h1>メーカー返却済み商品</h1>
+    <div></div>
+  </div>
+  <div class="content">
+    ${list.length === 0 ? '<p style="color:var(--text-sub);text-align:center;margin-top:32px;">メーカー返却済み商品はありません</p>' : list.map(d => {
+      const history = db.loans.filter(l => l.deviceId === d.id).sort((a,b) => b.date.localeCompare(a.date));
+      return `
+      <div class="card" style="margin-bottom:12px;">
+        <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:8px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:12px;color:var(--text-sub);">${d.labelId}</div>
+            <div style="font-size:16px;font-weight:700;">${d.name}</div>
+            <div style="font-size:12px;color:var(--text-sub);margin-top:2px;">${d.type}${d.maker ? ' ・ ' + d.maker : ''}</div>
+          </div>
+          <button class="btn" style="flex-shrink:0;width:120px;background:none;border:1px solid var(--text-sub);color:var(--text-sub);font-size:12px;padding:5px 0;" onclick="confirmRestoreMaker(${d.id})">返却を取り消す</button>
+        </div>
+        ${d.makerReturnDate ? `<div style="font-size:12px;color:var(--text-sub);margin-bottom:6px;">返却日: ${fmtDate(d.makerReturnDate)}${d.makerReturnBy ? ' ・ ' + d.makerReturnBy : ''}${d.makerReturnNotes ? ' ・ ' + d.makerReturnNotes : ''}</div>` : ''}
+        ${history.length > 0 ? `
+        <div style="border-top:1px solid var(--border);padding-top:8px;margin-top:4px;">
+          <div style="font-size:11px;color:var(--text-sub);margin-bottom:4px;">貸出履歴</div>
+          ${history.map(l => `
+          <div class="history-item">
+            <span class="history-type ${l.type==='貸出'?'loan':'ret'}">${l.type}</span>
+            <div class="history-detail">${l.type==='貸出' ? fmtDate(l.date) + ' ・ ' + (l.loanTo||'—') + ' ・ ' + (l.salesRep||'—') : fmtDate(l.date) + ' 返却'}</div>
+          </div>`).join('')}
+        </div>` : ''}
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function renderDisposedDevices() {
+  const disposed = db.devices.filter(d => d.status === '廃棄');
+  return `
+  <div class="header">
+    <div style="display:flex;gap:6px;"><button class="header-back" onclick="goBack()">← 戻る</button><button class="header-back" onclick="resetTo('home')">🏠</button></div>
+    <h1>廃棄済み商品</h1>
+    <div></div>
+  </div>
+  <div class="content">
+    ${disposed.length === 0 ? '<p style="color:var(--text-sub);text-align:center;margin-top:32px;">廃棄済み商品はありません</p>' : disposed.map(d => {
+      const history = db.loans.filter(l => l.deviceId === d.id).sort((a,b) => b.date.localeCompare(a.date));
+      return `
+      <div class="card" style="margin-bottom:12px;">
+        <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:8px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:12px;color:var(--text-sub);">${d.labelId}</div>
+            <div style="font-size:16px;font-weight:700;">${d.name}</div>
+            <div style="font-size:12px;color:var(--text-sub);margin-top:2px;">${d.type}${d.maker ? ' ・ ' + d.maker : ''}</div>
+          </div>
+          <button class="btn" style="flex-shrink:0;width:120px;background:none;border:1px solid var(--text-sub);color:var(--text-sub);font-size:12px;padding:5px 0;" onclick="confirmRestore(${d.id})">廃棄を取り消す</button>
+        </div>
+        ${d.disposalDate ? `<div style="font-size:12px;color:var(--text-sub);margin-bottom:6px;">廃棄日: ${fmtDate(d.disposalDate)}${d.disposalBy ? ' ・ ' + d.disposalBy : ''}${d.disposeNotes ? ' ・ ' + d.disposeNotes : ''}</div>` : ''}
+        ${history.length > 0 ? `
+        <div style="border-top:1px solid var(--border);padding-top:8px;margin-top:4px;">
+          <div style="font-size:11px;color:var(--text-sub);margin-bottom:4px;">貸出履歴</div>
+          ${history.map(l => `
+          <div class="history-item">
+            <span class="history-type ${l.type==='貸出'?'loan':'ret'}">${l.type}</span>
+            <div class="history-detail">${l.type==='貸出' ? fmtDate(l.date) + ' ・ ' + (l.loanTo||'—') + ' ・ ' + (l.salesRep||'—') : fmtDate(l.date) + ' 返却'}</div>
+          </div>`).join('')}
+        </div>` : ''}
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+// ========== SETTINGS ==========
+function renderSettings() {
+  return `
+  <div class="header">
+    <h1>設定</h1>
+    <div></div>
+  </div>
+  <div class="content">
+    <div class="section-title">マスタ管理</div>
+    <div class="card">
+      <div class="settings-item" onclick="navigate('salesReps', {})">
+        <span class="settings-label">担当者マスタ</span>
+        <span class="settings-arrow">›</span>
+      </div>
+      <div class="settings-item" onclick="navigate('makers', {})">
+        <span class="settings-label">メーカーマスタ</span>
+        <span class="settings-arrow">›</span>
+      </div>
+      <div class="settings-item" onclick="navigate('labelPool', {})">
+        <span class="settings-label">ラベル管理</span>
+        <span class="settings-arrow">›</span>
+      </div>
+      <div class="settings-item" onclick="navigate('disposedDevices', {})">
+        <span class="settings-label">廃棄済み商品</span>
+        <span class="settings-arrow">›</span>
+      </div>
+      <div class="settings-item" onclick="navigate('makerReturnedDevices', {})">
+        <span class="settings-label">メーカー返却済み商品</span>
+        <span class="settings-arrow">›</span>
+      </div>
+    </div>
+
+    <div class="section-title">データ管理</div>
+    <div class="card">
+      <div class="settings-item" onclick="exportCSV()">
+        <span class="settings-label">商品一覧をCSV出力</span>
+        <span class="settings-arrow">↓</span>
+      </div>
+      <div class="settings-item" onclick="exportLoansCSV()">
+        <span class="settings-label">貸出履歴をCSV出力</span>
+        <span class="settings-arrow">↓</span>
+      </div>
+    </div>
+
+    <div class="section-title">ヘルプ・マニュアル</div>
+    <div class="card">
+      <div class="settings-item" onclick="window.open('https://beaufield.github.io/beaufield-dev/kiki-kanri/manual_full.pdf','_blank')">
+        <span class="settings-label">操作マニュアル（全体版）</span>
+        <span class="settings-arrow">›</span>
+      </div>
+      <div class="settings-item" onclick="window.open('https://beaufield.github.io/beaufield-dev/kiki-kanri/manual_simple.pdf','_blank')">
+        <span class="settings-label">かんたん操作ガイド（社員向け）</span>
+        <span class="settings-arrow">›</span>
+      </div>
+    </div>
+
+    <div class="section-title">アカウント設定</div>
+    <div class="card">
+      <div class="settings-item" onclick="openChangePinModal()">
+        <span class="settings-label">PINを変更する</span>
+        <span class="settings-arrow">›</span>
+      </div>
+      <div style="padding:8px 12px 12px;font-size:12px;color:var(--text-sub);">
+        ※ このPINはすべてのBeaufieldアプリで共通です
+      </div>
+    </div>
+
+    <div class="section-title">アプリ情報</div>
+    <div class="card">
+      <div class="info-row"><span class="info-key">バージョン</span><span class="info-val">${APP_VERSION}</span></div>
+      <div class="info-row"><span class="info-key">ログインユーザー</span><span class="info-val">${currentUser ? currentUser.name : '-'}</span></div>
+      <div class="info-row"><span class="info-key">登録数</span><span class="info-val">${db.devices.length} 台</span></div>
+      <div class="info-row"><span class="info-key">貸出記録数</span><span class="info-val">${db.loans.length} 件</span></div>
+    </div>
+
+  </div>
+  ${renderNav()}`;
+}
+
+function renderSalesReps() {
+  return `
+  <div class="header">
+    <div style="display:flex;gap:6px;"><button class="header-back" onclick="goBack()">← 戻る</button><button class="header-back" onclick="resetTo('home')">🏠</button></div>
+    <h1>担当者マスタ</h1>
+    <div></div>
+  </div>
+  <div class="content">
+    <p style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">「営業」をONにすると貸出登録の営業担当リストに表示されます</p>
+    <div class="card" style="margin-bottom:16px;">
+      ${db.salesReps.map(r => `
+      <div class="device-item" style="cursor:default;">
+        <div style="flex:1;font-size:15px;font-weight:500;">${r.name}</div>
+        <button onclick="toggleRepSales(${r.id})" style="border:none;background:${r.isSales?'var(--primary)':'var(--border)'};color:${r.isSales?'#fff':'var(--text-sub)'};padding:5px 12px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;margin-right:4px;">${r.isSales?'営業✓':'営業'}</button>
+        <button onclick="toggleRep(${r.id})" style="border:none;background:${r.active?'var(--in)':'var(--border)'};color:${r.active?'var(--in-text)':'var(--text-sub)'};padding:5px 12px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;">${r.active?'有効':'無効'}</button>
+        <button onclick="deleteRep(${r.id})" style="border:none;background:none;color:var(--text-sub);padding:4px 8px;font-size:18px;cursor:pointer;margin-left:4px;">×</button>
+      </div>`).join('')}
+    </div>
+
+    <div class="form-section">
+      <div class="form-label">新しい担当者を追加</div>
+      <div class="scanner-label-input">
+        <input class="form-input" id="new-rep" placeholder="氏名を入力">
+        <button onclick="addRep()">追加</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function toggleRep(id) {
+  const rep = db.salesReps.find(r => r.id === id);
+  if (rep) rep.active = !rep.active;
+  showLoading();
+  try {
+    await apiPost('saveSalesRep', rep);
+    render();
+  } catch(e) {} finally {
+    hideLoading();
+  }
+}
+
+async function toggleRepSales(id) {
+  const rep = db.salesReps.find(r => r.id === id);
+  if (rep) rep.isSales = !rep.isSales;
+  showLoading();
+  try {
+    await apiPost('saveSalesRep', rep);
+    render();
+  } catch(e) {} finally {
+    hideLoading();
+  }
+}
+
+async function deleteRep(id) {
+  if (!confirm('この担当者を削除しますか？')) return;
+  db.salesReps = db.salesReps.filter(r => r.id !== id);
+  showLoading();
+  try {
+    await apiPost('deleteSalesRep', { id });
+    render();
+  } catch(e) {} finally {
+    hideLoading();
+  }
+}
+
+async function addRep() {
+  const name = document.getElementById('new-rep').value.trim();
+  if (!name) return;
+  const newRep = { id: db.nextRepId++, name, active: true, isSales: false };
+  db.salesReps.push(newRep);
+  showLoading();
+  try {
+    await apiPost('saveSalesRep', newRep);
+    showToast('追加しました ✓', 'success');
+    render();
+  } catch(e) {} finally {
+    hideLoading();
+  }
+}
+
+// ========== LABEL POOL ==========
+function renderLabelPool() {
+  const labels = db.labels || [];
+  const unprinted = labels.filter(l => l.status === '未印刷');
+  const printed   = labels.filter(l => l.status === '印刷済');
+  const assigned  = labels.filter(l => l.status === '割当済');
+  const showPrintBtn = viewData.showPrintBtn || false;
+
+  return `
+  <div class="header">
+    <div style="display:flex;gap:6px;"><button class="header-back" onclick="goBack()">← 戻る</button><button class="header-back" onclick="resetTo('home')">🏠</button></div>
+    <h1>ラベル管理</h1>
+    <div></div>
+  </div>
+  <div class="content">
+
+    <div class="section-title">ラベル在庫状況</div>
+    <div class="stats" style="grid-template-columns:repeat(2,1fr);">
+      <div class="stat-card">
+        <div class="stat-num" style="font-size:22px;">${unprinted.length}</div>
+        <div class="stat-label">未使用・未印刷</div>
+      </div>
+      <div class="stat-card warn">
+        <div class="stat-num" style="font-size:22px;">${printed.length}</div>
+        <div class="stat-label">未使用・印刷済</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num" style="font-size:22px;">${assigned.length}</div>
+        <div class="stat-label">割当済</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num" style="font-size:22px;">${labels.length}</div>
+        <div class="stat-label">合計枚数</div>
+      </div>
+    </div>
+
+    <div class="section-title">ラベル発行</div>
+    <div class="card" style="padding:16px;">
+      <div class="form-section">
+        <div class="form-label">発行枚数</div>
+        <input class="form-input" id="f-issue-count" type="number" min="1" max="200" value="65">
+      </div>
+      <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#856404;font-weight:600;">
+        ⚠️ 社長以外タップしないでください
+      </div>
+      <button class="btn btn-primary" onclick="issueLabels()">発行する</button>
+    </div>
+
+    <div class="section-title">CSV出力 / 印刷管理</div>
+    <div class="card" style="padding:16px;">
+      ${unprinted.length > 0
+        ? `<button class="btn btn-outline" onclick="exportLabelCSV()" style="margin-bottom:10px;">📄 印刷用CSVを出力（${unprinted.length}枚）</button>`
+        : `<p style="font-size:14px;color:var(--text-sub);margin-bottom:10px;">未印刷のラベルはありません</p>`
+      }
+      ${showPrintBtn
+        ? `<button class="btn" style="background:var(--success);color:white;" onclick="markPrinted()">✓ 印刷済みにする</button>`
+        : ''
+      }
+    </div>
+
+  </div>`;
+}
+
+async function issueLabels() {
+  const count = parseInt(document.getElementById('f-issue-count').value, 10);
+  if (!count || count < 1) { showToast('発行枚数を入力してください', 'error'); return; }
+  showLoading();
+  try {
+    await apiPost('issueLabel', { count });
+    db = await apiGet();
+    showToast(`${count}枚のラベルを発行しました ✓`, 'success');
+    viewData.showPrintBtn = false;
+    render();
+  } catch(e) {
+    showToast('エラーが発生しました', 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+function exportLabelCSV() {
+  const unprinted = (db.labels || []).filter(l => l.status === '未印刷');
+  if (unprinted.length === 0) { showToast('未印刷のラベルがありません', 'error'); return; }
+  const rows = [['labelId'], ...unprinted.map(l => [l.labelId])];
+  downloadCSV(rows, 'ラベル印刷用.csv');
+  viewData.showPrintBtn = true;
+  render();
+}
+
+async function markPrinted() {
+  const unprintedIds = (db.labels || []).filter(l => l.status === '未印刷').map(l => l.labelId);
+  if (unprintedIds.length === 0) { showToast('対象ラベルがありません', 'error'); return; }
+  showLoading();
+  try {
+    await apiPost('updatePrintStatus', { labelIds: unprintedIds });
+    db = await apiGet();
+    showToast('印刷済みに更新しました ✓', 'success');
+    viewData.showPrintBtn = false;
+    render();
+  } catch(e) {
+    showToast('エラーが発生しました', 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// ========== MAKERS MASTER ==========
+function renderMakers() {
+  return `
+  <div class="header">
+    <div style="display:flex;gap:6px;"><button class="header-back" onclick="goBack()">← 戻る</button><button class="header-back" onclick="resetTo('home')">🏠</button></div>
+    <h1>メーカーマスタ</h1>
+    <div></div>
+  </div>
+  <div class="content">
+    <div class="card" style="margin-bottom:16px;">
+      ${(db.makers||[]).map(m => `
+      <div class="device-item" style="cursor:default;">
+        <div style="flex:1;font-size:15px;font-weight:500;">${m.name}</div>
+        <button onclick="toggleMaker(${m.id})" style="border:none;background:${m.active?'var(--in)':'var(--border)'};color:${m.active?'var(--in-text)':'var(--text-sub)'};padding:5px 12px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;">${m.active?'有効':'無効'}</button>
+        <button onclick="deleteMaker(${m.id})" style="border:none;background:none;color:var(--text-sub);padding:4px 8px;font-size:18px;cursor:pointer;margin-left:4px;">×</button>
+      </div>`).join('')}
+    </div>
+    <div class="form-section">
+      <div class="form-label">新しいメーカーを追加</div>
+      <div class="scanner-label-input">
+        <input class="form-input" id="new-maker" placeholder="メーカー名を入力">
+        <button onclick="addMaker()">追加</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function toggleMaker(id) {
+  const m = (db.makers||[]).find(m => m.id === id);
+  if (m) m.active = !m.active;
+  showLoading();
+  try {
+    await apiPost('saveMaker', m);
+    render();
+  } catch(e) {} finally {
+    hideLoading();
+  }
+}
+
+async function deleteMaker(id) {
+  if (!confirm('このメーカーを削除しますか？')) return;
+  db.makers = (db.makers||[]).filter(m => m.id !== id);
+  showLoading();
+  try {
+    await apiPost('deleteMaker', { id });
+    render();
+  } catch(e) {} finally {
+    hideLoading();
+  }
+}
+
+async function addMaker() {
+  const name = document.getElementById('new-maker').value.trim();
+  if (!name) return;
+  if (!db.makers) db.makers = [];
+  const newMaker = { id: db.nextMakerId++, name, active: true };
+  db.makers.push(newMaker);
+  showLoading();
+  try {
+    await apiPost('saveMaker', newMaker);
+    showToast('追加しました ✓', 'success');
+    render();
+  } catch(e) {} finally {
+    hideLoading();
+  }
+}
+
+function exportCSV() {
+  const rows = [['LabelID','商品名','区分','メーカー','状態','貸出先','貸出日','返却予定日','営業担当','備考','メーカー返却期限','廃棄日','廃棄操作者','メーカー返却日','メーカー返却操作者']];
+  db.devices.forEach(d => {
+    rows.push([d.labelId, d.name, d.type, d.maker||'', d.status, d.loanTo||'', d.loanDate||'', d.returnDueDate||'', d.salesRep||'', d.notes||'', d.makerReturnDueDate||'', d.disposalDate||'', d.disposalBy||'', d.makerReturnDate||'', d.makerReturnBy||'']);
+  });
+  downloadCSV(rows, '商品一覧.csv');
+}
+
+function exportLoansCSV() {
+  const rows = [['ID','LabelID','商品名','種別','貸出先','日付','返却予定日','営業担当','備考','操作者','デバイス情報']];
+  db.loans.forEach(l => {
+    rows.push([l.id, l.labelId, l.deviceName||'', l.type, l.loanTo||'', l.date, l.returnDueDate||'', l.salesRep||'', l.notes||'', l.registeredBy||'', l.deviceInfo||'']);
+  });
+  downloadCSV(rows, '貸出履歴.csv');
+}
+
+function downloadCSV(rows, filename) {
+  const bom = '\uFEFF';
+  const csv = bom + rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function resetData() {
+  showLoading();
+  try {
+    await apiPost('resetDB', {});
+    db = await apiGet();
+    showToast('リセットしました');
+    resetTo('home');
+  } catch(e) {
+    showToast('通信エラーが発生しました', 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// ========== AFTER RENDER ==========
+function afterRender() {
+  if (currentView === 'scanner') {
+    startScanner();
+  }
+}
+
+async function initBarcodeDetector() {
+  // iOS17+ / Chrome83+ のネイティブQR検出APIを初期化
+  try {
+    if ('BarcodeDetector' in window) {
+      const formats = await BarcodeDetector.getSupportedFormats();
+      if (formats.includes('qr_code')) {
+        barcodeDetector = new BarcodeDetector({ formats: ['qr_code'] });
+        dbgLog('BarcodeDetector: ネイティブAPI使用（推奨）');
+        return;
+      }
+    }
+  } catch(e) {
+    dbgLog(`BarcodeDetector初期化失敗: ${e.message}`);
+  }
+  // フォールバック: jsQRの読み込み状況を確認
+  if (typeof jsQR !== 'undefined') {
+    dbgLog('jsQR: ライブラリ使用（フォールバック）');
+  } else {
+    dbgLog('ERROR: BarcodeDetector未対応かつjsQR未ロード。スキャン不可。');
+  }
+}
+
+function startScanner() {
+  const video = document.getElementById('qr-video');
+  if (!video) { dbgLog('ERROR: video要素が見つかりません'); return; }
+  dbgLog(`startScanner UA=${navigator.userAgent.slice(0,50)}`);
+
+  const constraints = { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } };
+
+  navigator.mediaDevices.getUserMedia(constraints)
+    .catch(err => {
+      dbgLog(`getUserMedia失敗: ${err.name} → フォールバック`);
+      return navigator.mediaDevices.getUserMedia({ video: true });
+    })
+    .then(async stream => {
+      const track = stream.getVideoTracks()[0];
+      const s = track ? track.getSettings() : {};
+      dbgLog(`カメラOK: ${s.width}x${s.height} facing=${s.facingMode||'不明'}`);
+      scannerStream = stream;
+      video.srcObject = stream;
+      video.setAttribute('playsinline', 'true');
+      video.setAttribute('muted', 'true');
+      scannerActive = true;
+      await initBarcodeDetector();
+      await video.play();
+      dbgLog(`video再生開始 size=${video.videoWidth}x${video.videoHeight}`);
+      // video準備完了を待ってスキャン開始
+      waitForVideoAndScan(video);
+    })
+    .catch(err => {
+      dbgLog(`ERROR カメラ失敗: ${err.name}: ${err.message}`);
+      const wrap = document.querySelector('.scanner-wrap');
+      if (wrap) wrap.innerHTML = `<div style="color:white;padding:40px;text-align:center;font-size:14px;">カメラを使用できません。<br>LabelIDを直接入力してください。</div>`;
+    });
+}
+
+function waitForVideoAndScan(video) {
+  // videoWidth が確定するまで最大3秒待つ
+  let tries = 0;
+  function check() {
+    if (!scannerActive) return;
+    if (video.videoWidth > 0 && video.readyState >= 2) {
+      dbgLog(`スキャン開始 video=${video.videoWidth}x${video.videoHeight}`);
+      scanTick(video);
+    } else {
+      tries++;
+      if (tries > 30) { dbgLog('ERROR: video準備タイムアウト(3秒)'); return; }
+      if (tries % 5 === 1) dbgLog(`video待機 readyState=${video.readyState} size=${video.videoWidth}x${video.videoHeight}`);
+      setTimeout(check, 100);
+    }
+  }
+  setTimeout(check, 100);
+}
+
+async function scanTick(video) {
+  if (!scannerActive) return;
+
+  let detected = false;
+  try {
+    if (barcodeDetector) {
+      // ── ネイティブ BarcodeDetector（iOS17+）──
+      const barcodes = await barcodeDetector.detect(video);
+      if (barcodes.length > 0) {
+        dbgLog(`QR検出(BD): ${barcodes[0].rawValue}`);
+        detected = true;
+        stopScanner();
+        handleScannedLabel(barcodes[0].rawValue.trim().toUpperCase());
+      }
+    } else if (typeof jsQR !== 'undefined') {
+      // ── jsQR フォールバック ──
+      const MAX_SIZE = 640;
+      const vw = video.videoWidth, vh = video.videoHeight;
+      const scale = Math.min(1, MAX_SIZE / Math.max(vw, vh));
+      const cw = Math.floor(vw * scale), ch = Math.floor(vh * scale);
+      const isPortrait = vw < vh;
+      if (!scannerCanvas) {
+        scannerCanvas = document.createElement('canvas');
+        scannerCtx = scannerCanvas.getContext('2d', { willReadFrequently: true });
+      }
+      if (isPortrait) {
+        scannerCanvas.width = ch; scannerCanvas.height = cw;
+        scannerCtx.save();
+        scannerCtx.translate(ch / 2, cw / 2);
+        scannerCtx.rotate(Math.PI / 2);
+        scannerCtx.drawImage(video, -cw / 2, -ch / 2, cw, ch);
+        scannerCtx.restore();
+      } else {
+        scannerCanvas.width = cw; scannerCanvas.height = ch;
+        scannerCtx.drawImage(video, 0, 0, cw, ch);
+      }
+      const iw = isPortrait ? ch : cw, ih = isPortrait ? cw : ch;
+      const imageData = scannerCtx.getImageData(0, 0, iw, ih);
+      const code = jsQR(imageData.data, iw, ih, { inversionAttempts: 'attemptBoth' });
+      if (code && code.data) {
+        dbgLog(`QR検出(jsQR): ${code.data}`);
+        detected = true;
+        stopScanner();
+        handleScannedLabel(code.data.trim().toUpperCase());
+      }
+    } else {
+      dbgLog('ERROR: スキャン手段なし（jsQR未ロード・BarcodeDetector未対応）');
+    }
+  } catch(e) {
+    dbgLog(`ERROR scanTick: ${e.name}: ${e.message}`);
+  }
+
+  // 未検出かつアクティブならSCAN_INTERVAL_MS後に次のtick
+  if (!detected && scannerActive) {
+    setTimeout(() => scanTick(video), SCAN_INTERVAL_MS);
+  }
+}
+
+// ========== INIT ==========
+if (tryAutoLogin()) {
+  loadDB();
+} else {
+  location.replace(PORTAL_URL); // セッションなし → ポータルへリダイレクト
+}
+</script>
+
+<!-- PIN変更モーダル -->
+<div id="change-pin-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;justify-content:center;align-items:flex-end;">
+  <div style="background:#fff;width:100%;max-width:480px;border-radius:20px 20px 0 0;padding:24px 20px 32px;">
+    <div style="text-align:center;font-size:16px;font-weight:700;margin-bottom:4px;">PIN変更</div>
+    <div id="change-pin-step-label" style="text-align:center;font-size:13px;color:#6b7280;margin-bottom:16px;">現在のPINを入力してください</div>
+    <div style="display:flex;justify-content:center;gap:14px;margin-bottom:8px;">
+      <div id="cpd0" style="width:18px;height:18px;border-radius:50%;background:#e5e7eb;"></div>
+      <div id="cpd1" style="width:18px;height:18px;border-radius:50%;background:#e5e7eb;"></div>
+      <div id="cpd2" style="width:18px;height:18px;border-radius:50%;background:#e5e7eb;"></div>
+      <div id="cpd3" style="width:18px;height:18px;border-radius:50%;background:#e5e7eb;"></div>
+    </div>
+    <div id="change-pin-error" style="text-align:center;color:#dc2626;font-size:13px;min-height:20px;margin-bottom:12px;"></div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+      <button onclick="changePinInput('1')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">1</button>
+      <button onclick="changePinInput('2')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">2</button>
+      <button onclick="changePinInput('3')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">3</button>
+      <button onclick="changePinInput('4')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">4</button>
+      <button onclick="changePinInput('5')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">5</button>
+      <button onclick="changePinInput('6')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">6</button>
+      <button onclick="changePinInput('7')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">7</button>
+      <button onclick="changePinInput('8')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">8</button>
+      <button onclick="changePinInput('9')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">9</button>
+      <button onclick="closeChangePinModal()" style="padding:18px;font-size:14px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#f3f4f6;cursor:pointer;color:#6b7280;">取消</button>
+      <button onclick="changePinInput('0')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">0</button>
+      <button onclick="changePinBackspace()" style="padding:18px;font-size:22px;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">⌫</button>
+    </div>
+  </div>
+</div>
+
+<!-- ログイン用PINモーダル -->
+<div id="login-pin-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;justify-content:center;align-items:flex-end;">
+  <div style="background:#fff;width:100%;max-width:480px;border-radius:20px 20px 0 0;padding:24px 20px 32px;">
+    <div id="login-pin-title" style="text-align:center;font-size:16px;font-weight:700;margin-bottom:20px;">PINを入力してください</div>
+    <div style="display:flex;justify-content:center;gap:14px;margin-bottom:8px;">
+      <div id="lpd0" style="width:18px;height:18px;border-radius:50%;background:#e5e7eb;"></div>
+      <div id="lpd1" style="width:18px;height:18px;border-radius:50%;background:#e5e7eb;"></div>
+      <div id="lpd2" style="width:18px;height:18px;border-radius:50%;background:#e5e7eb;"></div>
+      <div id="lpd3" style="width:18px;height:18px;border-radius:50%;background:#e5e7eb;"></div>
+    </div>
+    <div id="login-pin-error" style="text-align:center;color:#dc2626;font-size:13px;min-height:20px;margin-bottom:12px;"></div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+      <button onclick="loginPinInput('1')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">1</button>
+      <button onclick="loginPinInput('2')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">2</button>
+      <button onclick="loginPinInput('3')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">3</button>
+      <button onclick="loginPinInput('4')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">4</button>
+      <button onclick="loginPinInput('5')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">5</button>
+      <button onclick="loginPinInput('6')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">6</button>
+      <button onclick="loginPinInput('7')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">7</button>
+      <button onclick="loginPinInput('8')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">8</button>
+      <button onclick="loginPinInput('9')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">9</button>
+      <button onclick="closeLoginPinModal()" style="padding:18px;font-size:14px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#f3f4f6;cursor:pointer;color:#6b7280;">取消</button>
+      <button onclick="loginPinInput('0')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">0</button>
+      <button onclick="loginPinBackspace()" style="padding:18px;font-size:22px;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">⌫</button>
+    </div>
+  </div>
+</div>
+</body>
+</html>

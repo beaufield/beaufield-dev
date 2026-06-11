@@ -1,0 +1,68 @@
+#!/bin/sh
+# ============================================================
+# pre-commit hook: 業務リソース・機密情報の誤コミットをブロック
+# ============================================================
+# beaufield/kiki-kanri は Public リポジトリ。
+# コミットしたものは全世界に公開される。
+#
+# 初回セットアップ（clone後に一度だけ実行）:
+#   git config core.hooksPath .githooks
+# ============================================================
+
+# 拒否対象の拡張子
+BLOCKED_EXT='\.(pdf|PDF|csv|CSV|xlsx|XLSX|xlsm|XLSM|xls|XLS|tsv|TSV|docx|DOCX|doc|DOC)$'
+
+# 拒否対象のファイル名
+BLOCKED_FILES='^CLAUDE\.md$'
+
+# ステージされている追加・変更ファイルから対象を抽出
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+
+violations_ext=$(echo "$staged" | grep -E "$BLOCKED_EXT" || true)
+violations_files=$(echo "$staged" | grep -E "$BLOCKED_FILES" || true)
+violations=$(printf '%s\n%s' "$violations_ext" "$violations_files" | grep -v '^$' || true)
+
+if [ -n "$violations" ]; then
+    echo ""
+    echo "=================================================================="
+    echo "  COMMIT BLOCKED: 機密情報・業務リソースのコミットは禁止されています"
+    echo "=================================================================="
+    echo ""
+    echo "以下のファイルがステージされています:"
+    echo ""
+    echo "$violations" | sed 's/^/    /'
+    echo ""
+    echo "理由: PDF/CSV/Excel/Word/CLAUDE.md は業務情報・機密情報を含むため"
+    echo "      Publicリポジトリにコミットすると全世界に公開されます。"
+    echo ""
+    echo "対処方法:"
+    echo "  1. ステージから取り除く:"
+    echo "     git restore --staged <ファイル名>"
+    echo ""
+    echo "  2. 業務PDF・CSVは Drive に保管し、GAS経由配信パターンを使う"
+    echo "  3. CLAUDE.md は .gitignore 除外済のため通常は追跡されない"
+    echo ""
+    echo "=================================================================="
+    exit 1
+fi
+
+# 認証情報のハードコード検知（簡易チェック）
+secret_pattern='(AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|sk-[a-zA-Z0-9]{20,}|ghp_[A-Za-z0-9]{36}|xoxb-[0-9A-Za-z-]{20,}|password\s*=\s*["\x27][^"\x27]{4,}["\x27])'
+secret_hits=$(git diff --cached --diff-filter=ACM -U0 | grep -E "^\+" | grep -E "$secret_pattern" || true)
+
+if [ -n "$secret_hits" ]; then
+    echo ""
+    echo "=================================================================="
+    echo "  WARNING: 認証情報らしき文字列が検出されました"
+    echo "=================================================================="
+    echo ""
+    echo "$secret_hits" | head -5
+    echo ""
+    echo "上記の文字列が認証情報であれば、コミット前に PropertiesService 等に移行してください。"
+    echo "誤検知の場合のみ --no-verify でスキップ可能です。"
+    echo ""
+    echo "=================================================================="
+    exit 1
+fi
+
+exit 0

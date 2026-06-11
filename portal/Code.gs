@@ -11,7 +11,7 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.5.1';
+const VERSION       = 'v1.5.2';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
 
 // ロックアウト設定
@@ -42,7 +42,7 @@ const APP_MASTER = [
     appName: 'lending',
     label:   '貸出管理',
     icon:    '🔑',
-    url:     'https://beaufield.github.io/kiki-kanri/'
+    url:     'https://beaufield.github.io/beaufield-dev/kiki-kanri/'
   },
   {
     appName: 'serial-apps',
