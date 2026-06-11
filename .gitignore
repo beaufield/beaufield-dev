@@ -75,6 +75,7 @@ kiki-kanri/
 *.tmp
 *.tmp.*
 CLAUDE.md
+AGENTS.md
 
 # ============================================
 # 機密情報を含む認証テンプレート
@@ -102,6 +103,7 @@ order-app/meros_*.png
 order-app/pdf_coords.txt
 order-app/grandex.pdf
 order-app/メーカー発注書/
+order-app/JANスクショ/
 
 # 納品書OCR（ローカル実行ツール・GitHub不要）
 ocr-invoice/

@@ -166,7 +166,12 @@ function cleanExpiredSessions() {
 // ============================================================
 function doGet(e) {
   const action = (e && e.parameter && e.parameter.action) ? e.parameter.action : '';
-  const data   = (e && e.parameter && e.parameter.data)   ? JSON.parse(e.parameter.data) : {};
+  let data = {};
+  try {
+    if (e && e.parameter && e.parameter.data) data = JSON.parse(e.parameter.data);
+  } catch(jsonErr) {
+    return _jsonResponse(_err('INVALID_REQUEST'));
+  }
   const token  = (e && e.parameter && e.parameter.session_token) ? e.parameter.session_token : '';
 
   const auth = validateAndGetUser(token);
@@ -196,7 +201,12 @@ function doGet(e) {
 function doPost(e) {
   const params = (e && e.parameter) ? e.parameter : {};
   const action = params.action || '';
-  const data   = params.data ? JSON.parse(params.data) : {};
+  let data = {};
+  try {
+    if (params.data) data = JSON.parse(params.data);
+  } catch(jsonErr) {
+    return _jsonResponse(_err('INVALID_REQUEST'));
+  }
   const token  = params.session_token || '';
 
   const auth = validateAndGetUser(token);

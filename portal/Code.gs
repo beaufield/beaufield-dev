@@ -107,7 +107,11 @@ function doPost(e) {
   // URL-encodedの場合（ポータルHTMLからの呼び出し）
   if (!action && e && e.parameter) {
     action = e.parameter.action || '';
-    data   = e.parameter.data ? JSON.parse(e.parameter.data) : {};
+    try {
+      data = e.parameter.data ? JSON.parse(e.parameter.data) : {};
+    } catch(jsonErr) {
+      return _json({ success: false, error: 'INVALID_REQUEST' });
+    }
   }
 
   try {
