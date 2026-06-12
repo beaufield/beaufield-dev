@@ -322,15 +322,20 @@
     .confirm-item-name { flex: 1; font-size: 14px; font-weight: 500; min-width: 0; word-break: break-all; }
     .confirm-item-qty  { font-size: 16px; font-weight: 700; color: var(--primary); white-space: nowrap; }
 
+    /* 出力・保存完了の「お知らせ表示」。ボタンと誤認されないよう、
+       塗りつぶしボタンとは別物の淡色アラートバー（左アクセント枠・左寄せ）にする。 */
     .complete-banner {
-      background: var(--success);
-      color: #fff;
-      padding: 16px;
-      border-radius: var(--radius);
-      text-align: center;
-      font-size: 18px;
+      background: #E7F8EC;
+      color: #1B7A38;
+      border: 1px solid #B7E7C6;
+      border-left: 5px solid var(--success);
+      padding: 11px 14px;
+      border-radius: 8px;
+      text-align: left;
+      font-size: 14px;
       font-weight: 700;
-      margin-bottom: 10px;
+      margin-bottom: 12px;
+      cursor: default;
     }
 
     .order-summary-card {
@@ -715,7 +720,7 @@
 
   <!-- ステップC: 確認・出力 -->
   <div id="step-confirm" style="display:none">
-    <div id="complete-banner" class="complete-banner" style="display:none">✅ 出力・保存完了</div>
+    <div id="complete-banner" class="complete-banner" style="display:none">✅ 出力・保存しました（履歴に登録済み）</div>
     <div class="card">
       <div class="card-label">発注内容確認</div>
       <div id="confirm-header"></div>
@@ -853,7 +858,7 @@
   <div class="nav-item" id="nav-settings" onclick="switchScreen('settings')">
     <span class="nav-icon">⚙️</span><span>設定</span>
   </div>
-  <div class="version-label" id="version-label">v1.24.5</div>
+  <div class="version-label" id="version-label">v1.24.6</div>
 </nav>
 
 <!-- ==============================
@@ -1030,7 +1035,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.24.5'; // 発注が履歴に残らない不具合を修正(新規発注開始時に修正発注フラグをクリア・カート変更でsavedOrderNoクリア)
+const APP_VERSION    = 'v1.24.6'; // UI改善: 修正発注ボタンに確認ダイアログ追加・完了表示をボタンと区別できるアラートバーに変更
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1519,6 +1524,15 @@ function startNewOrder() {
 
 // 修正発注：元の発注Noを記憶してリセット。次回出力時に新規保存＋元データ削除が行われる
 function resumeOrderForRevision() {
+  // 誤タップ防止＋仕様の明示。「修正発注」は今の発注を“置き換える”モードであることを確認する。
+  // （別メーカー等で新しく発注したい場合は「新しい発注を始める」を使う）
+  if (!confirm(
+    '「修正発注」モードに入りますか？\n\n' +
+    'これは直前の発注（' + (savedOrderNo || '') + '）を書き換えるモードです。\n' +
+    '内容を変更して再度出力すると、元の発注は新しい内容に置き換わります（履歴は1件のまま）。\n\n' +
+    '※別メーカーなど“新しい発注”を作りたい場合は、キャンセルして「新しい発注を始める」を押してください。'
+  )) return;
+
   revisionBaseOrderNo = savedOrderNo; // 修正前の発注Noを記憶
   savedOrderNo = null;
   goToInput();
