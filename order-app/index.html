@@ -853,7 +853,7 @@
   <div class="nav-item" id="nav-settings" onclick="switchScreen('settings')">
     <span class="nav-icon">⚙️</span><span>設定</span>
   </div>
-  <div class="version-label" id="version-label">v1.24.4</div>
+  <div class="version-label" id="version-label">v1.24.5</div>
 </nav>
 
 <!-- ==============================
@@ -1030,7 +1030,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.24.4'; // 在庫管理対象は空セルでも在庫:0を表示
+const APP_VERSION    = 'v1.24.5'; // 発注が履歴に残らない不具合を修正(新規発注開始時に修正発注フラグをクリア・カート変更でsavedOrderNoクリア)
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1466,7 +1466,9 @@ async function startOrder() {
     fax: opt.dataset.fax || '', staff: currentUser.name,
     date: dateIn.value, outputType: ''
   };
-  cartItems = []; savedOrderNo = null; saveCart();
+  // 修正発注フラグも必ずクリアする。これがないと、直前に「修正発注」を押した状態で
+  // 別の発注を新規開始した場合、その新規発注の保存時に直前の発注が誤って削除されてしまう（v1.24.5で修正）。
+  cartItems = []; savedOrderNo = null; revisionBaseOrderNo = null; saveCart();
   updateInputHeader(); showStep('step-input'); renderItemList();
   setTimeout(() => focusScanInput(), 150);
 }
@@ -1964,7 +1966,15 @@ function addHandwrite() {
 /* ===================================================
    カート管理
 =================================================== */
-function saveCart()             { sessionStorage.setItem(SS_CART, JSON.stringify(cartItems)); }
+function saveCart() {
+  // カート内容が変わったら「保存済みフラグ」(savedOrderNo)を必ずクリアする。
+  // 出力(CSV/PDF)後に savedOrderNo が残ったまま次の発注を組むと、
+  // saveOrderToGAS の「if(savedOrderNo) return」ガードで2件目以降の保存がスキップされ、
+  // ファイルはダウンロードされるのに履歴に残らない不具合が起きるため（v1.24.5で修正）。
+  // ※同一カートを複数形式で出力する場合は saveCart が呼ばれない＝フラグ維持で重複保存を防ぐ。
+  savedOrderNo = null;
+  sessionStorage.setItem(SS_CART, JSON.stringify(cartItems));
+}
 function updateItemQty(idx, val){ const q = parseInt(val); if (q > 0) { cartItems[idx].qty = q; saveCart(); } }
 function updateItemMemo(idx, v) { cartItems[idx].memo = v; saveCart(); }
 function removeItem(idx)        { cartItems.splice(idx, 1); saveCart(); renderItemList(); }
@@ -3222,6 +3232,7 @@ async function copyOrderFromHistory(orderNo) {
   }));
 
   savedOrderNo = null;
+  revisionBaseOrderNo = null; // 複製は新規発注。修正発注フラグの残留による誤削除を防ぐ
   saveCart();
 
   // 発注先ドロップダウンと発注日を画面に反映
@@ -3597,6 +3608,7 @@ function openInventoryQtyModal(idx) {
       outputType:   ''
     };
     savedOrderNo = null;
+    revisionBaseOrderNo = null; // 新規発注扱い。修正発注フラグの残留による誤削除を防ぐ
   }
 
   openQtyModal(p, false);
