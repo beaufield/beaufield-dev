@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.5.4';
+const VERSION = 'v2.5.5';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -678,18 +678,20 @@ function setStock(params) {
     return { ok: false, error: '品番「' + params.productNo + '」は在庫管理が設定されていないか、BCARTに存在しません' };
   }
 
-  // 公式仕様: 本文は { product_stock: [...] } で包む必須。stock_flag:0（通常在庫管理）を明示し、
-  // 在庫数を確実に有効化する（無制限/別在庫参照のままだとstockが反映されないため）。
-  const res = bcartPatch('/product_stock', {
-    product_stock: [{ product_no: params.productNo, stock_flag: 0, stock: params.stock }]
-  });
+  // 仕様: 「欠品（在庫0）」= 通常在庫管理(stock_flag:0)で在庫0＝売り切れ表示。
+  //       「在庫あり」= 無制限(stock_flag:1)＝在庫数に関係なく常に購入可（stockは送らない/BCART仕様上無視）。
+  // 公式仕様: 本文は { product_stock: [...] } で包むのが必須。
+  const stockEntry = (params.stock === 0)
+    ? { product_no: params.productNo, stock_flag: 0, stock: 0 }
+    : { product_no: params.productNo, stock_flag: 1 };
+  const res = bcartPatch('/product_stock', { product_stock: [stockEntry] });
   addHistory({
     userName: params._userName,
     code: params.productNo || '',
     name: params.name || '',
     type: '欠品設定',
     before: '',
-    after: params.stock === 0 ? '欠品（在庫0）' : '在庫あり（在庫1）',
+    after: params.stock === 0 ? '欠品（在庫0）' : '在庫あり（無制限）',
     result: res.ok ? '成功' : ('失敗: ' + res.error)
   });
   return res;

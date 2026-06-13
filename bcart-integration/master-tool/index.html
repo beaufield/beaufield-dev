@@ -274,7 +274,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.7.2</span>
+    <span class="version">HTML v2.7.3</span>
   </div>
 
   <div class="tabs">
@@ -359,7 +359,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <!-- タブ2: 欠品設定 -->
     <div class="tab-panel" id="tab-stock">
       <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;">
-        <p style="margin-bottom:12px;color:#6b7280;font-size:13px;">商品コードまたは商品名で検索し、在庫0（欠品）または1（復活）を設定します。</p>
+        <p style="margin-bottom:12px;color:#6b7280;font-size:13px;">商品コードまたは商品名で検索し、欠品（在庫0）または在庫あり（無制限）を設定します。</p>
         <div class="stock-search">
           <input type="text" id="stockQuery" placeholder="商品コードまたは商品名" onkeydown="if(event.key==='Enter')searchStock()">
           <button class="btn btn-primary" onclick="searchStock()">検索</button>
@@ -1936,14 +1936,14 @@ function searchStock() {
       '<div><span style="font-family:monospace;font-size:12px;color:#6b7280;">' + esc(p.product_no) + '</span> <strong>' + esc(p.name) + '</strong></div>' +
       '<div style="display:flex;gap:8px;">' +
       '<button class="btn btn-danger btn-sm" onclick="setStock(\'' + esc(p.product_no) + '\',0,this,\'' + esc(p.name) + '\')">🚫 欠品（在庫0）</button>' +
-      '<button class="btn btn-success btn-sm" onclick="setStock(\'' + esc(p.product_no) + '\',1,this,\'' + esc(p.name) + '\')">✅ 在庫あり（在庫1）</button>' +
+      '<button class="btn btn-success btn-sm" onclick="setStock(\'' + esc(p.product_no) + '\',1,this,\'' + esc(p.name) + '\')">✅ 在庫あり（無制限）</button>' +
       '</div></div></div>'
     ).join('');
   });
 }
 
 function setStock(productNo, stock, btn, name) {
-  const label = stock === 0 ? '欠品（在庫0）' : '在庫あり（在庫1）';
+  const label = stock === 0 ? '欠品（在庫0）' : '在庫あり（無制限）';
   if (!confirm(productNo + ' を ' + label + ' に設定しますか？')) return;
   btn.disabled = true;
   gasPost({ action: 'setStock', productNo: productNo, stock: stock, name: name || '' }, function(res) {
