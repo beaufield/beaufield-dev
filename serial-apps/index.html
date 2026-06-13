@@ -300,6 +300,29 @@ input[type="number"]:focus { border-color: #2a6acc; }
   text-align: center;
   padding: 5px 10px;
 }
+.scanner-mode-row {
+  display: flex;
+  gap: 0;
+  justify-content: center;
+  background: #222;
+  padding: 8px 10px 0;
+}
+.scanner-mode-row button {
+  flex: 1;
+  background: #333;
+  color: #bbb;
+  border: 1px solid #555;
+  padding: 9px 0;
+  font-size: 14px;
+  font-weight: bold;
+}
+.scanner-mode-row button:first-child { border-radius: 8px 0 0 8px; }
+.scanner-mode-row button:last-child  { border-radius: 0 8px 8px 0; border-left: none; }
+.scanner-mode-row button.active {
+  background: #2563eb;
+  color: #fff;
+  border-color: #2563eb;
+}
 .scanner-zoom-row {
   display: flex;
   gap: 8px;
@@ -464,7 +487,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.9.8</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.10.0</span>
   </div>
 
   <!-- タブバー -->
@@ -706,7 +729,11 @@ select:focus { border-color: #2a6acc; }
 <div class="scanner-overlay" id="scannerOverlay">
   <div class="scanner-box">
     <div class="scanner-header" id="scannerTitle">バーコードをかざしてください</div>
-    <div class="scanner-hint">📏 中央に大きく・ピタッと止めて（テカる時は角度を変える）</div>
+    <div class="scanner-mode-row" id="scannerModeRow" style="display:none;">
+      <button type="button" id="scanModeBarcode" class="active" onclick="switchScanMode('barcode')">📊 バーコード</button>
+      <button type="button" id="scanModeQr" onclick="switchScanMode('qr')">▦ QRコード</button>
+    </div>
+    <div class="scanner-hint" id="scannerHint">📏 中央に大きく・ピタッと止めて（テカる時は角度を変える）</div>
     <div id="scannerContainer"></div>
     <div class="scanner-zoom-row" id="scannerZoomRow" style="display:none;">
       <button type="button" data-z="1" onclick="applyScannerZoom(1)">1×</button>
@@ -732,7 +759,7 @@ select:focus { border-color: #2a6acc; }
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.9.8</div>
+<div class="version-label">HTML v2.10.0</div>
 
 <!-- ZXing バーコードスキャナー -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+" crossorigin="anonymous"></script>
@@ -778,6 +805,7 @@ var scannerTrack       = null;    // カメラ操作用のビデオトラック�
 var scannerTorchOn     = false;   // ライト点灯状態
 var qrDetector         = null;    // OS標準QR検出器（BarcodeDetector。非対応端末はnullのまま）
 var qrDetectTimer      = null;    // QR並行検出のタイマー
+var scanMode           = 'barcode'; // シリアルスキャンのモード（'barcode'=高解像度+ズーム / 'qr'=旧設定でQR向け）
 // シリアルNoとして受理する形式（英数字とハイフンのみ。誤読由来の「!」「.」等を含む値は破棄）
 var SERIAL_PATTERN = /^[0-9A-Za-z-]{3,32}$/;
 
@@ -1436,6 +1464,10 @@ function openScanner(target) {
   var isMulti    = target === 'sh-single-serial' || target === 'rt-single-serial';
   scanMultiMode  = isMulti;
   scanMultiCount = 0;
+  // モード切替はシリアル読取時のみ表示（JANは常にEAN固定）。既定はバーコードモード
+  scanMode = 'barcode';
+  document.getElementById('scannerModeRow').style.display = isJan ? 'none' : 'flex';
+  updateScanModeUI();
   document.getElementById('scannerTitle').textContent = isJan
     ? '商品JANコードをかざしてください'
     : 'シリアルNoバーコードをかざしてください';
@@ -1478,21 +1510,25 @@ function startScanner() {
   //   事象が判明したため、QRが読めていた旧版(v2.8.1)同様に無指定に戻す（CODE128もQRも読める）。
   codeReader = new Html5Qrcode('scannerContainer', scannerConfig);
 
+  // ===== モード別のカメラ設定 =====
+  // QRモード: 旧版(v2.8.1・QRが読めていた)を再現。解像度指定なし＝iOS既定の控えめな解像度に
+  //   なり、QRが画面に占める割合が大きくなってZXingが検出しやすい。ズームもしない。
+  // バーコードモード: CODE128向けに720p＋自動2倍ズーム（良好な現状を維持）。
+  var isQrMode  = (!isJan && scanMode === 'qr');
+  var startConfig = isQrMode
+    ? { fps: 15 }
+    : {
+        fps: 24,
+        videoConstraints: {
+          facingMode: 'environment',
+          width:  { ideal: 1280 },
+          height: { ideal: 720 }
+        }
+      };
+
   codeReader.start(
     { facingMode: 'environment' },
-    {
-      fps: 24,
-      // qrboxは指定しない＝画面全体をスキャン対象にする。
-      // （横長解像度を縦画面にはめ込むとqrboxの描画位置と実際の読取領域がズレ、
-      //   「枠より下でないと読まない」現象が起きるため。全体スキャンなら位置を問わない）
-      // 解像度は720pで十分（自動2倍ズームで大きく写るため細線は潰れない）。
-      // 全画面スキャンのため1080pだと処理が重く良いフレームを取りこぼすので720pに抑える
-      videoConstraints: {
-        facingMode: 'environment',
-        width:  { ideal: 1280 },
-        height: { ideal: 720 }
-      }
-    },
+    startConfig,
     function(decodedText, decodedResult) {
       // 読み取れた規格名を取り出す（QRは形式チェックを免除するため）
       var fmt = '';
@@ -1508,9 +1544,9 @@ function startScanner() {
       guide.className = 'scan-guide';
       container.appendChild(guide);
     }
-    // ズーム/ライト対応端末ならコントロールを表示（ズームは2倍を自動適用）
-    setTimeout(setupScannerCamera, 400);
-    // QRはZXingが大きいフレームで取りこぼすため、OS標準エンジンで並行検出する
+    // バーコードモードのみズーム/ライトを初期化（QRモードはズームせず旧版の見え方に）
+    if (!isQrMode) setTimeout(setupScannerCamera, 400);
+    // QRはZXingが大きいフレームで取りこぼすため、OS標準エンジン(対応端末のみ)でも並行検出
     setTimeout(startQrDetectorFallback, 500);
   }).catch(function(err) {
     showToast('カメラ起動エラー: ' + err, 'error');
@@ -1518,6 +1554,45 @@ function startScanner() {
   });
 
   scannerActive = true;
+}
+
+// シリアルスキャンのモード切替（バーコード⇔QR）。カメラを止めて新設定で起動し直す
+function switchScanMode(mode) {
+  if (mode === scanMode || !scannerActive) return;
+  scanMode = mode;
+  updateScanModeUI();
+  document.getElementById('scannerLiveResult').textContent = '— 認識待ち —';
+  // ズーム/ライトのボタンは一旦隠す（再起動後に対応端末なら再表示）
+  document.getElementById('scannerZoomRow').style.display = 'none';
+  scannerActive = false;
+  stopQrDetectorFallback();
+  if (codeReader) {
+    var r = codeReader;
+    codeReader = null;
+    r.stop().then(function() {
+      document.getElementById('scannerContainer').innerHTML = '';
+      startScanner();
+    }).catch(function() {
+      document.getElementById('scannerContainer').innerHTML = '';
+      startScanner();
+    });
+  } else {
+    startScanner();
+  }
+}
+
+// モード切替ボタンの見た目とヒント文を更新
+function updateScanModeUI() {
+  var bc = document.getElementById('scanModeBarcode');
+  var qr = document.getElementById('scanModeQr');
+  if (bc) bc.classList.toggle('active', scanMode === 'barcode');
+  if (qr) qr.classList.toggle('active', scanMode === 'qr');
+  var hint = document.getElementById('scannerHint');
+  if (hint) {
+    hint.textContent = (scanMode === 'qr')
+      ? '▦ QRコードを枠の中央に大きく映してください'
+      : '📏 中央に大きく・ピタッと止めて（テカる時は角度を変える）';
+  }
 }
 
 // OS標準のBarcodeDetectorでQRだけを並行検出する（ZXingは大きいフレームでQRを取りこぼすため）。
