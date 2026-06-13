@@ -487,7 +487,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.10.1</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.11.0</span>
   </div>
 
   <!-- タブバー -->
@@ -542,7 +542,7 @@ select:focus { border-color: #2a6acc; }
     <!-- 単独入力エリア -->
     <div id="sh-single-area" class="card">
       <div class="return-input-row">
-        <button class="btn btn-orange" onclick="openScanner('sh-single-serial')">⑤バーコード</button>
+        <button class="btn btn-orange" id="sh-single-scan-btn" onclick="openScanner('sh-single-serial')">⑤バーコード</button>
         <input type="text" id="sh-single-serial" placeholder="⑤シリアルNo" style="flex:1;" autocomplete="off">
         <button class="btn btn-blue" onclick="addSingleSerial('sh')">追加</button>
       </div>
@@ -558,8 +558,8 @@ select:focus { border-color: #2a6acc; }
     <!-- 連番入力エリア -->
     <div id="sh-seq-area" class="card" style="display:none;">
       <div class="seq-start-row">
-        <button class="btn btn-orange" onclick="openScanner('sh-seq-start')">⑤バーコード</button>
-        <span style="font-size:12px;color:#888;">or</span>
+        <button class="btn btn-orange" id="sh-seq-scan-btn" onclick="openScanner('sh-seq-start')">⑤バーコード</button>
+        <span style="font-size:12px;color:#888;" id="sh-seq-or">or</span>
         <input type="text" id="sh-seq-start" placeholder="開始シリアル手入力" style="flex:1;" autocomplete="off">
       </div>
       <div class="seq-qty-row">
@@ -624,7 +624,7 @@ select:focus { border-color: #2a6acc; }
     <!-- 単独入力エリア -->
     <div id="rt-single-area" class="card">
       <div class="return-input-row">
-        <button class="btn btn-orange" onclick="openScanner('rt-single-serial')">⑤バーコード</button>
+        <button class="btn btn-orange" id="rt-single-scan-btn" onclick="openScanner('rt-single-serial')">⑤バーコード</button>
         <input type="text" id="rt-single-serial" placeholder="⑤シリアルNo" style="flex:1;" autocomplete="off">
         <button class="btn btn-blue" onclick="addSingleSerial('rt')">追加</button>
       </div>
@@ -640,8 +640,8 @@ select:focus { border-color: #2a6acc; }
     <!-- 連番入力エリア -->
     <div id="rt-seq-area" class="card" style="display:none;">
       <div class="seq-start-row">
-        <button class="btn btn-orange" onclick="openScanner('rt-seq-start')">⑤バーコード</button>
-        <span style="font-size:12px;color:#888;">or</span>
+        <button class="btn btn-orange" id="rt-seq-scan-btn" onclick="openScanner('rt-seq-start')">⑤バーコード</button>
+        <span style="font-size:12px;color:#888;" id="rt-seq-or">or</span>
         <input type="text" id="rt-seq-start" placeholder="開始シリアル手入力" style="flex:1;" autocomplete="off">
       </div>
       <div class="seq-qty-row">
@@ -759,7 +759,7 @@ select:focus { border-color: #2a6acc; }
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.10.1</div>
+<div class="version-label">HTML v2.11.0</div>
 
 <!-- ZXing バーコードスキャナー（CODE128/JAN用） -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+" crossorigin="anonymous"></script>
@@ -1073,12 +1073,46 @@ function selectProduct(tab, product) {
   if (tab === 'sh') appState.shSelectedProduct = product;
   else              appState.rtSelectedProduct = product;
 
+  var stKey   = normalizeSerialType(product.serialType);  // 'qr' | 'barcode' | 'manual' | ''
+  var stLabel = (stKey === 'qr')      ? '▦ QR'
+              : (stKey === 'manual')  ? '✍ 手入力'
+              : (stKey === 'barcode') ? '📊 バーコード'
+              : '';
+
   var label = product.name + '（' + product.code + '）';
   if (product.maker) label += ' / ' + product.maker;
+  if (stLabel)       label += ' ｜ ' + stLabel;
   var el = document.getElementById(tab + '-selected-product');
   el.textContent = label;
   el.className   = 'selected-product-bar filled';
-  showToast('商品選択: ' + product.name, 'success');
+
+  // シリアル種別が「手入力」の商品は、⑤バーコードスキャンボタンを隠して手入力へ誘導する
+  applySerialTypeUI(tab, stKey);
+
+  showToast('商品選択: ' + product.name + (stKey === 'manual' ? '（手入力）' : ''), 'success');
+}
+
+// シリアル種別「バーコード/QR/手入力/空欄」を内部キーに正規化する。
+// 表記ゆれに強くするため部分一致で判定（例「2次元/QRコード」→qr、「手書き/手動/なし」→manual）。
+function normalizeSerialType(v) {
+  var s = String(v || '').normalize('NFKC').trim();
+  if (!s) return '';
+  var u = s.toUpperCase();
+  if (u.indexOf('QR') >= 0) return 'qr';
+  if (s.indexOf('手') >= 0 || s.indexOf('なし') >= 0 || s.indexOf('無') >= 0 ||
+      u.indexOf('MANUAL') >= 0 || u.indexOf('NONE') >= 0) return 'manual';
+  return 'barcode';  // 「バーコード」「BARCODE」その他 → バーコード（未設定は '' のまま既定動作）
+}
+
+// 種別に応じてタブ内の⑤バーコードボタン表示を切替える（手入力=非表示）
+function applySerialTypeUI(tab, stKey) {
+  var isManual = (stKey === 'manual');
+  ['single', 'seq'].forEach(function(kind) {
+    var btn = document.getElementById(tab + '-' + kind + '-scan-btn');
+    if (btn) btn.style.display = isManual ? 'none' : '';
+  });
+  var or = document.getElementById(tab + '-seq-or');
+  if (or) or.style.display = isManual ? 'none' : '';
 }
 
 // ============================================================
@@ -1467,8 +1501,15 @@ function openScanner(target) {
   var isMulti    = target === 'sh-single-serial' || target === 'rt-single-serial';
   scanMultiMode  = isMulti;
   scanMultiCount = 0;
-  // モード切替はシリアル読取時のみ表示（JANは常にEAN固定）。既定はバーコードモード
+  // モード切替はシリアル読取時のみ表示（JANは常にEAN固定）。
+  // 既定モードは選択商品のシリアル種別から自動判別（QR種別→QR、その他→バーコード）。
+  // 誤判別に備え、手動切替ボタン（scannerModeRow）は残す。
   scanMode = 'barcode';
+  if (!isJan) {
+    var tab  = target.substring(0, 2);  // 'sh' or 'rt'
+    var prod = (tab === 'sh') ? appState.shSelectedProduct : appState.rtSelectedProduct;
+    if (prod && normalizeSerialType(prod.serialType) === 'qr') scanMode = 'qr';
+  }
   document.getElementById('scannerModeRow').style.display = isJan ? 'none' : 'flex';
   updateScanModeUI();
   document.getElementById('scannerTitle').textContent = isJan

@@ -1,5 +1,5 @@
 // ============================================================
-// シリアルNo管理アプリ (SerialApps) - Code.gs v2.0.2
+// シリアルNo管理アプリ (SerialApps) - Code.gs v2.1.0
 // アーキテクチャ: GitHub Pages (front) + GAS WebApp (API)
 // ============================================================
 // [重要] コードに機密値を直書きしない。GASスクリプトプロパティに設定すること。
@@ -8,7 +8,7 @@
 //     AUTH_SHEET_ID : beaufield-auth スプレッドシートID（共通）
 // ============================================================
 
-var VERSION = 'v2.0.2';
+var VERSION = 'v2.1.0';
 
 var SHEET_ID      = PropertiesService.getScriptProperties().getProperty('SHEET_ID')      || '';
 var AUTH_SHEET_ID = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID') || '';
@@ -36,12 +36,13 @@ var COL = {
 
 // ProductMaster 列インデックス（0始まり）
 var PCOL = {
-  CODE:   0, // A: 商品コード
-  NAME:   1, // B: 商品名
-  JAN:    2, // C: JANコード
-  MAKER:  3, // D: メーカー
-  SERIES: 4, // E: 商品シリーズ
-  SIZE:   5  // F: サイズ
+  CODE:        0, // A: 商品コード
+  NAME:        1, // B: 商品名
+  JAN:         2, // C: JANコード
+  MAKER:       3, // D: メーカー
+  SERIES:      4, // E: 商品シリーズ
+  SIZE:        5, // F: サイズ
+  SERIAL_TYPE: 6  // G: シリアル種別（バーコード/QR/手入力、空欄=未設定）
 };
 
 // ============================================================
@@ -150,12 +151,13 @@ function getProductMaster() {
       var row = data[i];
       if (!row[PCOL.CODE]) continue;
       result.push({
-        code:   String(row[PCOL.CODE]),
-        name:   String(row[PCOL.NAME]),
-        jan:    String(row[PCOL.JAN]),
-        maker:  String(row[PCOL.MAKER]),
-        series: String(row[PCOL.SERIES]),
-        size:   String(row[PCOL.SIZE])
+        code:       String(row[PCOL.CODE]),
+        name:       String(row[PCOL.NAME]),
+        jan:        String(row[PCOL.JAN]),
+        maker:      String(row[PCOL.MAKER]),
+        series:     String(row[PCOL.SERIES]),
+        size:       String(row[PCOL.SIZE]),
+        serialType: String(row[PCOL.SERIAL_TYPE] || '')
       });
     }
     return { success: true, data: result };
