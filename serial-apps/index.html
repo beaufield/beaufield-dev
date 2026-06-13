@@ -464,7 +464,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.9.5</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.9.6</span>
   </div>
 
   <!-- タブバー -->
@@ -732,7 +732,7 @@ select:focus { border-color: #2a6acc; }
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.9.5</div>
+<div class="version-label">HTML v2.9.6</div>
 
 <!-- ZXing バーコードスキャナー -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+" crossorigin="anonymous"></script>
@@ -1699,18 +1699,23 @@ function scanFeedback() {
 function onScanResult(value, format) {
   if (!value) return;
   var now = Date.now();
-  var isQr = (format === 'QR_CODE');
+  // フォーマット名に "QR" を含めばQRコードとみなす（誤り訂正付きで誤読しない）
+  var isQr = String(format || '').toUpperCase().indexOf('QR') !== -1;
 
   // ===== 誤読対策①: 同じ値が2フレーム連続で読めるまで確定しない =====
-  // ブレた1フレームの誤デコード（例: 6B2A442 →「6!2A.32」）をここで捨てる
-  if (value !== scanCandidate || now - scanCandidateTime > 1500) {
-    scanCandidate      = value;
-    scanCandidateCount = 1;
-    scanCandidateTime  = now;
-    return;  // 1回目はまだ採用しない（次のフレームで同値なら確定）
+  // ブレた1フレームの誤デコード（例: 6B2A442 →「6!2A.32」）をここで捨てる。
+  // ※ QRは検出頻度が低く1500ms以内に2連続が揃わない（＝永遠に確定しない）うえ、
+  //   誤り訂正付きで誤読しないため、QRに限り2フレーム確定をスキップし1回で即確定する。
+  if (!isQr) {
+    if (value !== scanCandidate || now - scanCandidateTime > 1500) {
+      scanCandidate      = value;
+      scanCandidateCount = 1;
+      scanCandidateTime  = now;
+      return;  // 1回目はまだ採用しない（次のフレームで同値なら確定）
+    }
+    scanCandidateCount++;
+    scanCandidateTime = now;
   }
-  scanCandidateCount++;
-  scanCandidateTime = now;
 
   // 確定済み値の連続フレーム多重検知防止（500ms以内の同値は処理しない）
   if (value === scanLastValue && now - scanLastTime < 500) return;
