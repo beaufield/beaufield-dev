@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.5.5';
+const VERSION = 'v2.5.6';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -816,18 +816,42 @@ function searchProducts(params) {
     );
   }
 
+  // 欠品設定タブ用: 実際に登録されている在庫(stock_flag/stock)を product_stock から取得してマップ化
+  // （withStock指定時のみ。商品検索タブの速度を落とさないため通常は取得しない）
+  let stockByNo = null;
+  if (params.withStock && filtered.length) {
+    const ps = bcartGetAll('/product_stock');
+    if (ps.ok && Array.isArray(ps.data)) {
+      stockByNo = {};
+      ps.data.forEach(row => {
+        if (row.product_no === undefined || row.product_no === null || row.product_no === '') return;
+        const key = String(row.product_no);
+        const prev = stockByNo[key];
+        // 同一品番が複数行ある場合は通常在庫管理(stock_flag:0)の行を優先（欠品設定で操作する対象に合わせる）
+        if (!prev || (String(prev.stock_flag) !== '0' && String(row.stock_flag) === '0')) {
+          stockByNo[key] = { stock_flag: row.stock_flag, stock: row.stock };
+        }
+      });
+    }
+  }
+
   const result = filtered.map(p => {
     const s = setByProductId[p.id] || {};
+    // 品番は親商品(products)側が空のセット商品があるため、セット(product_sets)側の品番でフォールバック
+    const pno = p.product_no || p.main_no || s.product_no || '';
+    const live = stockByNo ? stockByNo[String(pno)] : null;
     return {
       id: p.id,
-      // 品番は親商品(products)側が空のセット商品があるため、セット(product_sets)側の品番でフォールバック
-      product_no: p.product_no || p.main_no || s.product_no || '',
+      product_no: pno,
       name: p.name || '',
       flag: p.flag || '',
       display_start: p.hanbai_start || '',
       display_end: getDisplayEnd(p),
       unit_price: s.unit_price || '',
-      stock: s.stock !== undefined ? s.stock : (s.inventory !== undefined ? s.inventory : ''),
+      // 在庫数: withStock時は product_stock の実値、それ以外は従来通りセット側の値
+      stock: live ? live.stock : (s.stock !== undefined ? s.stock : (s.inventory !== undefined ? s.inventory : '')),
+      // 在庫フラグ: withStock時のみ product_stock から付与（0=通常/1=無制限/100=別在庫参照）
+      stock_flag: live ? live.stock_flag : undefined,
       set_id: s.id || ''
     };
   });
