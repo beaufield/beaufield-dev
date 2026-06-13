@@ -464,7 +464,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.9.6</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.9.7</span>
   </div>
 
   <!-- タブバー -->
@@ -732,7 +732,7 @@ select:focus { border-color: #2a6acc; }
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.9.6</div>
+<div class="version-label">HTML v2.9.7</div>
 
 <!-- ZXing バーコードスキャナー -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+" crossorigin="anonymous"></script>
@@ -1463,18 +1463,18 @@ function startScanner() {
   // ・シリアル: CODE-128 と QRコード（誤ってJANをかざした時の警告用にEAN-13だけ併用）
   var F = Html5QrcodeSupportedFormats;
   var isJan = SCAN_TARGET.endsWith('-jan');
-  var formats = isJan
-    ? [F.EAN_13, F.UPC_A, F.EAN_8]
-    : [F.CODE_128, F.QR_CODE, F.EAN_13];
 
-  // ⚠️ OS内蔵エンジン(BarcodeDetector)は使わない（experimentalFeatures無効）。
-  //   iPhone(iOS18 Safari)で内蔵エンジンが有効になるとQRコードを検出できず、
-  //   さらにEAN-13の先頭0を落とす(UPC-A化)不具合が出たため、従来のZXingに固定する。
-  //   ZXingはCODE128・QR・EAN-13いずれも安定して読める。
-  codeReader = new Html5Qrcode('scannerContainer', {
-    formatsToSupport: formats,
-    verbose: false
-  });
+  // OS内蔵エンジン(BarcodeDetector)は使わずZXingに固定（experimentalFeaturesなし）。
+  //   iPhone(iOS18 Safari)で内蔵エンジンが有効になるとQR検出不可＆EAN-13先頭0落ちの不具合が出るため。
+  var scannerConfig = { verbose: false };
+  if (isJan) {
+    // JANスキャナーのみEAN/UPCに限定（シリアルのCODE128を商品コードに誤って拾わないため）
+    scannerConfig.formatsToSupport = [F.EAN_13, F.UPC_A, F.EAN_8];
+  }
+  // ⚠️ シリアルスキャナーは formatsToSupport を指定しない＝全フォーマット対応。
+  //   formatsToSupportでQR_CODEを明示してもライブラリ内のフィルタを通らずQRが読めない
+  //   事象が判明したため、QRが読めていた旧版(v2.8.1)同様に無指定に戻す（CODE128もQRも読める）。
+  codeReader = new Html5Qrcode('scannerContainer', scannerConfig);
 
   codeReader.start(
     { facingMode: 'environment' },
