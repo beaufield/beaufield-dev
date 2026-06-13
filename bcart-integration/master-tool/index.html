@@ -125,11 +125,6 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .login-card h2 { font-size: 18px; margin-bottom: 4px; }
 .login-card p { color: #6b7280; font-size: 13px; margin-bottom: 20px; }
 
-.debug-modal { background: #fff; border-radius: 10px; padding: 24px; width: 700px; max-width: 95vw; max-height: 85vh; display: flex; flex-direction: column; }
-.debug-modal h3 { font-size: 16px; margin-bottom: 12px; }
-.debug-modal textarea { flex: 1; width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; font-family: monospace; resize: none; min-height: 300px; background: #f8fafc; }
-.debug-modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
-
 .stock-filter-group { display: flex; gap: 4px; align-items: center; }
 .stock-filter-group .label { font-size: 12px; color: #6b7280; white-space: nowrap; margin-right: 4px; }
 .stock-btn { padding: 4px 10px; border: 1px solid #e5e7eb; border-radius: 14px; background: #fff; cursor: pointer; font-size: 12px; color: #6b7280; white-space: nowrap; }
@@ -274,7 +269,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.7.5</span>
+    <span class="version">HTML v2.7.6</span>
   </div>
 
   <div class="tabs">
@@ -311,8 +306,6 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
         <button class="filter-btn type-filter-btn"        data-filter="ignored"      onclick="setFilter('ignored',this)">対応不要のみ</button>
         <div style="margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
           <button class="btn btn-primary btn-sm" onclick="loadData()">🔄 再読み込み</button>
-          <button class="btn btn-gray btn-sm" onclick="runDebug()">🔍 デバッグ</button>
-          <button class="btn btn-gray btn-sm" onclick="runDebugCode()">🔍 コード確認</button>
         </div>
       </div>
       <div class="filter-bar">
@@ -399,7 +392,6 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
         <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <button class="btn btn-primary" onclick="doSearchProducts()">🔍 検索する</button>
           <span id="searchProductCount" style="font-size:12px;color:#6b7280;"></span>
-          <button class="btn btn-gray btn-sm" onclick="runDebugProduct()" style="margin-left:auto;">🔍 フィールド確認</button>
         </div>
       </div>
       <div id="searchProductList"></div>
@@ -537,18 +529,6 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <div class="actions">
       <button class="btn btn-gray" onclick="closeModal('featureModal')">キャンセル</button>
       <button class="btn btn-primary" onclick="submitFeatureModal()">保存</button>
-    </div>
-  </div>
-</div>
-
-<!-- デバッグモーダル -->
-<div class="modal-overlay" id="debugModal">
-  <div class="debug-modal">
-    <h3 id="debugModalTitle">デバッグ情報</h3>
-    <textarea id="debugModalText" readonly></textarea>
-    <div class="actions">
-      <button class="btn btn-gray" onclick="copyDebugText()">📋 コピー</button>
-      <button class="btn btn-primary" onclick="closeModal('debugModal')">閉じる</button>
     </div>
   </div>
 </div>
@@ -2080,20 +2060,6 @@ function hideSearchProduct(productId, btn) {
   });
 }
 
-function runDebugProduct() {
-  showToast('商品フィールドを確認中...');
-  gasPost({ action: 'debugProduct' }, function(res) {
-    if (!res.ok) { openDebugModal('エラー', JSON.stringify(res, null, 2)); return; }
-    const msg =
-      '=== BCART 商品フィールド一覧 ===\n' +
-      '総件数: ' + res.total + '\n\n' +
-      'フィールド名:\n' + (res.fields || []).join('\n') + '\n\n' +
-      '=== 1件目のフルデータ ===\n' +
-      JSON.stringify(res.sample, null, 2);
-    openDebugModal('商品フィールド確認', msg);
-  });
-}
-
 function deleteSearchProduct(productId, productNo, name, btn) {
   if (!confirm('商品を完全に削除します。\n\n商品コード: ' + productNo + '\n商品名: ' + name + '\n\n※ この操作は取り消せません。本当に削除しますか？')) return;
   btn.disabled = true;
@@ -2136,61 +2102,6 @@ function loadHistory() {
       '<th>操作種別</th><th>変更前</th><th>変更後</th><th>結果</th></tr></thead>' +
       '<tbody>' + rows + '</tbody>' +
       '</table></div>';
-  });
-}
-
-// ===================== デバッグ =====================
-function openDebugModal(title, text) {
-  document.getElementById('debugModalTitle').textContent = title;
-  document.getElementById('debugModalText').value = text;
-  document.getElementById('debugModal').classList.add('open');
-}
-
-function copyDebugText() {
-  const ta = document.getElementById('debugModalText');
-  ta.select();
-  ta.setSelectionRange(0, 99999);
-  navigator.clipboard.writeText(ta.value).then(() => showToast('コピーしました')).catch(() => {
-    document.execCommand('copy');
-    showToast('コピーしました');
-  });
-}
-
-function runDebugCode() {
-  const code = prompt('確認するコード番号を入力（例: 153）');
-  if (!code) return;
-  showToast('コード ' + code + ' を確認中...');
-  gasPost({ action: 'debugCode', code: code.trim() }, function(res) {
-    if (!res.ok) { openDebugModal('エラー', JSON.stringify(res, null, 2)); return; }
-    const msg =
-      '=== コード ' + res.targetCode + ' ===\n\n' +
-      '--- CSV ---\nマッチ件数: ' + res.csv.matchCount + '\n' +
-      JSON.stringify(res.csv.rows, null, 2) + '\n\n' +
-      '--- BCART ---\n' +
-      JSON.stringify(res.bcart, null, 2);
-    openDebugModal('コード確認: ' + res.targetCode, msg);
-  });
-}
-
-function runDebug() {
-  showToast('デバッグ中（数秒かかります）...');
-  gasPost({ action: 'debugData' }, function(res) {
-    if (!res.ok) { openDebugModal('デバッグエラー', JSON.stringify(res, null, 2)); return; }
-    const csvH = res.csv || {};
-    const bcH  = res.bcart || {};
-    const msg =
-      '=== CSV ===\n' +
-      '件数: ' + (csvH.totalRows || 0) + '\n' +
-      '列名: ' + (csvH.headers || []).join(' / ') + '\n' +
-      'コード先頭5件: ' + (csvH.sampleCodes || []).join(', ') + '\n' +
-      'ゼロ除去後: ' + (csvH.sampleCodesStripped || []).join(', ') + '\n\n' +
-      '=== BCART product_sets ===\n' +
-      '件数: ' + (bcH.total || 0) + '\n' +
-      'product_no先頭5件: ' + (bcH.sampleProductNos || []).join(', ') + '\n' +
-      'ゼロ除去後マッチ数: ' + (bcH.matchCountWithStrip !== undefined ? bcH.matchCountWithStrip : '（GAS未更新）') + '\n\n' +
-      '=== BCART 1件目フルJSON ===\n' +
-      JSON.stringify(bcH.sample1Full, null, 2);
-    openDebugModal('デバッグ情報', msg);
   });
 }
 
