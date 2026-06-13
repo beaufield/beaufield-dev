@@ -274,7 +274,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.7.4</span>
+    <span class="version">HTML v2.7.5</span>
   </div>
 
   <div class="tabs">
@@ -2028,15 +2028,31 @@ function renderSearchProducts() {
   }
 
   container.innerHTML = searchProductCache.map(p => {
-    const isHidden = p.flag === '非表示';
+    // BCARTの表示状態は2階層: 親商品(flag) と 商品セット(set_flag)
+    const isParentHidden = p.flag === '非表示';
+    const isSetHidden    = p.set_flag === '非表示';
+    // お客様が実際に見られるのは「親商品＝表示」かつ「セット＝表示」のときだけ。
+    // どちらか一方でも非表示なら客には見えていない＝行を淡色化する。
+    const isHidden = isParentHidden || isSetHidden;
     const displayEnd = p.display_end ? String(p.display_end).substring(0, 10) : '';
     const isExpired  = displayEnd && new Date(displayEnd) < new Date();
+
+    const parentBadge = isParentHidden
+      ? '<span class="badge badge-ignore">親商品 非表示</span>'
+      : '<span class="badge badge-green">親商品 公開中</span>';
+    const setBadge = isSetHidden
+      ? '<span class="badge badge-ignore">セット 非表示</span>'
+      : '<span class="badge badge-green">セット 公開中</span>';
+    // 親・セットのどちらかが非表示なら「お客様には見えていない」ことを明示
+    const invisibleBadge = isHidden
+      ? '<span class="badge badge-disc">👁 客に非表示</span>'
+      : '';
 
     return '<div class="search-product-item' + (isHidden ? ' product-hidden' : '') + '">' +
       '<div class="search-product-header">' +
       '<span class="diff-code">' + esc(p.product_no) + '</span>' +
       '<span class="diff-name">' + esc(p.name) + '</span>' +
-      (isHidden ? '<span class="badge badge-ignore">非表示</span>' : '<span class="badge badge-green">公開中</span>') +
+      parentBadge + setBadge + invisibleBadge +
       (isExpired ? '<span class="badge badge-price">期限切れ</span>' : '') +
       '</div>' +
       '<div class="search-product-detail">' +
@@ -2045,7 +2061,7 @@ function renderSearchProducts() {
       (p.stock !== '' ? '<span>在庫: ' + esc(String(p.stock)) + '</span>' : '') +
       '</div>' +
       '<div class="search-product-actions">' +
-      (!isHidden ? '<button class="btn btn-gray btn-sm" onclick="hideSearchProduct(\'' + esc(p.id) + '\',this)">🚫 非表示にする</button>' : '') +
+      (!isParentHidden ? '<button class="btn btn-gray btn-sm" onclick="hideSearchProduct(\'' + esc(p.id) + '\',this)">🚫 親商品を非表示</button>' : '') +
       '<button class="btn btn-danger btn-sm" onclick="deleteSearchProduct(\'' + esc(p.id) + '\',\'' + esc(p.product_no) + '\',\'' + esc(p.name) + '\',this)">🗑️ 削除</button>' +
       '</div>' +
       '</div>';

@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.5.7';
+const VERSION = 'v2.5.8';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -854,7 +854,8 @@ function searchProducts(params) {
       id: p.id,
       product_no: pno,
       name: p.name || '',
-      flag: p.flag || '',
+      flag: p.flag || '',                    // 親商品(products)の表示/非表示
+      set_flag: s.set_flag || '',            // 商品セット(product_sets)の表示/非表示
       display_start: p.hanbai_start || '',
       display_end: getDisplayEnd(p),
       unit_price: s.unit_price || '',
