@@ -455,7 +455,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.9.1</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.9.2</span>
   </div>
 
   <!-- タブバー -->
@@ -722,7 +722,7 @@ select:focus { border-color: #2a6acc; }
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.9.1</div>
+<div class="version-label">HTML v2.9.2</div>
 
 <!-- ZXing バーコードスキャナー -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+" crossorigin="anonymous"></script>
@@ -1446,15 +1446,15 @@ function startScanner() {
   document.getElementById('scannerContainer').innerHTML = '';
   document.getElementById('scannerZoomRow').style.display = 'none';
 
-  // スキャン対象ごとに読み取るバーコード形式を限定（高速化 + 誤読防止）
-  // ・JAN: EAN-13 / UPC-A / EAN-8 のみ（シリアルラベルを誤って拾わない）
-  // ・シリアル: 1D各種 + QR/DataMatrix（EAN-13はJAN誤スキャン警告を出すために残す）
+  // スキャン対象ごとに読み取るバーコード形式を絞る（総当たりを減らして高速化＝取りこぼし防止）
+  // ※ 実物ラベルの規格を実測で確定: シリアル=CODE128 / JAN=EAN13（pyzbar解析・2026-06-13）
+  // ・JAN: EAN-13 / UPC-A / EAN-8 のみ
+  // ・シリアル: CODE-128 のみ（誤ってJANをかざした時の警告用にEAN-13だけ併用）
   var F = Html5QrcodeSupportedFormats;
   var isJan = SCAN_TARGET.endsWith('-jan');
   var formats = isJan
     ? [F.EAN_13, F.UPC_A, F.EAN_8]
-    : [F.CODE_39, F.CODE_128, F.CODE_93, F.CODABAR, F.ITF,
-       F.QR_CODE, F.DATA_MATRIX, F.EAN_13];
+    : [F.CODE_128, F.EAN_13];
 
   codeReader = new Html5Qrcode('scannerContainer', { formatsToSupport: formats, verbose: false });
 
@@ -1465,11 +1465,12 @@ function startScanner() {
       // qrboxは指定しない＝画面全体をスキャン対象にする。
       // （横長解像度を縦画面にはめ込むとqrboxの描画位置と実際の読取領域がズレ、
       //   「枠より下でないと読まない」現象が起きるため。全体スキャンなら位置を問わない）
-      // 高解像度を要求（既定の低解像度だとバーコードの細線が潰れて認識が遅い）
+      // 解像度は720pで十分（自動2倍ズームで大きく写るため細線は潰れない）。
+      // 全画面スキャンのため1080pだと処理が重く良いフレームを取りこぼすので720pに抑える
       videoConstraints: {
         facingMode: 'environment',
-        width:  { ideal: 1920 },
-        height: { ideal: 1080 }
+        width:  { ideal: 1280 },
+        height: { ideal: 720 }
       }
     },
     function(decodedText) {
