@@ -487,7 +487,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.10.0</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.10.1</span>
   </div>
 
   <!-- タブバー -->
@@ -759,10 +759,12 @@ select:focus { border-color: #2a6acc; }
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.10.0</div>
+<div class="version-label">HTML v2.10.1</div>
 
-<!-- ZXing バーコードスキャナー -->
+<!-- ZXing バーコードスキャナー（CODE128/JAN用） -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+" crossorigin="anonymous"></script>
+<!-- jsQR（QRコード専用エンジン。html5-qrcode内蔵のZXingがQR苦手なため併用。iPhone Safariでも動作） -->
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js" integrity="sha384-b5Ya4Bq3qCyz39m2ISh+4DxjAIljdeFwK/BsXLuj9gugaNwAcj/ia15fxNZL9Nlx" crossorigin="anonymous"></script>
 
 <script>
 // ============================================================
@@ -803,8 +805,9 @@ var scanCandidateCount = 0;
 var scanCandidateTime  = 0;
 var scannerTrack       = null;    // カメラ操作用のビデオトラック（ズーム/ライト。非対応端末はnullのまま）
 var scannerTorchOn     = false;   // ライト点灯状態
-var qrDetector         = null;    // OS標準QR検出器（BarcodeDetector。非対応端末はnullのまま）
-var qrDetectTimer      = null;    // QR並行検出のタイマー
+var qrDetectTimer      = null;    // QR並行検出（jsQR）のタイマー
+var qrScanCanvas       = null;    // jsQR用の作業キャンバス
+var qrScanCtx          = null;    // jsQR用の2Dコンテキスト
 var scanMode           = 'barcode'; // シリアルスキャンのモード（'barcode'=高解像度+ズーム / 'qr'=旧設定でQR向け）
 // シリアルNoとして受理する形式（英数字とハイフンのみ。誤読由来の「!」「.」等を含む値は破棄）
 var SERIAL_PATTERN = /^[0-9A-Za-z-]{3,32}$/;
@@ -1510,21 +1513,20 @@ function startScanner() {
   //   事象が判明したため、QRが読めていた旧版(v2.8.1)同様に無指定に戻す（CODE128もQRも読める）。
   codeReader = new Html5Qrcode('scannerContainer', scannerConfig);
 
-  // ===== モード別のカメラ設定 =====
-  // QRモード: 旧版(v2.8.1・QRが読めていた)を再現。解像度指定なし＝iOS既定の控えめな解像度に
-  //   なり、QRが画面に占める割合が大きくなってZXingが検出しやすい。ズームもしない。
-  // バーコードモード: CODE128向けに720p＋自動2倍ズーム（良好な現状を維持）。
-  var isQrMode  = (!isJan && scanMode === 'qr');
-  var startConfig = isQrMode
-    ? { fps: 15 }
-    : {
-        fps: 24,
-        videoConstraints: {
-          facingMode: 'environment',
-          width:  { ideal: 1280 },
-          height: { ideal: 720 }
-        }
-      };
+  // ===== カメラ設定 =====
+  // 両モードとも720p＋自動2倍ズームの良いカメラ設定にする。
+  //   ※QRモードでズームを切ると、小さいQRに近づきすぎてピントが合わない問題が出たため、
+  //     QRモードでもズームを使い「離れても大きく写る＝ピントが合う距離を保つ」。
+  //   QRの読取はZXing(JS)が苦手なので、QRモードでは別途jsQRを並行起動する。
+  var isQrMode = (!isJan && scanMode === 'qr');
+  var startConfig = {
+    fps: 24,
+    videoConstraints: {
+      facingMode: 'environment',
+      width:  { ideal: 1280 },
+      height: { ideal: 720 }
+    }
+  };
 
   codeReader.start(
     { facingMode: 'environment' },
@@ -1544,10 +1546,10 @@ function startScanner() {
       guide.className = 'scan-guide';
       container.appendChild(guide);
     }
-    // バーコードモードのみズーム/ライトを初期化（QRモードはズームせず旧版の見え方に）
-    if (!isQrMode) setTimeout(setupScannerCamera, 400);
-    // QRはZXingが大きいフレームで取りこぼすため、OS標準エンジン(対応端末のみ)でも並行検出
-    setTimeout(startQrDetectorFallback, 500);
+    // ズーム/ライトを初期化（両モードとも・ズーム2倍でピントの合う距離を確保）
+    setTimeout(setupScannerCamera, 400);
+    // QRモードはjsQR（QR専用エンジン）を並行起動。ZXingはQRが苦手なため
+    if (isQrMode) setTimeout(startQrJsScan, 500);
   }).catch(function(err) {
     showToast('カメラ起動エラー: ' + err, 'error');
     closeScanner();
@@ -1565,7 +1567,7 @@ function switchScanMode(mode) {
   // ズーム/ライトのボタンは一旦隠す（再起動後に対応端末なら再表示）
   document.getElementById('scannerZoomRow').style.display = 'none';
   scannerActive = false;
-  stopQrDetectorFallback();
+  stopQrJsScan();
   if (codeReader) {
     var r = codeReader;
     codeReader = null;
@@ -1595,32 +1597,39 @@ function updateScanModeUI() {
   }
 }
 
-// OS標準のBarcodeDetectorでQRだけを並行検出する（ZXingは大きいフレームでQRを取りこぼすため）。
-// CODE128/JANは従来どおりhtml5-qrcode(ZXing)が担当。非対応端末では何もしない。
-function startQrDetectorFallback() {
+// QR専用エンジンjsQRで並行検出する（html5-qrcode内蔵のZXingはQRが苦手なため）。
+// CODE128/JANは従来どおりhtml5-qrcode(ZXing)が担当。iPhone Safariでも動作する。
+function startQrJsScan() {
   try {
-    if (!('BarcodeDetector' in window)) return;  // 非対応端末はスキップ
-    BarcodeDetector.getSupportedFormats().then(function(formats) {
-      if (!formats || formats.indexOf('qr_code') === -1) return;  // QR非対応ならスキップ
-      qrDetector = new BarcodeDetector({ formats: ['qr_code'] });
-      var video = document.querySelector('#scannerContainer video');
-      if (!video) return;
-      qrDetectTimer = setInterval(function() {
-        if (!scannerActive || !qrDetector || video.readyState < 2) return;
-        qrDetector.detect(video).then(function(codes) {
-          if (codes && codes.length) {
-            // 読み取れたQRをZXing側と同じ処理に流す（format='QR_CODE'で即確定）
-            onScanResult(codes[0].rawValue, 'QR_CODE');
-          }
-        }).catch(function() {});
-      }, 200);  // 1秒あたり5回検出
-    }).catch(function() {});
+    if (typeof jsQR === 'undefined') return;  // ライブラリ未ロード時はスキップ
+    var video = document.querySelector('#scannerContainer video');
+    if (!video) return;
+    if (!qrScanCanvas) {
+      qrScanCanvas = document.createElement('canvas');
+      qrScanCtx = qrScanCanvas.getContext('2d', { willReadFrequently: true });
+    }
+    qrDetectTimer = setInterval(function() {
+      try {
+        if (!scannerActive || video.readyState < 2) return;
+        var vw = video.videoWidth, vh = video.videoHeight;
+        if (!vw || !vh) return;
+        // 処理を軽くするため長辺を最大720pxに縮小（QRはこの解像度で十分読める）
+        var scale = Math.min(1, 720 / Math.max(vw, vh));
+        var cw = Math.round(vw * scale), ch = Math.round(vh * scale);
+        qrScanCanvas.width = cw; qrScanCanvas.height = ch;
+        qrScanCtx.drawImage(video, 0, 0, cw, ch);
+        var img = qrScanCtx.getImageData(0, 0, cw, ch);
+        var code = jsQR(img.data, cw, ch, { inversionAttempts: 'dontInvert' });
+        if (code && code.data) {
+          onScanResult(code.data, 'QR_CODE');  // QRは即確定（onScanResult内でQR優遇）
+        }
+      } catch (e) {}
+    }, 180);  // 1秒あたり約5回
   } catch (e) {}
 }
 
-function stopQrDetectorFallback() {
+function stopQrJsScan() {
   if (qrDetectTimer) { clearInterval(qrDetectTimer); qrDetectTimer = null; }
-  qrDetector = null;
 }
 
 // カメラ操作（ズーム・ライト）の対応確認と初期化。非対応端末では各ボタンを隠す
@@ -1679,7 +1688,7 @@ function closeScanner() {
   // フラグを先に落として多重コールバックを防ぐ
   scannerActive = false;
   scanMultiMode = false;
-  stopQrDetectorFallback();  // QR並行検出を停止
+  stopQrJsScan();  // QR並行検出を停止
   // ライトが点いていれば消してからトラック参照を破棄
   try {
     if (scannerTrack && scannerTorchOn) {
