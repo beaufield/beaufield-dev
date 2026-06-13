@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.5.2';
+const VERSION = 'v2.5.4';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -661,8 +661,12 @@ function hideProductSet(params) {
 
 // ⑧ 品番存在確認付き欠品設定
 function setStock(params) {
+  // 品番が空だとBCARTが422（product_no必須）を返すため、手前で弾いて分かりやすく案内する
+  if (!params.productNo) {
+    return { ok: false, error: 'この商品は品番が登録されていないため、欠品設定できません（BCART側で品番を設定してください）' };
+  }
   // 品番がBCARTに存在するか事前確認
-  const checkRes = bcartGet('/product_stock/' + params.productNo);
+  const checkRes = bcartGet('/product_stock/' + encodeURIComponent(params.productNo));
   if (!checkRes.ok) {
     return { ok: false, error: '品番「' + params.productNo + '」はBCARTに見つかりませんでした（' + checkRes.error + '）' };
   }
@@ -674,7 +678,11 @@ function setStock(params) {
     return { ok: false, error: '品番「' + params.productNo + '」は在庫管理が設定されていないか、BCARTに存在しません' };
   }
 
-  const res = bcartPatch('/product_stock', [{ product_no: params.productNo, stock: String(params.stock) }]);
+  // 公式仕様: 本文は { product_stock: [...] } で包む必須。stock_flag:0（通常在庫管理）を明示し、
+  // 在庫数を確実に有効化する（無制限/別在庫参照のままだとstockが反映されないため）。
+  const res = bcartPatch('/product_stock', {
+    product_stock: [{ product_no: params.productNo, stock_flag: 0, stock: params.stock }]
+  });
   addHistory({
     userName: params._userName,
     code: params.productNo || '',
@@ -810,7 +818,8 @@ function searchProducts(params) {
     const s = setByProductId[p.id] || {};
     return {
       id: p.id,
-      product_no: p.product_no || p.main_no || '',
+      // 品番は親商品(products)側が空のセット商品があるため、セット(product_sets)側の品番でフォールバック
+      product_no: p.product_no || p.main_no || s.product_no || '',
       name: p.name || '',
       flag: p.flag || '',
       display_start: p.hanbai_start || '',
