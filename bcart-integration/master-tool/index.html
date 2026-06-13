@@ -274,7 +274,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.7.3</span>
+    <span class="version">HTML v2.7.4</span>
   </div>
 
   <div class="tabs">
@@ -1914,9 +1914,9 @@ function searchStock() {
   const rawQuery = document.getElementById('stockQuery').value.trim();
   if (!rawQuery) return;
   const container = document.getElementById('stockResult');
-  container.innerHTML = '<div class="loading"><div class="spinner"></div><div>BCART商品を検索中...</div></div>';
+  container.innerHTML = '<div class="loading"><div class="spinner"></div><div>BCART商品と在庫情報を検索中（30秒ほどかかる場合があります）...</div></div>';
 
-  gasPost({ action: 'searchProducts', keyword: rawQuery }, function(res) {
+  gasPost({ action: 'searchProducts', keyword: rawQuery, withStock: true }, function(res) {
     if (!res.ok) {
       container.innerHTML = '';
       showToast('エラー: ' + res.error, true);
@@ -1933,13 +1933,37 @@ function searchStock() {
     container.innerHTML = found.map(p =>
       '<div class="stock-result">' +
       '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">' +
-      '<div><span style="font-family:monospace;font-size:12px;color:#6b7280;">' + esc(p.product_no) + '</span> <strong>' + esc(p.name) + '</strong></div>' +
+      '<div>' +
+        '<div><span style="font-family:monospace;font-size:12px;color:#6b7280;">' + esc(p.product_no) + '</span> <strong>' + esc(p.name) + '</strong></div>' +
+        '<div style="margin-top:4px;">' + stockBadge(p) + '</div>' +
+      '</div>' +
       '<div style="display:flex;gap:8px;">' +
       '<button class="btn btn-danger btn-sm" onclick="setStock(\'' + esc(p.product_no) + '\',0,this,\'' + esc(p.name) + '\')">🚫 欠品（在庫0）</button>' +
       '<button class="btn btn-success btn-sm" onclick="setStock(\'' + esc(p.product_no) + '\',1,this,\'' + esc(p.name) + '\')">✅ 在庫あり（無制限）</button>' +
       '</div></div></div>'
     ).join('');
   });
+}
+
+// 現在BCARTに登録されている在庫状態（在庫フラグ＋在庫数）を色付きバッジで表示
+function stockBadge(p) {
+  if (p.stock_flag === undefined || p.stock_flag === null || p.stock_flag === '') {
+    return '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;background:#f3f4f6;color:#6b7280;">在庫情報なし</span>';
+  }
+  const f = parseInt(p.stock_flag);
+  let flagLabel, stockLabel, bg, color;
+  if (f === 1) {
+    flagLabel = '無制限(1)'; stockLabel = '－'; bg = '#dcfce7'; color = '#166534';
+  } else if (f === 100) {
+    flagLabel = '別在庫参照(100)'; stockLabel = '自動計算'; bg = '#e0e7ff'; color = '#3730a3';
+  } else {
+    flagLabel = '通常(0)';
+    const st = (p.stock === '' || p.stock === undefined || p.stock === null) ? '?' : parseInt(p.stock);
+    stockLabel = String(st);
+    if (st === 0) { bg = '#fee2e2'; color = '#991b1b'; }   // 在庫0＝欠品状態は赤
+    else { bg = '#fef9c3'; color = '#854d0e'; }            // 在庫ありは黄
+  }
+  return '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;background:' + bg + ';color:' + color + ';">現在 ─ 在庫フラグ: ' + flagLabel + '｜在庫数: ' + stockLabel + '</span>';
 }
 
 function setStock(productNo, stock, btn, name) {
