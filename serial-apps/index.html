@@ -269,8 +269,21 @@ input[type="number"]:focus { border-color: #2a6acc; }
 }
 .scanner-footer { background: #222; padding: 14px; display: flex; gap: 10px; justify-content: center; }
 
-/* スキャナー補助UI（読取枠はhtml5-qrcodeのqrbox表示を使用）*/
+/* スキャナー補助UI */
 #scannerContainer { position: relative; }
+/* 視覚ガイド（中央に合わせる目安。実際は画面全体をスキャンするため位置ズレしない）*/
+.scan-guide {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 84%;
+  height: 46%;
+  border: 2px dashed rgba(0, 230, 118, 0.9);
+  border-radius: 8px;
+  pointer-events: none;
+  z-index: 50;
+}
 .scanner-hint {
   background: #000;
   color: #ccc;
@@ -442,7 +455,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.9.0</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.9.1</span>
   </div>
 
   <!-- タブバー -->
@@ -684,7 +697,7 @@ select:focus { border-color: #2a6acc; }
 <div class="scanner-overlay" id="scannerOverlay">
   <div class="scanner-box">
     <div class="scanner-header" id="scannerTitle">バーコードをかざしてください</div>
-    <div class="scanner-hint">📏 15cmほど離して、バーコードを枠の幅いっぱいに</div>
+    <div class="scanner-hint">📏 バーコードを画面中央に大きく映してください</div>
     <div id="scannerContainer"></div>
     <div class="scanner-zoom-row" id="scannerZoomRow" style="display:none;">
       <button type="button" data-z="1" onclick="applyScannerZoom(1)">1×</button>
@@ -709,7 +722,7 @@ select:focus { border-color: #2a6acc; }
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.9.0</div>
+<div class="version-label">HTML v2.9.1</div>
 
 <!-- ZXing バーコードスキャナー -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+" crossorigin="anonymous"></script>
@@ -1449,10 +1462,9 @@ function startScanner() {
     { facingMode: 'environment' },
     {
       fps: 24,
-      // 横長の読取枠（処理範囲を絞って高速化・周囲のバーコード誤読防止。枠はライブラリが描画）
-      qrbox: function(vw, vh) {
-        return { width: Math.floor(vw * 0.85), height: Math.floor(vh * 0.32) };
-      },
+      // qrboxは指定しない＝画面全体をスキャン対象にする。
+      // （横長解像度を縦画面にはめ込むとqrboxの描画位置と実際の読取領域がズレ、
+      //   「枠より下でないと読まない」現象が起きるため。全体スキャンなら位置を問わない）
       // 高解像度を要求（既定の低解像度だとバーコードの細線が潰れて認識が遅い）
       videoConstraints: {
         facingMode: 'environment',
@@ -1465,6 +1477,13 @@ function startScanner() {
     },
     null  // フレームごとのエラーは無視
   ).then(function() {
+    // 視覚ガイド（中央に合わせる目安）を映像の上に重ねる
+    var container = document.getElementById('scannerContainer');
+    if (container && !container.querySelector('.scan-guide')) {
+      var guide = document.createElement('div');
+      guide.className = 'scan-guide';
+      container.appendChild(guide);
+    }
     // ズーム対応端末なら2倍ズームを自動適用（離しても大きく写る=ピントの合う距離を保てる）
     setTimeout(setupScannerZoom, 400);
   }).catch(function(err) {
