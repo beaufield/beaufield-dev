@@ -269,31 +269,35 @@ input[type="number"]:focus { border-color: #2a6acc; }
 }
 .scanner-footer { background: #222; padding: 14px; display: flex; gap: 10px; justify-content: center; }
 
-/* スキャン枠（ファインダー）*/
+/* スキャナー補助UI（読取枠はhtml5-qrcodeのqrbox表示を使用）*/
 #scannerContainer { position: relative; }
-.scanner-finder {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 70%;
-  padding-top: 35%;
-  pointer-events: none;
+.scanner-hint {
+  background: #000;
+  color: #ccc;
+  font-size: 12px;
+  text-align: center;
+  padding: 5px 10px;
 }
-.scanner-finder::before,
-.scanner-finder::after,
-.sf-br,
-.sf-bl {
-  position: absolute;
-  width: 22px;
-  height: 22px;
-  border-color: #00e676;
-  border-style: solid;
+.scanner-zoom-row {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  background: #222;
+  padding: 8px 0 0;
 }
-.scanner-finder::before { content: ''; top: 0; left: 0; border-width: 3px 0 0 3px; }
-.scanner-finder::after  { content: ''; top: 0; right: 0; border-width: 3px 3px 0 0; }
-.sf-br { content: ''; bottom: 0; right: 0; border-width: 0 3px 3px 0; }
-.sf-bl { content: ''; bottom: 0; left: 0; border-width: 0 0 3px 3px; }
+.scanner-zoom-row button {
+  background: #444;
+  color: #fff;
+  border: none;
+  border-radius: 14px;
+  padding: 5px 18px;
+  font-size: 13px;
+}
+.scanner-zoom-row button.active {
+  background: #00e676;
+  color: #000;
+  font-weight: bold;
+}
 /* ライブデコード結果 */
 .scanner-live-result {
   background: #111;
@@ -438,7 +442,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.8.1</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.9.0</span>
   </div>
 
   <!-- タブバー -->
@@ -680,7 +684,13 @@ select:focus { border-color: #2a6acc; }
 <div class="scanner-overlay" id="scannerOverlay">
   <div class="scanner-box">
     <div class="scanner-header" id="scannerTitle">バーコードをかざしてください</div>
+    <div class="scanner-hint">📏 15cmほど離して、バーコードを枠の幅いっぱいに</div>
     <div id="scannerContainer"></div>
+    <div class="scanner-zoom-row" id="scannerZoomRow" style="display:none;">
+      <button type="button" data-z="1" onclick="applyScannerZoom(1)">1×</button>
+      <button type="button" data-z="2" onclick="applyScannerZoom(2)">2×</button>
+      <button type="button" data-z="3" onclick="applyScannerZoom(3)">3×</button>
+    </div>
     <div class="scanner-live-result" id="scannerLiveResult">— 認識待ち —</div>
     <div class="scanner-count" id="scannerCount" style="display:none;"></div>
     <div class="scanner-footer">
@@ -699,7 +709,7 @@ select:focus { border-color: #2a6acc; }
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.8.1</div>
+<div class="version-label">HTML v2.9.0</div>
 
 <!-- ZXing バーコードスキャナー -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+" crossorigin="anonymous"></script>
@@ -738,6 +748,12 @@ var scanMultiCount  = 0;
 var scanLastValue   = '';
 var scanLastTime    = 0;
 var scanScannedSet  = new Set();  // 連続スキャンモードでスキャン済みの値を記憶
+var scanCandidate      = '';      // 2フレーム連続一致確定用の候補値
+var scanCandidateCount = 0;
+var scanCandidateTime  = 0;
+var scannerZoomTrack   = null;    // カメラズーム操作用のビデオトラック（非対応端末はnullのまま）
+// シリアルNoとして受理する形式（英数字とハイフンのみ。誤読由来の「!」「.」等を含む値は破棄）
+var SERIAL_PATTERN = /^[0-9A-Za-z-]{3,32}$/;
 
 // ============================================================
 // スマホズーム補正（GAS WebApp固定幅対策 — GitHub Pagesでは不要だが残す）
@@ -1387,6 +1403,9 @@ function openScanner(target) {
   scanLastValue  = '';
   scanLastTime   = 0;
   scanScannedSet = new Set();  // スキャン済みセットをリセット
+  scanCandidate      = '';
+  scanCandidateCount = 0;
+  scanCandidateTime  = 0;
   var isJan      = target.endsWith('-jan');
   var isMulti    = target === 'sh-single-serial' || target === 'rt-single-serial';
   scanMultiMode  = isMulti;
@@ -1412,28 +1431,42 @@ function openScanner(target) {
 function startScanner() {
   if (scannerActive) return;
   document.getElementById('scannerContainer').innerHTML = '';
+  document.getElementById('scannerZoomRow').style.display = 'none';
 
-  // formatsToSupportを指定しない → html5-qrcodeが全フォーマット対応になる
-  // （EAN-13・UPC-A・Code 128・QRコード等すべて読める）
-  codeReader = new Html5Qrcode('scannerContainer', { verbose: false });
+  // スキャン対象ごとに読み取るバーコード形式を限定（高速化 + 誤読防止）
+  // ・JAN: EAN-13 / UPC-A / EAN-8 のみ（シリアルラベルを誤って拾わない）
+  // ・シリアル: 1D各種 + QR/DataMatrix（EAN-13はJAN誤スキャン警告を出すために残す）
+  var F = Html5QrcodeSupportedFormats;
+  var isJan = SCAN_TARGET.endsWith('-jan');
+  var formats = isJan
+    ? [F.EAN_13, F.UPC_A, F.EAN_8]
+    : [F.CODE_39, F.CODE_128, F.CODE_93, F.CODABAR, F.ITF,
+       F.QR_CODE, F.DATA_MATRIX, F.EAN_13];
+
+  codeReader = new Html5Qrcode('scannerContainer', { formatsToSupport: formats, verbose: false });
 
   codeReader.start(
     { facingMode: 'environment' },
-    { fps: 15 },
+    {
+      fps: 24,
+      // 横長の読取枠（処理範囲を絞って高速化・周囲のバーコード誤読防止。枠はライブラリが描画）
+      qrbox: function(vw, vh) {
+        return { width: Math.floor(vw * 0.85), height: Math.floor(vh * 0.32) };
+      },
+      // 高解像度を要求（既定の低解像度だとバーコードの細線が潰れて認識が遅い）
+      videoConstraints: {
+        facingMode: 'environment',
+        width:  { ideal: 1920 },
+        height: { ideal: 1080 }
+      }
+    },
     function(decodedText) {
-      // ライブ表示更新 & スキャン結果処理
-      var liveEl = document.getElementById('scannerLiveResult');
-      if (liveEl) liveEl.textContent = decodedText;
       onScanResult(decodedText);
     },
     null  // フレームごとのエラーは無視
   ).then(function() {
-    // カメラ起動後にスキャン枠オーバーレイを追加
-    var container = document.getElementById('scannerContainer');
-    var finder = document.createElement('div');
-    finder.className = 'scanner-finder';
-    finder.innerHTML = '<span class="sf-br"></span><span class="sf-bl"></span>';
-    container.appendChild(finder);
+    // ズーム対応端末なら2倍ズームを自動適用（離しても大きく写る=ピントの合う距離を保てる）
+    setTimeout(setupScannerZoom, 400);
   }).catch(function(err) {
     showToast('カメラ起動エラー: ' + err, 'error');
     closeScanner();
@@ -1442,10 +1475,40 @@ function startScanner() {
   scannerActive = true;
 }
 
+// ズーム対応の確認と初期適用（iOS 17+ Safari / Android Chrome対応。非対応端末では何もしない）
+function setupScannerZoom() {
+  try {
+    var video = document.querySelector('#scannerContainer video');
+    if (!video || !video.srcObject) return;
+    var track = video.srcObject.getVideoTracks()[0];
+    if (!track || !track.getCapabilities) return;
+    var caps = track.getCapabilities();
+    if (!caps.zoom || !caps.zoom.max || caps.zoom.max < 2) return;
+    scannerZoomTrack = track;
+    document.getElementById('scannerZoomRow').style.display = 'flex';
+    applyScannerZoom(2);
+  } catch (e) {}
+}
+
+function applyScannerZoom(z) {
+  try {
+    if (!scannerZoomTrack) return;
+    var caps = scannerZoomTrack.getCapabilities();
+    var zoom = Math.max(caps.zoom.min || 1, Math.min(z, caps.zoom.max));
+    scannerZoomTrack.applyConstraints({ advanced: [{ zoom: zoom }] });
+    var btns = document.querySelectorAll('#scannerZoomRow button');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].classList.toggle('active', Number(btns[i].getAttribute('data-z')) === z);
+    }
+  } catch (e) {}
+}
+
 function closeScanner() {
   // フラグを先に落として多重コールバックを防ぐ
   scannerActive = false;
   scanMultiMode = false;
+  scannerZoomTrack = null;
+  document.getElementById('scannerZoomRow').style.display = 'none';
   document.getElementById('scannerOverlay').classList.remove('active');
   if (codeReader) {
     var reader = codeReader;
@@ -1525,6 +1588,18 @@ function janErrorFeedback() {
   showToast('JANコードは登録できません', 'error');
 }
 
+// 誤読破棄時のフィードバック（形式不正の読み値を捨てたことを知らせる）
+function misreadFeedback() {
+  playErrorBeep();
+  if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
+  var liveEl = document.getElementById('scannerLiveResult');
+  if (liveEl) {
+    liveEl.style.color = '#ff4444';
+    liveEl.textContent = '⚠ 誤読を破棄しました。もう一度かざしてください';
+    setTimeout(function() { liveEl.style.color = ''; }, 2000);
+  }
+}
+
 // スキャン成功フィードバック（音 + バイブ + 画面フラッシュ）
 function scanFeedback() {
   // 音
@@ -1551,8 +1626,20 @@ function scanFeedback() {
 
 function onScanResult(value) {
   if (!value) return;
-  // 連続フレームの多重検知防止（500ms以内の同値は処理しない）
   var now = Date.now();
+
+  // ===== 誤読対策①: 同じ値が2フレーム連続で読めるまで確定しない =====
+  // ブレた1フレームの誤デコード（例: 6B2A442 →「6!2A.32」）をここで捨てる
+  if (value !== scanCandidate || now - scanCandidateTime > 1500) {
+    scanCandidate      = value;
+    scanCandidateCount = 1;
+    scanCandidateTime  = now;
+    return;  // 1回目はまだ採用しない（次のフレームで同値なら確定）
+  }
+  scanCandidateCount++;
+  scanCandidateTime = now;
+
+  // 確定済み値の連続フレーム多重検知防止（500ms以内の同値は処理しない）
   if (value === scanLastValue && now - scanLastTime < 500) return;
   scanLastValue = value;
   scanLastTime  = now;
@@ -1566,6 +1653,13 @@ function onScanResult(value) {
     var p   = appState.products.find(function(x) { return janMatch(x.jan, value) || janMatch(x.code, value); });
     if (p) selectProduct(tab, p);
     else   showToast('商品が見つかりません: ' + value, 'error');
+    return;
+  }
+
+  // ===== 誤読対策②: シリアルNo形式チェック =====
+  // 英数字とハイフン以外の文字を含む値は誤読として破棄（13桁数字のJANはこの後の分岐で警告を出す）
+  if (!SERIAL_PATTERN.test(value)) {
+    misreadFeedback();
     return;
   }
 
