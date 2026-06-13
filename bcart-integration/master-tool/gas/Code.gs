@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.5.6';
+const VERSION = 'v2.5.7';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -798,15 +798,6 @@ function searchProducts(params) {
     filtered = filtered.filter(p => p.flag === '非表示');
   }
 
-  if (params.stockZero) {
-    filtered = filtered.filter(p => {
-      const s = setByProductId[p.id];
-      if (!s) return false;
-      const stock = s.stock !== undefined ? s.stock : s.inventory;
-      return stock !== undefined && (parseInt(stock) === 0 || String(stock) === '0');
-    });
-  }
-
   if (params.specialId) {
     const fid = String(params.specialId);
     filtered = filtered.filter(p =>
@@ -816,10 +807,13 @@ function searchProducts(params) {
     );
   }
 
-  // 欠品設定タブ用: 実際に登録されている在庫(stock_flag/stock)を product_stock から取得してマップ化
-  // （withStock指定時のみ。商品検索タブの速度を落とさないため通常は取得しない）
+  // 実際に登録されている在庫(stock_flag/stock)を product_stock から取得してマップ化
+  // - withStock : 欠品設定タブで現在の在庫状態を表示するため
+  // - stockZero : 商品検索タブの「在庫0のみ」で、無制限(stock_flag:1)等を除いた
+  //               「本当の欠品（通常在庫管理 stock_flag:0 かつ stock:0）」だけに絞り込むため
+  // どちらの指定もない通常の商品検索では取得しない（速度を落とさないため）
   let stockByNo = null;
-  if (params.withStock && filtered.length) {
+  if ((params.withStock || params.stockZero) && filtered.length) {
     const ps = bcartGetAll('/product_stock');
     if (ps.ok && Array.isArray(ps.data)) {
       stockByNo = {};
@@ -833,6 +827,22 @@ function searchProducts(params) {
         }
       });
     }
+  }
+
+  // 在庫0のみ: 通常在庫管理(stock_flag:0)かつ在庫数0＝実際に欠品している商品だけを残す。
+  // 無制限(1)・別在庫参照(100)は在庫0表示でも常に購入可なので除外。
+  // 在庫情報(product_stock)が無い商品も「欠品と確認できない」ため除外（仕様確認済 2026-06-14）。
+  if (params.stockZero) {
+    filtered = filtered.filter(p => {
+      const s = setByProductId[p.id] || {};
+      // 品番は親商品(products)側が空のセット商品があるためセット側へフォールバック（mapと同一ロジック）
+      const pno = p.product_no || p.main_no || s.product_no || '';
+      const live = stockByNo ? stockByNo[String(pno)] : null;
+      if (!live) return false;                            // 在庫情報なし → 欠品扱いしない
+      if (String(live.stock_flag) !== '0') return false;  // 無制限/別在庫参照 → 除外
+      const st = live.stock;
+      return st !== undefined && st !== null && st !== '' && parseInt(st) === 0;
+    });
   }
 
   const result = filtered.map(p => {
