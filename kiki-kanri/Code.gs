@@ -4,7 +4,7 @@
 // 更新日: 2026-04-25
 // ============================================================
 
-const VERSION  = 'GAS 1.9.2';
+const VERSION  = 'GAS 1.9.3';
 const SHEET_ID      = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
 const AUTH_SHEET_ID = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID');
 // SHEET_ID / AUTH_SHEET_ID / LINEWORKS_WEBHOOK はスクリプトプロパティで管理
@@ -500,7 +500,7 @@ function sendLineWorksMessage(text) {
 }
 
 // ─── 週次レポート（毎週火曜9:00にトリガー登録） ─────────────
-// ① 返却期限超過 ② 7日以内に期限 ③ 返却期限未設定 をLINE WORKSに通知する
+// ① 返却期限超過 ② 7日以内に期限 ③ 返却期限未設定 ④ メーカー返却期限超過 をLINE WORKSに通知する
 function sendWeeklyReport() {
   const todayStr = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
   const limitDate = new Date();
@@ -509,7 +509,7 @@ function sendWeeklyReport() {
 
   // DeviceMasterを取得し、各フィールドを正規化する
   // - status: 余分なスペースを除去（手動編集で混入しやすい）
-  // - returnDueDate: DateオブジェクトはYYYY-MM-DD変換、スラッシュ区切りはハイフンに統一
+  // - returnDueDate / makerReturnDueDate: DateオブジェクトはYYYY-MM-DD変換、スラッシュ区切りはハイフンに統一
   //   （'2026/03/01' < '2026-04-21' が文字コード順でfalseになるため比較が狂う）
   const devices = getSheet('DeviceMaster').map(function(d) {
     if (d.status !== undefined) d.status = String(d.status).trim();
@@ -517,6 +517,11 @@ function sendWeeklyReport() {
       d.returnDueDate = Utilities.formatDate(d.returnDueDate, 'Asia/Tokyo', 'yyyy-MM-dd');
     } else if (d.returnDueDate) {
       d.returnDueDate = String(d.returnDueDate).trim().replace(/\//g, '-');
+    }
+    if (d.makerReturnDueDate instanceof Date) {
+      d.makerReturnDueDate = Utilities.formatDate(d.makerReturnDueDate, 'Asia/Tokyo', 'yyyy-MM-dd');
+    } else if (d.makerReturnDueDate) {
+      d.makerReturnDueDate = String(d.makerReturnDueDate).trim().replace(/\//g, '-');
     }
     return d;
   });
@@ -536,8 +541,17 @@ function sendWeeklyReport() {
     return d.status === '貸出中' && !d.returnDueDate;
   });
 
+  // ④ メーカー返却期限超過（メーカー借入商品で、廃棄・返却済以外）
+  const makerOverdue = devices.filter(function(d) {
+    return d.type === 'メーカー借入'
+      && d.makerReturnDueDate
+      && d.makerReturnDueDate < todayStr
+      && d.status !== '廃棄'
+      && d.status !== 'メーカー返却済';
+  }).sort(function(a, b) { return a.makerReturnDueDate.localeCompare(b.makerReturnDueDate); });
+
   // すべて該当なしなら簡易通知
-  if (overdue.length === 0 && soon.length === 0 && noDate.length === 0) {
+  if (overdue.length === 0 && soon.length === 0 && noDate.length === 0 && makerOverdue.length === 0) {
     sendLineWorksMessage('【週次レポート】要確認の貸出商品はありません。');
     return;
   }
@@ -567,6 +581,15 @@ function sendWeeklyReport() {
     noDate.forEach(function(d, i) {
       msg += '\n' + (i + 1) + '. [' + (d.labelId || d.id) + '] ' + d.name;
       msg += '\n　貸出先: ' + (d.loanTo || '未設定');
+      if (d.salesRep) msg += ' / ' + d.salesRep;
+    });
+  }
+
+  if (makerOverdue.length > 0) {
+    msg += '\n\n■ メーカー返却期限超過（' + makerOverdue.length + '件）';
+    makerOverdue.forEach(function(d, i) {
+      msg += '\n' + (i + 1) + '. [' + (d.labelId || d.id) + '] ' + d.name;
+      msg += '\n　期限: ' + d.makerReturnDueDate;
       if (d.salesRep) msg += ' / ' + d.salesRep;
     });
   }
