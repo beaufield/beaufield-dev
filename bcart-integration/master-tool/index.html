@@ -269,7 +269,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.8.3</span>
+    <span class="version">HTML v2.8.4</span>
   </div>
 
   <div class="tabs">
@@ -338,8 +338,8 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
           <button class="btn btn-jodai btn-sm" id="bulkJodaiBtn" onclick="bulkUpdateByType('jodai')" disabled title="チェックした商品の上代差異のみ更新">💴 上代のみ</button>
           <button class="btn btn-primary btn-sm" id="bulkAllBtn"  onclick="bulkUpdateByType('all')"   disabled title="チェックした商品の全差異をまとめて更新">▶ まとめて更新</button>
           <button class="btn btn-wip btn-sm" id="bulkWipBtn" onclick="bulkMarkWipAll()" disabled style="display:none;" title="チェックした未登録商品をまとめて作業中にする">📝 一括作業中にする</button>
-          <button class="btn btn-gray btn-sm" id="bulkAddSetBtn" onclick="openBulkAddSetSearch()" disabled style="display:none;" title="チェックした作業中の商品を既存のBCART商品にまとめて追加">📦 既存の商品にまとめて追加</button>
-          <button class="btn btn-primary btn-sm" id="bulkRegisterBtn" onclick="openBulkRegisterModal()" disabled style="display:none;" title="チェックした作業中の商品を新規BCART商品のセットとしてまとめて登録">🆕 新規商品にまとめて登録</button>
+          <button class="btn btn-gray btn-sm" id="bulkAddSetBtn" disabled style="display:none;" title="チェックした作業中の商品を既存のBCART商品にまとめて追加">📦 既存の商品にまとめて追加</button>
+          <button class="btn btn-primary btn-sm" id="bulkRegisterBtn" disabled style="display:none;" title="チェックした作業中の商品を新規BCART商品のセットとしてまとめて登録">🆕 新規商品にまとめて登録</button>
         </div>
         <button class="btn btn-gray btn-sm" id="bulkIgnoreBtn" onclick="openBulkIgnoreModal()" disabled>🚫 一括対応不要</button>
       </div>
@@ -1138,11 +1138,48 @@ window.onload = function() {
 
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('mainScreen').style.display = 'block';
+  bindBulkButtons();
   loadData();
 };
 
 function goToPortal() {
   window.location.href = PORTAL_URL;
+}
+
+// ボタンへの直接リスナーバインド + capture-phase 救済（onclick 不発・要素覆い被さり対策）
+function bindBulkButtons() {
+  var regBtn = document.getElementById('bulkRegisterBtn');
+  var addBtn = document.getElementById('bulkAddSetBtn');
+  if (regBtn) regBtn.addEventListener('click', openBulkRegisterModal);
+  if (addBtn) addBtn.addEventListener('click', openBulkAddSetSearch);
+
+  document.addEventListener('click', function(e) {
+    var candidates = [
+      { btn: regBtn, fn: openBulkRegisterModal },
+      { btn: addBtn, fn: openBulkAddSetSearch }
+    ];
+    for (var i = 0; i < candidates.length; i++) {
+      var btn = candidates[i].btn;
+      var fn = candidates[i].fn;
+      if (!btn || btn.style.display === 'none' || btn.disabled) continue;
+      var rect = btn.getBoundingClientRect();
+      if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) continue;
+      if (e.target !== btn && !btn.contains(e.target)) {
+        var info = e.target.id ? '#' + e.target.id : (e.target.className ? '.' + String(e.target.className).split(' ')[0] : e.target.tagName);
+        showToast('⚠ ボタンが別要素(' + info + ')に覆われていました。実行します。', true);
+        e.stopPropagation();
+        fn();
+      }
+    }
+  }, true);
+}
+
+// 残存オーバーレイを一掃する（開きっぱなしのモーダル・進捗画面を強制クリア）
+function closeAllOverlays() {
+  document.getElementById('progressOverlay').classList.remove('open');
+  document.querySelectorAll('.modal-overlay.open').forEach(function(el) {
+    el.classList.remove('open');
+  });
 }
 
 // ===================== タブ切り替え =====================
@@ -2278,6 +2315,7 @@ function openAddSetSearchModal(code) {
 
 // 一括: 一括バーの「N件を既存商品に追加」ボタンから起動
 function openBulkAddSetSearch() {
+  closeAllOverlays();
   const checked = [...document.querySelectorAll('.diff-check:checked')];
   if (checked.length === 0) { showToast('商品を選択してからボタンを押してください', true); return; }
   const checkedCodes = new Set(checked.map(c => String(c.dataset.code)));
@@ -2441,6 +2479,7 @@ async function confirmBulkAddSet() {
   }
 
   closeModal('addSetBulkFormModal');
+  document.getElementById('selectAll').checked = false;
   showProgressOverlay(items.length);
 
   let successCount = 0, failCount = 0;
@@ -2480,6 +2519,7 @@ async function confirmBulkAddSet() {
 
 // ===================== 機能D: 一括新規商品登録 =====================
 function openBulkRegisterModal() {
+  closeAllOverlays();
   const checked = [...document.querySelectorAll('.diff-check:checked')];
   if (checked.length === 0) { showToast('商品を選択してからボタンを押してください', true); return; }
   const checkedCodes = new Set(checked.map(c => String(c.dataset.code)));
@@ -2621,6 +2661,7 @@ async function confirmBulkRegister() {
 
   const failedSets = (res.results || []).filter(r => !r.ok);
   closeModal('bulkRegisterModal');
+  document.getElementById('selectAll').checked = false;
   if (failedSets.length > 0) {
     showToast('商品登録完了（一部セット失敗: ' + failedSets.map(r => r.code).join(', ') + '）', true);
   } else {
