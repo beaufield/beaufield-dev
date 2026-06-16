@@ -269,7 +269,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.8.6</span>
+    <span class="version">HTML v2.8.7</span>
   </div>
 
   <div class="tabs">
@@ -1128,11 +1128,6 @@ let addSetSearchCache = [];  // 検索結果キャッシュ（商品名のクォ
 let regBulkItems = [];
 
 // ===================== 初期化 =====================
-window.onerror = function(msg, src, line) {
-  showToast('❌ JSエラー: ' + String(msg).slice(0, 80) + ' (L' + line + ')', true);
-  return false;
-};
-
 window.onload = function() {
   const raw = localStorage.getItem('bf_session');
   if (!raw) { goToPortal(); return; }
@@ -1166,30 +1161,9 @@ function bindBulkButtons() {
     for (var i = 0; i < candidates.length; i++) {
       var btn = candidates[i].btn;
       var fn = candidates[i].fn;
-      if (!btn) continue;
-
-      // --- 診断①: ボタンが非活性の場合 ---
+      if (!btn || btn.style.display === 'none' || btn.disabled) continue;
       var rect = btn.getBoundingClientRect();
       if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) continue;
-      if (btn.style.display === 'none' || btn.disabled) {
-        if (btn === regBtn) {
-          showToast('📍[診断] ボタン非活性: display=' + btn.style.display + ' disabled=' + btn.disabled, true);
-        }
-        continue;
-      }
-
-      // --- 診断②: ボタン活性・クリック検出 → 400ms後に関数が呼ばれていなければ報告 ---
-      if (btn === regBtn) {
-        var targetInfo = e.target === btn ? 'btn' : (e.target.id ? '#' + e.target.id : e.target.tagName);
-        window._regBtnFnCalled = false;
-        clearTimeout(window._regBtnDiagTimer);
-        window._regBtnDiagTimer = setTimeout(function() {
-          if (!window._regBtnFnCalled) {
-            showToast('📍[診断] クリック検出(target=' + targetInfo + ')→関数未呼出', true);
-          }
-        }, 400);
-      }
-
       if (e.target !== btn && !btn.contains(e.target)) {
         var info = e.target.id ? '#' + e.target.id : (e.target.className ? '.' + String(e.target.className).split(' ')[0] : e.target.tagName);
         showToast('⚠ ボタンが別要素(' + info + ')に覆われていました。実行します。', true);
@@ -2545,9 +2519,6 @@ async function confirmBulkAddSet() {
 
 // ===================== 機能D: 一括新規商品登録 =====================
 function openBulkRegisterModal() {
-  showToast('📍 関数入口OK', true); // v2.8.6 診断
-  window._regBtnFnCalled = true;
-  clearTimeout(window._regBtnDiagTimer);
   closeAllOverlays();
   const checked = [...document.querySelectorAll('.diff-check:checked')];
   if (checked.length === 0) { showToast('商品を選択してからボタンを押してください', true); return; }
@@ -2662,8 +2633,9 @@ async function confirmBulkRegister() {
   }
 
   const btn = document.getElementById('bRegSubmitBtn');
+  const lbl = document.getElementById('bRegSubmitLabel');
   btn.disabled = true;
-  btn.textContent = '登録中...';
+  if (lbl) lbl.textContent = '登録中...';
 
   const res = await gasPostAsync({
     action:      'bulkRegisterProduct',
@@ -2680,7 +2652,7 @@ async function confirmBulkRegister() {
   });
 
   btn.disabled = false;
-  btn.textContent = '🆕 ' + regBulkItems.length + '件のセットで新規登録';
+  if (lbl) lbl.textContent = regBulkItems.length + '件';
 
   if (!res.ok) {
     errorEl.textContent = '登録失敗: ' + (res.error || '不明なエラー');
