@@ -269,7 +269,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.8.0</span>
+    <span class="version">HTML v2.8.3</span>
   </div>
 
   <div class="tabs">
@@ -1480,10 +1480,10 @@ function updateBulkBtn() {
     // WIPフィルター時のみ「既存商品に追加」「新規商品に登録」を表示
     if (currentFilter === 'wip') {
       addSetBtn.style.display = '';
-      addSetBtn.disabled = count === 0;
+      addSetBtn.disabled = false;
       addSetBtn.textContent = count > 0 ? '📦 ' + count + '件を既存商品に追加' : '📦 既存の商品にまとめて追加';
       regBulkBtn.style.display = '';
-      regBulkBtn.disabled = count === 0;
+      regBulkBtn.disabled = false;
       regBulkBtn.textContent = count > 0 ? '🆕 ' + count + '件を新規商品に登録' : '🆕 新規商品にまとめて登録';
     } else {
       addSetBtn.style.display  = 'none';
@@ -2279,10 +2279,15 @@ function openAddSetSearchModal(code) {
 // 一括: 一括バーの「N件を既存商品に追加」ボタンから起動
 function openBulkAddSetSearch() {
   const checked = [...document.querySelectorAll('.diff-check:checked')];
+  if (checked.length === 0) { showToast('商品を選択してからボタンを押してください', true); return; }
   const checkedCodes = new Set(checked.map(c => String(c.dataset.code)));
   addSetBulkItems = allDiffs.filter(d => d.isWip && !d.isIgnored && checkedCodes.has(String(d.code)));
   addSetDiff = null;
-  if (addSetBulkItems.length === 0) { showToast('対象商品が見つかりません。再読み込みしてください。', true); return; }
+  if (addSetBulkItems.length === 0) {
+    const wipTotal = allDiffs.filter(d => d.isWip && !d.isIgnored).length;
+    showToast('対象商品が見つかりません（WIP' + wipTotal + '件）。ページを再読み込みしてください。', true);
+    return;
+  }
   document.getElementById('addSetSearchTarget').textContent =
     '追加対象: ' + addSetBulkItems.length + '件の作業中商品';
   document.getElementById('addSetSearchInput').value = '';
@@ -2476,9 +2481,14 @@ async function confirmBulkAddSet() {
 // ===================== 機能D: 一括新規商品登録 =====================
 function openBulkRegisterModal() {
   const checked = [...document.querySelectorAll('.diff-check:checked')];
+  if (checked.length === 0) { showToast('商品を選択してからボタンを押してください', true); return; }
   const checkedCodes = new Set(checked.map(c => String(c.dataset.code)));
   regBulkItems = allDiffs.filter(d => d.isWip && !d.isIgnored && checkedCodes.has(String(d.code)));
-  if (regBulkItems.length === 0) { showToast('対象商品が見つかりません。再読み込みしてください。', true); return; }
+  if (regBulkItems.length === 0) {
+    const wipTotal = allDiffs.filter(d => d.isWip && !d.isIgnored).length;
+    showToast('対象商品が見つかりません（WIP' + wipTotal + '件）。ページを再読み込みしてください。', true);
+    return;
+  }
 
   const countLabel = regBulkItems.length + '件';
   document.getElementById('bRegTitle').textContent = countLabel;
