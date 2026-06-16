@@ -269,7 +269,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.8.5</span>
+    <span class="version">HTML v2.8.6</span>
   </div>
 
   <div class="tabs">
@@ -1128,6 +1128,11 @@ let addSetSearchCache = [];  // 検索結果キャッシュ（商品名のクォ
 let regBulkItems = [];
 
 // ===================== 初期化 =====================
+window.onerror = function(msg, src, line) {
+  showToast('❌ JSエラー: ' + String(msg).slice(0, 80) + ' (L' + line + ')', true);
+  return false;
+};
+
 window.onload = function() {
   const raw = localStorage.getItem('bf_session');
   if (!raw) { goToPortal(); return; }
@@ -2540,6 +2545,7 @@ async function confirmBulkAddSet() {
 
 // ===================== 機能D: 一括新規商品登録 =====================
 function openBulkRegisterModal() {
+  showToast('📍 関数入口OK', true); // v2.8.6 診断
   window._regBtnFnCalled = true;
   clearTimeout(window._regBtnDiagTimer);
   closeAllOverlays();
