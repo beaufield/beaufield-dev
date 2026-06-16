@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.5.8';
+const VERSION = 'v2.6.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -27,6 +27,7 @@ const SHEET_SP_GROUPS   = '特別価格_顧客グループ';
 const SHEET_SP_DETAILS  = '特別価格_明細';
 const SHEET_VF_DETAILS  = '例外表示_明細';
 const SHEET_FEATURES    = '特集_管理';
+const SHEET_DESC_SKIP   = '説明文不要';
 
 // ===================== エントリポイント =====================
 function doPost(e) {
@@ -98,10 +99,12 @@ function doPost(e) {
       case 'deleteViewFilterDetail':    return jsonResponse(deleteViewFilterDetail(params));
       case 'getMembers':                return jsonResponse(getMembers());
       // 機能C: 説明文生成
-      case 'getProductsForDescription': return jsonResponse(getProductsForDescription());
+      case 'getProductsForDescription': return jsonResponse(getProductsForDescription(params));
       case 'generateDescription':       return jsonResponse(generateDescription(params));
       case 'factCheckDescription':      return jsonResponse(factCheckDescription(params));
       case 'applyDescription':          return jsonResponse(applyDescription(params));
+      case 'markDescSkip':              return jsonResponse(markDescSkip(params));
+      case 'unmarkDescSkip':            return jsonResponse(unmarkDescSkip(params));
       // 機能D: 特集管理
       case 'getFeatureList':          return jsonResponse(getFeatureList());
       case 'createFeature':           return jsonResponse(createFeature(params));
@@ -1876,6 +1879,8 @@ function getOrCreateSheet(sheetName) {
       sheet.appendRow(['商品コード', '商品名', '理由', '登録日時', '仕入先名']);
     } else if (sheetName === SHEET_WIP) {
       sheet.appendRow(['商品コード', '商品名', '登録日時']);
+    } else if (sheetName === SHEET_DESC_SKIP) {
+      sheet.appendRow(['商品ID', '商品名', '登録日時']);
     } else if (sheetName === SHEET_HISTORY) {
       sheet.appendRow(['日時', '操作者', '商品コード', '商品名', '操作種別', '変更前', '変更後', '結果']);
       sheet.setFrozenRows(1);
@@ -2012,9 +2017,39 @@ function unmarkWip(params) {
   return { ok: true };
 }
 
+// ===================== 機能C-補助: 説明文不要フラグ =====================
+function getDescSkipMap() {
+  const sheet = getOrCreateSheet(SHEET_DESC_SKIP);
+  const rows = sheet.getDataRange().getValues();
+  const map = {};
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0]) map[String(rows[i][0])] = true;
+  }
+  return map;
+}
+
+function markDescSkip(params) {
+  const sheet = getOrCreateSheet(SHEET_DESC_SKIP);
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === String(params.id)) return { ok: true };
+  }
+  sheet.appendRow([params.id, params.name, new Date().toLocaleString('ja-JP')]);
+  return { ok: true };
+}
+
+function unmarkDescSkip(params) {
+  const sheet = getOrCreateSheet(SHEET_DESC_SKIP);
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === String(params.id)) { sheet.deleteRow(i + 1); return { ok: true }; }
+  }
+  return { ok: true };
+}
+
 // ===================== 機能C: 説明文生成（Gemini API） =====================
 
-function getProductsForDescription() {
+function getProductsForDescription(params) {
   const products = bcartGetAll('/products');
   if (!products.ok) return products;
 
@@ -2036,11 +2071,20 @@ function getProductsForDescription() {
     feature_id3: p.feature_id3 || null
   }));
 
-  const noDetail  = allMapped.filter(p => !p.detail || p.detail.trim() === '').sort((a, b) => b.id - a.id);
-  const hasDetail = allMapped.filter(p => p.detail && p.detail.trim() !== '');
-  // ※ detail は内部的に p.description をマッピングしたもの
+  const skipMap = getDescSkipMap();
 
-  return { ok: true, products: noDetail, withDetail: hasDetail.length, total: allMapped.length };
+  // 説明文不要リストのみ表示モード
+  if (params && params.skipOnly) {
+    const skipList = allMapped.filter(p => skipMap[String(p.id)]).sort((a, b) => b.id - a.id);
+    return { ok: true, products: skipList, skipOnly: true, total: allMapped.length };
+  }
+
+  // 通常モード: 説明文なし かつ 不要フラグなし
+  const noDetail  = allMapped.filter(p => (!p.detail || p.detail.trim() === '') && !skipMap[String(p.id)]).sort((a, b) => b.id - a.id);
+  const hasDetail = allMapped.filter(p => p.detail && p.detail.trim() !== '');
+  const skipCount = Object.keys(skipMap).length;
+
+  return { ok: true, products: noDetail, withDetail: hasDetail.length, total: allMapped.length, skipCount: skipCount };
 }
 
 // groundingMetadata からソースURL・検索クエリを抽出する共通ヘルパー
