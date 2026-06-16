@@ -269,7 +269,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.8.4</span>
+    <span class="version">HTML v2.8.5</span>
   </div>
 
   <div class="tabs">
@@ -1161,9 +1161,30 @@ function bindBulkButtons() {
     for (var i = 0; i < candidates.length; i++) {
       var btn = candidates[i].btn;
       var fn = candidates[i].fn;
-      if (!btn || btn.style.display === 'none' || btn.disabled) continue;
+      if (!btn) continue;
+
+      // --- 診断①: ボタンが非活性の場合 ---
       var rect = btn.getBoundingClientRect();
       if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) continue;
+      if (btn.style.display === 'none' || btn.disabled) {
+        if (btn === regBtn) {
+          showToast('📍[診断] ボタン非活性: display=' + btn.style.display + ' disabled=' + btn.disabled, true);
+        }
+        continue;
+      }
+
+      // --- 診断②: ボタン活性・クリック検出 → 400ms後に関数が呼ばれていなければ報告 ---
+      if (btn === regBtn) {
+        var targetInfo = e.target === btn ? 'btn' : (e.target.id ? '#' + e.target.id : e.target.tagName);
+        window._regBtnFnCalled = false;
+        clearTimeout(window._regBtnDiagTimer);
+        window._regBtnDiagTimer = setTimeout(function() {
+          if (!window._regBtnFnCalled) {
+            showToast('📍[診断] クリック検出(target=' + targetInfo + ')→関数未呼出', true);
+          }
+        }, 400);
+      }
+
       if (e.target !== btn && !btn.contains(e.target)) {
         var info = e.target.id ? '#' + e.target.id : (e.target.className ? '.' + String(e.target.className).split(' ')[0] : e.target.tagName);
         showToast('⚠ ボタンが別要素(' + info + ')に覆われていました。実行します。', true);
@@ -2519,6 +2540,8 @@ async function confirmBulkAddSet() {
 
 // ===================== 機能D: 一括新規商品登録 =====================
 function openBulkRegisterModal() {
+  window._regBtnFnCalled = true;
+  clearTimeout(window._regBtnDiagTimer);
   closeAllOverlays();
   const checked = [...document.querySelectorAll('.diff-check:checked')];
   if (checked.length === 0) { showToast('商品を選択してからボタンを押してください', true); return; }
