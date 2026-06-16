@@ -141,7 +141,9 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .search-keyword-row input { flex: 1; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
 .search-product-item { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 8px; }
 .search-product-item.product-hidden { opacity: 0.6; }
-.search-product-header { padding: 10px 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.search-product-header { padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; }
+.search-product-title  { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.search-product-badges { display: flex; flex-wrap: wrap; gap: 4px; }
 .search-product-detail { padding: 4px 14px 8px; display: flex; gap: 16px; font-size: 13px; color: #6b7280; flex-wrap: wrap; }
 .search-product-actions { padding: 8px 14px; background: #f9fafb; border-top: 1px solid #f3f4f6; border-radius: 0 0 8px 8px; display: flex; gap: 6px; flex-wrap: wrap; }
 .text-danger { color: #dc2626; font-weight: 600; }
@@ -262,14 +264,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.9.0</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.9.1</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.9.0</span>
+    <span class="version">HTML v2.9.1</span>
   </div>
 
   <div class="tabs">
@@ -2076,11 +2078,15 @@ function renderSearchProducts() {
 
     return '<div class="search-product-item' + (isHidden ? ' product-hidden' : '') + '">' +
       '<div class="search-product-header">' +
-      '<input type="checkbox" class="search-product-check" style="margin-right:4px;cursor:pointer;" data-id="' + esc(p.id) + '"' + (p._sel ? ' checked' : '') + ' onchange="onSearchCheckChange(this)">' +
-      '<span class="diff-code">' + esc(p.product_no) + '</span>' +
+      '<div class="search-product-title">' +
+      '<input type="checkbox" class="search-product-check" style="flex-shrink:0;cursor:pointer;" data-id="' + esc(p.id) + '"' + (p._sel ? ' checked' : '') + ' onchange="onSearchCheckChange(this)">' +
+      '<span class="diff-code" style="flex-shrink:0;">' + esc(p.product_no) + '</span>' +
       '<span class="diff-name">' + esc(p.name) + '</span>' +
+      '</div>' +
+      '<div class="search-product-badges">' +
       parentBadge + setBadge + invisibleBadge +
       (isExpired ? '<span class="badge badge-price">期限切れ</span>' : '') +
+      '</div>' +
       '</div>' +
       '<div class="search-product-detail">' +
       (displayEnd ? '<span>表示期限: <strong class="' + (isExpired ? 'text-danger' : '') + '">' + esc(displayEnd) + '</strong></span>' : '') +
@@ -2096,7 +2102,7 @@ function renderSearchProducts() {
 }
 
 function onSearchCheckChange(cb) {
-  const p = searchProductCache.find(x => x.id === cb.dataset.id);
+  const p = searchProductCache.find(x => String(x.id) === cb.dataset.id);
   if (p) p._sel = cb.checked;
   syncSearchBulkBar();
 }
