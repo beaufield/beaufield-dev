@@ -269,7 +269,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.7.6</span>
+    <span class="version">HTML v2.8.0</span>
   </div>
 
   <div class="tabs">
@@ -432,7 +432,8 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
           <span style="font-size:12px;color:#6b7280;">ONのとき、AIが実際にWeb検索して正確な情報をもとに説明文を生成します（使用上限超えの場合はOFFに切り替えてください）。</span>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <button class="btn btn-primary" id="descLoadBtn" onclick="loadProductsForDescription()">📦 説明文なし商品を取得</button>
+          <button class="btn btn-primary" id="descLoadBtn" onclick="loadProductsForDescription(false)">📦 説明文なし商品を取得</button>
+          <button class="btn" id="descSkipListBtn" onclick="loadProductsForDescription(true)" style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:14px;">🚫 説明文不要リスト</button>
           <span id="descProductCount" style="font-size:12px;color:#6b7280;"></span>
         </div>
         <div id="descFeatureFilterRow" style="display:none;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap;">
@@ -3655,6 +3656,8 @@ function deleteGroup(groupId, name) {
 
 var descAllProducts = [];
 var descFeatureList = [];
+var descViewMode = 'normal'; // 'normal' | 'skip'
+var BATCH_GEN_LIMIT = 5;
 
 function initDescriptionTab() {
   if (descFeatureList.length > 0) return;
@@ -3670,19 +3673,29 @@ function initDescriptionTab() {
   });
 }
 
-function loadProductsForDescription() {
-  const btn = document.getElementById('descLoadBtn');
-  btn.disabled = true;
-  btn.textContent = '取得中...';
+function loadProductsForDescription(skipOnly) {
+  descViewMode = skipOnly ? 'skip' : 'normal';
+  const loadBtn = document.getElementById('descLoadBtn');
+  const skipBtn = document.getElementById('descSkipListBtn');
+  loadBtn.disabled = true;
+  skipBtn.disabled = true;
+  loadBtn.textContent = '取得中...';
   document.getElementById('descProductCount').textContent = '';
   document.getElementById('descFilterCount').textContent = '';
-  gasPostAsync({ action: 'getProductsForDescription' }).then(function(res) {
-    btn.disabled = false;
-    btn.textContent = '📦 説明文なし商品を取得';
+  gasPostAsync({ action: 'getProductsForDescription', skipOnly: !!skipOnly }).then(function(res) {
+    loadBtn.disabled = false;
+    skipBtn.disabled = false;
+    loadBtn.textContent = '📦 説明文なし商品を取得';
     if (!res.ok) { showToast('取得失敗: ' + res.error, true); return; }
     descAllProducts = res.products;
-    document.getElementById('descProductCount').textContent =
-      '説明文なし: ' + res.products.length + '件 ／ 全' + res.total + '件（説明文あり: ' + res.withDetail + '件）';
+    if (skipOnly) {
+      document.getElementById('descProductCount').textContent =
+        '説明文不要リスト: ' + res.products.length + '件';
+    } else {
+      var countText = '説明文なし: ' + res.products.length + '件 ／ 全' + res.total + '件（説明文あり: ' + res.withDetail + '件）';
+      if (res.skipCount) countText += ' ・説明文不要に設定済み: ' + res.skipCount + '件';
+      document.getElementById('descProductCount').textContent = countText;
+    }
     document.getElementById('descFeatureFilterRow').style.display = 'flex';
     // 一覧にある商品の特集IDからドロップダウンを再構築
     var fids = {};
@@ -3700,8 +3713,9 @@ function loadProductsForDescription() {
     descSel.value = '';
     renderDescProductList(descAllProducts);
   }).catch(function(e) {
-    btn.disabled = false;
-    btn.textContent = '📦 説明文なし商品を取得';
+    loadBtn.disabled = false;
+    skipBtn.disabled = false;
+    loadBtn.textContent = '📦 説明文なし商品を取得';
     showToast('通信エラー: ' + e.message, true);
   });
 }
@@ -3722,12 +3736,35 @@ function filterDescProducts() {
 
 function renderDescProductList(products) {
   const el = document.getElementById('descProductList');
+
+  // 説明文不要リストモード
+  if (descViewMode === 'skip') {
+    if (!products || !products.length) {
+      el.innerHTML = '<div style="padding:24px;text-align:center;color:#6b7280;background:#fff;border-radius:8px;border:1px solid #e5e7eb;">説明文不要リストは空です</div>';
+      return;
+    }
+    let html = '';
+    products.forEach(function(p) {
+      const nameAttr = escAttr(p.name);
+      html += '<div class="desc-product-card" id="desc-card-' + p.id + '" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;">' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div class="desc-product-name">' + esc(p.name) + '</div>' +
+          '<div class="desc-product-meta">カテゴリ: ' + esc(p.category_name || '未設定') + ' ／ 商品ID: ' + p.id + '</div>' +
+        '</div>' +
+        '<button class="btn btn-sm" onclick="unmarkDescSkipOne(\'' + p.id + '\',this)" style="white-space:nowrap;background:#f0fdf4;border:1px solid #86efac;color:#16a34a;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">↩️ 不要を解除</button>' +
+      '</div>';
+    });
+    el.innerHTML = html;
+    return;
+  }
+
+  // 通常モード
   if (!products || !products.length) {
     el.innerHTML = '<div style="padding:24px;text-align:center;color:#6b7280;background:#fff;border-radius:8px;border:1px solid #e5e7eb;">説明文なしの商品はありません 🎉</div>';
     return;
   }
   let html = '<div style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
-    '<button class="btn btn-primary btn-sm" id="batchGenBtn" onclick="batchGenerateDesc()">✨ 上から10件まとめて生成</button>' +
+    '<button class="btn btn-primary btn-sm" id="batchGenBtn" onclick="batchGenerateDesc()">✨ 上から' + BATCH_GEN_LIMIT + '件まとめて生成</button>' +
     '<span style="font-size:12px;color:#6b7280;">（1件ずつ順番に処理・Web検索ありの場合は1件あたり約6〜8秒）</span></div>';
   products.forEach(function(p) {
     const nameAttr = escAttr(p.name);
@@ -3738,10 +3775,11 @@ function renderDescProductList(products) {
           '<div class="desc-product-name">' + esc(p.name) + '</div>' +
           '<div class="desc-product-meta">カテゴリ: ' + esc(p.category_name || '未設定') + ' ／ 商品ID: ' + p.id + '</div>' +
         '</div>' +
-        '<div class="desc-product-actions">' +
+        '<div class="desc-product-actions" style="flex-wrap:wrap;">' +
           '<button class="btn btn-primary btn-sm" onclick="generateOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',\'' + catAttr + '\',this)">✨ 生成</button>' +
           '<button class="btn btn-sm" id="fact-btn-' + p.id + '" onclick="factCheckOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',\'' + catAttr + '\',this)" style="display:none;background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">🔍 チェック</button>' +
           '<button class="btn btn-success btn-sm" id="apply-btn-' + p.id + '" onclick="applyOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',this)" disabled>✅ 反映</button>' +
+          '<button class="btn btn-sm" onclick="markDescSkipOne(\'' + p.id + '\',\'' + nameAttr + '\',this)" style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">🚫 不要</button>' +
         '</div>' +
       '</div>' +
       '<textarea class="desc-textarea" id="desc-text-' + p.id + '" rows="8" placeholder="「✨ 生成」を押すとAIが説明文を作成します。内容を確認・修正してから「✅ 反映」でBCARTに登録します。"></textarea>' +
@@ -3755,6 +3793,38 @@ function renderDescProductList(products) {
 
 function escAttr(str) {
   return String(str || '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+}
+
+function markDescSkipOne(id, name, btn) {
+  btn.disabled = true;
+  gasPost({ action: 'markDescSkip', id: id, name: name }, function(res) {
+    btn.disabled = false;
+    if (!res.ok) { showToast('設定失敗: ' + res.error, true); return; }
+    // 一覧から除去しカードを削除
+    descAllProducts = descAllProducts.filter(function(p) { return String(p.id) !== String(id); });
+    var card = document.getElementById('desc-card-' + id);
+    if (card) card.remove();
+    // カウント更新
+    var countEl = document.getElementById('descProductCount');
+    var skipMatch = countEl.textContent.match(/説明文不要に設定済み: (\d+)件/);
+    var skipCount = skipMatch ? parseInt(skipMatch[1]) + 1 : 1;
+    countEl.textContent = countEl.textContent.replace(/・説明文不要に設定済み: \d+件/, '') + ' ・説明文不要に設定済み: ' + skipCount + '件';
+    showToast('説明文不要に設定しました（「🚫 説明文不要リスト」ボタンから戻せます）');
+  });
+}
+
+function unmarkDescSkipOne(id, btn) {
+  btn.disabled = true;
+  gasPost({ action: 'unmarkDescSkip', id: id }, function(res) {
+    btn.disabled = false;
+    if (!res.ok) { showToast('解除失敗: ' + res.error, true); return; }
+    descAllProducts = descAllProducts.filter(function(p) { return String(p.id) !== String(id); });
+    var card = document.getElementById('desc-card-' + id);
+    if (card) card.remove();
+    var countEl = document.getElementById('descProductCount');
+    countEl.textContent = '説明文不要リスト: ' + descAllProducts.length + '件';
+    showToast('解除しました');
+  });
 }
 
 function getDescSearchToggle() {
@@ -3898,7 +3968,7 @@ function batchGenerateDesc() {
     const catText = metaEl ? metaEl.textContent.replace('カテゴリ: ', '').split(' ／ ')[0] : '';
     queue.push({ id: productId, name: nameEl ? nameEl.textContent : '', category: catText });
   });
-  const batch = queue.slice(0, 10);
+  const batch = queue.slice(0, BATCH_GEN_LIMIT);
   if (!batch.length) { batchGenerating = false; showToast('すべての商品に説明文が生成されています'); return; }
   document.getElementById('batchGenBtn').disabled = true;
   function processNext(idx) {
