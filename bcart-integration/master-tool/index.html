@@ -2280,7 +2280,7 @@ function openAddSetSearchModal(code) {
 function openBulkAddSetSearch() {
   const checked = [...document.querySelectorAll('.diff-check:checked')];
   const checkedCodes = new Set(checked.map(c => String(c.dataset.code)));
-  addSetBulkItems = getFilteredDiffs().filter(d => checkedCodes.has(String(d.code)));
+  addSetBulkItems = allDiffs.filter(d => d.isWip && !d.isIgnored && checkedCodes.has(String(d.code)));
   addSetDiff = null;
   if (addSetBulkItems.length === 0) { showToast('対象商品が見つかりません。再読み込みしてください。', true); return; }
   document.getElementById('addSetSearchTarget').textContent =
@@ -2477,7 +2477,7 @@ async function confirmBulkAddSet() {
 function openBulkRegisterModal() {
   const checked = [...document.querySelectorAll('.diff-check:checked')];
   const checkedCodes = new Set(checked.map(c => String(c.dataset.code)));
-  regBulkItems = getFilteredDiffs().filter(d => checkedCodes.has(String(d.code)));
+  regBulkItems = allDiffs.filter(d => d.isWip && !d.isIgnored && checkedCodes.has(String(d.code)));
   if (regBulkItems.length === 0) { showToast('対象商品が見つかりません。再読み込みしてください。', true); return; }
 
   const countLabel = regBulkItems.length + '件';
