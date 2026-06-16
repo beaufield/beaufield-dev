@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.6.0';
+const VERSION = 'v2.9.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -61,6 +61,7 @@ function doPost(e) {
       case 'markWip':              return jsonResponse(markWip(params));
       case 'unmarkWip':            return jsonResponse(unmarkWip(params));
       case 'bulkUpdate':           return jsonResponse(bulkUpdate(params));
+      case 'bulkUpdateVisibility': return jsonResponse(bulkUpdateVisibility(params));
       case 'bulkIgnore':           return jsonResponse(bulkIgnore(params));
       case 'bulkMarkWip':          return jsonResponse(bulkMarkWip(params));
       case 'searchProducts':       return jsonResponse(searchProducts(params));
@@ -740,6 +741,25 @@ function bulkUpdate(params) {
       res = bcartPatch('/product_sets/' + item.bcartSetId, { jan_code: item.janCode });
     }
     results.push({ code: item.code, ok: res ? res.ok : false, error: res ? res.error : '' });
+  });
+  return { ok: true, results: results };
+}
+
+function bulkUpdateVisibility(params) {
+  const flag = params.flag === '表示' ? '表示' : '非表示';
+  const results = [];
+  (params.items || []).forEach(item => {
+    const res = bcartPatch('/products/' + item.id, { flag: flag });
+    addHistory({
+      userName: params._userName,
+      code: item.code || '',
+      name: item.name || '',
+      type: '表示切替（一括）',
+      before: item.beforeFlag || '',
+      after: flag,
+      result: res.ok ? '成功' : ('失敗: ' + res.error)
+    });
+    results.push({ id: item.id, ok: res.ok, error: res.ok ? '' : res.error });
   });
   return { ok: true, results: results };
 }
