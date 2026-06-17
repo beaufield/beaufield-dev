@@ -265,14 +265,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.9.4</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.9.5</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.9.4</span>
+    <span class="version">HTML v2.9.5</span>
   </div>
 
   <div class="tabs">
@@ -3893,7 +3893,7 @@ function renderDescProductList(products) {
       '<div class="desc-product-btn-row">' +
         '<div class="desc-product-actions">' +
           '<button class="btn btn-primary btn-sm" onclick="generateOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',\'' + catAttr + '\',this)">✨ 生成</button>' +
-          '<button class="btn btn-sm" onclick="findSimilarDesc(\'' + p.id + '\',\'' + nameAttr + '\')" style="background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">🔗 類似品</button>' +
+          '<button class="btn btn-sm" onclick="findSimilarDesc(\'' + p.id + '\',\'' + nameAttr + '\',this)" style="background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">🔗 類似品</button>' +
           '<button class="btn btn-sm" id="fact-btn-' + p.id + '" onclick="factCheckOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',\'' + catAttr + '\',this)" style="display:none;background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">🔍 チェック</button>' +
           '<button class="btn btn-success btn-sm" id="apply-btn-' + p.id + '" onclick="applyOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',this)" disabled>✅ 反映</button>' +
         '</div>' +
@@ -4113,8 +4113,7 @@ function getBaseName(name) {
     .trim();
 }
 
-function findSimilarDesc(targetId, targetName) {
-  var btn = event.currentTarget;
+function findSimilarDesc(targetId, targetName, btn) {
   var origText = btn.textContent;
   btn.disabled = true;
   btn.textContent = '🔍 検索中...';
