@@ -2104,7 +2104,14 @@ function getProductsForDescription(params) {
   const hasDetail = allMapped.filter(p => p.detail && p.detail.trim() !== '');
   const skipCount = Object.keys(skipMap).length;
 
-  return { ok: true, products: noDetail, withDetail: hasDetail.length, total: allMapped.length, skipCount: skipCount };
+  return {
+    ok: true,
+    products: noDetail,
+    withDetail: hasDetail.length,
+    total: allMapped.length,
+    skipCount: skipCount,
+    productsWithDesc: hasDetail.map(p => ({ id: p.id, name: p.name, detail: p.detail }))
+  };
 }
 
 // groundingMetadata からソースURL・検索クエリを抽出する共通ヘルパー

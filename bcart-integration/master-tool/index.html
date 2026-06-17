@@ -265,14 +265,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.9.2</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.9.3</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.9.2</span>
+    <span class="version">HTML v2.9.3</span>
   </div>
 
   <div class="tabs">
@@ -819,6 +819,18 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     </div>
     <div class="progress-detail" id="progressDetail"></div>
     <div class="progress-result" id="progressResult"></div>
+  </div>
+</div>
+
+<!-- 類似商品説明文モーダル -->
+<div id="similarDescModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:200;align-items:center;justify-content:center;" onclick="if(event.target===this)closeSimilarModal()">
+  <div style="background:#fff;border-radius:12px;padding:24px;width:640px;max-width:92vw;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;gap:8px;">
+      <h3 id="similarModalTitle" style="font-size:14px;font-weight:700;color:#1e3a5f;line-height:1.4;"></h3>
+      <button onclick="closeSimilarModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#9ca3af;flex-shrink:0;line-height:1;">✕</button>
+    </div>
+    <div style="font-size:12px;color:#6b7280;margin-bottom:10px;">説明文を確認して「コピー」を押してください。テキストエリアに反映後、内容を修正できます。</div>
+    <div id="similarDescList" style="overflow-y:auto;flex:1;"></div>
   </div>
 </div>
 
@@ -3757,9 +3769,12 @@ function deleteGroup(groupId, name) {
 // ===================== 機能C: 説明文生成 =====================
 
 var descAllProducts = [];
+var descProductsWithDesc = [];
 var descFeatureList = [];
 var descViewMode = 'normal'; // 'normal' | 'skip'
 var BATCH_GEN_LIMIT = 5;
+var _similarMatches = [];
+var _similarTargetId = null;
 
 function initDescriptionTab() {
   if (descFeatureList.length > 0) return;
@@ -3790,6 +3805,7 @@ function loadProductsForDescription(skipOnly) {
     loadBtn.textContent = '📦 説明文なし商品を取得';
     if (!res.ok) { showToast('取得失敗: ' + res.error, true); return; }
     descAllProducts = res.products;
+    if (!skipOnly && res.productsWithDesc) descProductsWithDesc = res.productsWithDesc;
     if (skipOnly) {
       document.getElementById('descProductCount').textContent =
         '説明文不要リスト: ' + res.products.length + '件';
@@ -3879,6 +3895,7 @@ function renderDescProductList(products) {
       '<div class="desc-product-btn-row">' +
         '<div class="desc-product-actions">' +
           '<button class="btn btn-primary btn-sm" onclick="generateOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',\'' + catAttr + '\',this)">✨ 生成</button>' +
+          '<button class="btn btn-sm" onclick="findSimilarDesc(\'' + p.id + '\',\'' + nameAttr + '\')" style="background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">🔗 類似品</button>' +
           '<button class="btn btn-sm" id="fact-btn-' + p.id + '" onclick="factCheckOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',\'' + catAttr + '\',this)" style="display:none;background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">🔍 チェック</button>' +
           '<button class="btn btn-success btn-sm" id="apply-btn-' + p.id + '" onclick="applyOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',this)" disabled>✅ 反映</button>' +
         '</div>' +
@@ -4086,6 +4103,68 @@ function batchGenerateDesc() {
     setTimeout(function() { processNext(idx + 1); }, interval);
   }
   processNext(0);
+}
+
+// --- 類似商品説明文コピー ---
+
+function getBaseName(name) {
+  return name
+    .replace(/[\d０-９]+(\.\d+)?\s*(g|ml|mL|L|ℓ|kg|cc|本|枚|個|set|セット|pack|パック|step|ステップ|oz)/gi, '')
+    .replace(/[\d０-９]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function findSimilarDesc(targetId, targetName) {
+  if (!descProductsWithDesc.length) {
+    showToast('先に「説明文なし商品を取得」を実行してください', true);
+    return;
+  }
+  var base = getBaseName(targetName);
+  if (!base || base.length < 4) {
+    showToast('商品名が短すぎて類似検索できません', true);
+    return;
+  }
+  var matches = descProductsWithDesc.filter(function(p) {
+    return String(p.id) !== String(targetId) && getBaseName(p.name).indexOf(base) >= 0;
+  });
+  if (!matches.length) {
+    showToast('類似商品（説明文あり）が見つかりませんでした');
+    return;
+  }
+  openSimilarModal(targetId, targetName, matches);
+}
+
+function openSimilarModal(targetId, targetName, matches) {
+  _similarTargetId = targetId;
+  _similarMatches = matches;
+  document.getElementById('similarModalTitle').textContent = '類似商品を選択 — ' + targetName;
+  var html = '';
+  matches.forEach(function(p, idx) {
+    html +=
+      '<div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:10px;">' +
+        '<div style="font-weight:600;font-size:13px;color:#1e3a5f;margin-bottom:6px;">' + esc(p.name) + '</div>' +
+        '<div style="font-size:12px;color:#374151;background:#f9fafb;padding:8px;border-radius:4px;max-height:150px;overflow-y:auto;white-space:pre-wrap;line-height:1.7;margin-bottom:8px;">' + esc(p.detail) + '</div>' +
+        '<button class="btn btn-primary btn-sm" onclick="applySimilarDesc(' + idx + ')">この説明文をコピー</button>' +
+      '</div>';
+  });
+  document.getElementById('similarDescList').innerHTML = html;
+  var modal = document.getElementById('similarDescModal');
+  modal.style.display = 'flex';
+}
+
+function closeSimilarModal() {
+  document.getElementById('similarDescModal').style.display = 'none';
+  _similarTargetId = null;
+  _similarMatches = [];
+}
+
+function applySimilarDesc(idx) {
+  if (!_similarTargetId || !_similarMatches[idx]) return;
+  document.getElementById('desc-text-' + _similarTargetId).value = _similarMatches[idx].detail;
+  document.getElementById('apply-btn-' + _similarTargetId).disabled = false;
+  closeSimilarModal();
+  showToast('説明文をコピーしました。内容を確認してから「✅ 反映」してください。');
 }
 
 // ===================== 機能D: 特集管理 =====================
