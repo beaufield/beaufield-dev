@@ -245,10 +245,11 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .feature-search-input { width:100%; padding:5px 8px; border:1px solid #d1d5db; border-radius:4px; font-size:12px; margin-bottom:4px; box-sizing:border-box; }
 /* 説明文生成タブ */
 .desc-product-card { background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:16px; margin-bottom:12px; transition:opacity 0.3s; }
-.desc-product-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; gap:12px; }
+.desc-product-header { margin-bottom:8px; }
 .desc-product-name { font-weight:600; font-size:14px; margin-bottom:2px; }
 .desc-product-meta { font-size:12px; color:#6b7280; }
-.desc-product-actions { display:flex; gap:6px; flex-shrink:0; }
+.desc-product-btn-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:6px; }
+.desc-product-actions { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
 .desc-textarea { width:100%; border:1px solid #d1d5db; border-radius:6px; padding:10px; font-size:13px; font-family:inherit; resize:vertical; line-height:1.6; }
 .desc-textarea:focus { outline:none; border-color:#1a56db; box-shadow:0 0 0 2px #dbeafe; }
 .desc-status { margin-top:6px; font-size:12px; min-height:18px; }
@@ -264,14 +265,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.9.1</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.9.2</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.9.1</span>
+    <span class="version">HTML v2.9.2</span>
   </div>
 
   <div class="tabs">
@@ -3872,16 +3873,16 @@ function renderDescProductList(products) {
     const catAttr  = escAttr(p.category_name || '');
     html += '<div class="desc-product-card" id="desc-card-' + p.id + '">' +
       '<div class="desc-product-header">' +
-        '<div style="flex:1;min-width:0;">' +
-          '<div class="desc-product-name">' + esc(p.name) + '</div>' +
-          '<div class="desc-product-meta">カテゴリ: ' + esc(p.category_name || '未設定') + ' ／ 商品ID: ' + p.id + '</div>' +
-        '</div>' +
-        '<div class="desc-product-actions" style="flex-wrap:wrap;">' +
+        '<div class="desc-product-name">' + esc(p.name) + '</div>' +
+        '<div class="desc-product-meta">カテゴリ: ' + esc(p.category_name || '未設定') + ' ／ 商品ID: ' + p.id + '</div>' +
+      '</div>' +
+      '<div class="desc-product-btn-row">' +
+        '<div class="desc-product-actions">' +
           '<button class="btn btn-primary btn-sm" onclick="generateOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',\'' + catAttr + '\',this)">✨ 生成</button>' +
           '<button class="btn btn-sm" id="fact-btn-' + p.id + '" onclick="factCheckOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',\'' + catAttr + '\',this)" style="display:none;background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">🔍 チェック</button>' +
           '<button class="btn btn-success btn-sm" id="apply-btn-' + p.id + '" onclick="applyOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',this)" disabled>✅ 反映</button>' +
-          '<button class="btn btn-sm" onclick="markDescSkipOne(\'' + p.id + '\',\'' + nameAttr + '\',this)" style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">🚫 不要</button>' +
         '</div>' +
+        '<button class="btn btn-sm" onclick="markDescSkipOne(\'' + p.id + '\',\'' + nameAttr + '\',this)" style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">🚫 不要</button>' +
       '</div>' +
       '<textarea class="desc-textarea" id="desc-text-' + p.id + '" rows="8" placeholder="「✨ 生成」を押すとAIが説明文を作成します。内容を確認・修正してから「✅ 反映」でBCARTに登録します。"></textarea>' +
       '<div id="desc-sources-' + p.id + '" style="display:none;font-size:11px;color:#6b7280;margin-top:4px;padding:2px 0;line-height:1.6;"></div>' +
