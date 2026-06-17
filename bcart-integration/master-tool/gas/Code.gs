@@ -101,6 +101,7 @@ function doPost(e) {
       case 'getMembers':                return jsonResponse(getMembers());
       // 機能C: 説明文生成
       case 'getProductsForDescription': return jsonResponse(getProductsForDescription(params));
+      case 'getSimilarProducts':        return jsonResponse(getSimilarProducts(params));
       case 'generateDescription':       return jsonResponse(generateDescription(params));
       case 'factCheckDescription':      return jsonResponse(factCheckDescription(params));
       case 'applyDescription':          return jsonResponse(applyDescription(params));
@@ -2104,14 +2105,37 @@ function getProductsForDescription(params) {
   const hasDetail = allMapped.filter(p => p.detail && p.detail.trim() !== '');
   const skipCount = Object.keys(skipMap).length;
 
-  return {
-    ok: true,
-    products: noDetail,
-    withDetail: hasDetail.length,
-    total: allMapped.length,
-    skipCount: skipCount,
-    productsWithDesc: hasDetail.map(p => ({ id: p.id, name: p.name, detail: p.detail }))
-  };
+  return { ok: true, products: noDetail, withDetail: hasDetail.length, total: allMapped.length, skipCount: skipCount };
+}
+
+function getSimilarProducts(params) {
+  const name      = params && params.name      ? String(params.name)      : '';
+  const excludeId = params && params.excludeId ? String(params.excludeId) : '';
+  if (!name) return { ok: true, products: [] };
+
+  const baseName = _getBaseNameGas(name);
+  if (!baseName || baseName.length < 4) return { ok: true, products: [] };
+
+  const res = bcartGetAll('/products');
+  if (!res.ok) return res;
+
+  const matches = res.data
+    .filter(p => {
+      if (String(p.id) === excludeId) return false;
+      if (!p.description || !p.description.trim()) return false;
+      return _getBaseNameGas(p.name || '').indexOf(baseName) >= 0;
+    })
+    .map(p => ({ id: p.id, name: p.name, detail: p.description }));
+
+  return { ok: true, products: matches };
+}
+
+function _getBaseNameGas(name) {
+  return (name || '')
+    .replace(/[\d]+(\.\d+)?\s*(g|ml|mL|L|ℓ|kg|cc|本|枚|個|set|セット|pack|パック|step|ステップ|oz)/gi, '')
+    .replace(/[\d]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 // groundingMetadata からソースURL・検索クエリを抽出する共通ヘルパー

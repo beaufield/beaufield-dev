@@ -265,14 +265,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.9.3</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.9.4</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.9.3</span>
+    <span class="version">HTML v2.9.4</span>
   </div>
 
   <div class="tabs">
@@ -3769,7 +3769,6 @@ function deleteGroup(groupId, name) {
 // ===================== 機能C: 説明文生成 =====================
 
 var descAllProducts = [];
-var descProductsWithDesc = [];
 var descFeatureList = [];
 var descViewMode = 'normal'; // 'normal' | 'skip'
 var BATCH_GEN_LIMIT = 5;
@@ -3805,7 +3804,6 @@ function loadProductsForDescription(skipOnly) {
     loadBtn.textContent = '📦 説明文なし商品を取得';
     if (!res.ok) { showToast('取得失敗: ' + res.error, true); return; }
     descAllProducts = res.products;
-    if (!skipOnly && res.productsWithDesc) descProductsWithDesc = res.productsWithDesc;
     if (skipOnly) {
       document.getElementById('descProductCount').textContent =
         '説明文不要リスト: ' + res.products.length + '件';
@@ -4116,23 +4114,26 @@ function getBaseName(name) {
 }
 
 function findSimilarDesc(targetId, targetName) {
-  if (!descProductsWithDesc.length) {
-    showToast('先に「説明文なし商品を取得」を実行してください', true);
-    return;
-  }
-  var base = getBaseName(targetName);
-  if (!base || base.length < 4) {
-    showToast('商品名が短すぎて類似検索できません', true);
-    return;
-  }
-  var matches = descProductsWithDesc.filter(function(p) {
-    return String(p.id) !== String(targetId) && getBaseName(p.name).indexOf(base) >= 0;
-  });
-  if (!matches.length) {
-    showToast('類似商品（説明文あり）が見つかりませんでした');
-    return;
-  }
-  openSimilarModal(targetId, targetName, matches);
+  var btn = event.currentTarget;
+  var origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '🔍 検索中...';
+  gasPostAsync({ action: 'getSimilarProducts', name: targetName, excludeId: targetId })
+    .then(function(res) {
+      btn.disabled = false;
+      btn.textContent = origText;
+      if (!res.ok) { showToast('検索失敗: ' + (res.error || ''), true); return; }
+      if (!res.products || !res.products.length) {
+        showToast('類似商品（説明文あり）が見つかりませんでした');
+        return;
+      }
+      openSimilarModal(targetId, targetName, res.products);
+    })
+    .catch(function(e) {
+      btn.disabled = false;
+      btn.textContent = origText;
+      showToast('通信エラー: ' + e.message, true);
+    });
 }
 
 function openSimilarModal(targetId, targetName, matches) {
