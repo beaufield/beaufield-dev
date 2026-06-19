@@ -265,14 +265,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.9.5</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.9.6</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.9.5</span>
+    <span class="version">HTML v2.9.6</span>
   </div>
 
   <div class="tabs">
@@ -2107,7 +2107,9 @@ function renderSearchProducts() {
       (p.stock !== '' ? '<span>在庫: ' + esc(String(p.stock)) + '</span>' : '') +
       '</div>' +
       '<div class="search-product-actions">' +
-      '<button class="btn btn-danger btn-sm" onclick="deleteSearchProduct(\'' + esc(p.id) + '\',\'' + esc(p.product_no) + '\',\'' + esc(p.name) + '\',this)">🗑️ 削除</button>' +
+      (isParentHidden
+        ? '<button class="btn btn-secondary btn-sm" disabled>✅ 非表示済</button>'
+        : '<button class="btn btn-warning btn-sm" onclick="hideSearchProduct(\'' + esc(p.id) + '\',\'' + esc(p.product_no) + '\',\'' + esc(p.name) + '\',this)">🙈 非表示</button>') +
       '</div>' +
       '</div>';
   }).join('');
@@ -2158,14 +2160,14 @@ function bulkSetVisibility(flag) {
   });
 }
 
-function deleteSearchProduct(productId, productNo, name, btn) {
-  if (!confirm('商品を完全に削除します。\n\n商品コード: ' + productNo + '\n商品名: ' + name + '\n\n※ この操作は取り消せません。本当に削除しますか？')) return;
+function hideSearchProduct(productId, productNo, name, btn) {
+  if (!confirm('親商品を非表示にします。\n（BCART APIは商品の完全削除に非対応のため、非表示化で対応します）\n\n商品コード: ' + productNo + '\n商品名: ' + name + '\n\nよろしいですか？')) return;
   btn.disabled = true;
-  gasPost({ action: 'deleteProduct', productId: productId }, function(res) {
+  gasPost({ action: 'updateProduct', productId: productId, productFields: { flag: '非表示' } }, function(res) {
     if (!res.ok) { showToast('エラー: ' + res.error, true); btn.disabled = false; return; }
-    showToast('削除しました');
-    searchProductCache = searchProductCache.filter(x => x.id !== productId);
-    document.getElementById('searchProductCount').textContent = searchProductCache.length + '件';
+    showToast('非表示にしました');
+    const p = searchProductCache.find(x => String(x.id) === String(productId));
+    if (p) p.flag = '非表示';
     renderSearchProducts();
   });
 }
