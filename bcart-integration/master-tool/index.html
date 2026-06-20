@@ -265,14 +265,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.9.6</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.9.7</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.9.6</span>
+    <span class="version">HTML v2.9.7</span>
   </div>
 
   <div class="tabs">
@@ -3901,7 +3901,7 @@ function renderDescProductList(products) {
         '</div>' +
         '<button class="btn btn-sm" onclick="markDescSkipOne(\'' + p.id + '\',\'' + nameAttr + '\',this)" style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">🚫 不要</button>' +
       '</div>' +
-      '<textarea class="desc-textarea" id="desc-text-' + p.id + '" rows="8" placeholder="「✨ 生成」を押すとAIが説明文を作成します。内容を確認・修正してから「✅ 反映」でBCARTに登録します。"></textarea>' +
+      '<textarea class="desc-textarea" id="desc-text-' + p.id + '" rows="8" placeholder="「✨ 生成」を押すとAIが説明文を作成します。直接入力または修正後、「✅ 反映」でBCARTに登録します。" oninput="onDescInput(\'' + p.id + '\')"></textarea>' +
       '<div id="desc-sources-' + p.id + '" style="display:none;font-size:11px;color:#6b7280;margin-top:4px;padding:2px 0;line-height:1.6;"></div>' +
       '<div class="desc-status" id="desc-status-' + p.id + '"></div>' +
       '<div id="fact-result-' + p.id + '" style="display:none;font-size:12px;margin-top:6px;padding:8px 10px;border-radius:6px;"></div>' +
@@ -4107,10 +4107,17 @@ function batchGenerateDesc() {
 
 // --- 類似商品説明文コピー ---
 
+function onDescInput(productId) {
+  var val = document.getElementById('desc-text-' + productId).value.trim();
+  document.getElementById('apply-btn-' + productId).disabled = !val;
+}
+
 function getBaseName(name) {
-  return name
+  return (name || '')
     .replace(/[\d０-９]+(\.\d+)?\s*(g|ml|mL|L|ℓ|kg|cc|本|枚|個|set|セット|pack|パック|step|ステップ|oz)/gi, '')
     .replace(/[\d０-９]+/g, '')
+    .replace(/\b(mini|max|super|pro|lite|light|plus|compact|large|extra|jumbo|ex)\b/gi, '')
+    .replace(/(ミニ|マックス|スーパー|プロ|ライト|プラス|コンパクト|ラージ|エクストラ|ジャンボ)/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 }

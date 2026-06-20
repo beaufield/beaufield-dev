@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.9.0';
+const VERSION = 'v2.9.6';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -2134,6 +2134,8 @@ function _getBaseNameGas(name) {
   return (name || '')
     .replace(/[\d]+(\.\d+)?\s*(g|ml|mL|L|ℓ|kg|cc|本|枚|個|set|セット|pack|パック|step|ステップ|oz)/gi, '')
     .replace(/[\d]+/g, '')
+    .replace(/\b(mini|max|super|pro|lite|light|plus|compact|large|extra|jumbo|ex)\b/gi, '')
+    .replace(/(ミニ|マックス|スーパー|プロ|ライト|プラス|コンパクト|ラージ|エクストラ|ジャンボ)/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
