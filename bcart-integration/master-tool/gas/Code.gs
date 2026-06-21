@@ -65,6 +65,7 @@ function doPost(e) {
       case 'bulkIgnore':           return jsonResponse(bulkIgnore(params));
       case 'bulkMarkWip':          return jsonResponse(bulkMarkWip(params));
       case 'searchProducts':       return jsonResponse(searchProducts(params));
+      case 'cloneProduct':         return jsonResponse(cloneProduct(params));
       case 'getSpecials':          return jsonResponse(getSpecials());
       case 'updateProduct':        return jsonResponse(updateProductAction(params));
       case 'deleteProduct':        return jsonResponse(deleteProduct(params));
@@ -887,11 +888,114 @@ function searchProducts(params) {
       stock: live ? live.stock : (s.stock !== undefined ? s.stock : (s.inventory !== undefined ? s.inventory : '')),
       // 在庫フラグ: withStock時のみ product_stock から付与（0=通常/1=無制限/100=別在庫参照）
       stock_flag: live ? live.stock_flag : undefined,
-      set_id: s.id || ''
+      set_id: s.id || '',
+      category_id: p.category_id || null,
+      feature_id1: p.feature_id1 || null,
+      feature_id2: p.feature_id2 || null,
+      feature_id3: p.feature_id3 || null
     };
   });
 
   return { ok: true, products: result, total: result.length };
+}
+
+// 商品複製（商品基本情報 + 全セット、非表示状態で作成）
+function cloneProduct(params) {
+  const productId = String(params.productId);
+
+  // 元商品の全セットを取得して複製対象を絞り込み
+  const setsRes = bcartGetAll('/product_sets');
+  if (!setsRes.ok) return setsRes;
+  const srcSets = setsRes.data.filter(s => String(s.product_id) === productId);
+
+  // 新商品作成（非表示）
+  const productBody = {
+    products: [{
+      name:        params.productName,
+      category_id: params.categoryId || null,
+      flag:        '非表示',
+      feature_id1: params.featureId1 || null,
+      feature_id2: params.featureId2 || null,
+      feature_id3: params.featureId3 || null
+    }]
+  };
+
+  const step1 = bcartPost('/products', productBody);
+  if (!step1.ok) {
+    addHistory({
+      userName: params._userName,
+      code: params.productNo || '',
+      name: params.productName || '',
+      type: '商品複製（商品作成失敗）',
+      before: '元商品ID: ' + productId,
+      after: '',
+      result: '失敗: ' + step1.error
+    });
+    return step1;
+  }
+
+  const newProductId = step1.data && step1.data.products && step1.data.products[0]
+    ? step1.data.products[0].id : null;
+  if (!newProductId) {
+    return { ok: false, error: '新商品IDが取得できませんでした（レスポンス: ' + JSON.stringify(step1.data) + '）' };
+  }
+
+  // 全セットを新商品へ複製（非表示）
+  const results = [];
+  let successCount = 0;
+
+  for (const s of srcSets) {
+    const setBody = {
+      product_sets: [{
+        product_id:  newProductId,
+        product_no:  s.product_no || '',
+        name:        s.name || '',
+        jan_code:    s.jan_code || '',
+        unit_price:  s.unit_price !== undefined ? s.unit_price : 0,
+        jodai:       s.jodai || 0,
+        jodai_type:  s.jodai_type || 'メーカー希望小売価格',
+        group_price: s.group_price || {},
+        unit:        s.unit || '',
+        quantity:    s.quantity || 1,
+        min_order:   s.min_order || 1,
+        stock_flag:  1,
+        tax_type_id: s.tax_type_id || 1,
+        set_flag:    '非表示'
+      }]
+    };
+    const res = bcartPost('/product_sets', setBody);
+    const setId = res.ok && res.data && res.data.product_sets && res.data.product_sets[0]
+      ? res.data.product_sets[0].id : null;
+    results.push({ product_no: s.product_no || '', ok: res.ok, setId: setId, error: res.ok ? null : (res.error || '') });
+    if (res.ok) successCount++;
+  }
+
+  // 全セット失敗時はロールバック
+  if (successCount === 0 && srcSets.length > 0) {
+    bcartDelete('/products/' + newProductId);
+    addHistory({
+      userName: params._userName,
+      code: params.productNo || '',
+      name: params.productName || '',
+      type: '商品複製（ロールバック完了）',
+      before: '元商品ID: ' + productId,
+      after: '新商品ID: ' + newProductId + ' を削除',
+      result: '失敗: 全セット複製失敗'
+    });
+    return { ok: false, error: '全セットの複製に失敗したため商品を削除しました' };
+  }
+
+  addHistory({
+    userName: params._userName,
+    code: params.productNo || '',
+    name: params.productName || '',
+    type: '商品複製',
+    before: '元商品ID: ' + productId,
+    after: '新商品ID: ' + newProductId + ' / ' + successCount + '/' + srcSets.length + 'セット複製',
+    result: successCount === srcSets.length ? '成功' : '一部失敗'
+  });
+
+  return { ok: true, newProductId: newProductId, setCount: srcSets.length, successCount: successCount, results: results };
 }
 
 function getSpecials() {

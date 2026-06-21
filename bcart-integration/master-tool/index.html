@@ -265,14 +265,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.9.7</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.9.8</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.9.7</span>
+    <span class="version">HTML v2.9.8</span>
   </div>
 
   <div class="tabs">
@@ -2110,6 +2110,7 @@ function renderSearchProducts() {
       (isParentHidden
         ? '<button class="btn btn-secondary btn-sm" disabled>✅ 非表示済</button>'
         : '<button class="btn btn-warning btn-sm" onclick="hideSearchProduct(\'' + esc(p.id) + '\',\'' + esc(p.product_no) + '\',\'' + esc(p.name) + '\',this)">🙈 非表示</button>') +
+      '<button class="btn btn-wip btn-sm" onclick="cloneSearchProduct(\'' + esc(p.id) + '\',this)">📋 複製</button>' +
       '</div>' +
       '</div>';
   }).join('');
@@ -2169,6 +2170,30 @@ function hideSearchProduct(productId, productNo, name, btn) {
     const p = searchProductCache.find(x => String(x.id) === String(productId));
     if (p) p.flag = '非表示';
     renderSearchProducts();
+  });
+}
+
+function cloneSearchProduct(productId, btn) {
+  const p = searchProductCache.find(x => String(x.id) === String(productId));
+  if (!p) { showToast('商品データが見つかりません', true); return; }
+  if (!confirm('この商品を複製します。\n商品セットもすべて複製され、非表示状態で作成されます。\n\n商品名: ' + p.name + '\n\nよろしいですか？')) return;
+  btn.disabled = true;
+  const origText = btn.textContent;
+  btn.textContent = '複製中...';
+  gasPost({
+    action: 'cloneProduct',
+    productId: p.id,
+    productNo: p.product_no,
+    productName: p.name,
+    categoryId: p.category_id,
+    featureId1: p.feature_id1,
+    featureId2: p.feature_id2,
+    featureId3: p.feature_id3
+  }, function(res) {
+    btn.disabled = false;
+    btn.textContent = origText;
+    if (!res.ok) { showToast('複製エラー: ' + (res.error || '不明'), true); return; }
+    showToast('複製しました（新商品ID: ' + res.newProductId + ' / ' + res.successCount + '/' + res.setCount + 'セット）');
   });
 }
 
