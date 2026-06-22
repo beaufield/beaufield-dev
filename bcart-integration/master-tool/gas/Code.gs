@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.9.7';
+const VERSION = 'v2.12.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -36,8 +36,13 @@ function doPost(e) {
     const action = params.action;
 
     const noAuthActions = ['getVersion'];
+    const claudeActions = ['previewSuffixName', 'applySuffixName', 'previewHanbaiEnd', 'applyHanbaiEnd', 'previewSetDescription', 'applySetDescription', 'previewProductFields', 'applyProductFields', 'previewSetFields', 'applySetFields', 'previewProductSort', 'applyProductSort'];
     let userName = '不明';
-    if (!noAuthActions.includes(action)) {
+    if (claudeActions.includes(action)) {
+      const claudeKey = _BCART_PROPS.getProperty('CLAUDE_API_KEY');
+      if (!claudeKey || params.apiKey !== claudeKey) return jsonResponse({ ok: false, error: 'UNAUTHORIZED' });
+      userName = 'Claude(API)';
+    } else if (!noAuthActions.includes(action)) {
       const authResult = validateSession(params.session);
       if (!authResult.ok) return jsonResponse({ ok: false, error: 'UNAUTHORIZED' });
       if (authResult.user) {
@@ -115,6 +120,19 @@ function doPost(e) {
       case 'bulkUpdateFeatureOrder':  return jsonResponse(bulkUpdateFeatureOrder(params));
       case 'saveFeatureType':         return jsonResponse(saveFeatureType(params));
       case 'bulkSaveFeatureTypes':    return jsonResponse(bulkSaveFeatureTypes(params));
+      // 機能E: Claudeチャット直接操作
+      case 'previewSuffixName':      return jsonResponse(previewSuffixName(params));
+      case 'applySuffixName':        return jsonResponse(applySuffixName(params));
+      case 'previewHanbaiEnd':       return jsonResponse(previewHanbaiEnd(params));
+      case 'applyHanbaiEnd':         return jsonResponse(applyHanbaiEnd(params));
+      case 'previewSetDescription':  return jsonResponse(previewSetDescription(params));
+      case 'applySetDescription':    return jsonResponse(applySetDescription(params));
+      case 'previewProductFields':   return jsonResponse(previewProductFields(params));
+      case 'applyProductFields':     return jsonResponse(applyProductFields(params));
+      case 'previewSetFields':       return jsonResponse(previewSetFields(params));
+      case 'applySetFields':         return jsonResponse(applySetFields(params));
+      case 'previewProductSort':     return jsonResponse(previewProductSort(params));
+      case 'applyProductSort':       return jsonResponse(applyProductSort(params));
       default:                         return jsonResponse({ ok: false, error: 'UNKNOWN_ACTION' });
     }
   } catch (err) {
@@ -2613,4 +2631,419 @@ function saveFeatureTypeInternal_(featureId, type) {
     }
   }
   sheet.appendRow([featureId, type, now]);
+}
+
+// ===================== 機能E: Claudeチャット直接操作 =====================
+
+function fetchProductsAndSets_(productIds) {
+  const idSet = new Set(productIds.map(id => String(id)));
+  const products = bcartGetAll('/products');
+  if (!products.ok) return products;
+  const sets = bcartGetAll('/product_sets');
+  if (!sets.ok) return sets;
+  const targetProducts = products.data.filter(p => idSet.has(String(p.id)));
+  const targetSets = sets.data.filter(s => idSet.has(String(s.product_id)));
+  const notFound = productIds.filter(id => !targetProducts.some(p => String(p.id) === String(id)));
+  return { ok: true, products: targetProducts, sets: targetSets, notFound };
+}
+
+// ---- 操作1: 名前末尾テキスト追加 ----
+
+function previewSuffixName(params) {
+  if (!params.productIds || !Array.isArray(params.productIds) || params.productIds.length === 0)
+    return { ok: false, error: 'productIds が未指定です' };
+  if (!params.suffix)
+    return { ok: false, error: 'suffix が未指定です' };
+
+  const d = fetchProductsAndSets_(params.productIds);
+  if (!d.ok) return d;
+
+  const suffix = params.suffix;
+  const preview = d.products.map(p => {
+    const currentName = p.name || '';
+    const skip = currentName.endsWith(suffix);
+    const pSets = d.sets
+      .filter(s => String(s.product_id) === String(p.id))
+      .map(s => {
+        const cur = s.name || '';
+        const sSkip = cur.endsWith(suffix);
+        return { setId: s.id, currentName: cur, newName: sSkip ? cur : cur + suffix, skip: sSkip };
+      });
+    return {
+      productId: p.id,
+      productNo: p.product_no || p.main_no || '',
+      currentName,
+      newName: skip ? currentName : currentName + suffix,
+      skip,
+      sets: pSets
+    };
+  });
+
+  const totalChanges = preview.reduce(
+    (sum, p) => sum + (p.skip ? 0 : 1) + p.sets.reduce((s2, s) => s2 + (s.skip ? 0 : 1), 0), 0
+  );
+  return { ok: true, preview, totalChanges, notFound: d.notFound, suffix };
+}
+
+function applySuffixName(params) {
+  if (!params.productIds || !Array.isArray(params.productIds) || params.productIds.length === 0)
+    return { ok: false, error: 'productIds が未指定です' };
+  if (!params.suffix)
+    return { ok: false, error: 'suffix が未指定です' };
+
+  const d = fetchProductsAndSets_(params.productIds);
+  if (!d.ok) return d;
+
+  const suffix = params.suffix;
+  const userName = params._userName || 'Claude(API)';
+  const results = [];
+
+  // 商品名（products）一括PATCH
+  const productUpdates = d.products
+    .filter(p => !(p.name || '').endsWith(suffix))
+    .map(p => ({ id: p.id, name: (p.name || '') + suffix }));
+  if (productUpdates.length > 0) {
+    const res = bcartPatch('/products/', { products: productUpdates });
+    results.push({ target: 'products', count: productUpdates.length, ok: res.ok, error: res.error || '' });
+    if (res.ok) {
+      productUpdates.forEach(u => {
+        const p = d.products.find(p2 => p2.id === u.id);
+        addHistory({ userName, code: p ? (p.product_no || p.main_no || '') : '', name: p ? (p.name || '') : '', type: '商品名末尾追加', before: p ? (p.name || '') : '', after: u.name, result: '成功' });
+      });
+    }
+  }
+
+  // セット名（product_sets）個別PATCH（unit_price を同時送信で API 要件を満たす）
+  let setOk = 0;
+  let setFail = 0;
+  for (const s of d.sets) {
+    if ((s.name || '').endsWith(suffix)) continue;
+    const newName = (s.name || '') + suffix;
+    const res = bcartPatch('/product_sets/' + s.id, { name: newName, unit_price: s.unit_price });
+    if (res.ok) {
+      setOk++;
+      const p = d.products.find(p2 => String(p2.id) === String(s.product_id));
+      addHistory({ userName, code: p ? (p.product_no || p.main_no || '') : '', name: s.name || '', type: 'セット名末尾追加', before: s.name || '', after: newName, result: '成功' });
+    } else {
+      setFail++;
+      Logger.log('applySuffixName set PATCH failed: id=' + s.id + ' ' + res.error);
+    }
+    Utilities.sleep(300);
+  }
+  if (setOk > 0 || setFail > 0)
+    results.push({ target: 'product_sets', success: setOk, failed: setFail, ok: setFail === 0 });
+
+  return { ok: results.every(r => r.ok !== false), results, suffix };
+}
+
+// ---- 操作2: 販売終了日時の設定 ----
+
+function previewHanbaiEnd(params) {
+  if (!params.productIds || !Array.isArray(params.productIds) || params.productIds.length === 0)
+    return { ok: false, error: 'productIds が未指定です' };
+
+  const hanbaiEnd = Object.prototype.hasOwnProperty.call(params, 'hanbaiEnd') ? params.hanbaiEnd : null;
+
+  const all = bcartGetAll('/products');
+  if (!all.ok) return all;
+
+  const idSet = new Set(params.productIds.map(id => String(id)));
+  const targets = all.data.filter(p => idSet.has(String(p.id)));
+  const notFound = params.productIds.filter(id => !targets.some(p => String(p.id) === String(id)));
+
+  const preview = targets.map(p => ({
+    productId: p.id,
+    productNo: p.product_no || p.main_no || '',
+    name: p.name || '',
+    currentHanbaiEnd: p.hanbai_end || null,
+    newHanbaiEnd: hanbaiEnd
+  }));
+
+  return { ok: true, preview, totalChanges: preview.length, notFound, hanbaiEnd };
+}
+
+function applyHanbaiEnd(params) {
+  if (!params.productIds || !Array.isArray(params.productIds) || params.productIds.length === 0)
+    return { ok: false, error: 'productIds が未指定です' };
+
+  const hanbaiEnd = Object.prototype.hasOwnProperty.call(params, 'hanbaiEnd') ? params.hanbaiEnd : null;
+
+  const all = bcartGetAll('/products');
+  if (!all.ok) return all;
+
+  const idSet = new Set(params.productIds.map(id => String(id)));
+  const targets = all.data.filter(p => idSet.has(String(p.id)));
+  const userName = params._userName || 'Claude(API)';
+
+  if (targets.length === 0) return { ok: true, count: 0, message: '対象商品が見つかりませんでした' };
+
+  const updates = targets.map(p => ({ id: p.id, hanbai_end: hanbaiEnd }));
+  const res = bcartPatch('/products/', { products: updates });
+
+  if (res.ok) {
+    targets.forEach(p => {
+      addHistory({ userName, code: p.product_no || p.main_no || '', name: p.name || '', type: '販売終了日時設定', before: p.hanbai_end || '（未設定）', after: hanbaiEnd || '（解除）', result: '成功' });
+    });
+  }
+
+  return { ok: res.ok, count: updates.length, error: res.error || '', hanbaiEnd };
+}
+
+// ---- 操作3: 商品セット説明欄 末尾追加 ----
+
+function previewSetDescription(params) {
+  if (!params.productIds || !Array.isArray(params.productIds) || params.productIds.length === 0)
+    return { ok: false, error: 'productIds が未指定です' };
+  if (!params.appendText)
+    return { ok: false, error: 'appendText が未指定です' };
+
+  const d = fetchProductsAndSets_(params.productIds);
+  if (!d.ok) return d;
+
+  const appendText = params.appendText;
+  const preview = d.products.map(p => {
+    const pSets = d.sets
+      .filter(s => String(s.product_id) === String(p.id))
+      .map(s => {
+        const cur = s.description || '';
+        const skip = cur.includes(appendText);
+        return {
+          setId: s.id,
+          setName: s.name || '',
+          currentDescriptionPreview: cur.slice(0, 100) + (cur.length > 100 ? '…' : ''),
+          skip
+        };
+      });
+    return { productId: p.id, productNo: p.product_no || p.main_no || '', name: p.name || '', sets: pSets };
+  });
+
+  const totalChanges = preview.reduce((sum, p) => sum + p.sets.reduce((s2, s) => s2 + (s.skip ? 0 : 1), 0), 0);
+  return { ok: true, preview, totalChanges, notFound: d.notFound, appendText };
+}
+
+function applySetDescription(params) {
+  if (!params.productIds || !Array.isArray(params.productIds) || params.productIds.length === 0)
+    return { ok: false, error: 'productIds が未指定です' };
+  if (!params.appendText)
+    return { ok: false, error: 'appendText が未指定です' };
+
+  const d = fetchProductsAndSets_(params.productIds);
+  if (!d.ok) return d;
+
+  const appendText = params.appendText;
+  const userName = params._userName || 'Claude(API)';
+  let setOk = 0;
+  let setFail = 0;
+
+  for (const s of d.sets) {
+    const cur = s.description || '';
+    if (cur.includes(appendText)) continue;
+    const newDesc = cur + appendText;
+    const res = bcartPatch('/product_sets/' + s.id, { description: newDesc });
+    if (res.ok) {
+      setOk++;
+      const p = d.products.find(p2 => String(p2.id) === String(s.product_id));
+      addHistory({ userName, code: p ? (p.product_no || p.main_no || '') : '', name: s.name || '', type: 'セット説明末尾追加', before: cur.slice(0, 50) + (cur.length > 50 ? '…' : ''), after: '末尾追加: ' + appendText.slice(0, 30) + (appendText.length > 30 ? '…' : ''), result: '成功' });
+    } else {
+      setFail++;
+      Logger.log('applySetDescription PATCH failed: id=' + s.id + ' ' + res.error);
+    }
+    Utilities.sleep(300);
+  }
+
+  return { ok: setFail === 0, success: setOk, failed: setFail };
+}
+
+// ---- 操作4: 商品フィールド一括設定（特集3・商品特徴・画像） ----
+
+function previewProductFields(params) {
+  if (!params.productIds || !Array.isArray(params.productIds) || params.productIds.length === 0)
+    return { ok: false, error: 'productIds が未指定です' };
+
+  const d = fetchProductsAndSets_(params.productIds);
+  if (!d.ok) return d;
+
+  const featureId3   = Object.prototype.hasOwnProperty.call(params, 'feature_id3') ? params.feature_id3 : null;
+  const tag          = Object.prototype.hasOwnProperty.call(params, 'tag')          ? params.tag          : null;
+  const imageBasePath = Object.prototype.hasOwnProperty.call(params, 'imageBasePath') ? params.imageBasePath : null;
+
+  const preview = d.products.map(p => {
+    const item = { productId: p.id, productNo: p.product_no || p.main_no || '', productName: p.name || '' };
+    if (featureId3 !== null)   item.feature_id3    = { before: p.feature_id3 || null, after: featureId3 };
+    if (tag !== null)          item.tag             = { before: p.tag || null, after: tag };
+    if (imageBasePath !== null) item.image          = { before: p.image || null, after: imageBasePath + p.id + '.png' };
+    return item;
+  });
+
+  return { ok: true, preview, totalChanges: d.products.length, notFound: d.notFound };
+}
+
+function applyProductFields(params) {
+  if (!params.productIds || !Array.isArray(params.productIds) || params.productIds.length === 0)
+    return { ok: false, error: 'productIds が未指定です' };
+
+  const d = fetchProductsAndSets_(params.productIds);
+  if (!d.ok) return d;
+
+  const featureId3    = Object.prototype.hasOwnProperty.call(params, 'feature_id3')   ? params.feature_id3   : undefined;
+  const tag           = Object.prototype.hasOwnProperty.call(params, 'tag')            ? params.tag            : undefined;
+  const imageBasePath = Object.prototype.hasOwnProperty.call(params, 'imageBasePath') ? params.imageBasePath : undefined;
+  const userName      = params._userName || 'Claude(API)';
+
+  const productUpdates = d.products.map(p => {
+    const update = { id: p.id };
+    if (featureId3    !== undefined) update.feature_id3 = featureId3;
+    if (tag           !== undefined) update.tag         = tag;
+    if (imageBasePath !== undefined) update.image       = imageBasePath + p.id + '.png';
+    return update;
+  });
+
+  const res = bcartPatch('/products/', { products: productUpdates });
+  if (res.ok) {
+    d.products.forEach(p => {
+      const u = productUpdates.find(x => x.id === p.id);
+      addHistory({ userName, code: p.product_no || p.main_no || '', name: p.name || '', type: '商品フィールド更新(Claude)', before: '', after: JSON.stringify(u), result: '成功' });
+    });
+  }
+  return { ok: res.ok, count: productUpdates.length, error: res.error || '' };
+}
+
+// ---- 操作5: セットフィールド一括設定（上代タイプ・入数・状態） ----
+
+function previewSetFields(params) {
+  if (!params.productIds || !Array.isArray(params.productIds) || params.productIds.length === 0)
+    return { ok: false, error: 'productIds が未指定です' };
+
+  const d = fetchProductsAndSets_(params.productIds);
+  if (!d.ok) return d;
+
+  const jodaiType = Object.prototype.hasOwnProperty.call(params, 'jodai_type') ? params.jodai_type : null;
+  const quantity  = Object.prototype.hasOwnProperty.call(params, 'quantity')   ? params.quantity   : null;
+  const setFlag   = Object.prototype.hasOwnProperty.call(params, 'set_flag')   ? params.set_flag   : null;
+
+  const preview = d.sets.map(s => {
+    const item = { setId: s.id, productId: s.product_id, setName: s.name || '' };
+    if (jodaiType !== null) item.jodai_type = { before: s.jodai_type || null, after: jodaiType };
+    if (quantity  !== null) item.quantity   = { before: s.quantity   || null, after: quantity };
+    if (setFlag   !== null) item.set_flag   = { before: s.set_flag   || null, after: setFlag };
+    return item;
+  });
+
+  return { ok: true, preview, totalChanges: d.sets.length, notFound: d.notFound };
+}
+
+function applySetFields(params) {
+  if (!params.productIds || !Array.isArray(params.productIds) || params.productIds.length === 0)
+    return { ok: false, error: 'productIds が未指定です' };
+
+  const d = fetchProductsAndSets_(params.productIds);
+  if (!d.ok) return d;
+
+  const jodaiType = Object.prototype.hasOwnProperty.call(params, 'jodai_type') ? params.jodai_type : undefined;
+  const quantity  = Object.prototype.hasOwnProperty.call(params, 'quantity')   ? params.quantity   : undefined;
+  const setFlag   = Object.prototype.hasOwnProperty.call(params, 'set_flag')   ? params.set_flag   : undefined;
+  const userName  = params._userName || 'Claude(API)';
+
+  let success = 0;
+  let failed  = 0;
+
+  for (const s of d.sets) {
+    const body = {};
+    if (jodaiType !== undefined) body.jodai_type = jodaiType;
+    if (quantity  !== undefined) body.quantity   = quantity;
+    if (setFlag   !== undefined) body.set_flag   = setFlag;
+    if (Object.keys(body).length === 0) continue;
+
+    const res = bcartPatch('/product_sets/' + s.id, body);
+    const p = d.products.find(p2 => String(p2.id) === String(s.product_id));
+    if (res.ok) {
+      success++;
+      addHistory({ userName, code: p ? (p.product_no || p.main_no || '') : '', name: s.name || '', type: 'セットフィールド更新(Claude)', before: '', after: JSON.stringify(body), result: '成功' });
+    } else {
+      failed++;
+      Logger.log('applySetFields PATCH failed: setId=' + s.id + ' ' + res.error);
+    }
+    Utilities.sleep(300);
+  }
+
+  return { ok: failed === 0, success, failed };
+}
+
+// ---- 操作6: 商品の表示順（表示優先度）一括設定 ----
+
+function previewProductSort(params) {
+  if (!params.items || !Array.isArray(params.items) || params.items.length === 0)
+    return { ok: false, error: 'items が未指定です（[{ id, sort }] の配列）' };
+
+  const productIds = params.items.map(it => it.id);
+  const d = fetchProductsAndSets_(productIds);
+  if (!d.ok) return d;
+
+  // 表示順フィールドの候補（実データに存在するものだけ現在値を拾い、フィールド名を特定する）
+  const candidates = ['sort', 'priority', 'disp_no', 'sort_no', 'sort_order', 'display_order',
+                      'display_priority', 'disp_order', 'view_priority', 'order', 'order_no'];
+
+  const sortMap = {};
+  params.items.forEach(it => { sortMap[String(it.id)] = it.sort; });
+
+  const preview = d.products.map(p => {
+    const cand = {};
+    candidates.forEach(k => { if (Object.prototype.hasOwnProperty.call(p, k)) cand[k] = p[k]; });
+    return {
+      productId: p.id,
+      productNo: p.product_no || p.main_no || '',
+      productName: p.name || '',
+      candidateFields: cand,        // 候補フィールドの現在値（ここから表示順フィールド名を特定）
+      after: sortMap[String(p.id)]  // 設定したい表示順
+    };
+  });
+
+  // 先頭商品の全フィールド名（候補に該当が無い場合の特定用）
+  const allKeys = d.products.length > 0 ? Object.keys(d.products[0]) : [];
+
+  return { ok: true, preview, allKeys, totalChanges: d.products.length, notFound: d.notFound };
+}
+
+function applyProductSort(params) {
+  if (!params.items || !Array.isArray(params.items) || params.items.length === 0)
+    return { ok: false, error: 'items が未指定です（[{ id, sort }] の配列）' };
+  if (!params.sortField)
+    return { ok: false, error: 'sortField が未指定です（previewで特定したフィールド名を渡してください）' };
+
+  const productIds = params.items.map(it => it.id);
+  const d = fetchProductsAndSets_(productIds);
+  if (!d.ok) return d;
+
+  const sortField = params.sortField;
+  const sortMap = {};
+  params.items.forEach(it => { sortMap[String(it.id)] = it.sort; });
+  const userName = params._userName || 'Claude(API)';
+
+  const productUpdates = d.products
+    .filter(p => sortMap[String(p.id)] !== undefined)
+    .map(p => {
+      const u = { id: p.id };
+      u[sortField] = sortMap[String(p.id)];
+      return u;
+    });
+
+  if (productUpdates.length === 0)
+    return { ok: false, error: '対象商品が見つかりません', notFound: d.notFound };
+
+  const res = bcartPatch('/products/', { products: productUpdates });
+  if (res.ok) {
+    d.products.forEach(p => {
+      if (sortMap[String(p.id)] === undefined) return;
+      addHistory({
+        userName,
+        code: p.product_no || p.main_no || '',
+        name: p.name || '',
+        type: '表示順更新(Claude)',
+        before: '',
+        after: sortField + '=' + sortMap[String(p.id)],
+        result: '成功'
+      });
+    });
+  }
+  return { ok: res.ok, count: productUpdates.length, error: res.error || '', notFound: d.notFound };
 }
