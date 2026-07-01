@@ -8,7 +8,7 @@
 //     AUTH_SHEET_ID : beaufield-auth スプレッドシートID（共通）
 // ============================================================
 
-var VERSION = 'v2.1.0';
+var VERSION = 'v2.2.0';
 
 var SHEET_ID      = PropertiesService.getScriptProperties().getProperty('SHEET_ID')      || '';
 var AUTH_SHEET_ID = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID') || '';
@@ -168,48 +168,41 @@ function getProductMaster() {
 }
 
 // ============================================================
-// 重複チェック（内部用）
-// ============================================================
-function checkDuplicates_(productCode, serials) {
-  try {
-    var sh   = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SH_SHIPPING);
-    var data = sh.getDataRange().getValues();
-    var serialSet = {};
-    serials.forEach(function(s) { serialSet[s] = true; });
-    var duplicates = [];
-    for (var i = 1; i < data.length; i++) {
-      var row = data[i];
-      if (String(row[COL.PROD_CODE]) === String(productCode) &&
-          row[COL.STATUS] === '出荷中' &&
-          serialSet[String(row[COL.SERIAL])]) {
-        duplicates.push(String(row[COL.SERIAL]));
-      }
-    }
-    return { success: true, duplicates: duplicates };
-  } catch (e) {
-    Logger.log('checkDuplicates_ error: ' + e);
-    return { success: false, message: '重複チェックに失敗しました' };
-  }
-}
-
-// ============================================================
-// 出荷登録
+// 出荷登録（まとめ書き込み＝高速版）
 // params: productCode, productName, jan, shipDate (YYYY/MM/DD),
 //         customer, method (単独|連番), serials (JSON文字列 or 配列)
+// 【改善点】
+//  A. appendRowの1件ずつループを廃止 → setValuesで一括書き込み（数十倍高速）
+//  C. 重複チェックと追記でシートを2回開いていたのを1回の読み込みに統合
+//  D. 同時登録による行の衝突を防ぐためLockServiceで排他制御
 // ============================================================
 function registerShipping(params) {
+  var lock = LockService.getScriptLock();
   try {
-    var serials   = _parseArray(params.serials);
-    var dupResult = checkDuplicates_(params.productCode, serials);
-    if (!dupResult.success) return dupResult;
+    lock.waitLock(15000); // 他の登録処理の完了を最大15秒待つ
+  } catch (e) {
+    return { success: false, message: '他の処理と競合しました。少し待って再度お試しください' };
+  }
+  try {
+    var serials = _parseArray(params.serials);
+    var sh      = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SH_SHIPPING);
+    var data    = sh.getDataRange().getValues(); // ← シート読み込みは1回だけ（重複チェックに再利用）
 
+    // 重複（同一商品コード × 出荷中）のシリアルを集合化
+    var serialSet = {};
+    serials.forEach(function(s) { serialSet[s] = true; });
     var dupSet = {};
-    dupResult.duplicates.forEach(function(s) { dupSet[s] = true; });
+    for (var i = 1; i < data.length; i++) {
+      var r = data[i];
+      if (String(r[COL.PROD_CODE]) === String(params.productCode) &&
+          r[COL.STATUS] === '出荷中' &&
+          serialSet[String(r[COL.SERIAL])]) {
+        dupSet[String(r[COL.SERIAL])] = true;
+      }
+    }
 
-    var sh  = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SH_SHIPPING);
     var now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
-
-    var registered = 0, skipped = 0, skippedSerials = [];
+    var newRows = [], skipped = 0, skippedSerials = [];
 
     serials.forEach(function(serial) {
       if (dupSet[serial]) { skipped++; skippedSerials.push(serial); return; }
@@ -224,14 +217,20 @@ function registerShipping(params) {
       row[COL.METHOD]     = params.method || '単独';
       row[COL.CUSTOMER]   = params.customer || '';
       row[COL.CREATED_AT] = now;
-      sh.appendRow(row);
-      registered++;
+      newRows.push(row);
     });
 
-    return { success: true, registered: registered, skipped: skipped, skippedSerials: skippedSerials };
+    // 追記は1回のsetValuesで一括（appendRowループの数十倍高速）
+    if (newRows.length > 0) {
+      sh.getRange(sh.getLastRow() + 1, 1, newRows.length, 13).setValues(newRows);
+    }
+
+    return { success: true, registered: newRows.length, skipped: skipped, skippedSerials: skippedSerials };
   } catch (e) {
     Logger.log('registerShipping error: ' + e);
     return { success: false, message: '出荷登録に失敗しました' };
+  } finally {
+    lock.releaseLock();
   }
 }
 
@@ -239,8 +238,17 @@ function registerShipping(params) {
 // 返品・取消登録
 // params: productCode, returnDate (YYYY/MM/DD),
 //         kind (返品|取消), serials (JSON文字列 or 配列)
+// 【改善点】
+//  B. 1行につきsetValueを3回呼んでいたのを、変更行だけ1回のsetValuesにまとめて高速化
+//  D. 読み書きの競合を防ぐためLockServiceで排他制御
 // ============================================================
 function registerReturn(params) {
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+  } catch (e) {
+    return { success: false, message: '他の処理と競合しました。少し待って再度お試しください' };
+  }
   try {
     var serials   = _parseArray(params.serials);
     var sh        = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SH_SHIPPING);
@@ -260,9 +268,12 @@ function registerReturn(params) {
         skippedSerials.push(String(row[COL.SERIAL]));
         continue;
       }
-      sh.getRange(i + 1, COL.STATUS + 1).setValue(newStatus);
-      sh.getRange(i + 1, COL.RETURN_DATE + 1).setValue(params.returnDate);
-      sh.getRange(i + 1, COL.REASON + 1).setValue(params.kind);
+      // メモリ上で更新し、変更行のG〜J列だけを1回のsetValuesで書き戻す（3回→1回）
+      row[COL.STATUS]      = newStatus;
+      row[COL.RETURN_DATE] = params.returnDate;
+      row[COL.REASON]      = params.kind;
+      // G(STATUS)〜J(REASON)の4列を一括書き込み（間のI列CANCEL_DATEは元の値のまま維持）
+      sh.getRange(i + 1, COL.STATUS + 1, 1, 4).setValues([row.slice(COL.STATUS, COL.STATUS + 4)]);
       updated++;
     }
 
@@ -270,6 +281,8 @@ function registerReturn(params) {
   } catch (e) {
     Logger.log('registerReturn error: ' + e);
     return { success: false, message: '返品・取消登録に失敗しました' };
+  } finally {
+    lock.releaseLock();
   }
 }
 
