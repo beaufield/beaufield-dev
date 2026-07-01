@@ -292,6 +292,22 @@ input[type="number"]:focus { border-color: #2a6acc; }
   border-radius: 8px;
   pointer-events: none;
   z-index: 50;
+  transition: border-color 0.15s;
+}
+.scan-guide.refocus-flash { border-color: rgba(255, 214, 0, 0.95); }
+/* タップで再フォーカスできることを知らせる控えめな案内 */
+.refocus-hint {
+  position: absolute;
+  bottom: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.55);
+  color: #eee;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 10px;
+  pointer-events: none;
+  z-index: 50;
 }
 .scanner-hint {
   background: #000;
@@ -487,7 +503,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.11.0</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.12.0</span>
   </div>
 
   <!-- タブバー -->
@@ -734,7 +750,7 @@ select:focus { border-color: #2a6acc; }
       <button type="button" id="scanModeQr" onclick="switchScanMode('qr')">▦ QRコード</button>
     </div>
     <div class="scanner-hint" id="scannerHint">📏 中央に大きく・ピタッと止めて（テカる時は角度を変える）</div>
-    <div id="scannerContainer"></div>
+    <div id="scannerContainer" onclick="requestRefocus()"></div>
     <div class="scanner-zoom-row" id="scannerZoomRow" style="display:none;">
       <button type="button" data-z="1" onclick="applyScannerZoom(1)">1×</button>
       <button type="button" data-z="2" onclick="applyScannerZoom(2)">2×</button>
@@ -759,7 +775,7 @@ select:focus { border-color: #2a6acc; }
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.11.0</div>
+<div class="version-label">HTML v2.12.0</div>
 
 <!-- ZXing バーコードスキャナー（CODE128/JAN用） -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+" crossorigin="anonymous"></script>
@@ -808,6 +824,7 @@ var scannerTorchOn     = false;   // ライト点灯状態
 var qrDetectTimer      = null;    // QR並行検出（jsQR）のタイマー
 var qrScanCanvas       = null;    // jsQR用の作業キャンバス
 var qrScanCtx          = null;    // jsQR用の2Dコンテキスト
+var refocusBusy        = false;   // タップ再フォーカス処理の多重実行防止
 var scanMode           = 'barcode'; // シリアルスキャンのモード（'barcode'=高解像度+ズーム / 'qr'=旧設定でQR向け）
 // シリアルNoとして受理する形式（英数字とハイフンのみ。誤読由来の「!」「.」等を含む値は破棄）
 var SERIAL_PATTERN = /^[0-9A-Za-z-]{3,32}$/;
@@ -1587,6 +1604,12 @@ function startScanner() {
       guide.className = 'scan-guide';
       container.appendChild(guide);
     }
+    if (container && !container.querySelector('.refocus-hint')) {
+      var rhint = document.createElement('div');
+      rhint.className = 'refocus-hint';
+      rhint.textContent = '👆 ピントが合わない時は画面をタップ';
+      container.appendChild(rhint);
+    }
     // ズーム/ライトを初期化（両モードとも・ズーム2倍でピントの合う距離を確保）
     setTimeout(setupScannerCamera, 400);
     // QRモードはjsQR（QR専用エンジン）を並行起動。ZXingはQRが苦手なため
@@ -1713,6 +1736,53 @@ function applyScannerZoom(z) {
       btns[i].classList.toggle('active', Number(btns[i].getAttribute('data-z')) === z);
     }
   } catch (e) {}
+}
+
+// 画面タップで強制的にAF（オートフォーカス）を再実行させる。
+// SafariはfocusMode/focusDistanceを公開しないため直接マクロ指定はできないが、
+// ズームや解像度の制約値をわずかに変えて戻すと、内部でキャプチャ設定が
+// 再評価されオートフォーカスが再ハントされることが経験的に確認されている。
+function requestRefocus() {
+  if (refocusBusy) return;
+  var video = document.querySelector('#scannerContainer video');
+  var track = scannerTrack || (video && video.srcObject && video.srcObject.getVideoTracks()[0]);
+  if (!track) return;
+  refocusBusy = true;
+
+  // 視覚フィードバック（タップを受け付けたことを枠の色でお知らせ）
+  var guide = document.querySelector('#scannerContainer .scan-guide');
+  if (guide) {
+    guide.classList.add('refocus-flash');
+    setTimeout(function() { guide.classList.remove('refocus-flash'); }, 350);
+  }
+  if (navigator.vibrate) navigator.vibrate(30);
+
+  try {
+    var caps = track.getCapabilities ? track.getCapabilities() : {};
+    var settings = track.getSettings ? track.getSettings() : {};
+
+    // 手段1: ズーム対応端末はズーム値を微調整して戻す
+    if (caps.zoom && caps.zoom.max) {
+      var curZoom = settings.zoom || caps.zoom.min || 1;
+      var nudgedZoom = Math.min(caps.zoom.max, curZoom + 0.1);
+      track.applyConstraints({ advanced: [{ zoom: nudgedZoom }] }).then(function() {
+        setTimeout(function() {
+          track.applyConstraints({ advanced: [{ zoom: curZoom }] }).catch(function() {});
+        }, 180);
+      }).catch(function() {});
+    }
+
+    // 手段2: ズーム非対応端末でも効くよう、解像度を微調整して戻す
+    var curW = settings.width  || (video && video.videoWidth)  || 1280;
+    var curH = settings.height || (video && video.videoHeight) || 720;
+    track.applyConstraints({ width: { ideal: curW + 2 }, height: { ideal: curH + 2 } }).then(function() {
+      setTimeout(function() {
+        track.applyConstraints({ width: { ideal: curW }, height: { ideal: curH } }).catch(function() {});
+      }, 200);
+    }).catch(function() {});
+  } catch (e) {}
+
+  setTimeout(function() { refocusBusy = false; }, 500);
 }
 
 // ライトのオン/オフ切り替え
