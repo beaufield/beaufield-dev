@@ -1,5 +1,5 @@
 // ============================================================
-// シリアルNo管理アプリ (SerialApps) - Code.gs v2.1.0
+// シリアルNo管理アプリ (SerialApps) - Code.gs v2.3.0
 // アーキテクチャ: GitHub Pages (front) + GAS WebApp (API)
 // ============================================================
 // [重要] コードに機密値を直書きしない。GASスクリプトプロパティに設定すること。
@@ -8,7 +8,7 @@
 //     AUTH_SHEET_ID : beaufield-auth スプレッドシートID（共通）
 // ============================================================
 
-var VERSION = 'v2.2.0';
+var VERSION = 'v2.3.0';
 
 var SHEET_ID      = PropertiesService.getScriptProperties().getProperty('SHEET_ID')      || '';
 var AUTH_SHEET_ID = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID') || '';
@@ -31,8 +31,16 @@ var COL = {
   REASON:      9,  // J: 取消理由（「返品」「取消」を格納）
   METHOD:      10, // K: 登録方法（単独/連番）
   CUSTOMER:    11, // L: 得意先
-  CREATED_AT:  12  // M: 登録日時
+  CREATED_AT:  12, // M: 登録日時
+  REGISTERED_BY: 13, // N: 登録者（v2.3.0で追加。登録時のログイン氏名をそのまま保存）
+  MAKER:       14, // O: メーカー（v2.3.0で追加。登録時点の商品マスタ値を複製保存）
+  SERIES:      15, // P: 商品シリーズ（v2.3.0で追加。同上）
+  SIZE:        16  // Q: サイズ（v2.3.0で追加。同上）
 };
+// ⚠️ N〜Q列は商品マスタの複製値。目的＝将来商品マスタ側の情報が変更・削除されても、
+//    出荷済みレコードは登録当時のメーカー/シリーズ/サイズを保持し続けられるようにするため。
+//    検索の絞り込み(searchRecords)はこの複製値を優先し、空欄（移行前の旧データ）の場合のみ
+//    商品マスタとの突き合わせにフォールバックする。
 
 // ProductMaster 列インデックス（0始まり）
 var PCOL = {
@@ -206,23 +214,27 @@ function registerShipping(params) {
 
     serials.forEach(function(serial) {
       if (dupSet[serial]) { skipped++; skippedSerials.push(serial); return; }
-      var row = new Array(13).fill('');
-      row[COL.ID]         = Utilities.getUuid();
-      row[COL.SHIP_DATE]  = params.shipDate;
-      row[COL.PROD_CODE]  = params.productCode;
-      row[COL.PROD_NAME]  = params.productName;
-      row[COL.JAN]        = params.jan || '';
-      row[COL.SERIAL]     = serial;
-      row[COL.STATUS]     = '出荷中';
-      row[COL.METHOD]     = params.method || '単独';
-      row[COL.CUSTOMER]   = params.customer || '';
-      row[COL.CREATED_AT] = now;
+      var row = new Array(17).fill('');
+      row[COL.ID]           = Utilities.getUuid();
+      row[COL.SHIP_DATE]    = params.shipDate;
+      row[COL.PROD_CODE]    = params.productCode;
+      row[COL.PROD_NAME]    = params.productName;
+      row[COL.JAN]          = params.jan || '';
+      row[COL.SERIAL]       = serial;
+      row[COL.STATUS]       = '出荷中';
+      row[COL.METHOD]       = params.method || '単独';
+      row[COL.CUSTOMER]     = params.customer || '';
+      row[COL.CREATED_AT]   = now;
+      row[COL.REGISTERED_BY] = params.registeredBy || '';
+      row[COL.MAKER]         = params.maker  || '';
+      row[COL.SERIES]        = params.series || '';
+      row[COL.SIZE]          = params.size   || '';
       newRows.push(row);
     });
 
     // 追記は1回のsetValuesで一括（appendRowループの数十倍高速）
     if (newRows.length > 0) {
-      sh.getRange(sh.getLastRow() + 1, 1, newRows.length, 13).setValues(newRows);
+      sh.getRange(sh.getLastRow() + 1, 1, newRows.length, 17).setValues(newRows);
     }
 
     return { success: true, registered: newRows.length, skipped: skipped, skippedSerials: skippedSerials };
@@ -344,27 +356,35 @@ function searchRecords(params) {
       if (params.serialNo    && _normalizeText(row[COL.SERIAL])    !== _normalizeText(params.serialNo))    continue;
       if (params.productName && !_matchesQuery(String(row[COL.PROD_NAME]), _normalizeText(params.productName))) continue;
 
-      if (params.maker || params.series || params.size) {
-        var pm = prodMap[String(row[COL.PROD_CODE])];
-        if (!pm) continue;
-        if (params.maker  && _normalizeText(pm.maker)  !== _normalizeText(params.maker))  continue;
-        if (params.series && _normalizeText(pm.series) !== _normalizeText(params.series)) continue;
-        if (params.size   && _normalizeText(pm.size)   !== _normalizeText(params.size))   continue;
-      }
+      // メーカー/シリーズ/サイズは行自体の複製値を優先し、
+      // 未設定（複製列導入前の旧データ）の場合のみ商品マスタとの突き合わせにフォールバックする。
+      // →商品マスタ側が後で変更・削除されても、登録当時の情報で絞り込みできる。
+      var pm        = prodMap[String(row[COL.PROD_CODE])];
+      var effMaker  = String(row[COL.MAKER]  || '') || (pm ? pm.maker  : '');
+      var effSeries = String(row[COL.SERIES] || '') || (pm ? pm.series : '');
+      var effSize   = String(row[COL.SIZE]   || '') || (pm ? pm.size   : '');
+
+      if (params.maker  && _normalizeText(effMaker)  !== _normalizeText(params.maker))  continue;
+      if (params.series && _normalizeText(effSeries) !== _normalizeText(params.series)) continue;
+      if (params.size   && _normalizeText(effSize)   !== _normalizeText(params.size))   continue;
 
       result.push({
-        id:          String(row[COL.ID]),
-        shipDate:    _formatDate(row[COL.SHIP_DATE]),
-        productCode: String(row[COL.PROD_CODE]),
-        productName: String(row[COL.PROD_NAME]),
-        jan:         String(row[COL.JAN]),
-        serial:      String(row[COL.SERIAL]),
-        status:      String(row[COL.STATUS]),
-        returnDate:  _formatDate(row[COL.RETURN_DATE]),
-        reason:      String(row[COL.REASON]    || ''),
-        method:      String(row[COL.METHOD]    || ''),
-        customer:    String(row[COL.CUSTOMER]  || ''),
-        createdAt:   String(row[COL.CREATED_AT] || '')
+        id:           String(row[COL.ID]),
+        shipDate:     _formatDate(row[COL.SHIP_DATE]),
+        productCode:  String(row[COL.PROD_CODE]),
+        productName:  String(row[COL.PROD_NAME]),
+        jan:          String(row[COL.JAN]),
+        serial:       String(row[COL.SERIAL]),
+        status:       String(row[COL.STATUS]),
+        returnDate:   _formatDate(row[COL.RETURN_DATE]),
+        reason:       String(row[COL.REASON]        || ''),
+        method:       String(row[COL.METHOD]        || ''),
+        customer:     String(row[COL.CUSTOMER]      || ''),
+        createdAt:    String(row[COL.CREATED_AT]    || ''),
+        registeredBy: String(row[COL.REGISTERED_BY] || ''),
+        maker:        effMaker,
+        series:       effSeries,
+        size:         effSize
       });
     }
 

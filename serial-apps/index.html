@@ -503,7 +503,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.12.0</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.13.0</span>
   </div>
 
   <!-- タブバー -->
@@ -775,7 +775,7 @@ select:focus { border-color: #2a6acc; }
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.12.0</div>
+<div class="version-label">HTML v2.13.0</div>
 
 <!-- ZXing バーコードスキャナー（CODE128/JAN用） -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+" crossorigin="anonymous"></script>
@@ -1261,14 +1261,18 @@ async function doRegisterShipping(method) {
   showLoading(true);
   try {
     var res = await gasPost({
-      action:      'registerShipping',
-      productCode: product.code,
-      productName: product.name,
-      jan:         product.jan,
-      shipDate:    shipDate.replace(/-/g, '/'),
-      customer:    customer,
-      method:      (method === 'single') ? '単独' : '連番',
-      serials:     serials
+      action:       'registerShipping',
+      productCode:  product.code,
+      productName:  product.name,
+      jan:          product.jan,
+      shipDate:     shipDate.replace(/-/g, '/'),
+      customer:     customer,
+      method:       (method === 'single') ? '単独' : '連番',
+      serials:      serials,
+      registeredBy: appState.userName || '',
+      maker:        product.maker  || '',
+      series:       product.series || '',
+      size:         product.size   || ''
     });
     if (res.success) {
 
@@ -1459,11 +1463,12 @@ function renderSearchResults(data, total) {
         '<span class="sri-status ' + c + '">' + esc(r.status) + '</span>' +
       '</div>' +
       '<div style="font-size:12px;color:#888;font-family:monospace;margin-top:3px;">' + esc(r.serial) + '</div>' +
+      '<div style="font-size:12px;color:#666;margin-top:2px;">' +
+        (r.shipDate ? esc(r.shipDate) : '—') + '　' +
+        (r.customer ? esc(r.customer) : '—') +
+      '</div>' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">' +
-        '<span style="font-size:12px;color:#666;">' +
-          (r.shipDate ? esc(r.shipDate) : '—') + '　' +
-          (r.customer ? esc(r.customer) : '—') +
-        '</span>' +
+        '<span style="font-size:12px;color:#999;">登録: ' + (r.registeredBy ? esc(r.registeredBy) : '—') + '</span>' +
         (r.status === '出荷中'
           ? '<button class="btn btn-orange" style="padding:3px 10px;font-size:12px;" onclick="goToReturn(' + idx + ')">返品へ</button>'
           : '') +
@@ -1963,9 +1968,11 @@ function onScanResult(value, format) {
   }
 
   // ===== 誤読対策②: シリアルNo形式チェック =====
-  // 英数字とハイフン以外の文字を含む値は誤読として破棄（13桁数字のJANはこの後の分岐で警告を出す）
-  // ※ QRコードは誤り訂正付きで誤読しないため形式チェックを免除（QRシリアルの自由な文字に対応）
-  if (!isQr && !SERIAL_PATTERN.test(value)) {
+  // 英数字とハイフン以外の文字を含む値（URL等の異なる形式）は誤読・誤スキャンとして破棄
+  // （13桁数字のJANはこの後の分岐で警告を出す）。
+  // QRシリアルの実際の書式は確認済み（例: LA-E-2008944）でこの形式に適合するため、
+  // QRも含めて全フォーマットでチェックする（v2.9.3〜v2.9.7時点ではQRのみ免除していたが復元）。
+  if (!SERIAL_PATTERN.test(value)) {
     misreadFeedback();
     return;
   }
