@@ -621,7 +621,7 @@
 
 <script>
 // ========== APP VERSION ==========
-const APP_VERSION = '1.9.2';
+const APP_VERSION = '1.10.0';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
 
 // ========== DATA STORE ==========
@@ -725,6 +725,12 @@ async function apiPost(action, data) {
   }
 
   return json;
+}
+
+// LINE WORKS通知の後追い送信（await しない。失敗しても登録処理には影響させない）
+function notifyAsync(text) {
+  if (!text) return;
+  apiPost('notify', { text }).catch(e => console.error('notify失敗:', e));
 }
 
 // ========== AUTH ==========
@@ -1626,8 +1632,9 @@ async function submitLoan(deviceId) {
   try {
     const imageUrl = await uploadPendingImage('loan');
     if (imageUrl) { device.imageUrl = imageUrl; newLoan.imageUrl = imageUrl; }
-    // saveDevice + saveLoan（LINE WORKS通知含む）を1回のGASコールで処理
-    await apiPost('saveLoanTransaction', { device, loan: newLoan });
+    // saveDevice + saveLoan を1回のGASコールで処理。LINE WORKS通知は応答後に後追い送信して高速化する
+    const res = await apiPost('saveLoanTransaction', { device, loan: newLoan });
+    notifyAsync(res && res.result && res.result.notifyText);
     pendingImages['loan'] = null;
     saveDBCache();
     showToast('貸出登録しました ✓', 'success');
@@ -1705,8 +1712,9 @@ async function submitReturn(deviceId) {
 
   showLoading();
   try {
-    // saveDevice + saveLoan（LINE WORKS通知含む）を1回のGASコールで処理
-    await apiPost('saveLoanTransaction', { device, loan: returnLoan });
+    // saveDevice + saveLoan を1回のGASコールで処理。LINE WORKS通知は応答後に後追い送信して高速化する
+    const res = await apiPost('saveLoanTransaction', { device, loan: returnLoan });
+    notifyAsync(res && res.result && res.result.notifyText);
     saveDBCache();
     showToast('返却登録しました ✓', 'success');
     currentView = 'home';
@@ -2285,7 +2293,7 @@ async function submitExtendDueDate(deviceId) {
   showLoading();
   try {
     const oldDueDate = device.returnDueDate || '';
-    await apiPost('extendDueDate', {
+    const res = await apiPost('extendDueDate', {
       deviceId,
       labelId: device.labelId || '',
       deviceName: device.name || '',
@@ -2295,6 +2303,8 @@ async function submitExtendDueDate(deviceId) {
       newDueDate,
       registeredBy: currentUser ? currentUser.name : ''
     });
+    // LINE WORKS通知は応答後に後追い送信して高速化する
+    notifyAsync(res && res.result && res.result.notifyText);
     // ローカルDBを即時更新
     device.returnDueDate = newDueDate;
     const loanEntry = {

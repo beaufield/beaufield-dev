@@ -10,7 +10,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.9.2';
+const VERSION  = '1.10.0';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -938,9 +938,9 @@ function processArrival(data) {
     processed++;
   }
 
-  // スプリット行を一括追加
-  for (const row of newRows) {
-    rs.appendRow(row);
+  // スプリット行を一括追加（appendRowループ→setValuesで高速化）
+  if (newRows.length > 0) {
+    rs.getRange(rs.getLastRow() + 1, 1, newRows.length, 14).setValues(newRows);
   }
 
   if (processed === 0) return _err('処理対象の予約が見つかりませんでした');

@@ -419,7 +419,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.20.0</span>
+  <span class="header-version">v1.21.0</span>
 </header>
 
 <!-- ============================================================ -->
@@ -1105,6 +1105,31 @@ async function loadProducts() {
   } catch(e) {}
 }
 
+/** 保存応答の1件を予約一覧にマージ（新規なら追加・既存なら置換）して再描画する
+ *  全件再取得を伴わないため、予約登録の体感速度を大きく改善する */
+function _mergeReservation(rec) {
+  const idx = reservations.findIndex(r => r.reservation_no === rec.reservation_no);
+  if (idx >= 0) reservations[idx] = rec; else reservations.unshift(rec);
+  reservations.sort((a, b) => b.reservation_no - a.reservation_no);
+
+  _refreshProductCounts();
+  _updateStaffFilter();
+  renderList();
+
+  // キャッシュの予約データも最新化（次回ロード時に最新状態が表示される）
+  try {
+    const raw = localStorage.getItem(LS_CACHE_KEY);
+    if (raw) {
+      const c = JSON.parse(raw);
+      if (c && c.data) {
+        c.data.reservations = reservations;
+        c.expires = Date.now() + LS_CACHE_TTL;
+        localStorage.setItem(LS_CACHE_KEY, JSON.stringify(c));
+      }
+    }
+  } catch(e) {}
+}
+
 /** 予約一覧を再取得（変更操作後に呼ぶ） */
 async function loadReservations() {
   showLoading();
@@ -1213,8 +1238,13 @@ async function registerReservation() {
     document.getElementById('regNotes').value   = '';
     document.getElementById('stockInfo').style.display = 'none';
 
-    // 予約一覧を再取得（残数もローカルで自動更新）
-    await loadReservations();
+    // 保存応答に含まれる予約レコードをローカルにマージして即時反映（全件再取得を廃止し高速化）
+    // レスポンスに reservation が含まれない場合（旧デプロイ等）は従来どおり全件再取得にフォールバック
+    if (res.data.reservation) {
+      _mergeReservation(res.data.reservation);
+    } else {
+      await loadReservations();
+    }
 
   } catch(e) {
     showToast(e.message, 'error');

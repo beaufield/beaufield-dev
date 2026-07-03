@@ -16,7 +16,8 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.9.5';
+const VERSION         = 'v1.10.0';
+const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
 // ※ 同名ファイルが複数ある場合はファイルIDで指定（下記コメント参照）
@@ -50,10 +51,20 @@ const ORDER_TEMPLATES = {
 // ============================================================
 // セッション検証
 // beaufield-auth の sessions シートでトークンを照合する
+// CacheService で 15 分間キャッシュしてシート読み込みを削減する
+// （ログアウト即時反映が必要な運用ではない前提。他アプリと同一パターン）
 // 戻り値: { valid: true, user_id } または { valid: false }
 // ============================================================
 function validateSession(token) {
   if (!token) return { valid: false };
+
+  const cache    = CacheService.getScriptCache();
+  const cacheKey = 'sess_' + token.slice(-32);
+  const cached   = cache.get(cacheKey);
+  if (cached !== null) {
+    try { return JSON.parse(cached); } catch(e) {}
+  }
+
   try {
     const ss   = SpreadsheetApp.openById(AUTH_SHEET_ID);
     const sh   = ss.getSheetByName('sessions');
@@ -71,15 +82,21 @@ function validateSession(token) {
         if (rowExpires < now) {
           // 期限切れ → 行を削除してから拒否
           sh.deleteRow(i + 1);
-          return { valid: false };
+          const r = { valid: false };
+          cache.put(cacheKey, JSON.stringify(r), 60);
+          return r;
         }
-        return { valid: true, user_id: rowUserId };
+        const r = { valid: true, user_id: rowUserId };
+        cache.put(cacheKey, JSON.stringify(r), CACHE_TTL_SESSION);
+        return r;
       }
     }
   } catch(e) {
     Logger.log('セッション検証エラー: ' + e);
   }
-  return { valid: false };
+  const r = { valid: false };
+  cache.put(cacheKey, JSON.stringify(r), 60);
+  return r;
 }
 
 // ============================================================
@@ -194,10 +211,16 @@ function jsonResponse(data) {
 
 // ============================================================
 // ヘルパー: シート取得
+// SpreadsheetApp.openById() は1リクエスト内で複数回呼ぶとオーバーヘッドになるため
+// 実行コンテキスト内でキャッシュして使い回す
 // ============================================================
+let _ssCache = null;
+function getSS() {
+  if (!_ssCache) _ssCache = SpreadsheetApp.openById(SPREADSHEET_ID);
+  return _ssCache;
+}
 function getSheet(name) {
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const sh = ss.getSheetByName(name);
+  const sh = getSS().getSheetByName(name);
   if (!sh) throw new Error('シートが見つかりません: ' + name);
   return sh;
 }
@@ -256,7 +279,7 @@ function getMasters() {
 // レスポンス: { success: true, products: [...], updatedAt: '...' }
 // ============================================================
 function getProductMaster() {
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const ss = getSS();
   const sh = ss.getSheetByName(SHEET_PRODUCTS);
   if (!sh || sh.getLastRow() === 0) {
     return { success: true, products: [], updatedAt: '' };
