@@ -71,4 +71,60 @@ if [ -n "$secret_hits" ]; then
     exit 1
 fi
 
+# ============================================================
+# バージョン更新チェック: Code.gs / index.html を変更した場合、
+# 同じコミット内でVERSION定数の値も変更されていることを要求する
+# 2026-07-04 バージョン表記の不統一・更新漏れの再発防止のため新設
+# 詳細ルール: workflows/versioning-rules.md 参照
+# ============================================================
+VERSION_LINE_PATTERN='^[[:space:]]*(const|var|let)[[:space:]]+(APP_)?VERSION[[:space:]]*='
+
+extract_version_value() {
+    # 標準入力からファイル内容を受け取り、VERSION定義行のクォート内の値を抜き出す
+    grep -E "$VERSION_LINE_PATTERN" | head -1 | sed -E "s/.*=[[:space:]]*['\"]([^'\"]*)['\"].*/\1/"
+}
+
+modified_versioned_files=$(git diff --cached --name-only --diff-filter=M | grep -E '\.gs$|(^|/)index\.html$' || true)
+version_violations=""
+
+for f in $modified_versioned_files; do
+    # HEAD時点でVERSION定義を持たないファイル（バージョン管理対象外）はスキップ
+    old_content=$(git show "HEAD:$f" 2>/dev/null || true)
+    if ! printf '%s' "$old_content" | grep -qE "$VERSION_LINE_PATTERN"; then
+        continue
+    fi
+
+    new_content=$(git show ":$f" 2>/dev/null || true)
+    old_val=$(printf '%s' "$old_content" | extract_version_value)
+    new_val=$(printf '%s' "$new_content" | extract_version_value)
+
+    if [ "$old_val" = "$new_val" ]; then
+        version_violations="${version_violations}${f}\n"
+    fi
+done
+
+if [ -n "$version_violations" ]; then
+    echo ""
+    echo "=================================================================="
+    echo "  COMMIT BLOCKED: バージョン番号が更新されていません"
+    echo "=================================================================="
+    echo ""
+    echo "以下のファイルはコード変更を含みますが、VERSION/APP_VERSION定数の値が"
+    echo "変わっていません:"
+    echo ""
+    printf "$version_violations" | sed 's/^/    /'
+    echo ""
+    echo "対応方法:"
+    echo "  1. 変更したファイルの VERSION（Code.gs）/ APP_VERSION（index.html）"
+    echo "     定数の値を vX.Y.Z 形式で上げる"
+    echo "     （バグ修正→パッチ / 機能追加→マイナー / 再設計→メジャー）"
+    echo "  2. git add で再ステージしてから、もう一度コミットしてください"
+    echo ""
+    echo "  やむを得ずこのチェックを回避する場合: git commit --no-verify"
+    echo "  （通常は使用しないこと。使う場合はたかしさんに確認）"
+    echo ""
+    echo "=================================================================="
+    exit 1
+fi
+
 exit 0
