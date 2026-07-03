@@ -503,7 +503,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.13.0</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.14.0</span>
   </div>
 
   <!-- タブバー -->
@@ -775,7 +775,7 @@ select:focus { border-color: #2a6acc; }
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.13.0</div>
+<div class="version-label">HTML v2.14.0</div>
 
 <!-- ZXing バーコードスキャナー（CODE128/JAN用） -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+" crossorigin="anonymous"></script>
@@ -948,13 +948,30 @@ function switchTab(tab) {
 
 // ============================================================
 // 商品マスタ読み込み
+// キャッシュがあれば即座に画面へ反映し（体感速度向上）、裏で最新データを取得して更新する
 // ============================================================
+var PM_CACHE_KEY = 'sa_product_master_cache';
+
 async function loadProductMaster() {
+  try {
+    var raw = localStorage.getItem(PM_CACHE_KEY);
+    if (raw) {
+      var cached = JSON.parse(raw);
+      if (cached && cached.products) {
+        appState.products = cached.products;
+        buildMakerDropdown();
+      }
+    }
+  } catch(e) {}
+
   try {
     var res = await gasGet({ action: 'getProductMaster' });
     if (res.success) {
       appState.products = res.data;
       buildMakerDropdown();
+      try {
+        localStorage.setItem(PM_CACHE_KEY, JSON.stringify({ products: res.data, savedAt: Date.now() }));
+      } catch(e) {}
     } else {
       showToast('商品マスタ読込失敗: ' + res.message, 'error');
     }

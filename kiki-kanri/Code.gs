@@ -4,7 +4,7 @@
 // 更新日: 2026-04-25
 // ============================================================
 
-const VERSION  = 'GAS 1.9.3';
+const VERSION  = 'GAS 1.10.0';
 const SHEET_ID      = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
 const AUTH_SHEET_ID = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID');
 // SHEET_ID / AUTH_SHEET_ID / LINEWORKS_WEBHOOK はスクリプトプロパティで管理
@@ -112,6 +112,7 @@ function doPost(e) {
     else if (action === 'updatePrintStatus')   result = updatePrintStatus(data);
     else if (action === 'assignLabel')         result = assignLabel(data);
     else if (action === 'extendDueDate')       result = extendDueDate(data);
+    else if (action === 'notify')              result = notify(data);
     else if (action === 'login')               result = login(data);
     else if (action === 'getAuthUsers')        result = getAuthUsers();
     else if (action === 'changePin')           result = changePin(data);
@@ -182,8 +183,8 @@ function registerDevice(data) {
 // フロントエンドから1回のリクエストで完結させ、通信往復を削減する
 function saveLoanTransaction(data) {
   saveDevice(data.device);
-  saveLoan(data.loan);
-  return { success: true };
+  const loanResult = saveLoan(data.loan);
+  return { success: true, notifyText: loanResult.notifyText };
 }
 
 // ─── 商品マスタ保存 ──────────────────────────────────────────
@@ -209,7 +210,9 @@ function saveDevice(device) {
   return { success: true, device };
 }
 
-// ─── 貸出ログ保存 + LINE WORKS即時通知 ───────────────────────
+// ─── 貸出ログ保存 ────────────────────────────────────────────
+// LINE WORKS通知はここでは送信せず、通知文言だけ組み立てて返す。
+// フロントから応答後に notify アクションで後追い送信することで、登録応答を高速化する。
 function saveLoan(loan) {
   const sheet = ss.getSheetByName('LoanLog');
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
@@ -218,10 +221,12 @@ function saveLoan(loan) {
   const rowData = headers.map(h => loan[h] !== undefined ? loan[h] : '');
   sheet.appendRow(rowData);
 
-  // 貸出登録の通知
+  let notifyText = null;
+
+  // 貸出登録の通知文言
   if (loan.type === '貸出') {
     const due = loan.returnDueDate || '未設定';
-    const msg = [
+    notifyText = [
       '【貸出登録】',
       '商品ID: ' + (loan.labelId || ''),
       '商品名: ' + (loan.deviceName || ''),
@@ -230,22 +235,20 @@ function saveLoan(loan) {
       '営業担当: ' + (loan.salesRep || ''),
       '操作者: ' + (loan.registeredBy || '')
     ].join('\n');
-    sendLineWorksMessage(msg);
   }
 
-  // 返却登録の通知
+  // 返却登録の通知文言
   if (loan.type === '返却') {
-    const msg = [
+    notifyText = [
       '【返却登録】',
       '商品ID: ' + (loan.labelId || ''),
       '商品名: ' + (loan.deviceName || ''),
       '返却日: ' + (loan.date || ''),
       '操作者: ' + (loan.registeredBy || '')
     ].join('\n');
-    sendLineWorksMessage(msg);
   }
 
-  return { success: true, loan };
+  return { success: true, loan, notifyText };
 }
 
 // ─── 営業担当マスタ保存 ──────────────────────────────────────
@@ -430,7 +433,8 @@ function assignLabel(data) {
 }
 
 // ─── 返却予定日延長 ──────────────────────────────────────────
-// DeviceMasterのreturnDueDateを更新し、LoanLogに延長記録を残してLINE WORKS通知する
+// DeviceMasterのreturnDueDateを更新し、LoanLogに延長記録を残す
+// LINE WORKS通知はnotifyTextとして返し、フロントから後追い送信する
 function extendDueDate(data) {
   const today = new Date().toISOString().split('T')[0];
 
@@ -468,8 +472,8 @@ function extendDueDate(data) {
   };
   loanSheet.appendRow(loanHeaders.map(h => loanEntry[h] !== undefined ? loanEntry[h] : ''));
 
-  // LINE WORKS通知
-  const msg = [
+  // LINE WORKS通知文言（送信はフロントからの notify アクションで後追い実行する）
+  const notifyText = [
     '【返却期限延長】',
     '商品ID: '    + (data.labelId   || ''),
     '商品名: '    + (data.deviceName || ''),
@@ -478,8 +482,15 @@ function extendDueDate(data) {
     '変更後: '    + (data.newDueDate || ''),
     '操作者: '    + (data.registeredBy || '')
   ].join('\n');
-  sendLineWorksMessage(msg);
 
+  return { success: true, notifyText };
+}
+
+// ─── LINE WORKS通知の後追い送信（フロントから登録応答後に呼ばれる） ─
+function notify(data) {
+  const text = data && data.text;
+  if (!text) return { success: false };
+  sendLineWorksMessage(text);
   return { success: true };
 }
 

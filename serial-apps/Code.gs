@@ -8,10 +8,11 @@
 //     AUTH_SHEET_ID : beaufield-auth スプレッドシートID（共通）
 // ============================================================
 
-var VERSION = 'v2.3.0';
+var VERSION = 'v2.4.0';
 
 var SHEET_ID      = PropertiesService.getScriptProperties().getProperty('SHEET_ID')      || '';
 var AUTH_SHEET_ID = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID') || '';
+var CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // シート名
 var SH_PRODUCT  = 'ProductMaster';
@@ -123,9 +124,18 @@ function doPost(e) {
 
 // ============================================================
 // セッション検証（beaufield-auth 共通）
+// CacheService で 15 分間キャッシュしてシート読み込みを削減する
 // ============================================================
 function validateSession(token) {
   if (!token) return { valid: false };
+
+  var cache    = CacheService.getScriptCache();
+  var cacheKey = 'sess_' + token.slice(-32);
+  var cached   = cache.get(cacheKey);
+  if (cached !== null) {
+    try { return JSON.parse(cached); } catch (e) {}
+  }
+
   try {
     var sh   = SpreadsheetApp.openById(AUTH_SHEET_ID).getSheetByName('sessions');
     if (!sh) return { valid: false };
@@ -135,15 +145,21 @@ function validateSession(token) {
       if (String(rows[i][0]) === String(token)) {
         if (Number(rows[i][2]) < now) {
           sh.deleteRow(i + 1); // 期限切れ行を削除
-          return { valid: false };
+          var invalid = { valid: false };
+          cache.put(cacheKey, JSON.stringify(invalid), 60);
+          return invalid;
         }
-        return { valid: true, userId: String(rows[i][1]) };
+        var valid = { valid: true, userId: String(rows[i][1]) };
+        cache.put(cacheKey, JSON.stringify(valid), CACHE_TTL_SESSION);
+        return valid;
       }
     }
   } catch (e) {
     Logger.log('validateSession error: ' + e.message);
   }
-  return { valid: false };
+  var result = { valid: false };
+  cache.put(cacheKey, JSON.stringify(result), 60);
+  return result;
 }
 
 // ============================================================

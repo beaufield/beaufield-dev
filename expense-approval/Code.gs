@@ -14,7 +14,7 @@
 // AUTH_SHEET_ID      : beaufield-auth スプレッドシートID（portal と共有）
 // =========================================
 
-const VERSION = '1.5.1';
+const VERSION = '1.6.0';
 
 // --- シート名 ---
 const SHEET_REQUESTS  = '申請一覧';
@@ -355,9 +355,23 @@ function sendLwMessage_(token, userId, text, messageObj) {
 
 // =========================================
 // LINE WORKS アクセストークン取得
+// トークンは1時間有効なため、CacheServiceで50分キャッシュしてJWT署名生成と
+// UrlFetchApp呼び出し（承認/却下操作のたびに発生していた）を削減する
 // =========================================
 
+const CACHE_TTL_LW_TOKEN = 3000; // 50分（秒）
+
 function getLwAccessToken_() {
+  const cache  = CacheService.getScriptCache();
+  const cached = cache.get('lw_access_token');
+  if (cached) return cached;
+
+  const token = getLwAccessTokenFresh_();
+  if (token) cache.put('lw_access_token', token, CACHE_TTL_LW_TOKEN);
+  return token;
+}
+
+function getLwAccessTokenFresh_() {
   const props         = PropertiesService.getScriptProperties().getProperties();
   const clientId      = props.LW_CLIENT_ID;
   const clientSecret  = props.LW_CLIENT_SECRET;
