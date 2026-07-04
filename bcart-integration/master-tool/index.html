@@ -2176,7 +2176,7 @@ function hideSearchProduct(productId, productNo, name, btn) {
 function cloneSearchProduct(productId, btn) {
   const p = searchProductCache.find(x => String(x.id) === String(productId));
   if (!p) { showToast('商品データが見つかりません', true); return; }
-  if (!confirm('この商品を複製します。\n商品セットもすべて複製され、非表示状態で作成されます。\n\n商品名: ' + p.name + '\n\nよろしいですか？')) return;
+  if (!confirm('この商品を複製します。\n説明・画像・表示グループ設定など全ての情報が複製されます。\n親商品は非表示で作成され、商品セットは元の表示状態のまま複製されます。\n\n商品名: ' + p.name + '\n\nよろしいですか？')) return;
   btn.disabled = true;
   const origText = btn.textContent;
   btn.textContent = '複製中...';
@@ -2184,11 +2184,7 @@ function cloneSearchProduct(productId, btn) {
     action: 'cloneProduct',
     productId: p.id,
     productNo: p.product_no,
-    productName: p.name,
-    categoryId: p.category_id,
-    featureId1: p.feature_id1,
-    featureId2: p.feature_id2,
-    featureId3: p.feature_id3
+    productName: p.name
   }, function(res) {
     btn.disabled = false;
     btn.textContent = origText;

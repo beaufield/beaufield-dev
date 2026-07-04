@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.12.0';
+const VERSION = 'v2.13.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -454,15 +454,18 @@ function getBcartToken() {
   return token;
 }
 
-function bcartGetAll(path) {
+function bcartGetAll(path, extraParams) {
   try {
     const token = getBcartToken();
     const allData = [];
     const limit = 100;
     let offset = 0;
+    const extraQs = extraParams
+      ? Object.entries(extraParams).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&')
+      : '';
 
     while (true) {
-      const url = BCART_BASE_URL + path + '?limit=' + limit + '&offset=' + offset;
+      const url = BCART_BASE_URL + path + '?limit=' + limit + '&offset=' + offset + (extraQs ? '&' + extraQs : '');
       let res;
       for (let retry = 0; retry <= 3; retry++) {
         res = UrlFetchApp.fetch(url, {
@@ -520,7 +523,7 @@ function bcartGet(path, params) {
     });
     if (res.getResponseCode() !== 200) return { ok: false, error: 'BCART_API_ERROR: ' + res.getResponseCode() };
     const data = JSON.parse(res.getContentText());
-    return { ok: true, data: data.data || data.product_set || data };
+    return { ok: true, data: data.data || data.product_set || data.product || data };
   } catch (e) {
     Logger.log('bcartGet error: ' + e.message);
     return { ok: false, error: 'INTERNAL_ERROR' };
@@ -917,24 +920,74 @@ function searchProducts(params) {
   return { ok: true, products: result, total: result.length };
 }
 
-// 商品複製（商品基本情報 + 全セット、非表示状態で作成）
+// 商品複製（商品基本情報 + 全セット、全フィールドを複製）
+// 親商品は必ず非表示で作成（確認後に手動公開する運用）。商品セットは元の表示状態(set_flag)をそのまま複製する。
 function cloneProduct(params) {
   const productId = String(params.productId);
 
+  // 元商品を全フィールド取得
+  const srcRes = bcartGet('/products/' + productId);
+  if (!srcRes.ok) return srcRes;
+  const src = srcRes.data;
+  if (!src || !src.id) {
+    return { ok: false, error: '元商品が見つかりませんでした（ID: ' + productId + '）' };
+  }
+
   // 元商品の全セットを取得して複製対象を絞り込み
-  const setsRes = bcartGetAll('/product_sets');
+  const setsRes = bcartGetAll('/product_sets', { product_id: productId });
   if (!setsRes.ok) return setsRes;
   const srcSets = setsRes.data.filter(s => String(s.product_id) === productId);
 
-  // 新商品作成（非表示）
+  // sub_images: GETはオブジェクト形式 {1:{image,caption},...} → POSTは配列形式
+  const subImages = [];
+  if (src.sub_images && typeof src.sub_images === 'object') {
+    Object.keys(src.sub_images).forEach(k => {
+      const si = src.sub_images[k];
+      if (si && (si.image || si.caption)) {
+        subImages.push({ image: si.image || '', caption: si.caption || '' });
+      }
+    });
+  }
+
+  // 新商品作成（表示状態(flag)以外は元商品の全フィールドをそのまま複製）
   const productBody = {
     products: [{
-      name:        params.productName,
-      category_id: params.categoryId || null,
-      flag:        '非表示',
-      feature_id1: params.featureId1 || null,
-      feature_id2: params.featureId2 || null,
-      feature_id3: params.featureId3 || null
+      main_no:              src.main_no || '',
+      name:                 params.productName || src.name || '',
+      catch_copy:           src.catch_copy || '',
+      category_id:          src.category_id || null,
+      sub_category_id:      src.sub_category_id || '',
+      feature_id1:          src.feature_id1 || null,
+      feature_id2:          src.feature_id2 || null,
+      feature_id3:          src.feature_id3 || null,
+      made_in:              src.made_in || '',
+      size:                 src.size || '',
+      sozai:                src.sozai || '',
+      caution:              src.caution || '',
+      tag:                  src.tag || '',
+      description:          src.description || '',
+      meta_title:           src.meta_title || '',
+      meta_keywords:        src.meta_keywords || '',
+      meta_description:     src.meta_description || '',
+      image:                src.image || '',
+      view_group_filter:    src.view_group_filter || '',
+      visible_customer_id:  src.visible_customer_id || '',
+      hide_customer_id:     src.hide_customer_id || '',
+      prepend_text:         src.prepend_text || '',
+      middle_text:          src.middle_text || '',
+      append_text:          src.append_text || '',
+      rv_prepend_text:      src.rv_prepend_text || '',
+      rv_middle_text:       src.rv_middle_text || '',
+      rv_append_text:       src.rv_append_text || '',
+      file_download:        src.file_download || null,
+      customs:              src.customs || [],
+      hanbai_start:         src.hanbai_start || null,
+      hanbai_end:           src.hanbai_end || null,
+      recommend_product_id: src.recommend_product_id || '',
+      view_pattern:         src.view_pattern || 0,
+      priority:             src.priority || 0,
+      flag:                 '非表示',
+      sub_images:           subImages
     }]
   };
 
@@ -958,27 +1011,57 @@ function cloneProduct(params) {
     return { ok: false, error: '新商品IDが取得できませんでした（レスポンス: ' + JSON.stringify(step1.data) + '）' };
   }
 
-  // 全セットを新商品へ複製（非表示）
+  // 全セットを新商品へ複製（表示状態(set_flag)は元のセットのまま複製）
   const results = [];
   let successCount = 0;
 
   for (const s of srcSets) {
+    // group_price: GETレスポンスにはname/rate等の付随情報が混じるため、POSTに必要な
+    // fixed_price/volume_discountだけに整形する（fixed_price未設定＝掛け率運用のグループは送らない）
+    const groupPrice = {};
+    if (s.group_price && typeof s.group_price === 'object') {
+      Object.keys(s.group_price).forEach(gid => {
+        const gp = s.group_price[gid] || {};
+        if (gp.fixed_price === undefined || gp.fixed_price === null) return;
+        const entry = { fixed_price: gp.fixed_price };
+        if (gp.volume_discount) entry.volume_discount = gp.volume_discount;
+        groupPrice[gid] = entry;
+      });
+    }
+
     const setBody = {
       product_sets: [{
-        product_id:  newProductId,
-        product_no:  s.product_no || '',
-        name:        s.name || '',
-        jan_code:    s.jan_code || '',
-        unit_price:  s.unit_price !== undefined ? s.unit_price : 0,
-        jodai:       s.jodai || 0,
-        jodai_type:  s.jodai_type || 'メーカー希望小売価格',
-        group_price: s.group_price || {},
-        unit:        s.unit || '',
-        quantity:    s.quantity || 1,
-        min_order:   s.min_order || 1,
-        stock_flag:  1,
-        tax_type_id: s.tax_type_id || 1,
-        set_flag:    '非表示'
+        product_id:          newProductId,
+        product_no:          s.product_no || '',
+        jan_code:            s.jan_code || '',
+        location_no:         s.location_no || '',
+        jodai_type:          s.jodai_type || 'メーカー希望小売価格',
+        jodai:               s.jodai || 0,
+        name:                s.name || '',
+        unit_price:          s.unit_price !== undefined ? s.unit_price : 0,
+        min_order:           s.min_order || null,
+        max_order:           s.max_order || null,
+        group_price:         groupPrice,
+        special_price:       s.special_price || {},
+        volume_discount:     s.volume_discount || {},
+        quantity:            s.quantity || 1,
+        unit:                s.unit || '',
+        description:         s.description || '',
+        stock:               s.stock !== undefined ? s.stock : null,
+        stock_flag:          s.stock_flag !== undefined ? s.stock_flag : 1,
+        stock_parent:        s.stock_parent || null,
+        stock_view_id:       s.stock_view_id || null,
+        stock_few:           s.stock_few || 0,
+        view_group_filter:   s.view_group_filter || '',
+        visible_customer_id: s.visible_customer_id || '',
+        hide_customer_id:    s.hide_customer_id || '',
+        customs:             s.customs || [],
+        option_ids:          s.option_ids || [],
+        shipping_group_id:   s.shipping_group_id || null,
+        shipping_size:       s.shipping_size || 0,
+        priority:            s.priority || 0,
+        tax_type_id:         s.tax_type_id || 1,
+        set_flag:            s.set_flag || '表示'
       }]
     };
     const res = bcartPost('/product_sets', setBody);
