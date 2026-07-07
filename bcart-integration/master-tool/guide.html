@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bカート特価管理ガイド</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Helvetica Neue', 'Hiragino Kaku Gothic ProN', Arial, sans-serif; font-size: 14px; background: #f5f6fa; color: #1f2937; line-height: 1.7; }
+
+.header { background: #1a56db; color: #fff; padding: 20px 28px; }
+.header h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+.header p { font-size: 13px; opacity: 0.85; }
+
+.layout { display: flex; max-width: 1180px; margin: 0 auto; align-items: flex-start; }
+
+.toc { width: 230px; flex-shrink: 0; position: sticky; top: 0; max-height: 100vh; overflow-y: auto; padding: 24px 16px; }
+.toc-title { font-size: 11px; font-weight: 700; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; padding-left: 10px; }
+.toc a { display: block; padding: 7px 10px; border-radius: 6px; color: #4b5563; text-decoration: none; font-size: 13px; margin-bottom: 2px; }
+.toc a:hover { background: #eef2ff; color: #1a56db; }
+.toc a.sub { padding-left: 22px; font-size: 12px; color: #6b7280; }
+
+.main { flex: 1; padding: 24px 28px 80px; min-width: 0; }
+
+section { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 24px 28px; margin-bottom: 20px; scroll-margin-top: 16px; }
+section h2 { font-size: 17px; color: #1a56db; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+section h3 { font-size: 14px; color: #111827; margin: 18px 0 8px; }
+section h3:first-of-type { margin-top: 4px; }
+p { margin-bottom: 10px; color: #374151; }
+ul, ol { margin: 0 0 10px 22px; color: #374151; }
+li { margin-bottom: 4px; }
+strong { color: #111827; }
+code { background: #f3f4f6; border-radius: 4px; padding: 1px 6px; font-size: 12.5px; font-family: 'SFMono-Regular', Consolas, monospace; color: #b91c1c; }
+pre { background: #1f2937; color: #e5e7eb; border-radius: 8px; padding: 14px 16px; font-size: 12.5px; overflow-x: auto; margin-bottom: 12px; font-family: 'SFMono-Regular', Consolas, monospace; line-height: 1.6; }
+pre code { background: none; color: inherit; padding: 0; }
+
+.lead { font-size: 15px; color: #111827; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 14px 18px; margin-bottom: 16px; }
+
+.callout { border-radius: 8px; padding: 12px 16px; margin: 12px 0; font-size: 13px; }
+.callout-warn { background: #fef3c7; border: 1px solid #fcd34d; color: #92400e; }
+.callout-info { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; }
+.callout-tip  { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 14px; }
+th, td { border-bottom: 1px solid #e5e7eb; padding: 8px 10px; text-align: left; vertical-align: top; }
+th { background: #f9fafb; font-weight: 600; color: #374151; white-space: nowrap; }
+tr:last-child td { border-bottom: none; }
+
+.badge { display: inline-flex; align-items: center; gap: 3px; padding: 2px 9px; border-radius: 12px; font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+.badge-ok       { background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; }
+.badge-warn     { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+.badge-danger   { background: #fee2e2; color: #dc2626; border: 1px solid #fca5a5; }
+.badge-pending  { background: #f5f3ff; color: #7c3aed; border: 1px solid #ddd6fe; }
+.badge-info     { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+
+.flow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 14px 0; }
+.flow-box { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 16px; font-size: 12.5px; text-align: center; min-width: 130px; }
+.flow-box strong { display: block; font-size: 13px; margin-bottom: 2px; }
+.flow-arrow { color: #9ca3af; font-size: 18px; }
+
+.subnav-preview { display: flex; gap: 6px; margin-bottom: 4px; flex-wrap: wrap; }
+.subnav-preview span { padding: 6px 14px; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff; font-size: 12.5px; color: #6b7280; }
+.subnav-preview span.active { background: #eff6ff; border-color: #1a56db; color: #1a56db; font-weight: 600; }
+
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 900px) {
+  .layout { flex-direction: column; }
+  .toc { position: static; width: 100%; max-height: none; }
+  .grid2 { grid-template-columns: 1fr; }
+}
+
+.footer-note { text-align: center; color: #9ca3af; font-size: 12px; padding: 20px 0 40px; }
+</style>
+</head>
+<body>
+
+<div class="header" style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <h1>💎 Bカート特価管理ガイド</h1>
+    <p>master-tool「特別価格」タブ ＋ 特価候補抽出ツール（price-master） の使い方 — v2.14.0（2026-07-07）</p>
+  </div>
+  <a href="index.html" style="background:rgba(255,255,255,0.15);color:#fff;padding:8px 16px;border-radius:6px;font-size:13px;text-decoration:none;white-space:nowrap;">← アプリに戻る</a>
+</div>
+
+<div class="layout">
+  <nav class="toc">
+    <div class="toc-title">目次</div>
+    <a href="#why">1. これは何のためのツールか</a>
+    <a href="#overview">2. 全体像</a>
+    <a href="#glossary">3. 用語集</a>
+    <a href="#groups">4. 導入サロングループ</a>
+    <a href="#settings">5. 特別価格設定</a>
+    <a href="#individual">6. 個別特価</a>
+    <a href="#audit">7. 突合チェック</a>
+    <a href="#extract">8. 特価候補の抽出（初期構築・棚卸し）</a>
+    <a href="#routine">9. 月次運用フロー</a>
+    <a href="#faq">10. よくある質問</a>
+  </nav>
+
+  <main class="main">
+
+    <section id="why">
+      <h2>1. これは何のためのツールか</h2>
+      <p class="lead">「どの顧客に、どの商品を、いくらで売っているか」を一元管理するための仕組みです。これまでは過去の販売履歴を見て都度確認・都度Bカートに登録していましたが、その手作業をなくすことが目的です。</p>
+      <p>Bカートの登録会員数が増えるにつれ、次のような個別対応が積み重なっていました。</p>
+      <ul>
+        <li>顧客ごとに異なる特別価格を適用しているケースが多い</li>
+        <li>特別価格を適用する商品が多岐にわたる</li>
+        <li>特定の契約をした顧客しか購入できない商品がある（限定商品）</li>
+      </ul>
+      <p>Bカートの標準機能だけでこれをやろうとすると、商品ごとに「表示する顧客」や「顧客ごとの価格」を個別設定する必要があり、件数が増えるほど破綻します。そこで <strong>master-tool の「特別価格」タブに置いたシートを唯一の正（マスターデータ）</strong>とし、そこから一括でBカートへ反映する体制にしました。</p>
+    </section>
+
+    <section id="overview">
+      <h2>2. 全体像</h2>
+      <div class="flow">
+        <div class="flow-box"><strong>①販売履歴</strong>sales.db（過去の実売価格）</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-box"><strong>②抽出スクリプト</strong>derive_special_prices.py</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-box"><strong>③レビュー</strong>Excelで目視確認</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-box"><strong>④特価マスター</strong>master-tool特別価格タブ</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-box"><strong>⑤Bカート</strong>API反映（special_price等）</div>
+      </div>
+      <p>①〜③は<strong>最初の1回だけ</strong>行う「棚卸し」作業です（8章）。一度マスターができた後の日常運用は④と⑤だけで完結します（9章）。</p>
+      <p>④のマスターは4つの画面（サブビュー）に分かれています。</p>
+      <div class="subnav-preview">
+        <span>導入サロングループ</span><span>特別価格設定</span><span>個別特価</span><span>🔍 突合チェック</span>
+      </div>
+      <table>
+        <tr><th>サブビュー</th><th>用途</th><th>対象</th></tr>
+        <tr><td><strong>導入サロングループ</strong></td><td>複数の商品に同じ特価・同じ限定表示を適用するグループを作る</td><td>N顧客 × N商品</td></tr>
+        <tr><td><strong>特別価格設定</strong></td><td>選んだグループに、商品ごとの特価を設定する</td><td>グループ内の商品設定</td></tr>
+        <tr><td><strong>個別特価</strong></td><td>グループを作るほどではない「1顧客だけの特価」を管理する</td><td>1顧客 × 1商品</td></tr>
+        <tr><td><strong>突合チェック</strong></td><td>マスターの内容と実際のBカートの設定にズレがないか確認する</td><td>点検・監査</td></tr>
+      </table>
+    </section>
+
+    <section id="glossary">
+      <h2>3. 用語集</h2>
+      <table>
+        <tr><th>用語</th><th>意味</th></tr>
+        <tr><td><strong>得意先コード</strong></td><td>販売管理システムの「親子コード」（例: <code>1234-1</code>）。社内で得意先を識別するコード</td></tr>
+        <tr><td><strong>会員ID</strong></td><td>Bカート側で顧客に割り振られるID（例: <code>10123</code>）。得意先コードとは別体系の数字</td></tr>
+        <tr><td><strong>ext_id</strong></td><td>Bカートの会員に登録している「外部ID」欄。このツールでは<strong>ここに得意先コードを入れて紐づけている</strong></td></tr>
+        <tr><td><strong>商品セット（product_set）</strong></td><td>Bカートで実際に価格・在庫を持つ単位。1商品に複数セット（色違い・容量違いなど）がある場合がある</td></tr>
+        <tr><td><strong>special_price</strong></td><td>Bカート側の「会員ごとの特別価格」を保持するデータ項目。このアプリが裏でPATCHしている実体</td></tr>
+        <tr><td><strong>例外表示（view_group_filter / visible_customer_id）</strong></td><td>「契約した顧客にしか見せない・買わせない」限定商品を作るためのBカートの設定項目</td></tr>
+        <tr><td><strong>保留</strong></td><td>得意先コードをマスターに登録したが、その得意先がまだBカート会員登録されていない状態。会員登録されると自動的に解消される</td></tr>
+      </table>
+    </section>
+
+    <section id="groups">
+      <h2>4. 導入サロングループ</h2>
+      <p>「同じ条件を適用する複数の顧客」をまとめたグループです。例えば「特定ブランドの導入サロン10店舗全員に同じ特価を出す」といった使い方をします。</p>
+
+      <h3>顧客の指定方法（2通り、併用可）</h3>
+      <ul>
+        <li><strong>得意先コードで指定（推奨）</strong>：グループ編集画面の「得意先コード」欄に、販売管理の親子コードをカンマ区切りで入力します（例: <code>1234-1,5678-2</code>）。反映のたびにBカート会員の <code>ext_id</code> と自動照合し、会員IDに変換されます。</li>
+        <li><strong>会員IDで直接指定</strong>：Bカートの会員IDが分かっている場合はそのままカンマ区切りで入力できます。</li>
+      </ul>
+      <div class="callout callout-info">
+        💡 <strong>Bカート未登録の得意先も先に登録しておけます。</strong>まだBカート会員登録が済んでいない得意先コードを入力すると「保留」として保持され、後日その得意先が会員登録された後に「BCARTに反映」を押すだけで自動的に適用対象へ加わります。得意先登録を待たずに特価設定を先に済ませておけるのがポイントです。
+      </div>
+
+      <h3>できること</h3>
+      <ul>
+        <li>グループへの会員（得意先）の追加・削除</li>
+        <li>グループ削除（関連する特別価格・例外表示もBカートから自動的に削除）</li>
+        <li>次の「特別価格設定」画面での価格適用</li>
+        <li>「例外表示設定」（このグループの顧客にしか見えない・買えない商品を作る）</li>
+      </ul>
+    </section>
+
+    <section id="settings">
+      <h2>5. 特別価格設定</h2>
+      <p>「導入サロングループ」で作ったグループを選び、商品ごとの特価を設定してBカートに反映する画面です。</p>
+      <ol>
+        <li>グループを選択する</li>
+        <li>品番・商品名で検索、または特集から選んで商品を追加する</li>
+        <li>各商品に特価を入力する（チェックした商品をまとめて同じ価格にする「一括価格」も使えます）</li>
+        <li>「一時保存」でアプリ内に保存（この時点ではまだBカートに反映されていません）</li>
+        <li>「BCARTに反映する」を押すと、反映前の内容をプレビューで確認できます（変更前・変更後を突き合わせ表示）</li>
+        <li>内容を確認して反映を確定</li>
+      </ol>
+      <div class="callout callout-warn">
+        ⚠️ 一時保存しただけではBカートに反映されません。一覧に <span class="badge badge-warn">⚠️ 未反映</span> が出ている行は、必ず「BCARTに反映する」ボタンを押してください。
+      </div>
+    </section>
+
+    <section id="individual">
+      <h2>6. 個別特価</h2>
+      <p>グループを作るまでもない「特定の1顧客だけ・特定の1商品だけ」の特価を管理する画面です。まとまった件数を一気に登録するのにも向いています。</p>
+
+      <h3>一括登録（貼り付け）</h3>
+      <p>「📋 一括登録（貼り付け）」ボタンから、Excelなどで作った表をそのまま貼り付けて登録できます。1行1件、次の順番でカンマまたはタブ区切りにしてください。</p>
+<pre><code>得意先コード, 商品コード（品番）, 特価, メモ（任意）
+
+例:
+1234-1, 9999, 1980
+5678-2, 8888, 2500, 契約特価</code></pre>
+      <ul>
+        <li>一度に登録できるのは<strong>500行まで</strong>です。それ以上は分けて貼り付けてください</li>
+        <li>同じ「得意先×商品」がすでにある場合は価格が上書きされます（未反映状態に戻ります）</li>
+        <li>Bカートに存在しない品番はスキップされ、登録後に一覧表示されます</li>
+        <li>会員未登録の得意先コードもそのまま登録できます（<span class="badge badge-pending">⏸ 未登録（保留）</span> として表示）</li>
+      </ul>
+
+      <h3>状態バッジの見方</h3>
+      <table>
+        <tr><th>バッジ</th><th>意味</th></tr>
+        <tr><td><span class="badge badge-pending">⏸ 未登録（保留）</span></td><td>得意先コードがまだBカート会員登録されていません。会員登録後、次の「BCARTに反映」で自動的に解決されます</td></tr>
+        <tr><td><span class="badge badge-warn">⚠️ 未反映</span></td><td>マスターには登録済みだが、まだBカートには反映していません</td></tr>
+        <tr><td><span class="badge badge-ok">✅ 反映済み（日時）</span></td><td>Bカートへの反映が完了しています</td></tr>
+      </table>
+
+      <h3>BCARTに反映</h3>
+      <p>「💎 BCARTに反映」ボタンで、未反映の行をまとめて処理します。処理のたびに保留中の得意先コードの再解決も試みるため、押すだけで新しく会員登録された得意先分も自動的に含まれます。件数が多い場合は自動的に分割して処理されます。</p>
+    </section>
+
+    <section id="audit">
+      <h2>7. 突合チェック</h2>
+      <p>Bカートに実際に設定されている特別価格と、このアプリのマスター（導入サロングループ＋個別特価）を比較し、ズレがないかを確認する機能です。<strong>Bカートの管理画面から直接変更されてしまった特価</strong>や、反映漏れを見つけられます。</p>
+      <p>「🔍 突合チェックを実行」を押すと、全商品セットを取得して照合するため<strong>1〜2分程度</strong>かかります。</p>
+      <table>
+        <tr><th>区分</th><th>意味</th><th>想定される原因</th></tr>
+        <tr><td><span class="badge badge-danger">🚨 管理外の特価</span></td><td>Bカートにはあるが、マスターに記録がない特価</td><td>管理画面から直接、担当者が特価を設定した</td></tr>
+        <tr><td><span class="badge badge-warn">⚠️ 価格不一致</span></td><td>マスターとBカートで金額が違う</td><td>片方だけ更新して反映を忘れた／管理画面で上書きされた</td></tr>
+        <tr><td><span class="badge badge-info">📤 未反映</span></td><td>マスターにはあるが、Bカートに設定がない</td><td>「BCARTに反映」を押し忘れている</td></tr>
+        <tr><td><span class="badge badge-pending">⏸ 未登録得意先</span></td><td>マスターにある得意先コードがまだBカート会員として存在しない</td><td>会員登録待ちの状態（異常ではない）</td></tr>
+      </table>
+      <div class="callout callout-tip">
+        ✅ 「一致」件数が多く、上記4区分がほぼゼロであれば、マスターとBカートの実態が揃っている健全な状態です。定期的にこのチェックを回すことをおすすめします。
+      </div>
+    </section>
+
+    <section id="extract">
+      <h2>8. 特価候補の抽出（初期構築・棚卸し）</h2>
+      <p>マスターがまだ空の状態から始める場合や、過去の販売実績から「実は特価になっていた」ケースを洗い出したいときに使うツールです。<code>bcart-integration/price-master/derive_special_prices.py</code> というPythonスクリプトが、<strong>sales.db（販売履歴データベース）</strong>から特価候補を自動抽出します。</p>
+
+      <h3>判定ルール</h3>
+      <ul>
+        <li>直近12ヶ月の<strong>実売上のみ</strong>（値引・添付仕入・見本・返品などは対象外）</li>
+        <li><strong>特値フラグ（'特'）が付いた行は除外</strong> — このフラグは単発適用（その場限り）の価格を意味し、継続特価とは逆の性質のため</li>
+        <li>同じ「得意先×商品×単価」の組み合わせが<strong>3回以上</strong>出現している</li>
+        <li>商品マスターの通常売上単価と<strong>金額が異なる</strong>もの</li>
+        <li>売上単価が0円の商品（社内専用品など）は除外</li>
+      </ul>
+      <p>同一の「得意先×商品」で条件を満たす価格が複数見つかった場合は、自動判定せず<strong>「要確認」として別シートに分離</strong>します（値上げ・値下げの過渡期などが該当）。</p>
+
+      <h3>実行方法</h3>
+<pre><code>cd 開発・自動化/bcart-integration/price-master
+python derive_special_prices.py
+
+# 期間や回数のしきい値を変えたい場合
+python derive_special_prices.py --months 24 --min-count 2
+
+# Bカートとの照合をせず、抽出だけ行いたい場合
+python derive_special_prices.py --no-api</code></pre>
+
+      <h3>出力される2つのファイル</h3>
+      <table>
+        <tr><th>ファイル</th><th>内容</th></tr>
+        <tr>
+          <td><code>reports/特価候補_YYYYMMDD.xlsx</code></td>
+          <td>
+            人がレビューするための一覧。シートは4つ：<br>
+            ・<strong>README</strong>（集計サマリー）<br>
+            ・<strong>候補_会員登録済み</strong>（Bカート会員が既にいる・すぐ反映できる）<br>
+            ・<strong>候補_未登録得意先</strong>（会員登録待ち・先に登録だけしておける）<br>
+            ・<strong>要確認_価格ばらつき</strong>（同一組み合わせで複数価格・目視判断が必要）
+          </td>
+        </tr>
+        <tr>
+          <td><code>reports/特価候補_貼り付け用_YYYYMMDD.csv</code></td>
+          <td>Excelでのレビュー後、不要な行を除いてから master-tool の「個別特価 → 一括登録（貼り付け）」へそのまま貼り付ける形式</td>
+        </tr>
+      </table>
+      <div class="callout callout-warn">
+        ⚠️ このスクリプトが出力するExcel/CSVは<strong>得意先名・価格情報を含む業務データ</strong>のため、<code>price-master/</code> フォルダごとGit管理外（GitHubには一切上がりません）にしています。取り扱いには通常の業務データと同様の注意をしてください。
+      </div>
+    </section>
+
+    <section id="routine">
+      <h2>9. 月次運用フロー</h2>
+      <p>初期構築（8章）が済んだ後の、日常的な回し方です。</p>
+      <div class="grid2">
+        <div>
+          <h3>① 新しい特価が発生したとき（随時）</h3>
+          <ol>
+            <li>個別特価タブに1行追加（またはグループへ追加）</li>
+            <li>BCARTに反映</li>
+          </ol>
+          <h3>② 新規得意先がBカート会員登録されたとき（随時）</h3>
+          <ol>
+            <li>特にすることはありません</li>
+            <li>個別特価・導入サロングループの「BCARTに反映」を押すだけで、保留になっていた特価が自動的に有効化されます</li>
+          </ol>
+        </div>
+        <div>
+          <h3>③ 月1回程度：抽出スクリプトの再実行</h3>
+          <ol>
+            <li><code>derive_special_prices.py</code> を再実行</li>
+            <li>新しく出てきた候補をExcelでレビュー</li>
+            <li>問題なければ貼り付け用CSVを個別特価タブへ登録</li>
+          </ol>
+          <h3>④ 定期的：突合チェック</h3>
+          <ol>
+            <li>「突合チェック」タブを実行</li>
+            <li>「管理外の特価」「価格不一致」が出ていれば内容を確認し、必要ならマスター側を修正</li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <section id="faq">
+      <h2>10. よくある質問</h2>
+
+      <h3>Q. 得意先がまだBカートに登録されていない場合、特価設定は後回しにするべき？</h3>
+      <p>A. いいえ、<strong>先に登録して構いません。</strong>導入サロングループ・個別特価のどちらも、未登録の得意先コードは「保留」として保持され、会員登録された後に「BCARTに反映」を押すだけで自動的に有効になります。</p>
+
+      <h3>Q. 特値フラグ（'特'）が付いた売上は、なぜ特価候補から除外するの？</h3>
+      <p>A. 販売管理システムの特値フラグは「その回限りの単発適用」を意味し、次回以降に同じ価格を引き継がない設定だからです。継続的な特価とは逆の性質のため、抽出ロジックでは意図的に除外しています。</p>
+
+      <h3>Q. 「導入サロングループ」と「個別特価」はどちらを使えばいい？</h3>
+      <p>A. 複数の顧客に同じ条件（同じ商品・同じ価格）を適用するなら<strong>グループ</strong>、顧客ごとに条件がバラバラな場合や1件だけの特殊対応なら<strong>個別特価</strong>が向いています。まとまった件数を一気に登録したいときも、個別特価の一括貼り付けが便利です。</p>
+
+      <h3>Q. Bカートの管理画面で直接、特価を変更してしまった。どうなる？</h3>
+      <p>A. その変更はマスター（Googleスプレッドシート）には反映されないため、次にマスター側から「反映」をかけると上書きされて元に戻ってしまいます。管理画面で直接変更した場合は、必ず突合チェックで検出し、マスター側にも同じ内容を登録してください。</p>
+
+      <h3>Q. 削除するとBカート側の設定はどうなる？</h3>
+      <p>A. グループ削除・個別特価削除のいずれも、確認ダイアログの通りBカート側の <code>special_price</code>（や例外表示設定）からも該当分が自動的に削除されます。アプリ内だけ消してBカート側が残る、ということはありません。</p>
+
+    </section>
+
+  </main>
+</div>
+
+<div class="footer-note">
+  master-tool 特別価格タブ v2.14.0（2026-07-07）の仕様に基づくガイドです。仕様の一次情報は <code>master-tool/HANDOVER.md</code> を参照してください。
+</div>
+
+</body>
+</html>
