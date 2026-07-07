@@ -411,8 +411,10 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <!-- タブ5: 特別価格 -->
     <div class="tab-panel" id="tab-special-price">
       <div class="sp-subnav">
-        <button class="sp-subnav-btn" id="sp-btn-groups" onclick="switchSpSubview('groups',this)">導入サロングループ</button>
-        <button class="sp-subnav-btn active" id="sp-btn-settings" onclick="switchSpSubview('settings',this)">特別価格設定</button>
+        <button class="sp-subnav-btn" id="sp-btn-groups" data-view="groups" onclick="switchSpSubview('groups',this)">導入サロングループ</button>
+        <button class="sp-subnav-btn active" id="sp-btn-settings" data-view="settings" onclick="switchSpSubview('settings',this)">特別価格設定</button>
+        <button class="sp-subnav-btn" id="sp-btn-individual" data-view="individual" onclick="switchSpSubview('individual',this)">個別特価</button>
+        <button class="sp-subnav-btn" id="sp-btn-audit" data-view="audit" onclick="switchSpSubview('audit',this)">🔍 突合チェック</button>
       </div>
       <div id="sp-alert-area"></div>
       <div id="sp-content">
@@ -734,8 +736,15 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     </div>
     <div class="form-row" style="margin-bottom:10px;">
       <div class="form-field" style="flex:1;">
-        <label>会員ID（カンマ区切り）*</label>
+        <label>会員ID（カンマ区切り）</label>
         <input type="text" id="groupMemberIds" placeholder="例: 9888,9999,10000">
+      </div>
+    </div>
+    <div class="form-row" style="margin-bottom:10px;">
+      <div class="form-field" style="flex:1;">
+        <label>得意先コード（カンマ区切り）</label>
+        <input type="text" id="groupCustomerCodes" placeholder="例: 1234-1,5678-2">
+        <p style="font-size:11px;color:#9ca3af;margin-top:3px;">販売管理の得意先コード（親-子）。BCART会員登録済みなら自動で会員に解決されます。未登録の得意先は「保留」として保持され、会員登録後の反映時に自動で含まれます。</p>
       </div>
     </div>
     <div class="form-row" style="margin-bottom:10px;">
@@ -805,6 +814,21 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <div class="actions" style="margin-top:16px;">
       <button class="btn btn-gray" onclick="closeModal('vfPreviewModal')">キャンセル</button>
       <button class="btn btn-success" id="vfApplyConfirmBtn" onclick="executeVfApply()" disabled>✅ BCARTに反映する</button>
+    </div>
+  </div>
+</div>
+
+<!-- 個別特価 一括貼り付けモーダル -->
+<div class="modal-overlay" id="indPasteModal">
+  <div class="modal" style="width:640px;max-width:95vw;">
+    <h3>📋 個別特価の一括登録</h3>
+    <p style="font-size:12px;color:#6b7280;margin-bottom:8px;">1行1件で「<strong>得意先コード, 商品コード(品番), 特価, メモ(任意)</strong>」をカンマまたはタブ区切りで貼り付けてください（Excelからのコピー可）。</p>
+    <textarea id="indPasteText" style="width:100%;min-height:220px;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;font-family:monospace;box-sizing:border-box;" oninput="previewIndPaste()" placeholder="1234-1,9999,1980&#10;5678-2,8888,2500,契約特価"></textarea>
+    <div id="indPastePreview"></div>
+    <p style="font-size:11px;color:#9ca3af;margin-top:6px;">・同じ「得意先コード×商品」が既にある場合は価格を上書きします（未反映状態に戻ります）<br>・BCART会員未登録の得意先コードは「保留」として登録され、会員登録後の反映時に自動解決されます<br>・登録しただけではBCARTに反映されません。一覧の「💎 BCARTに反映」を押してください</p>
+    <div class="actions">
+      <button class="btn btn-gray" onclick="closeModal('indPasteModal')">キャンセル</button>
+      <button class="btn btn-primary" id="indPasteSaveBtn" onclick="saveIndPaste()">登録する</button>
     </div>
   </div>
 </div>
@@ -2874,6 +2898,8 @@ function renderSpContent() {
   if (!spData) return;
   if (spSubview === 'settings') renderSpSettings();
   else if (spSubview === 'groups') renderSpGroups();
+  else if (spSubview === 'individual') renderSpIndividual();
+  else if (spSubview === 'audit') renderSpAudit();
 }
 
 function renderSpGroups() {
@@ -2886,12 +2912,14 @@ function renderSpGroups() {
   } else {
     html += groups.map(g => {
       const ids = String(g.member_ids || '').split(',').map(s => s.trim()).filter(s => s);
-      const memberLabel = ids.length > 0 ? ids.length + '名登録済み' : '会員未設定';
+      const codes = String(g.customer_codes || '').split(',').map(s => s.trim()).filter(s => s);
+      const memberLabel = ids.length > 0 ? ids.length + '名登録済み' : (codes.length > 0 ? '' : '会員未設定');
+      const codeLabel = codes.length > 0 ? '<span style="color:#7c3aed;">得意先コード: ' + codes.length + '件</span>' : '';
       const detailCount = (spData.details || []).filter(d => d.group_id === g.group_id).length;
       return '<div class="sp-card">' +
         '<div class="sp-card-info">' +
         '<div class="sp-card-title">👥 ' + esc(g.group_name) + '</div>' +
-        '<div class="sp-card-sub">会員: ' + memberLabel + '　特別価格商品: ' + detailCount + '件' + (g.note ? '　— ' + esc(g.note) : '') + '</div>' +
+        '<div class="sp-card-sub">会員: ' + memberLabel + (memberLabel && codeLabel ? '　' : '') + codeLabel + '　特別価格商品: ' + detailCount + '件' + (g.note ? '　— ' + esc(g.note) : '') + '</div>' +
         '</div>' +
         '<div class="sp-card-actions">' +
         '<button class="btn btn-sm btn-wip" onclick="openMemberSelectModal(\'' + esc(g.group_id) + '\',\'' + esc(g.group_name) + '\')">👥 会員を管理</button>' +
@@ -2930,8 +2958,10 @@ function renderSpSettings() {
     const details = (spData.details || []).filter(d => d.group_id === spSelectedGroupId);
 
     // 会員情報
-    html += '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:8px 12px;margin-bottom:16px;font-size:13px;display:flex;align-items:center;gap:10px;">' +
-      '<span>👥 会員: <strong>' + memberIds.length + '名</strong>' + (memberIds.length > 0 ? '（ID: ' + memberIds.slice(0, 5).join(', ') + (memberIds.length > 5 ? ' 他' + (memberIds.length - 5) + '名' : '') + '）' : '　未設定') + '</span>' +
+    const groupCodes = selGroup ? String(selGroup.customer_codes || '').split(',').map(s => s.trim()).filter(s => s) : [];
+    html += '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:8px 12px;margin-bottom:16px;font-size:13px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
+      '<span>👥 会員: <strong>' + memberIds.length + '名</strong>' + (memberIds.length > 0 ? '（ID: ' + memberIds.slice(0, 5).join(', ') + (memberIds.length > 5 ? ' 他' + (memberIds.length - 5) + '名' : '') + '）' : (groupCodes.length > 0 ? '' : '　未設定')) + '</span>' +
+      (groupCodes.length > 0 ? '<span style="color:#7c3aed;">＋得意先コード: <strong>' + groupCodes.length + '件</strong>（反映時に会員へ自動解決・未登録分は保留）</span>' : '') +
       '<button class="btn btn-sm btn-wip" style="margin-left:auto;" onclick="openMemberSelectModal(\'' + esc(spSelectedGroupId) + '\',\'' + esc(selGroup ? selGroup.group_name : '') + '\')">👥 会員を管理</button>' +
       '</div>';
 
@@ -3274,9 +3304,12 @@ function executeVfApply() {
     btn.disabled = false;
     closeModal('vfPreviewModal');
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
-    const msg = res.failCount > 0
+    let msg = res.failCount > 0
       ? res.successCount + '件成功、' + res.failCount + '件失敗'
       : spPendingVfItems.length + '件をBCARTに反映しました';
+    if (res.unresolvedCodes && res.unresolvedCodes.length > 0) {
+      msg += '（未登録の得意先コード ' + res.unresolvedCodes.length + '件は保留）';
+    }
     showToast(msg, res.failCount > 0);
     spPendingVfItems = [];
     loadSpecialPriceData();
@@ -3455,9 +3488,12 @@ function openSpApplyPreview() {
     const curMap = {};
     (res.results || []).forEach(r => { curMap[String(r.product_set_id)] = r; });
 
+    const previewCodes = selGroup ? String(selGroup.customer_codes || '').split(',').map(s => s.trim()).filter(s => s) : [];
     document.getElementById('spPreviewInfo').innerHTML =
       '<strong>' + esc(selGroup ? selGroup.group_name : '') + '</strong>' +
-      '　会員: ' + memberIds.length + '名　→　' + details.length + '件の商品に特別価格を適用します';
+      '　会員: ' + memberIds.length + '名' +
+      (previewCodes.length > 0 ? '＋得意先コード' + previewCodes.length + '件（反映時に会員へ自動解決・未登録分は保留）' : '') +
+      '　→　' + details.length + '件の商品に特別価格を適用します';
 
     let tbodyHtml = '';
     details.forEach(d => {
@@ -3570,9 +3606,12 @@ function executeBcartApply() {
     btn.disabled = false;
     closeModal('spApplyPreviewModal');
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
-    const msg = res.failCount > 0
+    let msg = res.failCount > 0
       ? res.successCount + '件成功、' + res.failCount + '件失敗'
       : spPendingApplyItems.length + '件をBCARTに反映しました';
+    if (res.unresolvedCodes && res.unresolvedCodes.length > 0) {
+      msg += '（未登録の得意先コード ' + res.unresolvedCodes.length + '件は保留: ' + res.unresolvedCodes.slice(0, 5).join(', ') + (res.unresolvedCodes.length > 5 ? ' 他' : '') + '）';
+    }
     showToast(msg, res.failCount > 0);
     spPendingApplyItems = [];
     loadSpecialPriceData();
@@ -3741,6 +3780,7 @@ function openGroupModal(groupId) {
   const g = groupId ? (spData.groups || []).find(x => x.group_id === groupId) : null;
   document.getElementById('groupName').value = g ? g.group_name : '';
   document.getElementById('groupMemberIds').value = g ? (g.member_ids || '') : '';
+  document.getElementById('groupCustomerCodes').value = g ? (g.customer_codes || '') : '';
   document.getElementById('groupNote').value = g ? (g.note || '') : '';
   const btn = document.getElementById('saveGroupBtn');
   if (btn) { btn.textContent = '保存'; btn.disabled = false; }
@@ -3755,11 +3795,12 @@ function saveGroupModal() {
   btn.textContent = '保存中...';
   btn.disabled = true;
   gasPost({
-    action:     'saveCustomerGroup',
-    group_id:   document.getElementById('editGroupId').value || null,
-    group_name: name,
-    member_ids: ids,
-    note:       document.getElementById('groupNote').value.trim()
+    action:         'saveCustomerGroup',
+    group_id:       document.getElementById('editGroupId').value || null,
+    group_name:     name,
+    member_ids:     ids,
+    customer_codes: document.getElementById('groupCustomerCodes').value.trim(),
+    note:           document.getElementById('groupNote').value.trim()
   }, function(res) {
     btn.textContent = '保存';
     btn.disabled = false;
@@ -3787,6 +3828,240 @@ function deleteGroup(groupId, name) {
     showToast('削除しました');
     loadSpecialPriceData();
   });
+}
+
+// ===================== 機能B-2: 個別特価 =====================
+let indFilterKw = '';
+
+function renderSpIndividual() {
+  const individuals = spData.individuals || [];
+  const kw = indFilterKw.toLowerCase();
+  const shown = individuals.filter(d =>
+    !kw ||
+    String(d.customer_code).toLowerCase().includes(kw) ||
+    String(d.customer_name).toLowerCase().includes(kw) ||
+    String(d.product_no).toLowerCase().includes(kw) ||
+    String(d.product_set_name).toLowerCase().includes(kw)
+  );
+  const pendingCount = individuals.filter(d => !d.member_id).length;
+  const unappliedCount = individuals.filter(d => !d.applied_at).length;
+
+  let html = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">' +
+    '<button class="btn btn-primary btn-sm" onclick="openIndPasteModal()">📋 一括登録（貼り付け）</button>' +
+    '<button class="btn btn-success btn-sm" onclick="applyIndPrices()"' + (unappliedCount === 0 ? ' disabled' : '') + '>💎 BCARTに反映（未反映' + unappliedCount + '件）</button>' +
+    '<input type="text" placeholder="得意先コード・名前・品番で絞り込み" value="' + esc(indFilterKw) + '" oninput="indFilterKw=this.value;renderSpIndividual();" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;flex:1;min-width:200px;max-width:320px;">' +
+    '<button class="btn btn-gray btn-sm" onclick="loadSpecialPriceData()">🔄 更新</button>' +
+    '</div>';
+
+  html += '<div style="font-size:12px;color:#6b7280;margin-bottom:10px;">グループに属さない「1得意先×1商品」の特価です。全' + individuals.length + '件' +
+    (pendingCount > 0 ? '　<span style="color:#d97706;">⏸ 会員未登録（保留）: ' + pendingCount + '件</span>' : '') +
+    (unappliedCount > 0 ? '　<span style="color:#dc2626;">⚠️ 未反映: ' + unappliedCount + '件</span>' : '') +
+    '</div>';
+
+  if (shown.length === 0) {
+    html += '<div class="sp-empty">個別特価がありません。「一括登録（貼り付け）」から追加してください。</div>';
+  } else {
+    html += '<div style="overflow-x:auto;"><table class="sp-table"><thead><tr>' +
+      '<th>得意先コード</th><th>得意先名</th><th>品番</th><th>商品セット名</th><th>特価</th><th>会員</th><th>BCART反映</th><th></th>' +
+      '</tr></thead><tbody>';
+    shown.slice(0, 500).forEach(d => {
+      const stateBadge = d.member_id
+        ? '<span style="color:#059669;font-size:11px;">ID:' + esc(d.member_id) + '</span>'
+        : '<span style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:700;">⏸ 未登録（保留）</span>';
+      const reflectBadge = !d.member_id
+        ? '<span style="color:#9ca3af;font-size:10px;">—</span>'
+        : (d.applied_at
+          ? '<span style="color:#059669;font-size:10px;">✅ ' + esc(String(d.applied_at).substring(0, 16)) + '</span>'
+          : '<span style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:700;">⚠️ 未反映</span>');
+      html += '<tr>' +
+        '<td style="font-family:monospace;font-size:12px;">' + esc(d.customer_code) + '</td>' +
+        '<td style="font-size:12px;">' + esc(d.customer_name || '') + (d.note ? '<div style="font-size:10px;color:#9ca3af;">' + esc(d.note) + '</div>' : '') + '</td>' +
+        '<td style="font-family:monospace;font-size:12px;color:#6b7280;">' + esc(d.product_no) + '</td>' +
+        '<td style="font-size:12px;">' + esc(d.product_set_name) + '</td>' +
+        '<td style="font-weight:700;color:#1a56db;">¥' + Number(d.unit_price).toLocaleString() + '</td>' +
+        '<td>' + stateBadge + '</td>' +
+        '<td>' + reflectBadge + '</td>' +
+        '<td><button class="btn btn-sm btn-danger" onclick="deleteIndPrice(\'' + esc(d.detail_id) + '\',\'' + esc(d.customer_code) + '\',\'' + esc(d.product_no) + '\')">削除</button></td>' +
+        '</tr>';
+    });
+    html += '</tbody></table></div>';
+    if (shown.length > 500) html += '<div style="font-size:12px;color:#9ca3af;margin-top:6px;">表示は500件まで。絞り込みで探してください。</div>';
+  }
+  document.getElementById('sp-content').innerHTML = html;
+}
+
+function openIndPasteModal() {
+  document.getElementById('indPasteText').value = '';
+  document.getElementById('indPastePreview').innerHTML = '';
+  document.getElementById('indPasteModal').classList.add('open');
+}
+
+function parseIndPaste() {
+  const text = document.getElementById('indPasteText').value;
+  const items = [];
+  const errors = [];
+  text.split(/\r?\n/).forEach((line, idx) => {
+    const t = line.trim();
+    if (!t) return;
+    const cols = t.split(/\t|,/).map(s => s.trim());
+    if (cols.length < 3) { errors.push((idx + 1) + '行目: 列不足'); return; }
+    const price = Number(String(cols[2]).replace(/[¥￥,\s]/g, ''));
+    if (!cols[0] || !cols[1] || !(price > 0)) { errors.push((idx + 1) + '行目: 値が不正'); return; }
+    items.push({ customer_code: cols[0], product_no: cols[1], unit_price: price, note: cols[3] || '' });
+  });
+  return { items: items, errors: errors };
+}
+
+function previewIndPaste() {
+  const p = parseIndPaste();
+  let html = '<div style="font-size:12px;margin-top:8px;">読み取り: <strong>' + p.items.length + '件</strong>';
+  if (p.errors.length > 0) html += '　<span style="color:#dc2626;">スキップ' + p.errors.length + '件（' + esc(p.errors.slice(0, 3).join(' / ')) + (p.errors.length > 3 ? ' 他' : '') + '）</span>';
+  html += '</div>';
+  document.getElementById('indPastePreview').innerHTML = html;
+  return p;
+}
+
+function saveIndPaste() {
+  const p = previewIndPaste();
+  if (p.items.length === 0) { showToast('登録できる行がありません', true); return; }
+  if (p.items.length > 500) { showToast('一度に登録できるのは500件までです。分けて貼り付けてください', true); return; }
+  const btn = document.getElementById('indPasteSaveBtn');
+  btn.textContent = '登録中...'; btn.disabled = true;
+  gasPost({ action: 'saveIndividualPrices', items: p.items }, function(res) {
+    btn.textContent = '登録する'; btn.disabled = false;
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    closeModal('indPasteModal');
+    let msg = '新規' + res.added + '件・更新' + res.updated + '件を登録しました';
+    if ((res.pendingCodes || []).length > 0) msg += '（会員未登録の保留: ' + res.pendingCodes.length + '件）';
+    if ((res.unknownProducts || []).length > 0) msg += '／BCARTに無い品番をスキップ: ' + res.unknownProducts.slice(0, 5).join(', ') + (res.unknownProducts.length > 5 ? ' 他' : '');
+    showToast(msg, (res.unknownProducts || []).length > 0);
+    loadSpecialPriceData();
+  });
+}
+
+function applyIndPrices() {
+  const individuals = spData.individuals || [];
+  const targets = individuals.filter(d => !d.applied_at).map(d => d.detail_id);
+  const pendingCount = individuals.filter(d => !d.member_id).length;
+  if (targets.length === 0) { showToast('反映対象がありません', true); return; }
+  if (!confirm('個別特価をBCARTに反映します。\n\n対象: ' + targets.length + '件（うち会員未登録の保留 ' + pendingCount + '件は反映前に再解決を試みます）\n\nよろしいですか？')) return;
+
+  const CHUNK = 150;
+  const chunks = [];
+  for (let i = 0; i < targets.length; i += CHUNK) chunks.push(targets.slice(i, i + CHUNK));
+  let done = 0, success = 0, fail = 0, resolved = 0, pendingLeft = 0;
+
+  showToast('反映中... 0/' + targets.length);
+  (function next(ci) {
+    if (ci >= chunks.length) {
+      let msg = '完了: 成功' + success + '件・失敗' + fail + '件';
+      if (resolved > 0) msg += '・新たに会員解決' + resolved + '件';
+      if (pendingLeft > 0) msg += '・保留のまま' + pendingLeft + '件';
+      showToast(msg, fail > 0);
+      loadSpecialPriceData();
+      return;
+    }
+    gasPost({ action: 'applyIndividualPrices', detail_ids: chunks[ci] }, function(res) {
+      if (!res.ok) { showToast('エラー: ' + res.error + '（' + done + '件まで処理済み）', true); loadSpecialPriceData(); return; }
+      success += res.successCount || 0;
+      fail += res.failCount || 0;
+      resolved += res.resolvedNow || 0;
+      pendingLeft = (res.skippedPending || []).length;
+      done += chunks[ci].length;
+      showToast('反映中... ' + done + '/' + targets.length);
+      next(ci + 1);
+    });
+  })(0);
+}
+
+function deleteIndPrice(detailId, code, productNo) {
+  if (!confirm('得意先「' + code + '」の「' + productNo + '」の個別特価を削除します。\nBCART反映済みの場合はBCARTのspecial_priceからも削除されます。\nよろしいですか？')) return;
+  gasPost({ action: 'deleteIndividualPrice', detail_id: detailId }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    showToast('削除しました');
+    loadSpecialPriceData();
+  });
+}
+
+// ===================== 機能B-3: 突合チェック =====================
+let spAuditResult = null;
+
+function renderSpAudit() {
+  let html = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:16px;">' +
+    '<p style="font-size:13px;color:#374151;margin-bottom:6px;">BCART上の特別価格（special_price）の実態と、このアプリのマスター（導入サロングループ＋個別特価）を突合します。</p>' +
+    '<p style="font-size:12px;color:#9ca3af;margin-bottom:12px;">BCART管理画面で直接変更された「管理外の特価」や、マスターにあるのに未反映の設定を検出できます。全商品セットを取得するため1〜2分かかることがあります。</p>' +
+    '<button class="btn btn-primary" id="spAuditRunBtn" onclick="runSpAudit()">🔍 突合チェックを実行</button>' +
+    '</div>' +
+    '<div id="spAuditResultArea"></div>';
+  document.getElementById('sp-content').innerHTML = html;
+  if (spAuditResult) renderSpAuditResult();
+}
+
+function runSpAudit() {
+  const btn = document.getElementById('spAuditRunBtn');
+  btn.textContent = '実行中...（1〜2分お待ちください）'; btn.disabled = true;
+  gasPost({ action: 'auditSpecialPrices' }, function(res) {
+    btn.textContent = '🔍 突合チェックを実行'; btn.disabled = false;
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    spAuditResult = res;
+    renderSpAuditResult();
+  });
+}
+
+function spAuditTable(title, color, rows, cols) {
+  let html = '<div style="margin-bottom:20px;">' +
+    '<div style="font-size:13px;font-weight:700;color:' + color + ';margin-bottom:6px;">' + title + '（' + rows.length + '件）</div>';
+  if (rows.length === 0) {
+    html += '<div style="font-size:12px;color:#9ca3af;">なし</div></div>';
+    return html;
+  }
+  html += '<div style="overflow-x:auto;max-height:320px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px;"><table class="sp-table"><thead><tr>' +
+    cols.map(c => '<th>' + c.label + '</th>').join('') + '</tr></thead><tbody>';
+  rows.forEach(r => {
+    html += '<tr>' + cols.map(c => {
+      let v = r[c.key];
+      if (c.key === 'bcart_price' || c.key === 'expected_price') v = (v === undefined || v === null || isNaN(v)) ? '' : '¥' + Number(v).toLocaleString();
+      return '<td style="font-size:12px;">' + esc(String(v === undefined || v === null ? '' : v)) + '</td>';
+    }).join('') + '</tr>';
+  });
+  html += '</tbody></table></div></div>';
+  return html;
+}
+
+function renderSpAuditResult() {
+  const area = document.getElementById('spAuditResultArea');
+  if (!area || !spAuditResult) return;
+  const s = spAuditResult.summary || {};
+  let html = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">' +
+    '<div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;padding:10px 14px;font-size:12px;">✅ 一致<br><strong style="font-size:18px;">' + (s.matched || 0) + '</strong></div>' +
+    '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;font-size:12px;">🚨 管理外の特価<br><strong style="font-size:18px;">' + (s.unmanaged || 0) + '</strong></div>' +
+    '<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 14px;font-size:12px;">⚠️ 価格不一致<br><strong style="font-size:18px;">' + (s.mismatch || 0) + '</strong></div>' +
+    '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;font-size:12px;">📤 未反映<br><strong style="font-size:18px;">' + (s.missing || 0) + '</strong></div>' +
+    '<div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:10px 14px;font-size:12px;">⏸ 未登録得意先（保留）<br><strong style="font-size:18px;">' + (s.pending || 0) + '</strong></div>' +
+    '</div>';
+  if (spAuditResult.truncated) {
+    html += '<div class="warn-bar" style="margin-bottom:12px;">⚠️ 件数が多いため各一覧は300件までの表示です。</div>';
+  }
+  html += spAuditTable('🚨 管理外の特価（BCARTにあるがマスターにない）', '#dc2626', spAuditResult.unmanaged || [], [
+    { key: 'product_no', label: '品番' }, { key: 'set_name', label: '商品セット名' },
+    { key: 'customer_code', label: '得意先コード' }, { key: 'member_name', label: '会員名' },
+    { key: 'member_id', label: '会員ID' }, { key: 'bcart_price', label: 'BCART価格' }
+  ]);
+  html += spAuditTable('⚠️ 価格不一致（マスターとBCARTで金額が違う）', '#d97706', spAuditResult.mismatch || [], [
+    { key: 'product_no', label: '品番' }, { key: 'set_name', label: '商品セット名' },
+    { key: 'customer_code', label: '得意先コード' }, { key: 'member_name', label: '会員名' },
+    { key: 'bcart_price', label: 'BCART価格' }, { key: 'expected_price', label: 'マスター価格' },
+    { key: 'source', label: '出所' }
+  ]);
+  html += spAuditTable('📤 未反映（マスターにあるがBCARTにない）', '#1d4ed8', spAuditResult.missing || [], [
+    { key: 'product_no', label: '品番' }, { key: 'set_name', label: '商品セット名' },
+    { key: 'customer_code', label: '得意先コード' }, { key: 'member_name', label: '会員名' },
+    { key: 'expected_price', label: 'マスター価格' }, { key: 'source', label: '出所' }
+  ]);
+  html += spAuditTable('⏸ 未登録得意先（会員登録待ちの保留）', '#7c3aed', spAuditResult.pending || [], [
+    { key: 'customer_code', label: '得意先コード' }, { key: 'source', label: '出所' }
+  ]);
+  area.innerHTML = html;
 }
 
 // ===================== 機能C: 説明文生成 =====================
