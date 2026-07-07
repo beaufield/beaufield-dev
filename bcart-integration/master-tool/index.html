@@ -170,9 +170,11 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .register-error { background: #fee2e2; border: 1px solid #fca5a5; border-radius: 6px; padding: 8px 12px; font-size: 13px; color: #b91c1c; margin-bottom: 12px; display: none; }
 
 /* 特別価格タブ */
-.sp-subnav { display: flex; gap: 4px; margin-bottom: 16px; }
+.sp-subnav { display: flex; gap: 4px; margin-bottom: 16px; align-items: center; }
 .sp-subnav-btn { padding: 7px 16px; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff; cursor: pointer; font-size: 13px; color: #6b7280; }
 .sp-subnav-btn.active { background: #eff6ff; border-color: #1a56db; color: #1a56db; font-weight: 600; }
+.sp-help-link { margin-left: auto; padding: 7px 14px; border: 1px solid #bfdbfe; border-radius: 6px; background: #eff6ff; color: #1a56db; font-size: 13px; text-decoration: none; white-space: nowrap; }
+.sp-help-link:hover { background: #dbeafe; }
 .sp-alert { background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px; color: #92400e; }
 .sp-table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; border-radius: 8px; overflow: hidden; border: 1px solid #e5e7eb; }
 .sp-table th { background: #f9fafb; padding: 9px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #e5e7eb; white-space: nowrap; }
@@ -415,6 +417,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
         <button class="sp-subnav-btn active" id="sp-btn-settings" data-view="settings" onclick="switchSpSubview('settings',this)">特別価格設定</button>
         <button class="sp-subnav-btn" id="sp-btn-individual" data-view="individual" onclick="switchSpSubview('individual',this)">個別特価</button>
         <button class="sp-subnav-btn" id="sp-btn-audit" data-view="audit" onclick="switchSpSubview('audit',this)">🔍 突合チェック</button>
+        <a class="sp-help-link" href="guide.html" target="_blank" rel="noopener">❓ ヘルプ（使い方ガイド）</a>
       </div>
       <div id="sp-alert-area"></div>
       <div id="sp-content">
