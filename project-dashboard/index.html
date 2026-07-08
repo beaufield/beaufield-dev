@@ -148,9 +148,20 @@
   .stale-warn { background: #fff3cd; color: #856404; }
   .stale-bad  { background: #fde8e8; color: #c62828; }
 
-  .effort-badge { display: inline-flex; align-items: center; gap: 3px; padding: 0 2px; }
-  .effort-dot { width: 6px; height: 6px; border-radius: 50%; background: #e2e2e2; display: inline-block; }
-  .effort-dot.filled { background: #999; }
+  .effort-badge {
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 2px 8px; border-radius: 10px; background: #f2f2f2;
+  }
+  .effort-dot { width: 6px; height: 6px; border-radius: 50%; background: #d8d8d8; display: inline-block; }
+  /* 工数が重いほど目立つ色にする（S=控えめグレー→M=青→L=オレンジ→XL=赤） */
+  .effort-badge-S  { background: #f2f2f2; }
+  .effort-badge-S  .effort-dot.filled { background: #9a9a9a; }
+  .effort-badge-M  { background: #e8eefc; }
+  .effort-badge-M  .effort-dot.filled { background: #3b5bdb; }
+  .effort-badge-L  { background: #ffedd9; }
+  .effort-badge-L  .effort-dot.filled { background: #e8830f; }
+  .effort-badge-XL { background: #fde3e3; }
+  .effort-badge-XL .effort-dot.filled { background: #d32f2f; }
 
   .pcard-row2 {
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
@@ -303,7 +314,7 @@
   // ============================================================
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzkuWEqpJLhERoYlosHIeazlVjl3ipIq8u3x0rp4tCU7BaqPuYt4kP78Ha5Vu4ayNWDCg/exec';
   const PORTAL_URL   = 'https://beaufield.github.io/beaufield-dev/';
-  const APP_VERSION  = '1.3.0';
+  const APP_VERSION  = '1.4.0';
   const USE_MOCK     = false; // ← 開発中は true にして data/dashboard_data.json を見る
 
   document.getElementById('header-version').textContent = 'v' + APP_VERSION;
@@ -488,7 +499,7 @@
     if (!p.effort || !EFFORT_LEVELS[p.effort]) return '';
     const n = EFFORT_LEVELS[p.effort];
     const dots = [1,2,3,4].map(i => '<span class="effort-dot' + (i <= n ? ' filled' : '') + '"></span>').join('');
-    return '<span class="effort-badge" title="工数感: ' + EFFORT_LABELS[p.effort] + '">' + dots + '</span>';
+    return '<span class="effort-badge effort-badge-' + p.effort + '" title="工数感: ' + EFFORT_LABELS[p.effort] + '">' + dots + '</span>';
   }
 
   // ============================================================
