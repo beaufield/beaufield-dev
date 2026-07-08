@@ -12,7 +12,7 @@
  *   SYNC_TOKEN    … 同期スクリプト用の共有シークレット（ランダム長文字列）
  */
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const APP_NAME = 'project-dashboard';
 const CACHE_TTL_SESSION = 900; // セッション検証キャッシュ 15分（他アプリと同一パターン）
 
@@ -29,9 +29,9 @@ const COLS = [
   'summary', 'next_actions', 'relations', 'source', 'path', 'parse_ok',
   'synced_at', 'active',
   // ↓ここから手動管理列（同期で上書きしない）
-  'priority', 'manual_ball', 'memo'
+  'priority', 'manual_ball', 'memo', 'effort'
 ];
-const MANUAL_COLS = ['priority', 'manual_ball', 'memo'];
+const MANUAL_COLS = ['priority', 'manual_ball', 'memo', 'effort'];
 
 // ============================================================
 // 初期化（GASエディタから一度だけ手動実行する）
@@ -49,6 +49,23 @@ function initDb() {
     sh.setFrozenRows(1);
   }
   Logger.log('initDb 完了');
+}
+
+// ============================================================
+// マイグレーション（v1.2.0・GASエディタから一度だけ手動実行する）
+// 既存の projects シートに effort 列（工数感 S/M/L/XL）を末尾追加する
+// ============================================================
+function migrateAddEffortColumn() {
+  const ss = SpreadsheetApp.openById(prop_('DB_SHEET_ID'));
+  const sh = ss.getSheetByName('projects');
+  const lastCol = sh.getLastColumn();
+  const header = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+  if (header.indexOf('effort') >= 0) {
+    Logger.log('effort列は既に存在します（列' + (header.indexOf('effort') + 1) + '）。何もしません');
+    return;
+  }
+  sh.getRange(1, lastCol + 1).setValue('effort');
+  Logger.log('effort列を追加しました（列' + (lastCol + 1) + '）');
 }
 
 // ============================================================
