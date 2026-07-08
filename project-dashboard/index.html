@@ -16,6 +16,7 @@
     flex-direction: column;
     -webkit-tap-highlight-color: transparent;
   }
+  body.dnd-active { user-select: none; }
 
   header {
     background: #1a73e8;
@@ -94,6 +95,7 @@
   .card-list { display: flex; flex-direction: column; gap: 12px; }
 
   .pcard {
+    position: relative;
     background: #fff;
     border-radius: 10px;
     padding: 16px;
@@ -103,14 +105,29 @@
   .pcard-row1 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .pcard-name { font-size: 15px; font-weight: bold; flex: 1; min-width: 0; }
 
-  .drag-handle {
-    cursor: grab; padding: 2px 8px; margin: -2px -4px -2px 0; color: #bbb;
-    font-size: 16px; line-height: 1; user-select: none; touch-action: none; border-radius: 4px;
+  .edit-toggle-btn {
+    border: none; background: none; color: #bbb; font-size: 15px; cursor: pointer;
+    padding: 3px 7px; border-radius: 5px;
   }
-  .drag-handle:hover { background: #f0f0f0; color: #888; }
-  .drag-handle:active { cursor: grabbing; }
-  .pcard.dragging { opacity: 0.35; }
-  .pcard.drag-over { outline: 2px dashed #1a73e8; outline-offset: -2px; }
+  .edit-toggle-btn:hover { background: #f0f0f0; color: #666; }
+
+  /* ドラッグハンドル: PCのみ表示。カード左端いっぱいに掴みやすい領域を確保する */
+  .drag-handle {
+    display: none;
+    position: absolute; left: 0; top: 0; bottom: 0; width: 30px;
+    align-items: center; justify-content: center;
+    cursor: grab; color: #ccc; font-size: 18px; line-height: 1;
+    touch-action: none; user-select: none;
+    border-radius: 10px 0 0 10px;
+  }
+  .drag-handle:hover { background: #eef2ff; color: #1a73e8; }
+  .pcard.dragging { opacity: 0.4; }
+  .pcard.dragging .drag-handle { cursor: grabbing; background: #e0e7ff; color: #1a73e8; }
+
+  .drop-indicator {
+    height: 4px; border-radius: 2px; background: #1a73e8;
+    grid-column: 1 / -1;
+  }
 
   .badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 11px; font-weight: bold; white-space: nowrap; }
   .badge-運用中     { background: #d1f0d1; color: #155724; }
@@ -131,6 +148,10 @@
   .stale-warn { background: #fff3cd; color: #856404; }
   .stale-bad  { background: #fde8e8; color: #c62828; }
 
+  .effort-badge { display: inline-flex; align-items: center; gap: 3px; padding: 0 2px; }
+  .effort-dot { width: 6px; height: 6px; border-radius: 50%; background: #e2e2e2; display: inline-block; }
+  .effort-dot.filled { background: #999; }
+
   .pcard-row2 {
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     margin-top: 8px; font-size: 12px; color: #888;
@@ -141,6 +162,7 @@
     margin-top: 10px; font-size: 13px; color: #555; line-height: 1.5;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
+  .pcard.text-expanded .pcard-summary { -webkit-line-clamp: unset; display: block; }
 
   .pcard-actions { margin-top: 10px; }
   .pcard-actions ul { list-style: none; }
@@ -148,6 +170,7 @@
     font-size: 12.5px; color: #444; padding: 3px 0 3px 16px; position: relative; line-height: 1.4;
   }
   .pcard-actions li::before { content: '・'; position: absolute; left: 0; color: #aaa; }
+  .more-hint { font-size: 11.5px; color: #1a73e8; margin-top: 4px; }
 
   .rel-row { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
   .rel-chip {
@@ -162,7 +185,7 @@
     100% { box-shadow: 0 1px 4px rgba(0,0,0,0.10); }
   }
 
-  /* ── 展開パネル ── */
+  /* ── 編集パネル（⚙アイコンで開閉） ── */
   .pcard-expand {
     display: none; margin-top: 14px; padding-top: 14px; border-top: 1px solid #eee;
   }
@@ -186,7 +209,7 @@
   }
   .exp-meta { font-size: 11px; color: #aaa; margin-top: 10px; }
 
-  /* ── 運用中まとめセクション ── */
+  /* ── 運用中まとめセクション（「すべて」タブ内の折りたたみ） ── */
   .collapse-section {
     background: #fff; border-radius: 10px; padding: 14px 16px;
     box-shadow: 0 1px 4px rgba(0,0,0,0.10); cursor: pointer;
@@ -227,9 +250,8 @@
       gap: 14px;
       align-items: start;
     }
-  }
-  @media (max-width: 859px) {
-    .drag-handle { display: none; }
+    .pcard { padding-left: 38px; }
+    .drag-handle { display: flex; }
   }
 </style>
 </head>
@@ -247,6 +269,7 @@
   <button class="tab-btn" data-tab="claude" onclick="switchTab('claude')">🔧 Claude待ち<span class="tab-count" id="cnt-claude">0</span></button>
   <button class="tab-btn" data-tab="env" onclick="switchTab('env')">🏢 環境待ち<span class="tab-count" id="cnt-env">0</span></button>
   <button class="tab-btn" data-tab="stale" onclick="switchTab('stale')">🔴 滞留(14日+)<span class="tab-count" id="cnt-stale">0</span></button>
+  <button class="tab-btn" data-tab="active" onclick="switchTab('active')">🟢 稼働中<span class="tab-count" id="cnt-active">0</span></button>
   <button class="tab-btn" data-tab="all" onclick="switchTab('all')">すべて<span class="tab-count" id="cnt-all">0</span></button>
 </div>
 
@@ -275,27 +298,30 @@
   // ============================================================
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzkuWEqpJLhERoYlosHIeazlVjl3ipIq8u3x0rp4tCU7BaqPuYt4kP78Ha5Vu4ayNWDCg/exec';
   const PORTAL_URL   = 'https://beaufield.github.io/beaufield-dev/';
-  const APP_VERSION  = '1.1.0';
+  const APP_VERSION  = '1.2.0';
   const USE_MOCK     = false; // ← 開発中は true にして data/dashboard_data.json を見る
 
   document.getElementById('header-version').textContent = 'v' + APP_VERSION;
   document.getElementById('footer-text').textContent = 'プロジェクトダッシュボード v' + APP_VERSION + ' | Beaufield（管理者専用）';
 
-  let session      = null;
-  let allProjects  = [];
-  let currentTab   = 'takashi';
-  let currentCat   = '';
-  let expandedId   = null;
-  let draggingId   = null;
+  let session         = null;
+  let allProjects      = [];
+  let currentTab       = 'takashi';
+  let currentCat       = '';
+  let metaEditId       = null;        // ⚙アイコンで開く編集パネル（単一開閉）
+  let textExpandedIds  = new Set();   // カード本体クリックで全文表示中のID（複数可）
+  let dragState        = null;        // { pointerId, card, container }（PCドラッグ並び替え中の状態）
 
   const STATUS_ORDER = ['運用中','進行中','レビュー待ち','要対応','計画中','待機中','要確認'];
+  const EFFORT_LEVELS = { S: 1, M: 2, L: 3, XL: 4 };
+  const EFFORT_LABELS = { S: 'S・軽い', M: 'M・普通', L: 'L・重い', XL: 'XL・大仕事' };
 
-  // PCのみドラッグ並び替えを有効化（スマホは数値入力のみ）
+  // PCのみドラッグ並び替え・グリッドレイアウトを有効化（スマホは数値入力のみ）
   function isDesktop() { return window.matchMedia('(min-width: 860px)').matches; }
   let _resizeTimer = null;
   window.addEventListener('resize', () => {
     clearTimeout(_resizeTimer);
-    _resizeTimer = setTimeout(render, 150); // 幅をまたいだらdraggable状態を再構築する
+    _resizeTimer = setTimeout(render, 150); // 幅をまたいだらドラッグハンドルの有無を再構築する
   });
 
   // ============================================================
@@ -367,8 +393,15 @@
   // ============================================================
   // 集計・フィルタ・描画
   // ============================================================
+  // 「運用中」かつ次アクションが残っていない = 本番稼働のみで作業待ちではない案件
+  function isDormant(p) {
+    return p.status_label === '運用中' && (!p.next_actions || !p.next_actions.length);
+  }
+
   function effectiveBall(p) {
-    return (p.manual_ball && String(p.manual_ball).trim()) ? p.manual_ball : p.ball;
+    if (p.manual_ball && String(p.manual_ball).trim()) return p.manual_ball;
+    if (isDormant(p)) return 'none'; // 稼働中のみの案件は作業タブのノイズにしない
+    return p.ball;
   }
 
   function staleDays(p) {
@@ -386,6 +419,7 @@
       case 'takashi': return ball === 'Takashi';
       case 'claude':  return ball === 'Claude';
       case 'env':     return ball === '環境待ち';
+      case 'active':  return p.status_label === '運用中';
       case 'stale':   return sd !== null && sd >= 14;
       case 'all':     return true;
       default:        return true;
@@ -394,7 +428,7 @@
 
   function render() {
     // タブ件数（カテゴリ絞り込み前・全体件数）を出す
-    ['takashi','claude','env','stale'].forEach(t => {
+    ['takashi','claude','env','stale','active'].forEach(t => {
       document.getElementById('cnt-' + t).textContent = allProjects.filter(p => matchesTab(p, t)).length;
     });
     document.getElementById('cnt-all').textContent = allProjects.length;
@@ -412,8 +446,8 @@
     hideStatus();
 
     if (currentTab === 'all') {
-      const active = list.filter(p => !(p.status_label === '運用中' && (!p.next_actions || !p.next_actions.length)));
-      const dormant = list.filter(p => p.status_label === '運用中' && (!p.next_actions || !p.next_actions.length));
+      const active  = list.filter(p => !isDormant(p));
+      const dormant = list.filter(p => isDormant(p));
       sortList(active).forEach(p => listEl.appendChild(buildCard(p)));
       if (dormant.length) listEl.appendChild(buildCollapseSection(dormant));
     } else {
@@ -441,25 +475,30 @@
   }
 
   // ============================================================
+  // 工数バッジ
+  // ============================================================
+  function effortBadgeHtml(p) {
+    if (!p.effort || !EFFORT_LEVELS[p.effort]) return '';
+    const n = EFFORT_LEVELS[p.effort];
+    const dots = [1,2,3,4].map(i => '<span class="effort-dot' + (i <= n ? ' filled' : '') + '"></span>').join('');
+    return '<span class="effort-badge" title="工数感: ' + EFFORT_LABELS[p.effort] + '">' + dots + '</span>';
+  }
+
+  // ============================================================
   // カード構築
   // ============================================================
   function buildCard(p) {
     const div = document.createElement('div');
-    div.className = 'pcard' + (p.id === expandedId ? ' expanded' : '');
+    const textExpanded = textExpandedIds.has(p.id);
+    div.className = 'pcard' +
+      (p.id === metaEditId ? ' expanded' : '') +
+      (textExpanded ? ' text-expanded' : '');
     div.id = 'pcard-' + p.id;
     div.dataset.id = p.id;
     div.onclick = function (e) {
-      if (e.target.closest('.rel-chip, .exp-field, .exp-btns, .drag-handle')) return;
-      toggleExpand(p.id);
+      if (e.target.closest('.rel-chip, .exp-field, .exp-btns, .drag-handle, .edit-toggle-btn')) return;
+      toggleTextExpand(p.id);
     };
-    if (isDesktop()) {
-      div.draggable = true;
-      div.addEventListener('dragstart', onDragStart);
-      div.addEventListener('dragend', onDragEnd);
-      div.addEventListener('dragover', onDragOver);
-      div.addEventListener('dragleave', onDragLeave);
-      div.addEventListener('drop', onDropCard);
-    }
 
     const sd = staleDays(p);
     const staleCls = sd === null ? 'stale-ok' : sd >= 30 ? 'stale-bad' : sd >= 14 ? 'stale-warn' : 'stale-ok';
@@ -467,15 +506,21 @@
 
     const statusCls = 'badge-' + (p.status_label || '');
     const ball = effectiveBall(p);
+    const ballBadgeHtml = ball === 'none' ? '' :
+      '<span class="ball-badge ball-' + ball + '">' + esc(ball) + '</span>';
     const parseWarn = p.parse_ok === false ? '<span class="badge badge-要確認">⚠要確認</span>' : '';
 
     const summaryHtml = p.summary ? '<div class="pcard-summary">' + esc(p.summary) + '</div>' : '';
 
     let actionsHtml = '';
     if (p.next_actions && p.next_actions.length) {
+      const shown = textExpanded ? p.next_actions : p.next_actions.slice(0, 3);
+      const hiddenCount = p.next_actions.length - shown.length;
       actionsHtml = '<div class="pcard-actions"><ul>' +
-        p.next_actions.slice(0, 3).map(a => '<li>' + esc(a) + '</li>').join('') +
-        '</ul></div>';
+        shown.map(a => '<li>' + esc(a) + '</li>').join('') +
+        '</ul>' +
+        (hiddenCount > 0 ? '<div class="more-hint">ほか' + hiddenCount + '件（クリックで表示）</div>' : '') +
+        '</div>';
     }
 
     let relHtml = '';
@@ -489,19 +534,23 @@
     }
 
     div.innerHTML =
+      '<span class="drag-handle" title="ドラッグで並び替え（PCのみ）">⋮⋮</span>' +
       '<div class="pcard-row1">' +
-        '<span class="drag-handle" title="ドラッグで並び替え（PCのみ）">⠿</span>' +
         '<span class="pcard-name">' + esc(p.name) + '</span>' +
         '<span class="badge ' + statusCls + '">' + esc(p.status_label || '?') + '</span>' +
         parseWarn +
+        '<button class="edit-toggle-btn" title="優先度・工数・メモを編集" onclick="event.stopPropagation(); toggleMetaEdit(\'' + p.id + '\')">⚙</button>' +
       '</div>' +
       '<div class="pcard-row2">' +
         '<span class="cat-tag">' + esc(p.category || '') + '</span>' +
-        '<span class="ball-badge ball-' + ball + '">' + esc(ball) + '</span>' +
+        ballBadgeHtml +
         '<span class="stale-badge ' + staleCls + '">' + staleTxt + '</span>' +
+        effortBadgeHtml(p) +
       '</div>' +
       summaryHtml + actionsHtml + relHtml +
       buildExpandPanel(p);
+
+    if (isDesktop()) attachDragHandlers(div);
 
     return div;
   }
@@ -510,17 +559,22 @@
     const ballOptions = ['', 'Takashi', 'Claude', '環境待ち'].map(v =>
       '<option value="' + v + '"' + ((p.manual_ball || '') === v ? ' selected' : '') + '>' +
       (v === '' ? '（自動判定のまま）' : v) + '</option>').join('');
+    const effortOptions = ['', 'S', 'M', 'L', 'XL'].map(v =>
+      '<option value="' + v + '"' + ((p.effort || '') === v ? ' selected' : '') + '>' +
+      (v === '' ? '（未設定）' : EFFORT_LABELS[v]) + '</option>').join('');
 
     return '<div class="pcard-expand">' +
       '<div class="exp-field"><label>優先度（数値・大きいほど上）</label>' +
       '<input type="number" id="pri-' + p.id + '" value="' + (p.priority != null ? p.priority : '') + '"></div>' +
       '<div class="exp-field"><label>ボール（手動で上書き）</label>' +
       '<select id="ball-' + p.id + '">' + ballOptions + '</select></div>' +
+      '<div class="exp-field"><label>工数感</label>' +
+      '<select id="effort-' + p.id + '">' + effortOptions + '</select></div>' +
       '<div class="exp-field"><label>メモ</label>' +
       '<textarea id="memo-' + p.id + '">' + esc(p.memo || '') + '</textarea></div>' +
       '<div class="exp-btns">' +
         '<button class="btn-save" id="save-' + p.id + '" onclick="event.stopPropagation(); saveMeta(\'' + p.id + '\')">保存</button>' +
-        '<button class="btn-cancel" onclick="event.stopPropagation(); toggleExpand(\'' + p.id + '\')">閉じる</button>' +
+        '<button class="btn-cancel" onclick="event.stopPropagation(); toggleMetaEdit(\'' + p.id + '\')">閉じる</button>' +
       '</div>' +
       '<div class="exp-meta">原本: ' + esc(p.path || '') + '</div>' +
     '</div>';
@@ -539,49 +593,100 @@
   }
 
   // ============================================================
-  // ドラッグ並び替え（PCのみ・優先度を並び順から自動採番）
+  // ドラッグ並び替え（PCのみ・Pointer Eventsによる自前実装）
+  // 標準HTML5 Drag&Dropは「ハンドル以外から開始したらキャンセル」という
+  // 作りが不安定（掴んでも即座にキャンセルされグー→パーに戻る不具合があった）
+  // ため廃止し、pointerdown/pointermove/pointerupで自前に並び替える。
   // ============================================================
-  function onDragStart(e) {
-    if (!e.target.closest('.drag-handle')) { e.preventDefault(); return; }
-    draggingId = e.currentTarget.dataset.id;
-    e.dataTransfer.effectAllowed = 'move';
-    try { e.dataTransfer.setData('text/plain', draggingId); } catch (err) {}
-    e.currentTarget.classList.add('dragging');
+  function attachDragHandlers(cardEl) {
+    const handle = cardEl.querySelector('.drag-handle');
+    if (!handle) return;
+
+    handle.addEventListener('pointerdown', function (e) {
+      if (e.button !== undefined && e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const container = cardEl.parentElement;
+      dragState = { pointerId: e.pointerId, card: cardEl, container: container };
+      handle.setPointerCapture(e.pointerId);
+      cardEl.classList.add('dragging');
+      document.body.classList.add('dnd-active');
+    });
+
+    handle.addEventListener('pointermove', function (e) {
+      if (!dragState || dragState.pointerId !== e.pointerId) return;
+      const target = findDropTarget(dragState.container, dragState.card, e.clientX, e.clientY);
+      showDropIndicator(dragState.container, target);
+    });
+
+    handle.addEventListener('pointerup', function (e) {
+      if (!dragState || dragState.pointerId !== e.pointerId) return;
+      finishDrag();
+    });
+
+    handle.addEventListener('pointercancel', function (e) {
+      if (!dragState || dragState.pointerId !== e.pointerId) return;
+      cancelDrag();
+    });
   }
 
-  function onDragEnd(e) {
-    e.currentTarget.classList.remove('dragging');
-    document.querySelectorAll('.pcard.drag-over').forEach(el => el.classList.remove('drag-over'));
-    draggingId = null;
+  // 最も近いカードを探し、そのカードの前/後どちらに挿入するかを判定する
+  // （CSSグリッドで複数列になっている場合も、同じ行かどうかをY座標で見て
+  //   同じ行ならX座標、違う行ならY座標で前後を決める）
+  function findDropTarget(container, excludeEl, x, y) {
+    const cards = Array.from(container.querySelectorAll(':scope > .pcard')).filter(c => c !== excludeEl);
+    if (!cards.length) return null;
+
+    let nearest = null, nearestDist = Infinity;
+    cards.forEach(c => {
+      const r = c.getBoundingClientRect();
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      const d = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+      if (d < nearestDist) { nearestDist = d; nearest = c; }
+    });
+
+    const r = nearest.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const sameRow = Math.abs(y - cy) < r.height / 2;
+    const before = sameRow ? (x < cx) : (y < cy);
+    return { anchor: nearest, before: before };
   }
 
-  function onDragOver(e) {
-    if (!draggingId) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    if (e.currentTarget.dataset.id !== draggingId) e.currentTarget.classList.add('drag-over');
+  function showDropIndicator(container, target) {
+    clearDropIndicator();
+    if (!target) return;
+    const indicator = document.createElement('div');
+    indicator.className = 'drop-indicator';
+    if (target.before) {
+      container.insertBefore(indicator, target.anchor);
+    } else {
+      container.insertBefore(indicator, target.anchor.nextSibling);
+    }
   }
 
-  function onDragLeave(e) {
-    e.currentTarget.classList.remove('drag-over');
+  function clearDropIndicator() {
+    document.querySelectorAll('.drop-indicator').forEach(el => el.remove());
   }
 
-  function onDropCard(e) {
-    e.preventDefault();
-    const targetCard = e.currentTarget;
-    targetCard.classList.remove('drag-over');
-    const targetId = targetCard.dataset.id;
-    if (!draggingId || draggingId === targetId) return;
-
-    const container = targetCard.parentElement; // #card-list または .collapse-section .body
-    const draggedCard = container.querySelector('[data-id="' + draggingId + '"]');
-    if (!draggedCard) return;
-
-    const rect   = targetCard.getBoundingClientRect();
-    const before = (e.clientY - rect.top) < rect.height / 2;
-    container.insertBefore(draggedCard, before ? targetCard : targetCard.nextSibling);
-
+  function finishDrag() {
+    const { card, container } = dragState;
+    const indicator = container.querySelector('.drop-indicator');
+    if (indicator) {
+      container.insertBefore(card, indicator);
+    }
+    clearDropIndicator();
+    card.classList.remove('dragging');
+    document.body.classList.remove('dnd-active');
+    dragState = null;
     persistOrder(container);
+  }
+
+  function cancelDrag() {
+    if (!dragState) return;
+    dragState.card.classList.remove('dragging');
+    document.body.classList.remove('dnd-active');
+    clearDropIndicator();
+    dragState = null;
   }
 
   function persistOrder(container) {
@@ -615,11 +720,19 @@
     });
   }
 
-  function toggleExpand(id) {
-    expandedId = (expandedId === id) ? null : id;
+  // ============================================================
+  // 「読む」（全文表示）と「編集する」（⚙パネル）の切り替え
+  // ============================================================
+  function toggleTextExpand(id) {
+    if (textExpandedIds.has(id)) textExpandedIds.delete(id); else textExpandedIds.add(id);
     render();
-    if (expandedId) {
-      const el = document.getElementById('pcard-' + expandedId);
+  }
+
+  function toggleMetaEdit(id) {
+    metaEditId = (metaEditId === id) ? null : id;
+    render();
+    if (metaEditId) {
+      const el = document.getElementById('pcard-' + metaEditId);
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   }
@@ -643,12 +756,13 @@
   }
 
   // ============================================================
-  // メタ更新（priority / manual_ball / memo のみ）
+  // メタ更新（priority / manual_ball / effort / memo のみ）
   // ============================================================
   function saveMeta(id) {
     const btn = document.getElementById('save-' + id);
     const priorityRaw = document.getElementById('pri-' + id).value;
     const manualBall  = document.getElementById('ball-' + id).value;
+    const effortVal    = document.getElementById('effort-' + id).value;
     const memo         = document.getElementById('memo-' + id).value;
 
     btn.disabled = true;
@@ -659,6 +773,7 @@
       const p = allProjects.find(x => x.id === id);
       p.priority = priorityRaw === '' ? null : Number(priorityRaw);
       p.manual_ball = manualBall;
+      p.effort = effortVal;
       p.memo = memo;
       btn.disabled = false;
       btn.textContent = '保存';
@@ -676,6 +791,7 @@
         id: id,
         priority: priorityRaw === '' ? '' : Number(priorityRaw),
         manual_ball: manualBall,
+        effort: effortVal,
         memo: memo
       })
     })
@@ -683,15 +799,12 @@
     .then(res => {
       if (!res.success) throw new Error(res.message || res.error || '保存失敗');
       const p = allProjects.find(x => x.id === id);
-      if (p) { p.priority = priorityRaw === '' ? null : Number(priorityRaw); p.manual_ball = manualBall; p.memo = memo; }
+      if (p) { p.priority = priorityRaw === '' ? null : Number(priorityRaw); p.manual_ball = manualBall; p.effort = effortVal; p.memo = memo; }
       showToast('保存しました');
       render();
     })
     .catch(err => {
       showToast('保存に失敗しました: ' + err.message, true);
-    })
-    .finally(() => {
-      // render() でカードが再生成されるため btn 参照は使い回さない
     });
   }
 
