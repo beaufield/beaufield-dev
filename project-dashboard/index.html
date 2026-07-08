@@ -64,6 +64,19 @@
   }
   .tab-btn.active .tab-count { background: #d2e3fc; color: #1a73e8; }
 
+  .sort-select {
+    flex-shrink: 0;
+    align-self: center;
+    margin: 0 10px 0 auto;
+    padding: 5px 8px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #555;
+    background: #fff;
+    cursor: pointer;
+  }
+
   .chip-row {
     background: #fff;
     padding: 10px 16px;
@@ -268,6 +281,9 @@
     }
     .pcard { padding-left: 38px; }
     .drag-handle { display: flex; }
+    /* 優先度順以外でソート中は並び替え不能にする（表示順と priority がずれるため） */
+    body.sort-alt .pcard { padding-left: 16px; }
+    body.sort-alt .drag-handle { display: none; }
   }
 </style>
 </head>
@@ -287,6 +303,11 @@
   <button class="tab-btn" data-tab="stale" onclick="switchTab('stale')">🔴 滞留(14日+)<span class="tab-count" id="cnt-stale">0</span></button>
   <button class="tab-btn" data-tab="active" onclick="switchTab('active')">🟢 稼働中<span class="tab-count" id="cnt-active">0</span></button>
   <button class="tab-btn" data-tab="all" onclick="switchTab('all')">すべて<span class="tab-count" id="cnt-all">0</span></button>
+  <select class="sort-select" id="sort-select" onchange="setSort(this.value)">
+    <option value="priority">優先度順</option>
+    <option value="new">新しい順</option>
+    <option value="effort">工数が多い順</option>
+  </select>
 </div>
 
 <div class="chip-row" id="chip-row">
@@ -314,7 +335,7 @@
   // ============================================================
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzkuWEqpJLhERoYlosHIeazlVjl3ipIq8u3x0rp4tCU7BaqPuYt4kP78Ha5Vu4ayNWDCg/exec';
   const PORTAL_URL   = 'https://beaufield.github.io/beaufield-dev/';
-  const APP_VERSION  = '1.4.0';
+  const APP_VERSION  = '1.5.0';
   const USE_MOCK     = false; // ← 開発中は true にして data/dashboard_data.json を見る
 
   document.getElementById('header-version').textContent = 'v' + APP_VERSION;
@@ -324,6 +345,7 @@
   let allProjects      = [];
   let currentTab       = 'takashi';
   let currentCat       = '';
+  let currentSort      = 'priority';  // 'priority'（既定・並び替え可）/ 'new'（更新が新しい順）/ 'effort'（工数が多い順）
   let metaEditId       = null;        // ⚙アイコンで開く編集パネル（単一開閉）
   let textExpandedIds  = new Set();   // カード本体クリックで全文表示中のID（複数可）
   let dragState        = null;        // { pointerId, card, container }（PCドラッグ並び替え中の状態）
@@ -406,6 +428,12 @@
     render();
   }
 
+  function setSort(mode) {
+    currentSort = mode;
+    document.body.classList.toggle('sort-alt', mode !== 'priority'); // 優先度順以外はドラッグ並び替えを無効化
+    render();
+  }
+
   // ============================================================
   // 集計・フィルタ・描画
   // ============================================================
@@ -474,6 +502,20 @@
   }
 
   function sortList(list) {
+    if (currentSort === 'new') {
+      return list.slice().sort((a, b) => {
+        const ta = a.last_update ? new Date(a.last_update).getTime() : -Infinity;
+        const tb = b.last_update ? new Date(b.last_update).getTime() : -Infinity;
+        return tb - ta; // 更新日が新しい順
+      });
+    }
+    if (currentSort === 'effort') {
+      return list.slice().sort((a, b) => {
+        const ea = EFFORT_LEVELS[a.effort] || 0, eb = EFFORT_LEVELS[b.effort] || 0;
+        if (ea !== eb) return eb - ea; // 工数が多い順
+        return (Number(b.priority) || 0) - (Number(a.priority) || 0);
+      });
+    }
     return list.slice().sort((a, b) => {
       const pa = Number(a.priority) || 0, pb = Number(b.priority) || 0;
       if (pa !== pb) return pb - pa;
@@ -568,7 +610,7 @@
       summaryHtml + actionsHtml + relHtml +
       buildExpandPanel(p);
 
-    if (isDesktop()) attachDragHandlers(div);
+    if (isDesktop() && currentSort === 'priority') attachDragHandlers(div);
 
     return div;
   }
