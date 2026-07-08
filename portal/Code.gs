@@ -11,7 +11,7 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.5.2';
+const VERSION       = 'v1.6.0';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
 
 // ロックアウト設定
@@ -67,6 +67,12 @@ const APP_MASTER = [
     label:   '経費事前申請',
     icon:    '💰',
     url:     'https://beaufield.github.io/beaufield-dev/expense-approval/'
+  },
+  {
+    appName: 'project-dashboard',
+    label:   'プロジェクトダッシュボード',
+    icon:    '📊',
+    url:     'https://beaufield.github.io/beaufield-dev/project-dashboard/'
   }
 ];
 
