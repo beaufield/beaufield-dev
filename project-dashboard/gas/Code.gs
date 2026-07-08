@@ -12,7 +12,7 @@
  *   SYNC_TOKEN    … 同期スクリプト用の共有シークレット（ランダム長文字列）
  */
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 const APP_NAME = 'project-dashboard';
 const CACHE_TTL_SESSION = 900; // セッション検証キャッシュ 15分（他アプリと同一パターン）
 
@@ -228,7 +228,11 @@ function syncProjects_(p) {
       syncedIds[proj.id] = true;
       const rowValues = COLS.map(c => {
         if (MANUAL_COLS.indexOf(c) >= 0) {
-          return existing[proj.id] ? existing[proj.id].manual[c] : '';
+          // 手動列: 既に値が入っていれば（Takashiの編集・過去の自動見立て問わず）必ず保持する。
+          // 空欄の場合のみ、同期側から届いた初期値（例: effortの自動見立て）で埋める。
+          const existingVal = existing[proj.id] ? existing[proj.id].manual[c] : '';
+          if (existingVal !== '' && existingVal != null) return existingVal;
+          return proj[c] != null ? proj[c] : '';
         }
         switch (c) {
           case 'next_actions': return JSON.stringify(proj.next_actions || []);

@@ -160,16 +160,21 @@
 
   .pcard-summary {
     margin-top: 10px; font-size: 13px; color: #555; line-height: 1.5;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
   }
   .pcard.text-expanded .pcard-summary { -webkit-line-clamp: unset; display: block; }
+  /* 表示件数が少ない（<=8件）ときはさらにコンパクトに(2行) */
+  #card-list.dense .pcard-summary,
+  .collapse-section .body.dense .pcard-summary { -webkit-line-clamp: 2; }
 
   .pcard-actions { margin-top: 10px; }
   .pcard-actions ul { list-style: none; }
   .pcard-actions li {
     font-size: 12.5px; color: #444; padding: 3px 0 3px 16px; position: relative; line-height: 1.4;
+    display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
   }
   .pcard-actions li::before { content: '・'; position: absolute; left: 0; color: #aaa; }
+  .pcard.text-expanded .pcard-actions li { -webkit-line-clamp: unset; display: block; }
   .more-hint { font-size: 11.5px; color: #1a73e8; margin-top: 4px; }
 
   .rel-row { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
@@ -298,7 +303,7 @@
   // ============================================================
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzkuWEqpJLhERoYlosHIeazlVjl3ipIq8u3x0rp4tCU7BaqPuYt4kP78Ha5Vu4ayNWDCg/exec';
   const PORTAL_URL   = 'https://beaufield.github.io/beaufield-dev/';
-  const APP_VERSION  = '1.2.0';
+  const APP_VERSION  = '1.3.0';
   const USE_MOCK     = false; // ← 開発中は true にして data/dashboard_data.json を見る
 
   document.getElementById('header-version').textContent = 'v' + APP_VERSION;
@@ -448,9 +453,11 @@
     if (currentTab === 'all') {
       const active  = list.filter(p => !isDormant(p));
       const dormant = list.filter(p => isDormant(p));
+      listEl.classList.toggle('dense', active.length <= 8);
       sortList(active).forEach(p => listEl.appendChild(buildCard(p)));
       if (dormant.length) listEl.appendChild(buildCollapseSection(dormant));
     } else {
+      listEl.classList.toggle('dense', list.length <= 8);
       sortList(list).forEach(p => listEl.appendChild(buildCard(p)));
     }
   }
@@ -584,9 +591,10 @@
     const wrap = document.createElement('div');
     wrap.className = 'collapse-section';
     wrap.onclick = function () { wrap.classList.toggle('open'); };
+    const bodyDense = list.length <= 8 ? ' dense' : '';
     wrap.innerHTML =
       '<div class="head"><span>✅ 運用中（' + list.length + '件）</span><span class="arrow">▶</span></div>' +
-      '<div class="body"></div>';
+      '<div class="body' + bodyDense + '"></div>';
     const body = wrap.querySelector('.body');
     sortList(list).forEach(p => body.appendChild(buildCard(p)));
     return wrap;
