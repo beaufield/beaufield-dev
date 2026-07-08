@@ -103,6 +103,15 @@
   .pcard-row1 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .pcard-name { font-size: 15px; font-weight: bold; flex: 1; min-width: 0; }
 
+  .drag-handle {
+    cursor: grab; padding: 2px 8px; margin: -2px -4px -2px 0; color: #bbb;
+    font-size: 16px; line-height: 1; user-select: none; touch-action: none; border-radius: 4px;
+  }
+  .drag-handle:hover { background: #f0f0f0; color: #888; }
+  .drag-handle:active { cursor: grabbing; }
+  .pcard.dragging { opacity: 0.35; }
+  .pcard.drag-over { outline: 2px dashed #1a73e8; outline-offset: -2px; }
+
   .badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 11px; font-weight: bold; white-space: nowrap; }
   .badge-運用中     { background: #d1f0d1; color: #155724; }
   .badge-進行中     { background: #d2e3fc; color: #1a73e8; }
@@ -185,8 +194,8 @@
   .collapse-section .head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: bold; color: #444; }
   .collapse-section .head .arrow { transition: transform 0.2s; color: #999; }
   .collapse-section.open .head .arrow { transform: rotate(90deg); }
-  .collapse-section .body { display: none; margin-top: 12px; }
-  .collapse-section.open .body { display: block; }
+  .collapse-section .body { display: none; flex-direction: column; gap: 12px; margin-top: 12px; }
+  .collapse-section.open .body { display: flex; }
 
   .toast {
     position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
@@ -201,6 +210,27 @@
     header h1 { font-size: 19px; }
     .pcard-name { font-size: 16px; }
   }
+
+  /* ── PC向けレイアウト: 複数列グリッド＋ドラッグ並び替え ── */
+  @media (min-width: 860px) {
+    main { max-width: 1440px; }
+    .card-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 14px;
+      align-items: start;
+    }
+    .collapse-section { grid-column: 1 / -1; }
+    .collapse-section.open .body {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 14px;
+      align-items: start;
+    }
+  }
+  @media (max-width: 859px) {
+    .drag-handle { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -209,7 +239,7 @@
   <h1>📊 プロジェクトダッシュボード</h1>
   <span class="synced-at" id="synced-at"></span>
   <button class="btn-refresh" onclick="loadData(true)">更新</button>
-  <span class="version">v1.0.0</span>
+  <span class="version" id="header-version"></span>
 </header>
 
 <div class="tab-bar" id="tab-bar">
@@ -235,7 +265,7 @@
   <div class="card-list" id="card-list"></div>
 </main>
 
-<footer>プロジェクトダッシュボード v1.0.0 | Beaufield（管理者専用）</footer>
+<footer id="footer-text"></footer>
 
 <div class="toast" id="toast"></div>
 
@@ -243,17 +273,30 @@
   // ============================================================
   // 設定
   // ============================================================
-  const GAS_URL    = 'https://script.google.com/macros/s/AKfycbzkuWEqpJLhERoYlosHIeazlVjl3ipIq8u3x0rp4tCU7BaqPuYt4kP78Ha5Vu4ayNWDCg/exec';
-  const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-  const USE_MOCK   = false; // ← 開発中は true にして data/dashboard_data.json を見る
+  const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzkuWEqpJLhERoYlosHIeazlVjl3ipIq8u3x0rp4tCU7BaqPuYt4kP78Ha5Vu4ayNWDCg/exec';
+  const PORTAL_URL   = 'https://beaufield.github.io/beaufield-dev/';
+  const APP_VERSION  = '1.1.0';
+  const USE_MOCK     = false; // ← 開発中は true にして data/dashboard_data.json を見る
+
+  document.getElementById('header-version').textContent = 'v' + APP_VERSION;
+  document.getElementById('footer-text').textContent = 'プロジェクトダッシュボード v' + APP_VERSION + ' | Beaufield（管理者専用）';
 
   let session      = null;
   let allProjects  = [];
   let currentTab   = 'takashi';
   let currentCat   = '';
   let expandedId   = null;
+  let draggingId   = null;
 
   const STATUS_ORDER = ['運用中','進行中','レビュー待ち','要対応','計画中','待機中','要確認'];
+
+  // PCのみドラッグ並び替えを有効化（スマホは数値入力のみ）
+  function isDesktop() { return window.matchMedia('(min-width: 860px)').matches; }
+  let _resizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(_resizeTimer);
+    _resizeTimer = setTimeout(render, 150); // 幅をまたいだらdraggable状態を再構築する
+  });
 
   // ============================================================
   // 初期化
@@ -404,10 +447,19 @@
     const div = document.createElement('div');
     div.className = 'pcard' + (p.id === expandedId ? ' expanded' : '');
     div.id = 'pcard-' + p.id;
+    div.dataset.id = p.id;
     div.onclick = function (e) {
-      if (e.target.closest('.rel-chip, .exp-field, .exp-btns')) return;
+      if (e.target.closest('.rel-chip, .exp-field, .exp-btns, .drag-handle')) return;
       toggleExpand(p.id);
     };
+    if (isDesktop()) {
+      div.draggable = true;
+      div.addEventListener('dragstart', onDragStart);
+      div.addEventListener('dragend', onDragEnd);
+      div.addEventListener('dragover', onDragOver);
+      div.addEventListener('dragleave', onDragLeave);
+      div.addEventListener('drop', onDropCard);
+    }
 
     const sd = staleDays(p);
     const staleCls = sd === null ? 'stale-ok' : sd >= 30 ? 'stale-bad' : sd >= 14 ? 'stale-warn' : 'stale-ok';
@@ -438,6 +490,7 @@
 
     div.innerHTML =
       '<div class="pcard-row1">' +
+        '<span class="drag-handle" title="ドラッグで並び替え（PCのみ）">⠿</span>' +
         '<span class="pcard-name">' + esc(p.name) + '</span>' +
         '<span class="badge ' + statusCls + '">' + esc(p.status_label || '?') + '</span>' +
         parseWarn +
@@ -483,6 +536,83 @@
     const body = wrap.querySelector('.body');
     sortList(list).forEach(p => body.appendChild(buildCard(p)));
     return wrap;
+  }
+
+  // ============================================================
+  // ドラッグ並び替え（PCのみ・優先度を並び順から自動採番）
+  // ============================================================
+  function onDragStart(e) {
+    if (!e.target.closest('.drag-handle')) { e.preventDefault(); return; }
+    draggingId = e.currentTarget.dataset.id;
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', draggingId); } catch (err) {}
+    e.currentTarget.classList.add('dragging');
+  }
+
+  function onDragEnd(e) {
+    e.currentTarget.classList.remove('dragging');
+    document.querySelectorAll('.pcard.drag-over').forEach(el => el.classList.remove('drag-over'));
+    draggingId = null;
+  }
+
+  function onDragOver(e) {
+    if (!draggingId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (e.currentTarget.dataset.id !== draggingId) e.currentTarget.classList.add('drag-over');
+  }
+
+  function onDragLeave(e) {
+    e.currentTarget.classList.remove('drag-over');
+  }
+
+  function onDropCard(e) {
+    e.preventDefault();
+    const targetCard = e.currentTarget;
+    targetCard.classList.remove('drag-over');
+    const targetId = targetCard.dataset.id;
+    if (!draggingId || draggingId === targetId) return;
+
+    const container = targetCard.parentElement; // #card-list または .collapse-section .body
+    const draggedCard = container.querySelector('[data-id="' + draggingId + '"]');
+    if (!draggedCard) return;
+
+    const rect   = targetCard.getBoundingClientRect();
+    const before = (e.clientY - rect.top) < rect.height / 2;
+    container.insertBefore(draggedCard, before ? targetCard : targetCard.nextSibling);
+
+    persistOrder(container);
+  }
+
+  function persistOrder(container) {
+    const ids = Array.from(container.children)
+      .filter(el => el.classList.contains('pcard'))
+      .map(el => el.dataset.id);
+    if (ids.length < 2) return;
+
+    const n = ids.length;
+    const updates = ids.map((id, idx) => ({ id: id, priority: n - idx }));
+    updates.forEach(u => {
+      const p = allProjects.find(x => x.id === u.id);
+      if (p) p.priority = u.priority;
+    });
+    render(); // ドラッグ結果どおりの順序で即座に確定表示する
+
+    if (USE_MOCK) { showToast('並び替えました（モック）'); return; }
+
+    fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'reorderPriorities', session_token: session.token, updates: updates })
+    })
+    .then(r => r.json())
+    .then(res => {
+      if (!res.success) throw new Error(res.message || res.error || '保存失敗');
+      showToast('並び替えを保存しました');
+    })
+    .catch(err => {
+      showToast('並び替えの保存に失敗しました: ' + err.message, true);
+    });
   }
 
   function toggleExpand(id) {
