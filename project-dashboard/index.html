@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>プロジェクトダッシュボード</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif;
+    background: #f5f5f5;
+    color: #333;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  header {
+    background: #1a73e8;
+    color: #fff;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 17px; font-weight: bold; }
+  header .synced-at { font-size: 11px; opacity: 0.85; }
+  header .version { font-size: 11px; opacity: 0.7; margin-left: auto; }
+  header .btn-refresh {
+    background: rgba(255,255,255,0.18); border: none; color: #fff;
+    border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer;
+  }
+  header .btn-refresh:active { background: rgba(255,255,255,0.32); }
+
+  .tab-bar {
+    background: #fff;
+    border-bottom: 1px solid #ddd;
+    display: flex;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .tab-bar::-webkit-scrollbar { display: none; }
+  .tab-btn {
+    padding: 12px 16px;
+    border: none;
+    background: none;
+    font-size: 13px;
+    font-weight: 600;
+    color: #888;
+    cursor: pointer;
+    white-space: nowrap;
+    border-bottom: 3px solid transparent;
+    transition: all 0.15s;
+  }
+  .tab-btn.active { color: #1a73e8; border-bottom-color: #1a73e8; }
+  .tab-count {
+    display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px;
+    background: #e8eaed; color: #555; border-radius: 9px; font-size: 11px; font-weight: bold;
+  }
+  .tab-btn.active .tab-count { background: #d2e3fc; color: #1a73e8; }
+
+  .chip-row {
+    background: #fff;
+    padding: 10px 16px;
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border-bottom: 1px solid #eee;
+    scrollbar-width: none;
+  }
+  .chip-row::-webkit-scrollbar { display: none; }
+  .chip {
+    flex-shrink: 0;
+    padding: 6px 14px;
+    border-radius: 14px;
+    border: 1px solid #ddd;
+    background: #fff;
+    font-size: 12px;
+    color: #666;
+    cursor: pointer;
+  }
+  .chip.active { background: #1a73e8; border-color: #1a73e8; color: #fff; }
+
+  main { flex: 1; width: 100%; padding: 16px; max-width: 720px; margin: 0 auto; }
+
+  #status-msg { text-align: center; padding: 40px 0; color: #888; font-size: 14px; }
+  #status-msg.error { color: #c62828; }
+
+  .card-list { display: flex; flex-direction: column; gap: 12px; }
+
+  .pcard {
+    background: #fff;
+    border-radius: 10px;
+    padding: 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.10);
+    cursor: pointer;
+  }
+  .pcard-row1 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .pcard-name { font-size: 15px; font-weight: bold; flex: 1; min-width: 0; }
+
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 11px; font-weight: bold; white-space: nowrap; }
+  .badge-運用中     { background: #d1f0d1; color: #155724; }
+  .badge-進行中     { background: #d2e3fc; color: #1a73e8; }
+  .badge-レビュー待ち{ background: #ffe6c7; color: #a45c00; }
+  .badge-要対応     { background: #fde8e8; color: #c62828; }
+  .badge-計画中     { background: #eee; color: #777; }
+  .badge-待機中     { background: #eee; color: #777; }
+  .badge-要確認     { background: #fff3cd; color: #856404; }
+
+  .ball-badge { font-size: 11px; padding: 2px 9px; border-radius: 10px; font-weight: bold; }
+  .ball-Takashi   { background: #fde8e8; color: #c62828; }
+  .ball-Claude    { background: #e8eefc; color: #3b5bdb; }
+  .ball-環境待ち   { background: #f3e8fd; color: #7e3cad; }
+
+  .stale-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: bold; }
+  .stale-ok   { background: #f0f0f0; color: #999; }
+  .stale-warn { background: #fff3cd; color: #856404; }
+  .stale-bad  { background: #fde8e8; color: #c62828; }
+
+  .pcard-row2 {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin-top: 8px; font-size: 12px; color: #888;
+  }
+  .cat-tag { color: #999; }
+
+  .pcard-summary {
+    margin-top: 10px; font-size: 13px; color: #555; line-height: 1.5;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+
+  .pcard-actions { margin-top: 10px; }
+  .pcard-actions ul { list-style: none; }
+  .pcard-actions li {
+    font-size: 12.5px; color: #444; padding: 3px 0 3px 16px; position: relative; line-height: 1.4;
+  }
+  .pcard-actions li::before { content: '・'; position: absolute; left: 0; color: #aaa; }
+
+  .rel-row { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .rel-chip {
+    font-size: 11px; padding: 3px 10px; border-radius: 10px;
+    background: #f0f4ff; color: #3b5bdb; cursor: pointer;
+  }
+  .rel-chip:active { background: #dbe4ff; }
+
+  .pcard.highlight { animation: flash 1.4s ease; }
+  @keyframes flash {
+    0%   { box-shadow: 0 0 0 3px #1a73e8; }
+    100% { box-shadow: 0 1px 4px rgba(0,0,0,0.10); }
+  }
+
+  /* ── 展開パネル ── */
+  .pcard-expand {
+    display: none; margin-top: 14px; padding-top: 14px; border-top: 1px solid #eee;
+  }
+  .pcard.expanded .pcard-expand { display: block; }
+  .exp-field { margin-bottom: 10px; }
+  .exp-field label { display: block; font-size: 11px; font-weight: bold; color: #888; margin-bottom: 4px; }
+  .exp-field input, .exp-field select, .exp-field textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px;
+    font-size: 13px; font-family: inherit;
+  }
+  .exp-field textarea { resize: vertical; min-height: 50px; }
+  .exp-btns { display: flex; gap: 8px; margin-top: 4px; }
+  .btn-save {
+    flex: 1; padding: 9px; background: #1a73e8; color: #fff; border: none;
+    border-radius: 6px; font-size: 13px; font-weight: bold; cursor: pointer;
+  }
+  .btn-save:disabled { background: #aaa; }
+  .btn-cancel {
+    padding: 9px 16px; background: #f0f0f0; border: none; border-radius: 6px;
+    font-size: 13px; cursor: pointer; color: #555;
+  }
+  .exp-meta { font-size: 11px; color: #aaa; margin-top: 10px; }
+
+  /* ── 運用中まとめセクション ── */
+  .collapse-section {
+    background: #fff; border-radius: 10px; padding: 14px 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.10); cursor: pointer;
+  }
+  .collapse-section .head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: bold; color: #444; }
+  .collapse-section .head .arrow { transition: transform 0.2s; color: #999; }
+  .collapse-section.open .head .arrow { transform: rotate(90deg); }
+  .collapse-section .body { display: none; margin-top: 12px; }
+  .collapse-section.open .body { display: block; }
+
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: #333; color: #fff; padding: 10px 20px; border-radius: 20px;
+    font-size: 13px; z-index: 500; opacity: 0; transition: opacity 0.25s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+
+  footer { text-align: center; padding: 16px; font-size: 11px; color: #aaa; }
+
+  @media (min-width: 600px) {
+    header h1 { font-size: 19px; }
+    .pcard-name { font-size: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📊 プロジェクトダッシュボード</h1>
+  <span class="synced-at" id="synced-at"></span>
+  <button class="btn-refresh" onclick="loadData(true)">更新</button>
+  <span class="version">v1.0.0</span>
+</header>
+
+<div class="tab-bar" id="tab-bar">
+  <button class="tab-btn active" data-tab="takashi" onclick="switchTab('takashi')">⏳ Takashi待ち<span class="tab-count" id="cnt-takashi">0</span></button>
+  <button class="tab-btn" data-tab="claude" onclick="switchTab('claude')">🔧 Claude待ち<span class="tab-count" id="cnt-claude">0</span></button>
+  <button class="tab-btn" data-tab="env" onclick="switchTab('env')">🏢 環境待ち<span class="tab-count" id="cnt-env">0</span></button>
+  <button class="tab-btn" data-tab="stale" onclick="switchTab('stale')">🔴 滞留(14日+)<span class="tab-count" id="cnt-stale">0</span></button>
+  <button class="tab-btn" data-tab="all" onclick="switchTab('all')">すべて<span class="tab-count" id="cnt-all">0</span></button>
+</div>
+
+<div class="chip-row" id="chip-row">
+  <button class="chip active" data-cat="" onclick="setCategory('')">すべて</button>
+  <button class="chip" data-cat="開発・自動化" onclick="setCategory('開発・自動化')">開発・自動化</button>
+  <button class="chip" data-cat="商品" onclick="setCategory('商品')">商品</button>
+  <button class="chip" data-cat="経営・業務" onclick="setCategory('経営・業務')">経営・業務</button>
+  <button class="chip" data-cat="LINEHarness" onclick="setCategory('LINEHarness')">LINEHarness</button>
+  <button class="chip" data-cat="Note" onclick="setCategory('Note')">Note</button>
+  <button class="chip" data-cat="全般" onclick="setCategory('全般')">全般</button>
+</div>
+
+<main>
+  <div id="status-msg">読み込み中...</div>
+  <div class="card-list" id="card-list"></div>
+</main>
+
+<footer>プロジェクトダッシュボード v1.0.0 | Beaufield（管理者専用）</footer>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  // ============================================================
+  // 設定
+  // ============================================================
+  const GAS_URL    = 'https://script.google.com/macros/s/XXXXXXXX/exec'; // ← Takashiさんのデプロイ後に差し替え
+  const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
+  const USE_MOCK   = false; // ← 開発中は true にして data/dashboard_data.json を見る
+
+  let session      = null;
+  let allProjects  = [];
+  let currentTab   = 'takashi';
+  let currentCat   = '';
+  let expandedId   = null;
+
+  const STATUS_ORDER = ['運用中','進行中','レビュー待ち','要対応','計画中','待機中','要確認'];
+
+  // ============================================================
+  // 初期化
+  // ============================================================
+  window.onload = function () {
+    try { session = JSON.parse(localStorage.getItem('bf_session')); } catch (e) { session = null; }
+    if (!USE_MOCK) {
+      if (!session || !session.token || !session.expires || Date.now() > session.expires) {
+        location.href = PORTAL_URL;
+        return;
+      }
+      if (!session.is_admin) {
+        location.href = PORTAL_URL;
+        return;
+      }
+    }
+    loadData(false);
+  };
+
+  function loadData(manual) {
+    showStatus('読み込み中...', false);
+    if (manual) showToast('更新中...');
+
+    const dataPromise = USE_MOCK
+      ? fetch('data/dashboard_data.json').then(r => r.json()).then(mock => ({
+          success: true,
+          synced_at: mock.generated_at,
+          projects: mock.projects
+        }))
+      : fetch(GAS_URL + '?action=data&session_token=' + encodeURIComponent(session.token))
+          .then(r => r.json());
+
+    dataPromise
+      .then(data => {
+        if (!data.success) {
+          if (data.error === 'SESSION_INVALID' || data.error === 'FORBIDDEN') {
+            location.href = PORTAL_URL;
+            return;
+          }
+          throw new Error(data.message || data.error || '取得失敗');
+        }
+        allProjects = data.projects || [];
+        document.getElementById('synced-at').textContent =
+          data.synced_at ? ('最終同期: ' + fmtDateTime(data.synced_at)) : '';
+        render();
+      })
+      .catch(err => {
+        console.error('データ取得エラー:', err);
+        showStatus('データの取得に失敗しました。' + (err.message || ''), true);
+      });
+  }
+
+  // ============================================================
+  // タブ・カテゴリ切り替え
+  // ============================================================
+  function switchTab(tab) {
+    currentTab = tab;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    render();
+  }
+
+  function setCategory(cat) {
+    currentCat = cat;
+    document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.cat === cat));
+    render();
+  }
+
+  // ============================================================
+  // 集計・フィルタ・描画
+  // ============================================================
+  function effectiveBall(p) {
+    return (p.manual_ball && String(p.manual_ball).trim()) ? p.manual_ball : p.ball;
+  }
+
+  function staleDays(p) {
+    if (!p.last_update) return null;
+    const d = new Date(p.last_update);
+    if (isNaN(d)) return null;
+    const today = new Date();
+    return Math.floor((today - d) / 86400000);
+  }
+
+  function matchesTab(p, tab) {
+    const ball = effectiveBall(p);
+    const sd = staleDays(p);
+    switch (tab) {
+      case 'takashi': return ball === 'Takashi';
+      case 'claude':  return ball === 'Claude';
+      case 'env':     return ball === '環境待ち';
+      case 'stale':   return sd !== null && sd >= 14;
+      case 'all':     return true;
+      default:        return true;
+    }
+  }
+
+  function render() {
+    // タブ件数（カテゴリ絞り込み前・全体件数）を出す
+    ['takashi','claude','env','stale'].forEach(t => {
+      document.getElementById('cnt-' + t).textContent = allProjects.filter(p => matchesTab(p, t)).length;
+    });
+    document.getElementById('cnt-all').textContent = allProjects.length;
+
+    let list = allProjects.filter(p => matchesTab(p, currentTab));
+    if (currentCat) list = list.filter(p => p.category === currentCat);
+
+    const listEl = document.getElementById('card-list');
+    listEl.innerHTML = '';
+
+    if (!list.length) {
+      showStatus('該当するプロジェクトはありません', false);
+      return;
+    }
+    hideStatus();
+
+    if (currentTab === 'all') {
+      const active = list.filter(p => !(p.status_label === '運用中' && (!p.next_actions || !p.next_actions.length)));
+      const dormant = list.filter(p => p.status_label === '運用中' && (!p.next_actions || !p.next_actions.length));
+      sortList(active).forEach(p => listEl.appendChild(buildCard(p)));
+      if (dormant.length) listEl.appendChild(buildCollapseSection(dormant));
+    } else {
+      sortList(list).forEach(p => listEl.appendChild(buildCard(p)));
+    }
+  }
+
+  function sortList(list) {
+    return list.slice().sort((a, b) => {
+      const pa = Number(a.priority) || 0, pb = Number(b.priority) || 0;
+      if (pa !== pb) return pb - pa;
+      const sa = staleDays(a), sb = staleDays(b);
+      return (sb === null ? -1 : sb) - (sa === null ? -1 : sa);
+    });
+  }
+
+  function showStatus(msg, isError) {
+    const el = document.getElementById('status-msg');
+    el.textContent = msg;
+    el.className = isError ? 'error' : '';
+    el.style.display = 'block';
+  }
+  function hideStatus() {
+    document.getElementById('status-msg').style.display = 'none';
+  }
+
+  // ============================================================
+  // カード構築
+  // ============================================================
+  function buildCard(p) {
+    const div = document.createElement('div');
+    div.className = 'pcard' + (p.id === expandedId ? ' expanded' : '');
+    div.id = 'pcard-' + p.id;
+    div.onclick = function (e) {
+      if (e.target.closest('.rel-chip, .exp-field, .exp-btns')) return;
+      toggleExpand(p.id);
+    };
+
+    const sd = staleDays(p);
+    const staleCls = sd === null ? 'stale-ok' : sd >= 30 ? 'stale-bad' : sd >= 14 ? 'stale-warn' : 'stale-ok';
+    const staleTxt = sd === null ? '更新日不明' : sd + '日前';
+
+    const statusCls = 'badge-' + (p.status_label || '');
+    const ball = effectiveBall(p);
+    const parseWarn = p.parse_ok === false ? '<span class="badge badge-要確認">⚠要確認</span>' : '';
+
+    const summaryHtml = p.summary ? '<div class="pcard-summary">' + esc(p.summary) + '</div>' : '';
+
+    let actionsHtml = '';
+    if (p.next_actions && p.next_actions.length) {
+      actionsHtml = '<div class="pcard-actions"><ul>' +
+        p.next_actions.slice(0, 3).map(a => '<li>' + esc(a) + '</li>').join('') +
+        '</ul></div>';
+    }
+
+    let relHtml = '';
+    if (p.relations && p.relations.length) {
+      relHtml = '<div class="rel-row">' + p.relations.map(r => {
+        const target = allProjects.find(x => x.id === r.id);
+        const name = target ? target.name : r.id;
+        return '<span class="rel-chip" title="' + esc(r.reason || '') +
+          '" onclick="jumpTo(\'' + r.id + '\')">🔗 ' + esc(name) + '</span>';
+      }).join('') + '</div>';
+    }
+
+    div.innerHTML =
+      '<div class="pcard-row1">' +
+        '<span class="pcard-name">' + esc(p.name) + '</span>' +
+        '<span class="badge ' + statusCls + '">' + esc(p.status_label || '?') + '</span>' +
+        parseWarn +
+      '</div>' +
+      '<div class="pcard-row2">' +
+        '<span class="cat-tag">' + esc(p.category || '') + '</span>' +
+        '<span class="ball-badge ball-' + ball + '">' + esc(ball) + '</span>' +
+        '<span class="stale-badge ' + staleCls + '">' + staleTxt + '</span>' +
+      '</div>' +
+      summaryHtml + actionsHtml + relHtml +
+      buildExpandPanel(p);
+
+    return div;
+  }
+
+  function buildExpandPanel(p) {
+    const ballOptions = ['', 'Takashi', 'Claude', '環境待ち'].map(v =>
+      '<option value="' + v + '"' + ((p.manual_ball || '') === v ? ' selected' : '') + '>' +
+      (v === '' ? '（自動判定のまま）' : v) + '</option>').join('');
+
+    return '<div class="pcard-expand">' +
+      '<div class="exp-field"><label>優先度（数値・大きいほど上）</label>' +
+      '<input type="number" id="pri-' + p.id + '" value="' + (p.priority != null ? p.priority : '') + '"></div>' +
+      '<div class="exp-field"><label>ボール（手動で上書き）</label>' +
+      '<select id="ball-' + p.id + '">' + ballOptions + '</select></div>' +
+      '<div class="exp-field"><label>メモ</label>' +
+      '<textarea id="memo-' + p.id + '">' + esc(p.memo || '') + '</textarea></div>' +
+      '<div class="exp-btns">' +
+        '<button class="btn-save" id="save-' + p.id + '" onclick="event.stopPropagation(); saveMeta(\'' + p.id + '\')">保存</button>' +
+        '<button class="btn-cancel" onclick="event.stopPropagation(); toggleExpand(\'' + p.id + '\')">閉じる</button>' +
+      '</div>' +
+      '<div class="exp-meta">原本: ' + esc(p.path || '') + '</div>' +
+    '</div>';
+  }
+
+  function buildCollapseSection(list) {
+    const wrap = document.createElement('div');
+    wrap.className = 'collapse-section';
+    wrap.onclick = function () { wrap.classList.toggle('open'); };
+    wrap.innerHTML =
+      '<div class="head"><span>✅ 運用中（' + list.length + '件）</span><span class="arrow">▶</span></div>' +
+      '<div class="body"></div>';
+    const body = wrap.querySelector('.body');
+    sortList(list).forEach(p => body.appendChild(buildCard(p)));
+    return wrap;
+  }
+
+  function toggleExpand(id) {
+    expandedId = (expandedId === id) ? null : id;
+    render();
+    if (expandedId) {
+      const el = document.getElementById('pcard-' + expandedId);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
+
+  function jumpTo(id) {
+    // 関連先が現在のフィルタで非表示の場合は「すべて」タブに切り替えてから探す
+    let el = document.getElementById('pcard-' + id);
+    if (!el) {
+      currentTab = 'all';
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === 'all'));
+      currentCat = '';
+      document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.cat === ''));
+      render();
+      el = document.getElementById('pcard-' + id);
+    }
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('highlight');
+      setTimeout(() => el.classList.remove('highlight'), 1400);
+    }
+  }
+
+  // ============================================================
+  // メタ更新（priority / manual_ball / memo のみ）
+  // ============================================================
+  function saveMeta(id) {
+    const btn = document.getElementById('save-' + id);
+    const priorityRaw = document.getElementById('pri-' + id).value;
+    const manualBall  = document.getElementById('ball-' + id).value;
+    const memo         = document.getElementById('memo-' + id).value;
+
+    btn.disabled = true;
+    btn.textContent = '保存中...';
+
+    if (USE_MOCK) {
+      // モック時はローカル state のみ更新（GAS接続なし）
+      const p = allProjects.find(x => x.id === id);
+      p.priority = priorityRaw === '' ? null : Number(priorityRaw);
+      p.manual_ball = manualBall;
+      p.memo = memo;
+      btn.disabled = false;
+      btn.textContent = '保存';
+      showToast('保存しました（モック）');
+      render();
+      return;
+    }
+
+    fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'updateMeta',
+        session_token: session.token,
+        id: id,
+        priority: priorityRaw === '' ? '' : Number(priorityRaw),
+        manual_ball: manualBall,
+        memo: memo
+      })
+    })
+    .then(r => r.json())
+    .then(res => {
+      if (!res.success) throw new Error(res.message || res.error || '保存失敗');
+      const p = allProjects.find(x => x.id === id);
+      if (p) { p.priority = priorityRaw === '' ? null : Number(priorityRaw); p.manual_ball = manualBall; p.memo = memo; }
+      showToast('保存しました');
+      render();
+    })
+    .catch(err => {
+      showToast('保存に失敗しました: ' + err.message, true);
+    })
+    .finally(() => {
+      // render() でカードが再生成されるため btn 参照は使い回さない
+    });
+  }
+
+  // ============================================================
+  // ユーティリティ
+  // ============================================================
+  function esc(str) {
+    return String(str == null ? '' : str)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function fmtDateTime(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return iso;
+    const pad = n => String(n).padStart(2, '0');
+    return (d.getMonth()+1) + '/' + d.getDate() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  let toastTimer = null;
+  function showToast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+  }
+</script>
+
+</body>
+</html>

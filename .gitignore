@@ -124,3 +124,15 @@ serial-apps/tmp/
 # 第三者（株式会社Dai）著作物 + APIエンドポイント設計情報を含むためGit管理外
 # ============================================
 bcart-integration/docs/
+
+# ============================================
+# プロジェクトダッシュボード（同期ツール・出力データはローカル専用）
+# dashboard_data.json は全プロジェクトの次アクション文（顧客名・メール等を含みうる）を
+# 集約したものであり絶対非公開。GitHub Pagesに必要なのはindex.htmlとgas/Code.gsのみ
+# ============================================
+project-dashboard/data/
+project-dashboard/dashboard_sync.py
+project-dashboard/relations.json
+project-dashboard/config.json
+project-dashboard/config.example.json
+project-dashboard/同期実行.bat
