@@ -12,7 +12,7 @@
  *   SYNC_TOKEN    … 同期スクリプト用の共有シークレット（ランダム長文字列）
  */
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const APP_NAME = 'project-dashboard';
 const CACHE_TTL_SESSION = 900; // セッション検証キャッシュ 15分（他アプリと同一パターン）
 
@@ -163,6 +163,11 @@ function doPost(e) {
         if (guard) return guard;
         return jsonResponse(updateMeta_(p));
       }
+      case 'reorderPriorities': {
+        const guard = authGuard_(p.session_token || '');
+        if (guard) return guard;
+        return jsonResponse(reorderPriorities_(p));
+      }
       default:
         return jsonResponse({ success: false, error: '不明なアクション' });
     }
@@ -268,6 +273,39 @@ function updateMeta_(p) {
     }
   }
   return { success: false, error: 'プロジェクトが見つかりません: ' + id };
+}
+
+// ============================================================
+// 優先度の一括並び替え（PC側のドラッグ&ドロップ操作から呼ばれる）
+// updates: [{id, priority}, ...]（priority列のみ更新。他のmanual列には触れない）
+// ============================================================
+function reorderPriorities_(p) {
+  const updates = p.updates || [];
+  if (!updates.length) return { success: false, error: '更新対象がありません' };
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const ss = SpreadsheetApp.openById(prop_('DB_SHEET_ID'));
+    const sh = ss.getSheetByName('projects');
+    const data = sh.getDataRange().getValues();
+    const header = data[0];
+    const idCol = header.indexOf('id');
+    const priCol = header.indexOf('priority');
+
+    const idToRow = {};
+    for (let i = 1; i < data.length; i++) idToRow[String(data[i][idCol])] = i + 1;
+
+    let updated = 0;
+    updates.forEach(u => {
+      const row = idToRow[String(u.id)];
+      if (row) { sh.getRange(row, priCol + 1).setValue(u.priority); updated++; }
+    });
+
+    return { success: true, updated: updated };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // ============================================================
