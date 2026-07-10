@@ -12,7 +12,7 @@
  *   SYNC_TOKEN    … 同期スクリプト用の共有シークレット（ランダム長文字列）
  */
 
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 const APP_NAME = 'project-dashboard';
 const CACHE_TTL_SESSION = 900; // セッション検証キャッシュ 15分（他アプリと同一パターン）
 
@@ -31,7 +31,9 @@ const COLS = [
   // ↓手動管理列（同期で上書きしない）
   'priority', 'manual_ball', 'memo', 'effort',
   // ↓同期列（原本は manual_ops.json → dashboard_sync.py。シート末尾に追加＝v1.4.0）
-  'manual_ops'
+  'manual_ops',
+  // ↓同期列（原本は各プロジェクトの _handoff.md「## 次の一手」→ dashboard_sync.py。シート末尾に追加＝v1.5.0）
+  'next_action_short'
 ];
 const MANUAL_COLS = ['priority', 'manual_ball', 'memo', 'effort'];
 
@@ -85,6 +87,23 @@ function migrateAddManualOpsColumn() {
   }
   sh.getRange(1, lastCol + 1).setValue('manual_ops');
   Logger.log('manual_ops列を追加しました（列' + (lastCol + 1) + '）');
+}
+
+// ============================================================
+// マイグレーション（v1.5.0・GASエディタから一度だけ手動実行する）
+// 既存の projects シートに next_action_short 列（「次の一手」1行表示）を末尾追加する
+// ============================================================
+function migrateAddNextActionShortColumn() {
+  const ss = SpreadsheetApp.openById(prop_('DB_SHEET_ID'));
+  const sh = ss.getSheetByName('projects');
+  const lastCol = sh.getLastColumn();
+  const header = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+  if (header.indexOf('next_action_short') >= 0) {
+    Logger.log('next_action_short列は既に存在します（列' + (header.indexOf('next_action_short') + 1) + '）。何もしません');
+    return;
+  }
+  sh.getRange(1, lastCol + 1).setValue('next_action_short');
+  Logger.log('next_action_short列を追加しました（列' + (lastCol + 1) + '）');
 }
 
 // ============================================================

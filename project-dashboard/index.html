@@ -118,6 +118,12 @@
   .pcard-row1 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .pcard-name { font-size: 15px; font-weight: bold; flex: 1; min-width: 0; }
 
+  /* 「次の一手」: カードの主役。プロジェクト名の直下に太字1行で表示する */
+  .pcard-next-action {
+    margin-top: 6px; font-size: 14px; font-weight: bold; color: #14326b;
+    line-height: 1.4;
+  }
+
   .edit-toggle-btn {
     border: none; background: none; color: #bbb; font-size: 15px; cursor: pointer;
     padding: 3px 7px; border-radius: 5px;
@@ -340,7 +346,7 @@
   // ============================================================
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzkuWEqpJLhERoYlosHIeazlVjl3ipIq8u3x0rp4tCU7BaqPuYt4kP78Ha5Vu4ayNWDCg/exec';
   const PORTAL_URL   = 'https://beaufield.github.io/beaufield-dev/';
-  const APP_VERSION  = '1.7.0';
+  const APP_VERSION  = '1.8.0';
   const USE_MOCK     = false; // ← 開発中は true にして data/dashboard_data.json を見る
 
   document.getElementById('header-version').textContent = 'v' + APP_VERSION;
@@ -575,17 +581,18 @@
       '<span class="ball-badge ball-' + ball + '">' + esc(ball) + '</span>';
     const parseWarn = p.parse_ok === false ? '<span class="badge badge-要確認">⚠要確認</span>' : '';
 
-    const summaryHtml = p.summary ? '<div class="pcard-summary">' + esc(p.summary) + '</div>' : '';
+    const nextActionHtml = p.next_action_short ?
+      '<div class="pcard-next-action">👉 ' + esc(p.next_action_short) + '</div>' : '';
+
+    // summary / next_actions の詳細はカードタップ（全文展開）時のみ表示。主役は次の一手に譲る
+    const summaryHtml = (textExpanded && p.summary) ?
+      '<div class="pcard-summary">' + esc(p.summary) + '</div>' : '';
 
     let actionsHtml = '';
-    if (p.next_actions && p.next_actions.length) {
-      const shown = textExpanded ? p.next_actions : p.next_actions.slice(0, 3);
-      const hiddenCount = p.next_actions.length - shown.length;
+    if (textExpanded && p.next_actions && p.next_actions.length) {
       actionsHtml = '<div class="pcard-actions"><ul>' +
-        shown.map(a => '<li>' + esc(a) + '</li>').join('') +
-        '</ul>' +
-        (hiddenCount > 0 ? '<div class="more-hint">ほか' + hiddenCount + '件（クリックで表示）</div>' : '') +
-        '</div>';
+        p.next_actions.map(a => '<li>' + esc(a) + '</li>').join('') +
+        '</ul></div>';
     }
 
     let relHtml = '';
@@ -606,6 +613,7 @@
         parseWarn +
         '<button class="edit-toggle-btn" title="優先度・工数・メモを編集" onclick="event.stopPropagation(); toggleMetaEdit(\'' + p.id + '\')">⚙</button>' +
       '</div>' +
+      nextActionHtml +
       '<div class="pcard-row2">' +
         '<span class="cat-tag">' + esc(p.category || '') + '</span>' +
         ballBadgeHtml +
