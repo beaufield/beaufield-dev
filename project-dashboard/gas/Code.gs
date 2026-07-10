@@ -12,7 +12,7 @@
  *   SYNC_TOKEN    … 同期スクリプト用の共有シークレット（ランダム長文字列）
  */
 
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 const APP_NAME = 'project-dashboard';
 const CACHE_TTL_SESSION = 900; // セッション検証キャッシュ 15分（他アプリと同一パターン）
 
@@ -28,8 +28,10 @@ const COLS = [
   'id', 'name', 'category', 'status_label', 'ball', 'last_update',
   'summary', 'next_actions', 'relations', 'source', 'path', 'parse_ok',
   'synced_at', 'active',
-  // ↓ここから手動管理列（同期で上書きしない）
-  'priority', 'manual_ball', 'memo', 'effort'
+  // ↓手動管理列（同期で上書きしない）
+  'priority', 'manual_ball', 'memo', 'effort',
+  // ↓同期列（原本は manual_ops.json → dashboard_sync.py。シート末尾に追加＝v1.4.0）
+  'manual_ops'
 ];
 const MANUAL_COLS = ['priority', 'manual_ball', 'memo', 'effort'];
 
@@ -66,6 +68,23 @@ function migrateAddEffortColumn() {
   }
   sh.getRange(1, lastCol + 1).setValue('effort');
   Logger.log('effort列を追加しました（列' + (lastCol + 1) + '）');
+}
+
+// ============================================================
+// マイグレーション（v1.4.0・GASエディタから一度だけ手動実行する）
+// 既存の projects シートに manual_ops 列（手動運用バッジの説明文）を末尾追加する
+// ============================================================
+function migrateAddManualOpsColumn() {
+  const ss = SpreadsheetApp.openById(prop_('DB_SHEET_ID'));
+  const sh = ss.getSheetByName('projects');
+  const lastCol = sh.getLastColumn();
+  const header = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+  if (header.indexOf('manual_ops') >= 0) {
+    Logger.log('manual_ops列は既に存在します（列' + (header.indexOf('manual_ops') + 1) + '）。何もしません');
+    return;
+  }
+  sh.getRange(1, lastCol + 1).setValue('manual_ops');
+  Logger.log('manual_ops列を追加しました（列' + (lastCol + 1) + '）');
 }
 
 // ============================================================

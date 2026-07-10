@@ -161,6 +161,10 @@
   .stale-warn { background: #fff3cd; color: #856404; }
   .stale-bad  { background: #fde8e8; color: #c62828; }
 
+  /* 手動運用バッジ（manual_ops列に説明文があるプロジェクトに表示。説明文は展開パネル参照） */
+  .manualops-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: bold;
+                     background: #e6f4f1; color: #0f766e; }
+
   .effort-badge {
     display: inline-flex; align-items: center; gap: 3px;
     padding: 2px 8px; border-radius: 10px; background: #f2f2f2;
@@ -336,7 +340,7 @@
   // ============================================================
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzkuWEqpJLhERoYlosHIeazlVjl3ipIq8u3x0rp4tCU7BaqPuYt4kP78Ha5Vu4ayNWDCg/exec';
   const PORTAL_URL   = 'https://beaufield.github.io/beaufield-dev/';
-  const APP_VERSION  = '1.6.0';
+  const APP_VERSION  = '1.7.0';
   const USE_MOCK     = false; // ← 開発中は true にして data/dashboard_data.json を見る
 
   document.getElementById('header-version').textContent = 'v' + APP_VERSION;
@@ -607,6 +611,7 @@
         ballBadgeHtml +
         '<span class="stale-badge ' + staleCls + '">' + staleTxt + '</span>' +
         effortBadgeHtml(p) +
+        (p.manual_ops ? '<span class="manualops-badge" title="' + esc(p.manual_ops) + '">🔁 手動運用</span>' : '') +
       '</div>' +
       summaryHtml + actionsHtml + relHtml +
       buildExpandPanel(p);
@@ -637,6 +642,7 @@
         '<button class="btn-save" id="save-' + p.id + '" onclick="event.stopPropagation(); saveMeta(\'' + p.id + '\')">保存</button>' +
         '<button class="btn-cancel" onclick="event.stopPropagation(); toggleMetaEdit(\'' + p.id + '\')">閉じる</button>' +
       '</div>' +
+      (p.manual_ops ? '<div class="exp-meta">🔁 手動運用: ' + esc(p.manual_ops) + '</div>' : '') +
       '<div class="exp-meta">原本: ' + esc(p.path || '') + '</div>' +
     '</div>';
   }

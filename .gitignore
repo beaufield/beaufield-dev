@@ -133,6 +133,7 @@ bcart-integration/docs/
 project-dashboard/data/
 project-dashboard/dashboard_sync.py
 project-dashboard/relations.json
+project-dashboard/manual_ops.json
 project-dashboard/config.json
 project-dashboard/config.example.json
 project-dashboard/同期実行.bat
