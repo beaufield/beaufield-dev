@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.16.0';
+const VERSION = 'v2.16.2';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -1213,6 +1213,25 @@ function getCategories() {
   };
 }
 
+// 上代(csvKouri)が無い(0/null)場合は「参考上代タイプ: 非表示」とし、jodai/group_priceの
+// メーカー希望小売価格を送らない（0円をメーカー希望小売価格として送るとBCART APIの
+// バリデーション(422)に弾かれるため。2026-07-12 登録ドラフト承認時に発覚）
+function buildJodaiFields_(csvKouri, csvShiire, jodaiType) {
+  const fields = {};
+  if (csvKouri) {
+    fields.jodai = csvKouri;
+    fields.jodai_type = jodaiType || 'メーカー希望小売価格';
+    fields.group_price = { '1': { fixed_price: csvKouri } };
+  } else {
+    fields.jodai_type = '非表示';
+  }
+  if (csvShiire) {
+    fields.group_price = fields.group_price || {};
+    fields.group_price['10'] = { fixed_price: csvShiire };
+  }
+  return fields;
+}
+
 // ① 孤立商品の自動ロールバック付き新規登録
 function registerProduct(params) {
   const productBody = {
@@ -1246,25 +1265,19 @@ function registerProduct(params) {
   }
 
   const setBody = {
-    product_sets: [{
+    product_sets: [Object.assign({
       product_id:  createdProductId,
       product_no:  params.code,
       name:        params.setName,
       jan_code:    params.janCode || '',
       unit_price:  params.csvPrice,
-      jodai:       params.csvKouri || 0,
-      jodai_type:  params.jodaiType || 'メーカー希望小売価格',
-      group_price: {
-        '1':  { fixed_price: params.csvKouri || 0 },
-        '10': { fixed_price: params.csvShiire || 0 }
-      },
       unit:        params.csvUnit || '',
       quantity:    1,
       min_order:   1,
       stock_flag:  1,
       tax_type_id: params.taxTypeId || 1,
       set_flag:    params.setFlag || '非表示'
-    }]
+    }, buildJodaiFields_(params.csvKouri, params.csvShiire, params.jodaiType))]
   };
 
   const step2 = bcartPost('/product_sets', setBody);
@@ -1316,25 +1329,19 @@ function registerProduct(params) {
 // 既存のBCART商品にセットを追加
 function addSetToProduct(params) {
   const setBody = {
-    product_sets: [{
+    product_sets: [Object.assign({
       product_id:  params.productId,
       product_no:  params.code,
       name:        params.setName,
       jan_code:    params.janCode || '',
       unit_price:  params.csvPrice,
-      jodai:       params.csvKouri || 0,
-      jodai_type:  params.jodaiType || 'メーカー希望小売価格',
-      group_price: {
-        '1':  { fixed_price: params.csvKouri || 0 },
-        '10': { fixed_price: params.csvShiire || 0 }
-      },
       unit:        params.csvUnit || '',
       quantity:    1,
       min_order:   1,
       stock_flag:  1,
       tax_type_id: params.taxTypeId || 1,
       set_flag:    params.setFlag || '非表示'
-    }]
+    }, buildJodaiFields_(params.csvKouri, params.csvShiire, params.jodaiType))]
   };
 
   const res = bcartPost('/product_sets', setBody);
@@ -1406,25 +1413,19 @@ function bulkRegisterProduct(params) {
 
   for (const s of sets) {
     const setBody = {
-      product_sets: [{
+      product_sets: [Object.assign({
         product_id:  createdProductId,
         product_no:  s.code,
         name:        s.setName,
         jan_code:    s.janCode || '',
         unit_price:  s.csvPrice,
-        jodai:       s.csvKouri || 0,
-        jodai_type:  params.jodaiType || 'メーカー希望小売価格',
-        group_price: {
-          '1':  { fixed_price: s.csvKouri || 0 },
-          '10': { fixed_price: s.csvShiire || 0 }
-        },
         unit:        s.csvUnit || '',
         quantity:    1,
         min_order:   1,
         stock_flag:  1,
         tax_type_id: params.taxTypeId || 1,
         set_flag:    params.setFlag || '非表示'
-      }]
+      }, buildJodaiFields_(s.csvKouri, s.csvShiire, params.jodaiType))]
     };
     const res = bcartPost('/product_sets', setBody);
     const setId = res.ok && res.data && res.data.product_sets && res.data.product_sets[0]
@@ -1436,15 +1437,16 @@ function bulkRegisterProduct(params) {
   // 全セット失敗時はロールバック
   if (successCount === 0 && sets.length > 0) {
     bcartDelete('/products/' + createdProductId);
+    const firstError = (results.find(r => !r.ok) || {}).error || '不明';
     addHistory({
       userName: params._userName,
       code: sets.map(s => s.code).join(','),
       name: params.productName,
       type: '一括新規登録（ロールバック完了）',
       before: '', after: '商品ID: ' + createdProductId + ' を削除',
-      result: '失敗: 全セット登録失敗'
+      result: '失敗: 全セット登録失敗（' + firstError + '）'
     });
-    return { ok: false, error: '全セットの登録に失敗したため商品を削除しました' };
+    return { ok: false, error: '全セットの登録に失敗したため商品を削除しました（' + firstError + '）', results: results };
   }
 
   // 成功したセットのWIPを解除
