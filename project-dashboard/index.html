@@ -346,7 +346,7 @@
   // ============================================================
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzkuWEqpJLhERoYlosHIeazlVjl3ipIq8u3x0rp4tCU7BaqPuYt4kP78Ha5Vu4ayNWDCg/exec';
   const PORTAL_URL   = 'https://beaufield.github.io/beaufield-dev/';
-  const APP_VERSION  = '1.8.0';
+  const APP_VERSION  = '1.8.1';
   const USE_MOCK     = false; // ← 開発中は true にして data/dashboard_data.json を見る
 
   document.getElementById('header-version').textContent = 'v' + APP_VERSION;
@@ -475,7 +475,7 @@
       case 'claude':  return ball === 'Claude';
       case 'env':     return ball === '環境待ち';
       case 'active':  return p.status_label === '運用中';
-      case 'stale':   return sd !== null && sd >= 14;
+      case 'stale':   return sd !== null && sd >= 14 && !isDormant(p);
       case 'all':     return true;
       default:        return true;
     }
