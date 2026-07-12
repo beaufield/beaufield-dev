@@ -4981,7 +4981,7 @@ function draftCardHtml(d) {
         : '') +
       '<div class="draft-meta-field"><label>税区分</label><select id="draft-tax-' + d.draftId + '"' + disabledAttr + '>' + draftTaxOptions(d.taxTypeId || 1) + '</select></div>' +
       '<div class="draft-meta-field"><label>上代タイプ</label><select id="draft-jodai-' + d.draftId + '"' + disabledAttr + '>' + draftJodaiTypeOptions(draftDefaultJodaiType(d)) + '</select></div>' +
-      '<div class="draft-meta-note">公開設定: 非表示で登録（公開は登録後の🌐ボタンから）</div>' +
+      '<div class="draft-meta-note">公開設定: 商品(親)は非表示・セットは表示で登録（商品を表示化するには登録後の🌐ボタンから）</div>' +
     '</div>';
 
   const refs = (d.refUrls || []).length

@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.17.0';
+const VERSION = 'v2.17.1';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -1927,7 +1927,7 @@ function approveDraft(params) {
       const res = addSetToProduct({
         _userName: params._userName, productId: targetProductId, code: s.code, setName: s.setName,
         janCode: s.janCode, csvPrice: s.csvPrice, csvKouri: s.csvKouri, csvShiire: s.csvShiire, csvUnit: s.csvUnit,
-        jodaiType: jodaiType, taxTypeId: taxTypeId, setFlag: '非表示'
+        jodaiType: jodaiType, taxTypeId: taxTypeId, setFlag: '表示'
       });
       return { code: s.code, ok: res.ok, setId: res.setId || null, error: res.ok ? null : res.error };
     });
@@ -1936,7 +1936,7 @@ function approveDraft(params) {
     const bulkRes = bulkRegisterProduct({
       _userName: params._userName, productName: productName, categoryId: categoryId,
       featureId1: featureId1, featureId2: featureId2, featureId3: featureId3,
-      productFlag: '非表示', setFlag: '非表示', jodaiType: jodaiType, taxTypeId: taxTypeId, sets: sets
+      productFlag: '非表示', setFlag: '表示', jodaiType: jodaiType, taxTypeId: taxTypeId, sets: sets
     });
     if (!bulkRes.ok) return Object.assign(bulkRes, { notes: notes });  // 全セット失敗＝ロールバック済み。ドラフトは下書きのまま
     productId = bulkRes.productId;
