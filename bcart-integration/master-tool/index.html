@@ -631,6 +631,18 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
   </div>
 </div>
 
+<div class="modal-overlay" id="imagePromptModal">
+  <div class="modal">
+    <h3>🎨 画像生成プロンプト</h3>
+    <div style="margin-bottom:8px;font-size:12px;color:#6b7280;">Codex等の画像生成AIに貼り付けてください。生成画像は参考用です。掲載前に必ず実商品と照合してください。</div>
+    <textarea id="imagePromptText" rows="14" style="width:100%;font-size:12px;font-family:monospace;" readonly></textarea>
+    <div class="actions">
+      <button class="btn btn-gray" onclick="closeModal('imagePromptModal')">閉じる</button>
+      <button class="btn btn-primary" onclick="copyImagePromptText()">📋 コピー</button>
+    </div>
+  </div>
+</div>
+
 <!-- 特価サロングループ編集モーダル（会員はカード画面から別途管理） -->
 <!-- ↑このコメントは既存groupModalを置き換え済み -->
 
@@ -4998,11 +5010,13 @@ function draftCardHtml(d) {
     actions =
       '<button class="btn btn-sm" onclick="saveDraftOnly(\'' + d.draftId + '\',this)" style="background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;">✏️ 保存のみ</button>' +
       '<button class="btn btn-success btn-sm" onclick="approveDraftOne(\'' + d.draftId + '\',this)">✅ 承認して登録（非表示）</button>' +
+      '<button class="btn btn-sm" onclick="openImagePromptModal(\'' + d.draftId + '\')" style="background:#faf5ff;border:1px solid #e9d5ff;color:#7c3aed;">🎨 画像生成プロンプト</button>' +
       '<button class="btn btn-sm" onclick="openDraftRejectModal(\'' + d.draftId + '\',\'' + escAttr(d.productName) + '\')" style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;">🚫 却下</button>';
   } else if (d.status === '登録済') {
     actions =
       '<span style="font-size:12px;color:#6b7280;">BCART商品ID: ' + esc(d.registeredProductId) +
-      ' ・<a href="https://cirgle.bcart.jp/admin/" target="_blank" rel="noopener">管理画面で確認</a></span>' +
+      ' ・<a href="' + BCART_ADMIN_BASE + '/' + esc(d.registeredProductId) + '/edit" target="_blank" rel="noopener">管理画面で確認</a></span>' +
+      '<button class="btn btn-sm" onclick="openImagePromptModal(\'' + d.draftId + '\')" style="background:#faf5ff;border:1px solid #e9d5ff;color:#7c3aed;">🎨 画像生成プロンプト</button>' +
       '<button class="btn btn-success btn-sm" onclick="publishDraftOne(\'' + d.draftId + '\',this)">🌐 公開する（表示化）</button>';
   } else if (d.status === '公開済') {
     actions = '<span style="font-size:12px;color:#16a34a;">✓ 公開済み（BCART商品ID: ' + esc(d.registeredProductId) + '）</span>';
@@ -5125,6 +5139,50 @@ function confirmRejectDraft() {
     showToast('却下しました（対応不要リストへ登録済み）');
     loadDrafts();
   });
+}
+
+function buildImagePrompt(d) {
+  const nameEl = document.getElementById('draft-name-' + d.draftId);
+  const descEl = document.getElementById('draft-desc-' + d.draftId);
+  const productName = (nameEl ? nameEl.value : d.productName) || '';
+  const description = (descEl ? descEl.value : d.description) || '';
+  const setNames = (d.sets || []).map(function(s) { return s.setName; }).filter(Boolean).join(' / ');
+  const refUrls = d.refUrls || [];
+
+  let p = '以下の条件でBtoB向けEC商品画像（1枚）を生成してください。\n\n';
+  p += '商品名: ' + productName + '\n';
+  if (setNames) p += 'バリエーション: ' + setNames + '\n';
+  if (description) p += '商品説明: ' + description + '\n';
+  p += '用途: 美容室・エステサロン向け業務用品のBtoB卸ECサイト掲載用商品画像\n';
+  p += 'スタイル: 白背景、商品パッケージ/ボトルが中央に大きく写る、清潔感のあるプロダクト写真風（イラスト調・過度な演出は避ける）\n';
+  if (refUrls.length) {
+    p += '参考URL（メーカー公式ページ。実際のパッケージ意匠の参考にしてください）:\n';
+    p += refUrls.map(function(u) { return '- ' + u; }).join('\n') + '\n';
+  }
+  p += '\n⚠️注意: これはAI生成画像です。実物のパッケージ色・ロゴ・容量表記と一致しない場合があります。ECサイトに掲載する前に必ず実商品と照合し、相違があれば修正・差し替えしてください。';
+  return p;
+}
+
+function openImagePromptModal(draftId) {
+  const d = draftList.find(function(x) { return x.draftId === draftId; });
+  if (!d) return;
+  document.getElementById('imagePromptText').value = buildImagePrompt(d);
+  document.getElementById('imagePromptModal').classList.add('open');
+}
+
+function copyImagePromptText() {
+  const el = document.getElementById('imagePromptText');
+  el.select();
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(el.value).then(function() {
+      showToast('コピーしました');
+    }, function() {
+      showToast('コピーに失敗しました。手動で選択してコピーしてください。', true);
+    });
+  } else {
+    document.execCommand('copy');
+    showToast('コピーしました');
+  }
 }
 
 function publishDraftOne(draftId, btn) {
