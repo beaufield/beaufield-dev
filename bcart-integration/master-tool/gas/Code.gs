@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.17.2';
+const VERSION = 'v2.17.3';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -1241,14 +1241,14 @@ function buildJodaiFields_(csvKouri, csvShiire, jodaiType) {
 // ① 孤立商品の自動ロールバック付き新規登録
 function registerProduct(params) {
   const productBody = {
-    products: [{
+    products: [Object.assign({
       name:        params.productName,
       category_id: params.categoryId,
       flag:        params.productFlag || '非表示',
       feature_id1: params.featureId1 || null,
       feature_id2: params.featureId2 || null,
       feature_id3: params.featureId3 || null
-    }]
+    }, (params.viewGroupFilter ? { view_group_filter: params.viewGroupFilter } : {}))]
   };
 
   const step1 = bcartPost('/products', productBody);
@@ -1386,14 +1386,14 @@ function addSetToProduct(params) {
 // 複数商品セットを紐付けた新規BCART商品を一括登録
 function bulkRegisterProduct(params) {
   const productBody = {
-    products: [{
+    products: [Object.assign({
       name:        params.productName,
       category_id: params.categoryId,
       flag:        params.productFlag || '非表示',
       feature_id1: params.featureId1 || null,
       feature_id2: params.featureId2 || null,
       feature_id3: params.featureId3 || null
-    }]
+    }, (params.viewGroupFilter ? { view_group_filter: params.viewGroupFilter } : {}))]
   };
 
   const step1 = bcartPost('/products', productBody);
