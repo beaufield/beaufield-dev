@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.16.2';
+const VERSION = 'v2.17.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -563,8 +563,9 @@ function bcartPatch(path, body) {
     });
     const code = res.getResponseCode();
     if (code !== 200 && code !== 204) {
-      Logger.log('bcartPatch error: ' + code + ' ' + res.getContentText().slice(0, 300));
-      return { ok: false, error: 'BCART_API_ERROR: ' + code };
+      const bodyText = res.getContentText().slice(0, 300);
+      Logger.log('bcartPatch error: ' + code + ' ' + bodyText);
+      return { ok: false, error: 'BCART_API_ERROR: ' + code + ' ' + bodyText.slice(0, 200) };
     }
     return { ok: true };
   } catch (e) {
@@ -605,8 +606,9 @@ function bcartPost(path, body) {
     });
     const code = res.getResponseCode();
     if (code !== 200 && code !== 201) {
-      Logger.log('bcartPost error: ' + code + ' ' + res.getContentText().slice(0, 300));
-      return { ok: false, error: 'BCART_API_ERROR: ' + code };
+      const bodyText = res.getContentText().slice(0, 300);
+      Logger.log('bcartPost error: ' + code + ' ' + bodyText);
+      return { ok: false, error: 'BCART_API_ERROR: ' + code + ' ' + bodyText.slice(0, 200) };
     }
     return { ok: true, data: JSON.parse(res.getContentText()) };
   } catch (e) {
@@ -1769,7 +1771,8 @@ function saveDrafts(params) {
 
 // 登録ドラフト列インデックス(0始まり): 0 draft_id / 1 status / 2 draft_type / 3 target_product_id /
 // 4 product_name / 5 category_id / 6-8 feature_id1-3 / 9 description / 10 confidence / 11 reasoning /
-// 12 ref_urls / 13 supplier_cd / 14 supplier_name / 15 created_at / 16 reviewed_at / 17 registered_product_id
+// 12 ref_urls / 13 supplier_cd / 14 supplier_name / 15 created_at / 16 reviewed_at / 17 registered_product_id /
+// 18 jodai_type / 19 tax_type_id
 
 function getDrafts(params) {
   const status = params.status !== undefined ? params.status : '下書き';
@@ -1784,7 +1787,7 @@ function getDrafts(params) {
     if (!r[0]) continue;
     if (!setsByDraft[r[0]]) setsByDraft[r[0]] = [];
     setsByDraft[r[0]].push({
-      code: r[1], setName: r[2], jan: r[3], unitPrice: r[4], jodai: r[5], shiire: r[6], unit: r[7], lastSaleDate: r[8]
+      code: String(r[1]), setName: r[2], jan: String(r[3] || ''), unitPrice: r[4], jodai: r[5], shiire: r[6], unit: r[7], lastSaleDate: r[8]
     });
   }
 
@@ -1802,6 +1805,7 @@ function getDrafts(params) {
       refUrls: r[12] ? String(r[12]).split('\n').filter(Boolean) : [],
       supplierCd: r[13], supplierName: r[14],
       createdAt: r[15], reviewedAt: r[16] || '', registeredProductId: r[17] || null,
+      jodaiType: r[18] || '', taxTypeId: r[19] || null,
       sets: setsByDraft[r[0]] || []
     });
   }
@@ -1825,6 +1829,8 @@ function updateDraft(params) {
   if (params.featureId2 !== undefined) sheet.getRange(rowIdx, 8).setValue(params.featureId2);
   if (params.featureId3 !== undefined) sheet.getRange(rowIdx, 9).setValue(params.featureId3);
   if (params.description !== undefined) sheet.getRange(rowIdx, 10).setValue(params.description);
+  if (params.jodaiType !== undefined) sheet.getRange(rowIdx, 19).setValue(params.jodaiType);
+  if (params.taxTypeId !== undefined) sheet.getRange(rowIdx, 20).setValue(params.taxTypeId);
 
   if (params.sets) {
     const setSheet = getOrCreateSheet(SHEET_DRAFT_SETS);
@@ -1833,7 +1839,7 @@ function updateDraft(params) {
       if (setRows[i - 1][0] === params.draftId) setSheet.deleteRow(i);
     }
     params.sets.forEach(s => {
-      setSheet.appendRow([params.draftId, s.code || '', s.setName || '', s.jan || '', s.unitPrice || '', s.jodai || '', s.shiire || '', s.unit || '', s.lastSaleDate || '']);
+      setSheet.appendRow([params.draftId, String(s.code || ''), s.setName || '', String(s.jan || ''), s.unitPrice || '', s.jodai || '', s.shiire || '', s.unit || '', s.lastSaleDate || '']);
     });
   }
 
@@ -1841,7 +1847,7 @@ function updateDraft(params) {
   return { ok: true };
 }
 
-// 承認＝登録実行。シートの現在値を正として非表示登録する
+// 承認＝登録実行。CSV最新値で価格をリフレッシュし、シートの現在値を正として非表示登録する
 function approveDraft(params) {
   const parentSheet = getOrCreateSheet(SHEET_DRAFT);
   const parentRows = parentSheet.getDataRange().getValues();
@@ -1853,23 +1859,66 @@ function approveDraft(params) {
   if (draft[1] !== '下書き') return { ok: false, error: 'このドラフトは下書き状態ではありません（status: ' + draft[1] + '）' };
 
   const setRows = getOrCreateSheet(SHEET_DRAFT_SETS).getDataRange().getValues();
-  const sets = [];
+  const rawSets = [];
   for (let i = 1; i < setRows.length; i++) {
     if (setRows[i][0] === params.draftId) {
-      sets.push({
-        code: setRows[i][1], setName: setRows[i][2], janCode: setRows[i][3],
+      // Sheetsが数値化した値をBCART API用に文字列へ正規化（product_no/jan_codeは文字列型必須。数値のまま送ると422になる）
+      rawSets.push({
+        code: String(setRows[i][1]), setName: String(setRows[i][2] || ''), janCode: String(setRows[i][3] || ''),
         csvPrice: Number(setRows[i][4]) || 0, csvKouri: Number(setRows[i][5]) || 0,
-        csvShiire: Number(setRows[i][6]) || 0, csvUnit: setRows[i][7]
+        csvShiire: Number(setRows[i][6]) || 0, csvUnit: String(setRows[i][7] || '')
       });
     }
   }
-  if (sets.length === 0) return { ok: false, error: 'セットが登録されていません' };
+  if (rawSets.length === 0) return { ok: false, error: 'セットが登録されていません' };
+
+  // CSV最新値でのリフレッシュ（ドラフト保存後に販売管理側で価格改定された場合の取りこぼし防止）
+  const notes = [];
+  let sets = rawSets;
+  const csvData = loadCsvFromDrive();
+  if (csvData.ok) {
+    const csvMap = {};
+    csvData.rows.forEach(row => {
+      const code = row['コード'];
+      if (!code) return;
+      csvMap[String(parseInt(code, 10) || code)] = row;
+    });
+    sets = rawSets.map(s => {
+      const row = csvMap[String(parseInt(s.code, 10) || s.code)];
+      if (!row) {
+        notes.push('code ' + s.code + ': CSVに見つからないためドラフト保存時の値のまま登録');
+        return s;
+      }
+      const freshPrice  = parseFloat(String(row['売上単価'] || '').replace(/,/g, '')) || 0;
+      const freshKouri  = parseFloat(String(row['定価１'] || row['定価1'] || '').replace(/,/g, '')) || 0;
+      const freshShiire = parseFloat(String(row['仕入単価'] || '').replace(/,/g, '')) || 0;
+      const freshJan    = (row['JANCD'] || '').trim();
+      const freshUnit   = (row['単位名'] || '').trim();
+
+      if (freshPrice && freshPrice !== s.csvPrice) notes.push('code ' + s.code + ': 売価 ' + s.csvPrice + '→' + freshPrice + '円（CSV最新値）');
+      if (freshKouri !== s.csvKouri) notes.push('code ' + s.code + ': 上代 ' + s.csvKouri + '→' + freshKouri + '円（CSV最新値）');
+      if (freshShiire && freshShiire !== s.csvShiire) notes.push('code ' + s.code + ': 仕入 ' + s.csvShiire + '→' + freshShiire + '円（CSV最新値）');
+
+      return {
+        code: s.code, setName: s.setName,
+        janCode: freshJan || s.janCode,
+        csvPrice: freshPrice || s.csvPrice,
+        csvKouri: freshKouri,
+        csvShiire: freshShiire || s.csvShiire,
+        csvUnit: freshUnit || s.csvUnit
+      };
+    });
+  } else {
+    notes.push('CSV読み込み失敗のためドラフト保存時の値で登録: ' + csvData.error);
+  }
 
   const draftType = draft[2];
   const productName = draft[4];
   const categoryId = draft[5];
   const featureId1 = draft[6] || null, featureId2 = draft[7] || null, featureId3 = draft[8] || null;
   const description = draft[9];
+  const jodaiType = draft[18] || null;
+  const taxTypeId = draft[19] || null;
 
   let productId, results;
   if (draftType === 'add_to_existing') {
@@ -1878,7 +1927,7 @@ function approveDraft(params) {
       const res = addSetToProduct({
         _userName: params._userName, productId: targetProductId, code: s.code, setName: s.setName,
         janCode: s.janCode, csvPrice: s.csvPrice, csvKouri: s.csvKouri, csvShiire: s.csvShiire, csvUnit: s.csvUnit,
-        setFlag: '非表示'
+        jodaiType: jodaiType, taxTypeId: taxTypeId, setFlag: '非表示'
       });
       return { code: s.code, ok: res.ok, setId: res.setId || null, error: res.ok ? null : res.error };
     });
@@ -1887,9 +1936,9 @@ function approveDraft(params) {
     const bulkRes = bulkRegisterProduct({
       _userName: params._userName, productName: productName, categoryId: categoryId,
       featureId1: featureId1, featureId2: featureId2, featureId3: featureId3,
-      productFlag: '非表示', setFlag: '非表示', sets: sets
+      productFlag: '非表示', setFlag: '非表示', jodaiType: jodaiType, taxTypeId: taxTypeId, sets: sets
     });
-    if (!bulkRes.ok) return bulkRes;  // 全セット失敗＝ロールバック済み。ドラフトは下書きのまま
+    if (!bulkRes.ok) return Object.assign(bulkRes, { notes: notes });  // 全セット失敗＝ロールバック済み。ドラフトは下書きのまま
     productId = bulkRes.productId;
     results = bulkRes.results;
   }
@@ -1901,14 +1950,16 @@ function approveDraft(params) {
       type: '登録ドラフト承認（一部失敗）', before: '', after: '商品ID: ' + productId, result: '一部失敗'
     });
     return {
-      ok: true, partial: true, productId: productId, results: results,
+      ok: true, partial: true, productId: productId, results: results, notes: notes,
       message: '一部のセットが登録に失敗しました。ステータスは下書きのままです。BCART管理画面で商品ID ' + productId + ' を確認してください。'
     };
   }
 
   // description反映（registerProduct/bulkRegisterProduct系はdescriptionを扱わないため追加PATCH）
-  if (description && productId) {
+  let descriptionApplied = true;
+  if (description) {
     const descRes = bcartPatch('/products/' + productId, { description: description });
+    descriptionApplied = descRes.ok;
     if (!descRes.ok) Logger.log('approveDraft: description PATCH失敗 draftId=' + params.draftId + ' error=' + descRes.error);
   }
 
@@ -1918,10 +1969,10 @@ function approveDraft(params) {
 
   addHistory({
     userName: params._userName, code: sets.map(s => s.code).join(','), name: productName || '',
-    type: '登録ドラフト承認・登録', before: '', after: '商品ID: ' + productId, result: '成功'
+    type: '登録ドラフト承認・登録', before: '', after: '商品ID: ' + productId + (notes.length ? '（' + notes.join('；') + '）' : ''), result: '成功'
   });
 
-  return { ok: true, productId: productId, results: results };
+  return { ok: true, productId: productId, results: results, notes: notes, descriptionApplied: descriptionApplied };
 }
 
 // 却下＝対応不要マークへ。以後の候補抽出から自動的に消える
@@ -1941,7 +1992,7 @@ function rejectDraft(params) {
   const setRows = getOrCreateSheet(SHEET_DRAFT_SETS).getDataRange().getValues();
   const codes = [];
   for (let i = 1; i < setRows.length; i++) {
-    if (setRows[i][0] === params.draftId) codes.push({ code: setRows[i][1], setName: setRows[i][2] });
+    if (setRows[i][0] === params.draftId) codes.push({ code: String(setRows[i][1]), setName: setRows[i][2] });
   }
   codes.forEach(c => {
     markIgnore({ code: c.code, name: c.setName, reason: '登録ドラフト却下: ' + (params.reason || ''), supplier: supplierName });
@@ -1972,13 +2023,13 @@ function publishDraft(params) {
   const setRows = getOrCreateSheet(SHEET_DRAFT_SETS).getDataRange().getValues();
   const codes = [];
   for (let i = 1; i < setRows.length; i++) {
-    if (setRows[i][0] === params.draftId) codes.push(setRows[i][1]);
+    if (setRows[i][0] === params.draftId) codes.push(String(setRows[i][1]));
   }
 
   const allSets = bcartGetAll('/product_sets');
   if (!allSets.ok) return allSets;
   const setIdByCode = {};
-  allSets.data.forEach(s => { setIdByCode[s.product_no] = s.id; });
+  allSets.data.forEach(s => { setIdByCode[String(s.product_no)] = s.id; });
 
   const results = codes.map(code => {
     const setId = setIdByCode[code];
@@ -3093,13 +3144,15 @@ function getOrCreateSheet(sheetName) {
       sheet.setFrozenRows(1);
       sheet.getRange(1, 1, 1, 3).setFontWeight('bold').setBackground('#f3f4f6');
     } else if (sheetName === SHEET_DRAFT) {
-      sheet.appendRow(['draft_id', 'status', 'draft_type', 'target_product_id', 'product_name', 'category_id', 'feature_id1', 'feature_id2', 'feature_id3', 'description', 'confidence', 'reasoning', 'ref_urls', 'supplier_cd', 'supplier_name', 'created_at', 'reviewed_at', 'registered_product_id']);
+      sheet.appendRow(['draft_id', 'status', 'draft_type', 'target_product_id', 'product_name', 'category_id', 'feature_id1', 'feature_id2', 'feature_id3', 'description', 'confidence', 'reasoning', 'ref_urls', 'supplier_cd', 'supplier_name', 'created_at', 'reviewed_at', 'registered_product_id', 'jodai_type', 'tax_type_id']);
       sheet.setFrozenRows(1);
-      sheet.getRange(1, 1, 1, 18).setFontWeight('bold').setBackground('#f3f4f6');
+      sheet.getRange(1, 1, 1, 20).setFontWeight('bold').setBackground('#f3f4f6');
     } else if (sheetName === SHEET_DRAFT_SETS) {
       sheet.appendRow(['draft_id', 'code', 'set_name', 'jan', 'unit_price', 'jodai', 'shiire', 'unit', 'last_sale_date']);
       sheet.setFrozenRows(1);
       sheet.getRange(1, 1, 1, 9).setFontWeight('bold').setBackground('#f3f4f6');
+      sheet.getRange('B2:B').setNumberFormat('@');  // code
+      sheet.getRange('D2:D').setNumberFormat('@');  // jan（先頭ゼロ・大桁数の誤変換防止）
     }
   } else {
     // 既存シートのマイグレーション処理
@@ -3123,6 +3176,16 @@ function getOrCreateSheet(sheetName) {
         sheet.getRange(1, 8).setValue('applied_at');
         sheet.getRange(1, 8).setFontWeight('bold').setBackground('#f3f4f6');
       }
+    } else if (sheetName === SHEET_DRAFT) {
+      // jodai_type / tax_type_id 列の自動追加（既存シートへのマイグレーション）
+      if (sheet.getLastColumn() < 20) {
+        sheet.getRange(1, 19, 1, 2).setValues([['jodai_type', 'tax_type_id']]);
+        sheet.getRange(1, 19, 1, 2).setFontWeight('bold').setBackground('#f3f4f6');
+      }
+    } else if (sheetName === SHEET_DRAFT_SETS) {
+      // code/jan列をテキスト書式に統一（既存シートへのマイグレーション。数値化された既存値はapproveDraft側のString()正規化で吸収）
+      sheet.getRange('B2:B').setNumberFormat('@');
+      sheet.getRange('D2:D').setNumberFormat('@');
     }
   }
   return sheet;

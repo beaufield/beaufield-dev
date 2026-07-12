@@ -47,6 +47,11 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .draft-reasoning { font-size: 12px; color: #6b7280; background: #f9fafb; border-radius: 6px; padding: 8px; margin: 6px 0; }
 .draft-refs a { font-size: 12px; color: #0284c7; margin-right: 10px; }
 .draft-card-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.draft-meta-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 8px 0; padding: 8px; background: #f9fafb; border-radius: 6px; }
+.draft-meta-field { display: flex; flex-direction: column; gap: 2px; }
+.draft-meta-field label { font-size: 11px; color: #6b7280; }
+.draft-meta-field select { font-size: 12px; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; min-width: 130px; }
+.draft-meta-note { font-size: 11px; color: #9ca3af; }
 
 .btn { display: inline-flex; align-items: center; gap: 4px; padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: opacity 0.15s; }
 .btn:hover { opacity: 0.85; }
@@ -4840,15 +4845,38 @@ function loadDrafts() {
   document.getElementById('draftList').innerHTML = '<div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>';
   document.getElementById('draftCount').textContent = '';
 
-  gasPostAsync({ action: 'getDrafts', status: status, supplierCd: supplierCd }).then(function(res) {
-    if (!res.ok) { showToast('ドラフト取得エラー: ' + res.error, true); return; }
-    draftList = res.drafts || [];
-    document.getElementById('draftCount').textContent = draftList.length + '件';
-    rebuildDraftSupplierFilter(draftList, supplierCd);
-    renderDraftList(draftList);
-  }).catch(function(e) {
-    showToast('通信エラー: ' + e.message, true);
+  ensureDraftMasters(function() {
+    gasPostAsync({ action: 'getDrafts', status: status, supplierCd: supplierCd }).then(function(res) {
+      if (!res.ok) { showToast('ドラフト取得エラー: ' + res.error, true); return; }
+      draftList = res.drafts || [];
+      document.getElementById('draftCount').textContent = draftList.length + '件';
+      rebuildDraftSupplierFilter(draftList, supplierCd);
+      renderDraftList(draftList);
+    }).catch(function(e) {
+      showToast('通信エラー: ' + e.message, true);
+    });
   });
+}
+
+// カテゴリー・特集マスタ（機能Aの一括登録モーダルと共用: regCategories/regFeatures）を未取得なら読み込む
+function ensureDraftMasters(cb) {
+  let pending = 0;
+  function done() { pending--; if (pending <= 0) cb(); }
+  if (regCategories.length === 0) {
+    pending++;
+    gasPost({ action: 'getCategories' }, function(res) {
+      if (res.ok && res.categories) regCategories = res.categories;
+      done();
+    });
+  }
+  if (regFeatures.length === 0) {
+    pending++;
+    gasPost({ action: 'getFeatures' }, function(res) {
+      if (res.ok && res.specials) regFeatures = res.specials;
+      done();
+    });
+  }
+  if (pending === 0) cb();
 }
 
 function rebuildDraftSupplierFilter(drafts, currentValue) {
@@ -4875,6 +4903,46 @@ function draftTypeLabel(d) {
     : '<span class="badge badge-draft-new">新規商品</span>';
 }
 
+// 機能Aの一括登録モーダル（populateBulkRegCategorySelect/populateBulkRegFeatureSelects）と同じマスタ・分類ロジックを流用
+function draftCategoryOptions(selectedId) {
+  let opts = '<option value="">カテゴリーを選択 *</option>';
+  regCategories.forEach(function(c) {
+    opts += '<option value="' + c.id + '"' + (String(c.id) === String(selectedId) ? ' selected' : '') + '>' + esc(c.name) + '</option>';
+  });
+  return opts;
+}
+
+function draftFeatureOptions(typeNum, selectedId) {
+  const typeMap = { 1: 'シリーズ', 2: 'メーカー', 3: 'キャンペーン' };
+  const filtered = regFeatures.filter(function(f) { return f.type === typeMap[typeNum]; });
+  let opts = '<option value="">なし</option>';
+  filtered.forEach(function(f) {
+    opts += '<option value="' + f.id + '"' + (String(f.id) === String(selectedId) ? ' selected' : '') + '>' + esc(f.name) + '</option>';
+  });
+  return opts;
+}
+
+// jodaiTypeが未設定(既存ドラフト)の場合の初期表示用デフォルト。実際の送信値はcollectDraftFormPayloadがselectの現在値を読む
+function draftDefaultJodaiType(d) {
+  if (d.jodaiType) return d.jodaiType;
+  const hasKouri = (d.sets || []).some(function(s) { return Number(s.jodai) > 0; });
+  return hasKouri ? 'メーカー希望小売価格' : '非表示';
+}
+
+function draftJodaiTypeOptions(selected) {
+  const values = ['非表示', 'オープン', '参考上代', 'メーカー希望小売価格', 'カタログ価格', 'カスタム', '単価'];
+  return values.map(function(v) {
+    return '<option value="' + esc(v) + '"' + (v === selected ? ' selected' : '') + '>' + esc(v) + '</option>';
+  }).join('');
+}
+
+function draftTaxOptions(selected) {
+  const values = [['1', '標準税率（10%）'], ['2', '軽減税率（8%）'], ['3', '非課税']];
+  return values.map(function(v) {
+    return '<option value="' + v[0] + '"' + (String(selected) === v[0] ? ' selected' : '') + '>' + v[1] + '</option>';
+  }).join('');
+}
+
 function renderDraftList(drafts) {
   const el = document.getElementById('draftList');
   if (!drafts || !drafts.length) {
@@ -4899,6 +4967,22 @@ function draftCardHtml(d) {
   const targetInfo = d.draftType === 'add_to_existing'
     ? '<div style="font-size:12px;color:#0e7490;margin-bottom:6px;">既存商品ID: ' + esc(d.targetProductId) + ' へセット追加</div>'
     : '';
+
+  const isDraft = d.status === '下書き';
+  const disabledAttr = isDraft ? '' : ' disabled';
+  const isNewProduct = d.draftType !== 'add_to_existing';
+  const metaRow =
+    '<div class="draft-meta-row">' +
+      (isNewProduct ?
+        '<div class="draft-meta-field"><label>カテゴリー *</label><select id="draft-category-' + d.draftId + '"' + disabledAttr + '>' + draftCategoryOptions(d.categoryId) + '</select></div>' +
+        '<div class="draft-meta-field"><label>特集1（シリーズ）</label><select id="draft-feature1-' + d.draftId + '"' + disabledAttr + '>' + draftFeatureOptions(1, d.featureId1) + '</select></div>' +
+        '<div class="draft-meta-field"><label>特集2（メーカー）</label><select id="draft-feature2-' + d.draftId + '"' + disabledAttr + '>' + draftFeatureOptions(2, d.featureId2) + '</select></div>' +
+        '<div class="draft-meta-field"><label>特集3（キャンペーン）</label><select id="draft-feature3-' + d.draftId + '"' + disabledAttr + '>' + draftFeatureOptions(3, d.featureId3) + '</select></div>'
+        : '') +
+      '<div class="draft-meta-field"><label>税区分</label><select id="draft-tax-' + d.draftId + '"' + disabledAttr + '>' + draftTaxOptions(d.taxTypeId || 1) + '</select></div>' +
+      '<div class="draft-meta-field"><label>上代タイプ</label><select id="draft-jodai-' + d.draftId + '"' + disabledAttr + '>' + draftJodaiTypeOptions(draftDefaultJodaiType(d)) + '</select></div>' +
+      '<div class="draft-meta-note">公開設定: 非表示で登録（公開は登録後の🌐ボタンから）</div>' +
+    '</div>';
 
   const refs = (d.refUrls || []).length
     ? '<div class="draft-refs">📎 参考URL: ' + d.refUrls.map(function(u) {
@@ -4932,6 +5016,7 @@ function draftCardHtml(d) {
         (d.status !== '下書き' ? ' disabled' : '') + '>' +
     '</div>' +
     targetInfo +
+    metaRow +
     '<table class="draft-set-table"><thead><tr><th>コード</th><th>セット名</th><th>売価</th><th>上代</th><th>仕入</th><th>最終売上日</th></tr></thead><tbody>' +
       setsRows +
     '</tbody></table>' +
@@ -4955,12 +5040,32 @@ function collectDraftSets(draftId) {
   });
 }
 
+// カード上のフォーム値を集める。add_to_existingドラフトはcategory/feature系のselectがDOMに無いためundefinedのまま
+// （JSON.stringifyでキーごと省略され、GAS側updateDraftの`!== undefined`判定で「変更なし」として扱われる）
+function collectDraftFormPayload(draftId) {
+  const catEl   = document.getElementById('draft-category-' + draftId);
+  const f1El    = document.getElementById('draft-feature1-' + draftId);
+  const f2El    = document.getElementById('draft-feature2-' + draftId);
+  const f3El    = document.getElementById('draft-feature3-' + draftId);
+  const taxEl   = document.getElementById('draft-tax-' + draftId);
+  const jodaiEl = document.getElementById('draft-jodai-' + draftId);
+  return {
+    productName: document.getElementById('draft-name-' + draftId).value,
+    description: document.getElementById('draft-desc-' + draftId).value,
+    categoryId:  catEl   ? (parseInt(catEl.value) || null) : undefined,
+    featureId1:  f1El    ? (parseInt(f1El.value) || null) : undefined,
+    featureId2:  f2El    ? (parseInt(f2El.value) || null) : undefined,
+    featureId3:  f3El    ? (parseInt(f3El.value) || null) : undefined,
+    jodaiType:   jodaiEl ? jodaiEl.value : undefined,
+    taxTypeId:   taxEl   ? (parseInt(taxEl.value) || 1) : undefined,
+    sets: collectDraftSets(draftId)
+  };
+}
+
 function saveDraftOnly(draftId, btn) {
   btn.disabled = true;
-  const productName = document.getElementById('draft-name-' + draftId).value;
-  const description = document.getElementById('draft-desc-' + draftId).value;
-  const sets = collectDraftSets(draftId);
-  gasPost({ action: 'updateDraft', draftId: draftId, productName: productName, description: description, sets: sets }, function(res) {
+  const payload = collectDraftFormPayload(draftId);
+  gasPost(Object.assign({ action: 'updateDraft', draftId: draftId }, payload), function(res) {
     btn.disabled = false;
     if (!res.ok) { showToast('保存失敗: ' + res.error, true); return; }
     showToast('保存しました ✓');
@@ -4969,21 +5074,28 @@ function saveDraftOnly(draftId, btn) {
 }
 
 function approveDraftOne(draftId, btn) {
-  const productName = document.getElementById('draft-name-' + draftId).value;
-  if (!confirm('「' + productName + '」を非表示状態でBCARTに登録します。よろしいですか？')) return;
+  const original = draftList.find(function(d) { return d.draftId === draftId; });
+  const payload = collectDraftFormPayload(draftId);
+  if (!payload.productName || !payload.productName.trim()) { showToast('商品名を入力してください', true); return; }
+  if (original && original.draftType !== 'add_to_existing' && !payload.categoryId) {
+    showToast('カテゴリーを選択してください', true);
+    return;
+  }
+  if (!confirm('「' + payload.productName + '」を非表示状態でBCARTに登録します。よろしいですか？')) return;
   btn.disabled = true;
   btn.textContent = '登録中...';
-  // 承認前に編集内容を保存してから登録を実行する
-  const description = document.getElementById('draft-desc-' + draftId).value;
-  const sets = collectDraftSets(draftId);
-  gasPostAsync({ action: 'updateDraft', draftId: draftId, productName: productName, description: description, sets: sets })
+  // 承認前にカード上の編集内容（カテゴリ・特集・税区分・上代タイプ含む）を保存してから登録を実行する
+  gasPostAsync(Object.assign({ action: 'updateDraft', draftId: draftId }, payload))
     .then(function() {
       return gasPostAsync({ action: 'approveDraft', draftId: draftId });
     })
     .then(function(res) {
       if (!res.ok) { showToast('登録失敗: ' + res.error, true); btn.disabled = false; btn.textContent = '✅ 承認して登録（非表示）'; return; }
       if (res.partial) { showToast('⚠️ ' + res.message, true); btn.disabled = false; btn.textContent = '✅ 承認して登録（非表示）'; loadDrafts(); return; }
-      showToast('登録しました（非表示）✓ 商品ID: ' + res.productId);
+      let msg = '登録しました（非表示）✓ 商品ID: ' + res.productId;
+      if (res.notes && res.notes.length) msg += '（' + res.notes.join('；') + '）';
+      if (res.descriptionApplied === false) msg += ' ⚠️説明文の反映に失敗しました';
+      showToast(msg);
       loadDrafts();
     })
     .catch(function(e) {
