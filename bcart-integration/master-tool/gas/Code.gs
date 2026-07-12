@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.14.0';
+const VERSION = 'v2.16.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -29,6 +29,8 @@ const SHEET_SP_INDIVIDUAL = '特別価格_個別';
 const SHEET_VF_DETAILS  = '例外表示_明細';
 const SHEET_FEATURES    = '特集_管理';
 const SHEET_DESC_SKIP   = '説明文不要';
+const SHEET_DRAFT       = '登録ドラフト';
+const SHEET_DRAFT_SETS  = '登録ドラフト_セット';
 
 // ===================== エントリポイント =====================
 function doPost(e) {
@@ -37,7 +39,7 @@ function doPost(e) {
     const action = params.action;
 
     const noAuthActions = ['getVersion'];
-    const claudeActions = ['previewSuffixName', 'applySuffixName', 'previewHanbaiEnd', 'applyHanbaiEnd', 'previewSetDescription', 'applySetDescription', 'previewProductFields', 'applyProductFields', 'previewSetFields', 'applySetFields', 'previewProductSort', 'applyProductSort'];
+    const claudeActions = ['previewSuffixName', 'applySuffixName', 'previewHanbaiEnd', 'applyHanbaiEnd', 'previewSetDescription', 'applySetDescription', 'previewProductFields', 'applyProductFields', 'previewSetFields', 'applySetFields', 'previewProductSort', 'applyProductSort', 'getDraftSupplierSummary', 'getDraftCandidates', 'getRegisteredExamples', 'saveDrafts'];
     let userName = '不明';
     if (claudeActions.includes(action)) {
       const claudeKey = _BCART_PROPS.getProperty('CLAUDE_API_KEY');
@@ -138,6 +140,17 @@ function doPost(e) {
       case 'applySetFields':         return jsonResponse(applySetFields(params));
       case 'previewProductSort':     return jsonResponse(previewProductSort(params));
       case 'applyProductSort':       return jsonResponse(applyProductSort(params));
+      // 商品登録ドラフト（AI叩き台作成・フェーズ1）
+      case 'getDraftSupplierSummary': return jsonResponse(getDraftSupplierSummary());
+      case 'getDraftCandidates':      return jsonResponse(getDraftCandidates(params));
+      case 'getRegisteredExamples':   return jsonResponse(getRegisteredExamples(params));
+      case 'saveDrafts':              return jsonResponse(saveDrafts(params));
+      // 登録ドラフト フェーズ2（ポータルセッション認証必須。claudeActionsに追加禁止）
+      case 'getDrafts':               return jsonResponse(getDrafts(params));
+      case 'updateDraft':             return jsonResponse(updateDraft(params));
+      case 'approveDraft':            return jsonResponse(approveDraft(params));
+      case 'rejectDraft':             return jsonResponse(rejectDraft(params));
+      case 'publishDraft':            return jsonResponse(publishDraft(params));
       default:                         return jsonResponse({ ok: false, error: 'UNKNOWN_ACTION' });
     }
   } catch (err) {
@@ -1450,6 +1463,544 @@ function bulkRegisterProduct(params) {
   return { ok: true, productId: createdProductId, results };
 }
 
+// ===================== 商品登録ドラフト（AI叩き台作成・フェーズ1） =====================
+
+// 未登録商品の抽出（calcDiffsのunregistered判定と同一基準。ドラフト用に項目を拡張）
+function getUnregisteredForDraft() {
+  const csvData = loadCsvFromDrive();
+  if (!csvData.ok) return csvData;
+  const bcartSets = bcartGetAll('/product_sets');
+  if (!bcartSets.ok) return bcartSets;
+  const ignoreMap = getIgnoreMap();
+
+  const bcartSetMap = {};
+  bcartSets.data.forEach(s => { bcartSetMap[s.product_no] = s; });
+
+  const rows = [];
+  csvData.rows.forEach(row => {
+    const code = row['コード'];
+    if (!code) return;
+    const codeKey = String(parseInt(code, 10) || code);
+    if (bcartSetMap[codeKey]) return;
+    if (ignoreMap[codeKey]) return;
+    const isDiscontinued = row['廃番'] === '1' || row['廃番'] === 'TRUE' || row['廃番'] === '廃番';
+    if (isDiscontinued) return;
+    if ((row['在庫有無'] || '') !== 'する') return;  // 差異一覧のデフォルトフィルターに合わせる（HANDOVER.md 差異検出除外ルール）
+    const price = parseFloat(String(row['売上単価'] || '').replace(/,/g, '')) || 0;
+    if (!price) return;
+
+    rows.push({
+      code: codeKey,
+      name: row['商品名'] || row['略称'] || '',
+      kana: row['かな'] || '',
+      ryakusho: row['略称'] || '',
+      unit: (row['単位名'] || '').trim(),
+      supplierCd: (row['仕入先CD'] || '').trim(),
+      supplierName: row['仕入先名'] || '',
+      price: price,
+      kouri: parseFloat(String(row['定価１'] || row['定価1'] || '').replace(/,/g, '')) || 0,
+      shiire: parseFloat(String(row['仕入単価'] || '').replace(/,/g, '')) || 0,
+      jan: (row['JANCD'] || '').trim(),
+      lastSaleKey: lastSaleDateKey_(row['最終売上日']),
+      stockManagement: row['在庫有無'] || ''
+    });
+  });
+
+  return { ok: true, rows: rows };
+}
+
+// 最終売上日をYYYYMMDD文字列に正規化（比較・ソート用）。不明/実績なしはnull。
+// ⚠️ 商品.CSVでの実際の表記は未検証（設計書§7-9）。同源データのsales-dbはYYYYMMDD8桁・実績なしは00000000。
+// スラッシュ/ハイフン区切りにもフォールバック対応するが、デプロイ後に実データで要検証。
+function lastSaleDateKey_(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s) return null;
+  if (/^\d{8}$/.test(s)) return s === '00000000' ? null : s;
+  const m = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+  if (m) {
+    const key = m[1] + ('0' + m[2]).slice(-2) + ('0' + m[3]).slice(-2);
+    return key === '00000000' ? null : key;
+  }
+  return null;
+}
+
+function dateKeyDaysAgo_(days) {
+  const d = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  return '' + d.getFullYear() + ('0' + (d.getMonth() + 1)).slice(-2) + ('0' + d.getDate()).slice(-2);
+}
+
+function dateKeyToSlash_(key) {
+  if (!key) return '';
+  return key.slice(0, 4) + '/' + key.slice(4, 6) + '/' + key.slice(6, 8);
+}
+
+// getDraftSupplierSummary — 仕入先別の未登録件数サマリー（バッチ計画用）
+function getDraftSupplierSummary() {
+  const data = getUnregisteredForDraft();
+  if (!data.ok) return data;
+
+  const cutoff1y = dateKeyDaysAgo_(365);
+  const cutoff2y = dateKeyDaysAgo_(730);
+  const bySupplier = {};
+
+  data.rows.forEach(r => {
+    const key = r.supplierCd || '(不明)';
+    if (!bySupplier[key]) {
+      bySupplier[key] = { supplierCd: r.supplierCd, supplierName: r.supplierName, countWithin1y: 0, countWithin2y: 0, countTotal: 0 };
+    }
+    bySupplier[key].countTotal++;
+    if (r.lastSaleKey && r.lastSaleKey >= cutoff1y) bySupplier[key].countWithin1y++;
+    if (r.lastSaleKey && r.lastSaleKey >= cutoff2y) bySupplier[key].countWithin2y++;
+  });
+
+  const suppliers = Object.keys(bySupplier).map(k => bySupplier[k])
+    .sort((a, b) => b.countWithin1y - a.countWithin1y);
+
+  return { ok: true, totalUnregistered: data.rows.length, suppliers: suppliers };
+}
+
+// getDraftCandidates — ドラフト対象候補の取得（仕入先・最終売上日で絞り込み、最終売上日降順）
+function getDraftCandidates(params) {
+  const data = getUnregisteredForDraft();
+  if (!data.ok) return data;
+
+  const supplierCd = params.supplierCd != null ? String(params.supplierCd).trim() : '';
+  const withinDays = params.lastSaleWithinDays || 365;
+  const cutoff = dateKeyDaysAgo_(withinDays);
+  const limit = params.limit || 50;
+  const offset = params.offset || 0;
+
+  const filtered = data.rows.filter(r => {
+    if (supplierCd && r.supplierCd !== supplierCd) return false;
+    if (!r.lastSaleKey || r.lastSaleKey < cutoff) return false;
+    return true;
+  });
+
+  filtered.sort((a, b) => (b.lastSaleKey || '').localeCompare(a.lastSaleKey || ''));
+
+  const page = filtered.slice(offset, offset + limit);
+
+  return {
+    ok: true,
+    total: filtered.length,
+    candidates: page.map(r => ({
+      code: r.code, name: r.name, kana: r.kana, ryakusho: r.ryakusho,
+      unit: r.unit, supplierCd: r.supplierCd, supplierName: r.supplierName,
+      price: r.price, kouri: r.kouri, shiire: r.shiire, jan: r.jan,
+      lastSaleDate: dateKeyToSlash_(r.lastSaleKey),
+      stockManagement: r.stockManagement
+    }))
+  };
+}
+
+// getRegisteredExamples — シリーズ推定用のfew-shot教師データ（既存の登録実績）
+function getRegisteredExamples(params) {
+  const supplierCd = params.supplierCd != null ? String(params.supplierCd).trim() : '';
+  const maxProducts = params.maxProducts || 80;
+
+  const csvData = loadCsvFromDrive();
+  if (!csvData.ok) return csvData;
+  const codeToSupplier = {};
+  csvData.rows.forEach(row => {
+    const code = row['コード'];
+    if (!code) return;
+    const key = String(parseInt(code, 10) || code);
+    codeToSupplier[key] = (row['仕入先CD'] || '').trim();
+  });
+
+  const productsRes = bcartGetAll('/products');
+  if (!productsRes.ok) return productsRes;
+  Utilities.sleep(500);
+  const setsRes = bcartGetAll('/product_sets');
+  if (!setsRes.ok) return setsRes;
+
+  const productMap = {};
+  productsRes.data.forEach(p => { productMap[p.id] = p; });
+
+  const setsByProduct = {};
+  setsRes.data.forEach(s => {
+    const pid = String(s.product_id);
+    if (!setsByProduct[pid]) setsByProduct[pid] = [];
+    setsByProduct[pid].push(s);
+  });
+
+  let matchedIds = [];
+  if (supplierCd) {
+    matchedIds = Object.keys(setsByProduct).filter(pid =>
+      setsByProduct[pid].some(s => codeToSupplier[String(parseInt(s.product_no, 10) || s.product_no)] === supplierCd)
+    );
+  }
+
+  let fallback = false;
+  if (matchedIds.length === 0) {
+    fallback = true;
+    matchedIds = Object.keys(setsByProduct).filter(pid => setsByProduct[pid].length > 1);
+  }
+
+  matchedIds.sort((a, b) => setsByProduct[b].length - setsByProduct[a].length);
+  matchedIds = matchedIds.slice(0, maxProducts);
+
+  const examples = matchedIds.map(pid => {
+    const p = productMap[pid] || {};
+    return {
+      productId: Number(pid),
+      productName: p.name || '',
+      categoryId: p.category_id || null,
+      featureIds: [p.feature_id1 || null, p.feature_id2 || null, p.feature_id3 || null],
+      sets: setsByProduct[pid].map(s => ({ setId: s.id, productNo: s.product_no, setName: s.name }))
+    };
+  });
+
+  const categoriesRes = getCategories();
+
+  return {
+    ok: true,
+    examples: examples,
+    categories: categoriesRes.ok ? categoriesRes.categories : [],
+    fallback: fallback
+  };
+}
+
+// saveDrafts — ドラフト保存（登録ドラフト／登録ドラフト_セットシートへ書き込み。部分保存はしない）
+function saveDrafts(params) {
+  const drafts = params.drafts || [];
+  if (drafts.length === 0) return { ok: false, error: '保存するドラフトがありません' };
+
+  const parentSheet = getOrCreateSheet(SHEET_DRAFT);
+  const setSheet = getOrCreateSheet(SHEET_DRAFT_SETS);
+
+  const parentRows = parentSheet.getDataRange().getValues();
+  const parentStatusById = {};
+  for (let i = 1; i < parentRows.length; i++) {
+    if (parentRows[i][0]) parentStatusById[parentRows[i][0]] = parentRows[i][1];
+  }
+
+  // 重複ガード: 既存の下書き/承認/登録済ドラフトに含まれるcodeを収集
+  const existingSetRows = setSheet.getDataRange().getValues();
+  const activeCodes = {};
+  for (let i = 1; i < existingSetRows.length; i++) {
+    const draftId = existingSetRows[i][0];
+    const code = existingSetRows[i][1];
+    if (!draftId || !code) continue;
+    const status = parentStatusById[draftId];
+    if (status === '下書き' || status === '承認' || status === '登録済') {
+      activeCodes[String(code)] = draftId;
+    }
+  }
+
+  // 本日分の既存連番の最大値を取得
+  const todayStr = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyyMMdd');
+  let maxSeq = 0;
+  for (let i = 1; i < parentRows.length; i++) {
+    const id = String(parentRows[i][0] || '');
+    if (id.indexOf('D' + todayStr + '-') === 0) {
+      const seq = parseInt(id.split('-')[1], 10);
+      if (!isNaN(seq) && seq > maxSeq) maxSeq = seq;
+    }
+  }
+
+  const nowStr = new Date().toLocaleString('ja-JP');
+  const savedIds = [];
+  const skipped = [];
+  const supplierNames = {};
+  let savedCount = 0;
+
+  drafts.forEach(d => {
+    const sets = d.sets || [];
+    if (sets.length === 0) {
+      skipped.push({ code: '', reason: 'セットが指定されていません' });
+      return;
+    }
+    const conflictCode = sets.map(s => s.code).find(c => activeCodes[String(c)]);
+    if (conflictCode) {
+      skipped.push({ code: conflictCode, reason: '既存ドラフト' + activeCodes[String(conflictCode)] + 'に含まれるためスキップ' });
+      return;
+    }
+
+    maxSeq++;
+    const draftId = 'D' + todayStr + '-' + ('00' + maxSeq).slice(-3);
+
+    parentSheet.appendRow([
+      draftId, '下書き', d.draftType || 'new_product', d.targetProductId || '',
+      d.productName || '', d.categoryId || '',
+      d.featureId1 || '', d.featureId2 || '', d.featureId3 || '',
+      d.description || '', d.confidence || '', d.reasoning || '',
+      (d.refUrls || []).join('\n'), d.supplierCd || '', d.supplierName || '',
+      nowStr, '', ''
+    ]);
+
+    sets.forEach(s => {
+      setSheet.appendRow([
+        draftId, s.code || '', s.setName || '', s.jan || '',
+        s.unitPrice || '', s.jodai || '', s.shiire || '', s.unit || '',
+        s.lastSaleDate || ''
+      ]);
+      activeCodes[String(s.code)] = draftId;
+    });
+
+    savedIds.push(draftId);
+    savedCount++;
+    if (d.supplierName) supplierNames[d.supplierName] = true;
+  });
+
+  if (savedCount > 0) {
+    const webhook = PropertiesService.getScriptProperties().getProperty('LINEWORKS_WEBHOOK');
+    if (webhook) {
+      const supplierLabel = Object.keys(supplierNames).join('、') || '不明';
+      try {
+        UrlFetchApp.fetch(webhook, {
+          method: 'post',
+          contentType: 'application/json',
+          payload: JSON.stringify({ content: `【BCART登録ドラフト】${savedCount}件保存（仕入先: ${supplierLabel}）\nレビューをお願いします。` }),
+          muteHttpExceptions: true
+        });
+      } catch (e) {
+        Logger.log('LINE WORKS通知エラー: ' + e);
+      }
+    }
+  }
+
+  return { ok: true, saved: savedCount, skipped: skipped, draftIds: savedIds };
+}
+
+// ===================== 登録ドラフト（フェーズ2: レビュー・登録実行。すべてポータルセッション認証） =====================
+
+// 登録ドラフト列インデックス(0始まり): 0 draft_id / 1 status / 2 draft_type / 3 target_product_id /
+// 4 product_name / 5 category_id / 6-8 feature_id1-3 / 9 description / 10 confidence / 11 reasoning /
+// 12 ref_urls / 13 supplier_cd / 14 supplier_name / 15 created_at / 16 reviewed_at / 17 registered_product_id
+
+function getDrafts(params) {
+  const status = params.status !== undefined ? params.status : '下書き';
+  const supplierCd = params.supplierCd != null ? String(params.supplierCd) : '';
+
+  const parentRows = getOrCreateSheet(SHEET_DRAFT).getDataRange().getValues();
+  const setRows = getOrCreateSheet(SHEET_DRAFT_SETS).getDataRange().getValues();
+
+  const setsByDraft = {};
+  for (let i = 1; i < setRows.length; i++) {
+    const r = setRows[i];
+    if (!r[0]) continue;
+    if (!setsByDraft[r[0]]) setsByDraft[r[0]] = [];
+    setsByDraft[r[0]].push({
+      code: r[1], setName: r[2], jan: r[3], unitPrice: r[4], jodai: r[5], shiire: r[6], unit: r[7], lastSaleDate: r[8]
+    });
+  }
+
+  const drafts = [];
+  for (let i = 1; i < parentRows.length; i++) {
+    const r = parentRows[i];
+    if (!r[0]) continue;
+    if (status && r[1] !== status) continue;
+    if (supplierCd && String(r[13]) !== supplierCd) continue;
+    drafts.push({
+      draftId: r[0], status: r[1], draftType: r[2], targetProductId: r[3] || null,
+      productName: r[4], categoryId: r[5] || null,
+      featureId1: r[6] || null, featureId2: r[7] || null, featureId3: r[8] || null,
+      description: r[9], confidence: r[10], reasoning: r[11],
+      refUrls: r[12] ? String(r[12]).split('\n').filter(Boolean) : [],
+      supplierCd: r[13], supplierName: r[14],
+      createdAt: r[15], reviewedAt: r[16] || '', registeredProductId: r[17] || null,
+      sets: setsByDraft[r[0]] || []
+    });
+  }
+  drafts.sort((a, b) => b.draftId.localeCompare(a.draftId));
+
+  return { ok: true, drafts: drafts };
+}
+
+function updateDraft(params) {
+  const sheet = getOrCreateSheet(SHEET_DRAFT);
+  const rows = sheet.getDataRange().getValues();
+  let rowIdx = -1;
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] === params.draftId) { rowIdx = i + 1; break; }
+  }
+  if (rowIdx === -1) return { ok: false, error: 'draftIdが見つかりません' };
+
+  if (params.productName !== undefined) sheet.getRange(rowIdx, 5).setValue(params.productName);
+  if (params.categoryId !== undefined) sheet.getRange(rowIdx, 6).setValue(params.categoryId);
+  if (params.featureId1 !== undefined) sheet.getRange(rowIdx, 7).setValue(params.featureId1);
+  if (params.featureId2 !== undefined) sheet.getRange(rowIdx, 8).setValue(params.featureId2);
+  if (params.featureId3 !== undefined) sheet.getRange(rowIdx, 9).setValue(params.featureId3);
+  if (params.description !== undefined) sheet.getRange(rowIdx, 10).setValue(params.description);
+
+  if (params.sets) {
+    const setSheet = getOrCreateSheet(SHEET_DRAFT_SETS);
+    const setRows = setSheet.getDataRange().getValues();
+    for (let i = setRows.length; i >= 2; i--) {
+      if (setRows[i - 1][0] === params.draftId) setSheet.deleteRow(i);
+    }
+    params.sets.forEach(s => {
+      setSheet.appendRow([params.draftId, s.code || '', s.setName || '', s.jan || '', s.unitPrice || '', s.jodai || '', s.shiire || '', s.unit || '', s.lastSaleDate || '']);
+    });
+  }
+
+  addHistory({ userName: params._userName, code: '', name: params.draftId, type: '登録ドラフト編集', before: '', after: '', result: '成功' });
+  return { ok: true };
+}
+
+// 承認＝登録実行。シートの現在値を正として非表示登録する
+function approveDraft(params) {
+  const parentSheet = getOrCreateSheet(SHEET_DRAFT);
+  const parentRows = parentSheet.getDataRange().getValues();
+  let rowIdx = -1, draft = null;
+  for (let i = 1; i < parentRows.length; i++) {
+    if (parentRows[i][0] === params.draftId) { rowIdx = i + 1; draft = parentRows[i]; break; }
+  }
+  if (rowIdx === -1) return { ok: false, error: 'draftIdが見つかりません' };
+  if (draft[1] !== '下書き') return { ok: false, error: 'このドラフトは下書き状態ではありません（status: ' + draft[1] + '）' };
+
+  const setRows = getOrCreateSheet(SHEET_DRAFT_SETS).getDataRange().getValues();
+  const sets = [];
+  for (let i = 1; i < setRows.length; i++) {
+    if (setRows[i][0] === params.draftId) {
+      sets.push({
+        code: setRows[i][1], setName: setRows[i][2], janCode: setRows[i][3],
+        csvPrice: Number(setRows[i][4]) || 0, csvKouri: Number(setRows[i][5]) || 0,
+        csvShiire: Number(setRows[i][6]) || 0, csvUnit: setRows[i][7]
+      });
+    }
+  }
+  if (sets.length === 0) return { ok: false, error: 'セットが登録されていません' };
+
+  const draftType = draft[2];
+  const productName = draft[4];
+  const categoryId = draft[5];
+  const featureId1 = draft[6] || null, featureId2 = draft[7] || null, featureId3 = draft[8] || null;
+  const description = draft[9];
+
+  let productId, results;
+  if (draftType === 'add_to_existing') {
+    const targetProductId = draft[3];
+    results = sets.map(s => {
+      const res = addSetToProduct({
+        _userName: params._userName, productId: targetProductId, code: s.code, setName: s.setName,
+        janCode: s.janCode, csvPrice: s.csvPrice, csvKouri: s.csvKouri, csvShiire: s.csvShiire, csvUnit: s.csvUnit,
+        setFlag: '非表示'
+      });
+      return { code: s.code, ok: res.ok, setId: res.setId || null, error: res.ok ? null : res.error };
+    });
+    productId = Number(targetProductId);
+  } else {
+    const bulkRes = bulkRegisterProduct({
+      _userName: params._userName, productName: productName, categoryId: categoryId,
+      featureId1: featureId1, featureId2: featureId2, featureId3: featureId3,
+      productFlag: '非表示', setFlag: '非表示', sets: sets
+    });
+    if (!bulkRes.ok) return bulkRes;  // 全セット失敗＝ロールバック済み。ドラフトは下書きのまま
+    productId = bulkRes.productId;
+    results = bulkRes.results;
+  }
+
+  const allOk = results.every(r => r.ok);
+  if (!allOk) {
+    addHistory({
+      userName: params._userName, code: sets.map(s => s.code).join(','), name: productName || '',
+      type: '登録ドラフト承認（一部失敗）', before: '', after: '商品ID: ' + productId, result: '一部失敗'
+    });
+    return {
+      ok: true, partial: true, productId: productId, results: results,
+      message: '一部のセットが登録に失敗しました。ステータスは下書きのままです。BCART管理画面で商品ID ' + productId + ' を確認してください。'
+    };
+  }
+
+  // description反映（registerProduct/bulkRegisterProduct系はdescriptionを扱わないため追加PATCH）
+  if (description && productId) {
+    const descRes = bcartPatch('/products/' + productId, { description: description });
+    if (!descRes.ok) Logger.log('approveDraft: description PATCH失敗 draftId=' + params.draftId + ' error=' + descRes.error);
+  }
+
+  parentSheet.getRange(rowIdx, 2).setValue('登録済');
+  parentSheet.getRange(rowIdx, 17).setValue(new Date().toLocaleString('ja-JP'));
+  parentSheet.getRange(rowIdx, 18).setValue(productId);
+
+  addHistory({
+    userName: params._userName, code: sets.map(s => s.code).join(','), name: productName || '',
+    type: '登録ドラフト承認・登録', before: '', after: '商品ID: ' + productId, result: '成功'
+  });
+
+  return { ok: true, productId: productId, results: results };
+}
+
+// 却下＝対応不要マークへ。以後の候補抽出から自動的に消える
+function rejectDraft(params) {
+  const parentSheet = getOrCreateSheet(SHEET_DRAFT);
+  const rows = parentSheet.getDataRange().getValues();
+  let rowIdx = -1;
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] === params.draftId) { rowIdx = i + 1; break; }
+  }
+  if (rowIdx === -1) return { ok: false, error: 'draftIdが見つかりません' };
+
+  const supplierName = rows[rowIdx - 1][14];
+  parentSheet.getRange(rowIdx, 2).setValue('却下');
+  parentSheet.getRange(rowIdx, 17).setValue(new Date().toLocaleString('ja-JP'));
+
+  const setRows = getOrCreateSheet(SHEET_DRAFT_SETS).getDataRange().getValues();
+  const codes = [];
+  for (let i = 1; i < setRows.length; i++) {
+    if (setRows[i][0] === params.draftId) codes.push({ code: setRows[i][1], setName: setRows[i][2] });
+  }
+  codes.forEach(c => {
+    markIgnore({ code: c.code, name: c.setName, reason: '登録ドラフト却下: ' + (params.reason || ''), supplier: supplierName });
+  });
+
+  addHistory({
+    userName: params._userName, code: codes.map(c => c.code).join(','), name: params.draftId,
+    type: '登録ドラフト却下', before: '', after: '', result: '成功'
+  });
+  return { ok: true };
+}
+
+// 公開＝表示化（登録済ドラフトのみ。画像アップ完了後にTakashiが押す想定）
+function publishDraft(params) {
+  const parentSheet = getOrCreateSheet(SHEET_DRAFT);
+  const rows = parentSheet.getDataRange().getValues();
+  let rowIdx = -1, draft = null;
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] === params.draftId) { rowIdx = i + 1; draft = rows[i]; break; }
+  }
+  if (rowIdx === -1) return { ok: false, error: 'draftIdが見つかりません' };
+  if (draft[1] !== '登録済') return { ok: false, error: 'このドラフトは登録済み状態ではありません（status: ' + draft[1] + '）' };
+
+  const draftType = draft[2];
+  const registeredProductId = draft[17];
+  if (!registeredProductId) return { ok: false, error: '登録済み商品IDが記録されていません' };
+
+  const setRows = getOrCreateSheet(SHEET_DRAFT_SETS).getDataRange().getValues();
+  const codes = [];
+  for (let i = 1; i < setRows.length; i++) {
+    if (setRows[i][0] === params.draftId) codes.push(setRows[i][1]);
+  }
+
+  const allSets = bcartGetAll('/product_sets');
+  if (!allSets.ok) return allSets;
+  const setIdByCode = {};
+  allSets.data.forEach(s => { setIdByCode[s.product_no] = s.id; });
+
+  const results = codes.map(code => {
+    const setId = setIdByCode[code];
+    if (!setId) return { code: code, ok: false, error: 'BCART上にセットが見つかりません' };
+    const res = bcartPatch('/product_sets/' + setId, { set_flag: '表示' });
+    return { code: code, ok: res.ok, error: res.ok ? null : res.error };
+  });
+
+  if (draftType === 'new_product') {
+    const productRes = bcartPatch('/products/' + registeredProductId, { flag: '表示' });
+    if (!productRes.ok) return { ok: false, error: '親商品の表示化に失敗しました: ' + productRes.error, results: results };
+  }
+
+  const allOk = results.every(r => r.ok);
+  parentSheet.getRange(rowIdx, 2).setValue('公開済');
+
+  addHistory({
+    userName: params._userName, code: codes.join(','), name: draft[4] || '',
+    type: '登録ドラフト公開', before: '', after: '商品ID: ' + registeredProductId, result: allOk ? '成功' : '一部失敗'
+  });
+
+  return { ok: true, allOk: allOk, results: results };
+}
+
 // ===================== 会員取得 =====================
 function getMembers() {
   try {
@@ -2539,6 +3090,14 @@ function getOrCreateSheet(sheetName) {
       sheet.appendRow(['feature_id', 'type', 'updated_at']);
       sheet.setFrozenRows(1);
       sheet.getRange(1, 1, 1, 3).setFontWeight('bold').setBackground('#f3f4f6');
+    } else if (sheetName === SHEET_DRAFT) {
+      sheet.appendRow(['draft_id', 'status', 'draft_type', 'target_product_id', 'product_name', 'category_id', 'feature_id1', 'feature_id2', 'feature_id3', 'description', 'confidence', 'reasoning', 'ref_urls', 'supplier_cd', 'supplier_name', 'created_at', 'reviewed_at', 'registered_product_id']);
+      sheet.setFrozenRows(1);
+      sheet.getRange(1, 1, 1, 18).setFontWeight('bold').setBackground('#f3f4f6');
+    } else if (sheetName === SHEET_DRAFT_SETS) {
+      sheet.appendRow(['draft_id', 'code', 'set_name', 'jan', 'unit_price', 'jodai', 'shiire', 'unit', 'last_sale_date']);
+      sheet.setFrozenRows(1);
+      sheet.getRange(1, 1, 1, 9).setFontWeight('bold').setBackground('#f3f4f6');
     }
   } else {
     // 既存シートのマイグレーション処理
