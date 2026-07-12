@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.17.1';
+const VERSION = 'v2.17.2';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -1215,6 +1215,10 @@ function getCategories() {
   };
 }
 
+// 美容師限定表示（非会員・通常会員・個人会員=id1には非表示、美容室=id2・社員=id10には表示）。
+// 表示グループの指定方法は既存の例外表示機能(VF_FILTER_VALUE)と同じ書式（'非会員'/'通常会員'はキーワード、以降は表示グループID）
+const BEAUTY_ONLY_VIEW_GROUP_FILTER = '非会員,通常会員,1';
+
 // 上代(csvKouri)が無い(0/null)場合は「参考上代タイプ: 非表示」とし、jodai/group_priceの
 // メーカー希望小売価格を送らない（0円をメーカー希望小売価格として送るとBCART APIの
 // バリデーション(422)に弾かれるため。2026-07-12 登録ドラフト承認時に発覚）
@@ -1279,7 +1283,8 @@ function registerProduct(params) {
       stock_flag:  1,
       tax_type_id: params.taxTypeId || 1,
       set_flag:    params.setFlag || '非表示'
-    }, buildJodaiFields_(params.csvKouri, params.csvShiire, params.jodaiType))]
+    }, buildJodaiFields_(params.csvKouri, params.csvShiire, params.jodaiType),
+       (params.viewGroupFilter ? { view_group_filter: params.viewGroupFilter } : {}))]
   };
 
   const step2 = bcartPost('/product_sets', setBody);
@@ -1343,7 +1348,8 @@ function addSetToProduct(params) {
       stock_flag:  1,
       tax_type_id: params.taxTypeId || 1,
       set_flag:    params.setFlag || '非表示'
-    }, buildJodaiFields_(params.csvKouri, params.csvShiire, params.jodaiType))]
+    }, buildJodaiFields_(params.csvKouri, params.csvShiire, params.jodaiType),
+       (params.viewGroupFilter ? { view_group_filter: params.viewGroupFilter } : {}))]
   };
 
   const res = bcartPost('/product_sets', setBody);
@@ -1427,7 +1433,8 @@ function bulkRegisterProduct(params) {
         stock_flag:  1,
         tax_type_id: params.taxTypeId || 1,
         set_flag:    params.setFlag || '非表示'
-      }, buildJodaiFields_(s.csvKouri, s.csvShiire, params.jodaiType))]
+      }, buildJodaiFields_(s.csvKouri, s.csvShiire, params.jodaiType),
+         (params.viewGroupFilter ? { view_group_filter: params.viewGroupFilter } : {}))]
     };
     const res = bcartPost('/product_sets', setBody);
     const setId = res.ok && res.data && res.data.product_sets && res.data.product_sets[0]
@@ -1772,7 +1779,7 @@ function saveDrafts(params) {
 // 登録ドラフト列インデックス(0始まり): 0 draft_id / 1 status / 2 draft_type / 3 target_product_id /
 // 4 product_name / 5 category_id / 6-8 feature_id1-3 / 9 description / 10 confidence / 11 reasoning /
 // 12 ref_urls / 13 supplier_cd / 14 supplier_name / 15 created_at / 16 reviewed_at / 17 registered_product_id /
-// 18 jodai_type / 19 tax_type_id
+// 18 jodai_type / 19 tax_type_id / 20 view_group_restricted
 
 function getDrafts(params) {
   const status = params.status !== undefined ? params.status : '下書き';
@@ -1806,6 +1813,8 @@ function getDrafts(params) {
       supplierCd: r[13], supplierName: r[14],
       createdAt: r[15], reviewedAt: r[16] || '', registeredProductId: r[17] || null,
       jodaiType: r[18] || '', taxTypeId: r[19] || null,
+      // 未設定(空セル)の既存ドラフトは「美容師限定表示」をデフォルトON扱いにする（'FALSE'明示時のみOFF）
+      viewGroupRestricted: r[20] !== 'FALSE',
       sets: setsByDraft[r[0]] || []
     });
   }
@@ -1831,6 +1840,7 @@ function updateDraft(params) {
   if (params.description !== undefined) sheet.getRange(rowIdx, 10).setValue(params.description);
   if (params.jodaiType !== undefined) sheet.getRange(rowIdx, 19).setValue(params.jodaiType);
   if (params.taxTypeId !== undefined) sheet.getRange(rowIdx, 20).setValue(params.taxTypeId);
+  if (params.viewGroupRestricted !== undefined) sheet.getRange(rowIdx, 21).setValue(params.viewGroupRestricted ? 'TRUE' : 'FALSE');
 
   if (params.sets) {
     const setSheet = getOrCreateSheet(SHEET_DRAFT_SETS);
@@ -1919,6 +1929,7 @@ function approveDraft(params) {
   const description = draft[9];
   const jodaiType = draft[18] || null;
   const taxTypeId = draft[19] || null;
+  const viewGroupFilter = draft[20] !== 'FALSE' ? BEAUTY_ONLY_VIEW_GROUP_FILTER : null;
 
   let productId, results;
   if (draftType === 'add_to_existing') {
@@ -1927,7 +1938,7 @@ function approveDraft(params) {
       const res = addSetToProduct({
         _userName: params._userName, productId: targetProductId, code: s.code, setName: s.setName,
         janCode: s.janCode, csvPrice: s.csvPrice, csvKouri: s.csvKouri, csvShiire: s.csvShiire, csvUnit: s.csvUnit,
-        jodaiType: jodaiType, taxTypeId: taxTypeId, setFlag: '表示'
+        jodaiType: jodaiType, taxTypeId: taxTypeId, setFlag: '表示', viewGroupFilter: viewGroupFilter
       });
       return { code: s.code, ok: res.ok, setId: res.setId || null, error: res.ok ? null : res.error };
     });
@@ -1936,7 +1947,8 @@ function approveDraft(params) {
     const bulkRes = bulkRegisterProduct({
       _userName: params._userName, productName: productName, categoryId: categoryId,
       featureId1: featureId1, featureId2: featureId2, featureId3: featureId3,
-      productFlag: '非表示', setFlag: '表示', jodaiType: jodaiType, taxTypeId: taxTypeId, sets: sets
+      productFlag: '非表示', setFlag: '表示', jodaiType: jodaiType, taxTypeId: taxTypeId,
+      viewGroupFilter: viewGroupFilter, sets: sets
     });
     if (!bulkRes.ok) return Object.assign(bulkRes, { notes: notes });  // 全セット失敗＝ロールバック済み。ドラフトは下書きのまま
     productId = bulkRes.productId;
@@ -3144,9 +3156,9 @@ function getOrCreateSheet(sheetName) {
       sheet.setFrozenRows(1);
       sheet.getRange(1, 1, 1, 3).setFontWeight('bold').setBackground('#f3f4f6');
     } else if (sheetName === SHEET_DRAFT) {
-      sheet.appendRow(['draft_id', 'status', 'draft_type', 'target_product_id', 'product_name', 'category_id', 'feature_id1', 'feature_id2', 'feature_id3', 'description', 'confidence', 'reasoning', 'ref_urls', 'supplier_cd', 'supplier_name', 'created_at', 'reviewed_at', 'registered_product_id', 'jodai_type', 'tax_type_id']);
+      sheet.appendRow(['draft_id', 'status', 'draft_type', 'target_product_id', 'product_name', 'category_id', 'feature_id1', 'feature_id2', 'feature_id3', 'description', 'confidence', 'reasoning', 'ref_urls', 'supplier_cd', 'supplier_name', 'created_at', 'reviewed_at', 'registered_product_id', 'jodai_type', 'tax_type_id', 'view_group_restricted']);
       sheet.setFrozenRows(1);
-      sheet.getRange(1, 1, 1, 20).setFontWeight('bold').setBackground('#f3f4f6');
+      sheet.getRange(1, 1, 1, 21).setFontWeight('bold').setBackground('#f3f4f6');
     } else if (sheetName === SHEET_DRAFT_SETS) {
       sheet.appendRow(['draft_id', 'code', 'set_name', 'jan', 'unit_price', 'jodai', 'shiire', 'unit', 'last_sale_date']);
       sheet.setFrozenRows(1);
@@ -3177,10 +3189,14 @@ function getOrCreateSheet(sheetName) {
         sheet.getRange(1, 8).setFontWeight('bold').setBackground('#f3f4f6');
       }
     } else if (sheetName === SHEET_DRAFT) {
-      // jodai_type / tax_type_id 列の自動追加（既存シートへのマイグレーション）
+      // jodai_type / tax_type_id / view_group_restricted 列の自動追加（既存シートへのマイグレーション）
       if (sheet.getLastColumn() < 20) {
         sheet.getRange(1, 19, 1, 2).setValues([['jodai_type', 'tax_type_id']]);
         sheet.getRange(1, 19, 1, 2).setFontWeight('bold').setBackground('#f3f4f6');
+      }
+      if (sheet.getLastColumn() < 21) {
+        sheet.getRange(1, 21).setValue('view_group_restricted');
+        sheet.getRange(1, 21).setFontWeight('bold').setBackground('#f3f4f6');
       }
     } else if (sheetName === SHEET_DRAFT_SETS) {
       // code/jan列をテキスト書式に統一（既存シートへのマイグレーション。数値化された既存値はapproveDraft側のString()正規化で吸収）
