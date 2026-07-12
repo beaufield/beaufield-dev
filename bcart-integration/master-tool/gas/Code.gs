@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.17.3';
+const VERSION = 'v2.17.4';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -1283,8 +1283,8 @@ function registerProduct(params) {
       stock_flag:  1,
       tax_type_id: params.taxTypeId || 1,
       set_flag:    params.setFlag || '非表示'
-    }, buildJodaiFields_(params.csvKouri, params.csvShiire, params.jodaiType),
-       (params.viewGroupFilter ? { view_group_filter: params.viewGroupFilter } : {}))]
+    }, buildJodaiFields_(params.csvKouri, params.csvShiire, params.jodaiType))]
+    // view_group_filterはproducts側のみで設定する（product_setsには設定しない・Takashi確定 2026-07-12）
   };
 
   const step2 = bcartPost('/product_sets', setBody);
@@ -1348,8 +1348,8 @@ function addSetToProduct(params) {
       stock_flag:  1,
       tax_type_id: params.taxTypeId || 1,
       set_flag:    params.setFlag || '非表示'
-    }, buildJodaiFields_(params.csvKouri, params.csvShiire, params.jodaiType),
-       (params.viewGroupFilter ? { view_group_filter: params.viewGroupFilter } : {}))]
+    }, buildJodaiFields_(params.csvKouri, params.csvShiire, params.jodaiType))]
+    // view_group_filterはproducts側のみで設定する（product_setsには設定しない・Takashi確定 2026-07-12）
   };
 
   const res = bcartPost('/product_sets', setBody);
@@ -1433,8 +1433,8 @@ function bulkRegisterProduct(params) {
         stock_flag:  1,
         tax_type_id: params.taxTypeId || 1,
         set_flag:    params.setFlag || '非表示'
-      }, buildJodaiFields_(s.csvKouri, s.csvShiire, params.jodaiType),
-         (params.viewGroupFilter ? { view_group_filter: params.viewGroupFilter } : {}))]
+      }, buildJodaiFields_(s.csvKouri, s.csvShiire, params.jodaiType))]
+      // view_group_filterはproducts側のみで設定する（product_setsには設定しない・Takashi確定 2026-07-12）
     };
     const res = bcartPost('/product_sets', setBody);
     const setId = res.ok && res.data && res.data.product_sets && res.data.product_sets[0]
@@ -1938,7 +1938,8 @@ function approveDraft(params) {
       const res = addSetToProduct({
         _userName: params._userName, productId: targetProductId, code: s.code, setName: s.setName,
         janCode: s.janCode, csvPrice: s.csvPrice, csvKouri: s.csvKouri, csvShiire: s.csvShiire, csvUnit: s.csvUnit,
-        jodaiType: jodaiType, taxTypeId: taxTypeId, setFlag: '表示', viewGroupFilter: viewGroupFilter
+        jodaiType: jodaiType, taxTypeId: taxTypeId, setFlag: '表示'
+        // add_to_existingは既存商品自体のview_group_filterを変更しない（product_setsには設定しない方針）
       });
       return { code: s.code, ok: res.ok, setId: res.setId || null, error: res.ok ? null : res.error };
     });
