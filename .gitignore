@@ -58,6 +58,11 @@ order-app/tools/config.json
 order-app/tools/logs/
 
 # ============================================
+# シリアル管理CSV出力ツール設定ファイル（GAS URL・APIキー含む）
+# ============================================
+serial-apps/tools/config.json
+
+# ============================================
 # ログ
 # ============================================
 *.log
@@ -132,8 +137,14 @@ bcart-integration/docs/
 # ============================================
 project-dashboard/data/
 project-dashboard/dashboard_sync.py
+project-dashboard/asset_scan.py
+project-dashboard/__pycache__/
+project-dashboard/assets_meta.json
+project-dashboard/assets_usage.json
 project-dashboard/relations.json
 project-dashboard/manual_ops.json
 project-dashboard/config.json
 project-dashboard/config.example.json
 project-dashboard/同期実行.bat
+project-dashboard/同期実行_自動.bat
+project-dashboard/logs/
