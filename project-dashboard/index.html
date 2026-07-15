@@ -156,6 +156,8 @@
   .badge-計画中     { background: #eee; color: #777; }
   .badge-待機中     { background: #eee; color: #777; }
   .badge-要確認     { background: #fff3cd; color: #856404; }
+  /* 資産の種別バッジ（🧰 資産タブ）。状態ではなく分類なので彩度を落として主張させない */
+  .badge-kind       { background: #ede9fe; color: #5b4bb7; }
 
   .ball-badge { font-size: 11px; padding: 2px 9px; border-radius: 10px; font-weight: bold; }
   .ball-Takashi   { background: #fde8e8; color: #c62828; }
@@ -313,6 +315,7 @@
   <button class="tab-btn" data-tab="stale" onclick="switchTab('stale')">🔴 滞留(14日+)<span class="tab-count" id="cnt-stale">0</span></button>
   <button class="tab-btn" data-tab="active" onclick="switchTab('active')">🟢 稼働中<span class="tab-count" id="cnt-active">0</span></button>
   <button class="tab-btn" data-tab="all" onclick="switchTab('all')">すべて<span class="tab-count" id="cnt-all">0</span></button>
+  <button class="tab-btn" data-tab="assets" onclick="switchTab('assets')">🧰 資産<span class="tab-count" id="cnt-assets">0</span></button>
   <select class="sort-select" id="sort-select" onchange="setSort(this.value)">
     <option value="priority">優先度順</option>
     <option value="new">新しい順</option>
@@ -331,6 +334,15 @@
   <button class="chip" data-cat="全般" onclick="setCategory('全般')">全般</button>
 </div>
 
+<!-- 資産タブ専用の絞り込み（種別）。カテゴリチップと入れ替えで表示する -->
+<div class="chip-row" id="kind-row" style="display:none">
+  <button class="chip active" data-kind="" onclick="setKind('')">すべて</button>
+  <button class="chip" data-kind="skill" onclick="setKind('skill')">スキル</button>
+  <button class="chip" data-kind="agent" onclick="setKind('agent')">エージェント</button>
+  <button class="chip" data-kind="bat" onclick="setKind('bat')">バッチ</button>
+  <button class="chip" data-kind="script" onclick="setKind('script')">スクリプト</button>
+</div>
+
 <main>
   <div id="status-msg">読み込み中...</div>
   <div class="card-list" id="card-list"></div>
@@ -346,7 +358,7 @@
   // ============================================================
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzkuWEqpJLhERoYlosHIeazlVjl3ipIq8u3x0rp4tCU7BaqPuYt4kP78Ha5Vu4ayNWDCg/exec';
   const PORTAL_URL   = 'https://beaufield.github.io/beaufield-dev/';
-  const APP_VERSION  = '1.8.1';
+  const APP_VERSION  = '1.9.0';
   const USE_MOCK     = false; // ← 開発中は true にして data/dashboard_data.json を見る
 
   document.getElementById('header-version').textContent = 'v' + APP_VERSION;
@@ -354,8 +366,10 @@
 
   let session         = null;
   let allProjects      = [];
+  let allAssets        = [];   // 発火待ち資産（スキル・エージェント・.bat・手動スクリプト）
   let currentTab       = 'takashi';
   let currentCat       = '';
+  let currentKind      = '';   // 資産タブの種別絞り込み
   let currentSort      = 'priority';  // 'priority'（既定・並び替え可）/ 'new'（更新が新しい順）/ 'effort'（工数が多い順）
   let metaEditId       = null;        // ⚙アイコンで開く編集パネル（単一開閉）
   let textExpandedIds  = new Set();   // カード本体クリックで全文表示中のID（複数可）
@@ -399,7 +413,8 @@
       ? fetch('data/dashboard_data.json').then(r => r.json()).then(mock => ({
           success: true,
           synced_at: mock.generated_at,
-          projects: mock.projects
+          projects: mock.projects,
+          assets: mock.assets
         }))
       : fetch(GAS_URL + '?action=data&session_token=' + encodeURIComponent(session.token))
           .then(r => r.json());
@@ -414,6 +429,7 @@
           throw new Error(data.message || data.error || '取得失敗');
         }
         allProjects = data.projects || [];
+        allAssets   = data.assets || [];   // GAS未デプロイ時は空配列（既存タブには影響しない）
         document.getElementById('synced-at').textContent =
           data.synced_at ? ('最終同期: ' + fmtDateTime(data.synced_at)) : '';
         render();
@@ -430,12 +446,24 @@
   function switchTab(tab) {
     currentTab = tab;
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    // 資産はプロジェクトと別モデル（カテゴリ絞り込みも並び替えも意味が違う）ので、
+    // 資産タブでは種別チップに入れ替え、ソートセレクトは隠して忘却度順に固定する
+    const isAssets = tab === 'assets';
+    document.getElementById('chip-row').style.display = isAssets ? 'none' : '';
+    document.getElementById('kind-row').style.display = isAssets ? '' : 'none';
+    document.getElementById('sort-select').style.display = isAssets ? 'none' : '';
     render();
   }
 
   function setCategory(cat) {
     currentCat = cat;
-    document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.cat === cat));
+    document.querySelectorAll('#chip-row .chip').forEach(c => c.classList.toggle('active', c.dataset.cat === cat));
+    render();
+  }
+
+  function setKind(kind) {
+    currentKind = kind;
+    document.querySelectorAll('#kind-row .chip').forEach(c => c.classList.toggle('active', c.dataset.kind === kind));
     render();
   }
 
@@ -487,6 +515,10 @@
       document.getElementById('cnt-' + t).textContent = allProjects.filter(p => matchesTab(p, t)).length;
     });
     document.getElementById('cnt-all').textContent = allProjects.length;
+    // 資産タブは「未使用が何件あるか」が本題なので、総数ではなく未使用件数をバッジに出す
+    document.getElementById('cnt-assets').textContent = allAssets.filter(isUnused).length;
+
+    if (currentTab === 'assets') { renderAssets(); return; }
 
     let list = allProjects.filter(p => matchesTab(p, currentTab));
     if (currentCat) list = list.filter(p => p.category === currentCat);
@@ -553,6 +585,119 @@
     const n = EFFORT_LEVELS[p.effort];
     const dots = [1,2,3,4].map(i => '<span class="effort-dot' + (i <= n ? ' filled' : '') + '"></span>').join('');
     return '<span class="effort-badge effort-badge-' + p.effort + '" title="工数感: ' + EFFORT_LABELS[p.effort] + '">' + dots + '</span>';
+  }
+
+  // ============================================================
+  // 発火待ち資産（🧰 資産タブ）
+  // Takashiが自分で起動しないと永久に動かないスキル・エージェント・.bat・手動スクリプト。
+  // 「作ったのに忘れている」ものを見つけるのが目的なので、忘却度順に固定で並べる。
+  // ============================================================
+  const KIND_LABELS = { skill: '🧠 スキル', agent: '🤖 エージェント', bat: '⚙ バッチ', script: '📜 スクリプト' };
+  const DISPOSITIONS = ['', '現役', '様子見', '廃止候補'];
+
+  // 「未使用」= 起動履歴を取れる資産なのに一度も起動されていない。
+  // evidence==='none'（.bat 等・実行日を取る手段が無い）を未使用と偽らないための条件。
+  function isUnused(a) {
+    return a.evidence !== 'none' && !Number(a.use_count);
+  }
+
+  function usedDays(a) {
+    if (!a.last_used) return null;
+    const d = new Date(a.last_used);
+    if (isNaN(d)) return null;
+    return Math.floor((new Date() - d) / 86400000);
+  }
+
+  function assetState(a) {
+    if (a.evidence === 'none') return { cls: 'stale-ok', txt: '⚪ 記録なし', rank: 2 };
+    if (isUnused(a))           return { cls: 'stale-bad', txt: '🔴 未使用', rank: 0 };
+    const d = usedDays(a);
+    if (d === null)            return { cls: 'stale-ok', txt: '使用日不明', rank: 1 };
+    if (d >= 90)               return { cls: 'stale-warn', txt: d + '日前', rank: 1 };
+    return { cls: 'stale-ok', txt: d + '日前', rank: 1 };
+  }
+
+  function renderAssets() {
+    let list = allAssets.slice();
+    if (currentKind) list = list.filter(a => a.kind === currentKind);
+
+    const listEl = document.getElementById('card-list');
+    listEl.innerHTML = '';
+    if (!list.length) { showStatus('該当する資産はありません', false); return; }
+    hideStatus();
+
+    // 忘却度順: 未使用 → 最終使用が古い順 → 記録なし（判定不能は末尾）
+    list.sort((a, b) => {
+      const ra = assetState(a).rank, rb = assetState(b).rank;
+      if (ra !== rb) return ra - rb;
+      const la = a.last_used || '', lb = b.last_used || '';
+      if (la !== lb) return la < lb ? -1 : 1;
+      return String(a.name).localeCompare(String(b.name));
+    });
+
+    listEl.classList.toggle('dense', list.length <= 8);
+    list.forEach(a => listEl.appendChild(buildAssetCard(a)));
+  }
+
+  function buildAssetCard(a) {
+    const div = document.createElement('div');
+    const textExpanded = textExpandedIds.has(a.id);
+    div.className = 'pcard' + (a.id === metaEditId ? ' expanded' : '') + (textExpanded ? ' text-expanded' : '');
+    div.id = 'pcard-' + a.id;
+    div.dataset.id = a.id;
+    div.onclick = function (e) {
+      if (e.target.closest('.rel-chip, .exp-field, .exp-btns, .drag-handle, .edit-toggle-btn')) return;
+      toggleTextExpand(a.id);
+    };
+
+    const st = assetState(a);
+    // 忘れている資産は使い方も忘れている。トリガーワードはカードの主役として常に出す
+    const triggerHtml = a.trigger
+      ? '<div class="pcard-next-action">🗣 ' + esc(a.trigger) + '</div>' : '';
+    const summaryHtml = (textExpanded && a.summary)
+      ? '<div class="pcard-summary">' + esc(a.summary) + '</div>' : '';
+    const countTxt = a.evidence === 'none' ? '実行回数の記録なし' : (Number(a.use_count) || 0) + '回';
+    const dispHtml = a.disposition
+      ? '<span class="manualops-badge">' + esc(a.disposition) + '</span>' : '';
+
+    div.innerHTML =
+      '<div class="pcard-row1">' +
+        '<span class="pcard-name">' + esc(a.name) + '</span>' +
+        '<span class="badge badge-kind">' + esc(KIND_LABELS[a.kind] || a.kind) + '</span>' +
+        '<button class="edit-toggle-btn" title="扱い・メモを編集" onclick="event.stopPropagation(); toggleMetaEdit(\'' + a.id + '\')">⚙</button>' +
+      '</div>' +
+      triggerHtml +
+      '<div class="pcard-row2">' +
+        '<span class="cat-tag">' + esc(a.category || '') + '</span>' +
+        '<span class="stale-badge ' + st.cls + '">' + st.txt + '</span>' +
+        '<span class="cat-tag">' + countTxt + '</span>' +
+        dispHtml +
+      '</div>' +
+      summaryHtml +
+      buildAssetExpandPanel(a);
+
+    return div;
+  }
+
+  function buildAssetExpandPanel(a) {
+    const dispOptions = DISPOSITIONS.map(v =>
+      '<option value="' + v + '"' + ((a.disposition || '') === v ? ' selected' : '') + '>' +
+      (v === '' ? '（未設定）' : v) + '</option>').join('');
+
+    // 低頻度な資産（期次ブリーフィング等は年数回）を日数だけで死蔵扱いしないための逃げ道
+    return '<div class="pcard-expand">' +
+      '<div class="exp-field"><label>扱い（日数だけで判断できないものを手動で上書き）</label>' +
+      '<select id="disp-' + a.id + '">' + dispOptions + '</select></div>' +
+      '<div class="exp-field"><label>メモ</label>' +
+      '<textarea id="memo-' + a.id + '">' + esc(a.memo || '') + '</textarea></div>' +
+      '<div class="exp-btns">' +
+        '<button class="btn-save" id="save-' + a.id + '" onclick="event.stopPropagation(); saveAssetMeta(\'' + a.id + '\')">保存</button>' +
+        '<button class="btn-cancel" onclick="event.stopPropagation(); toggleMetaEdit(\'' + a.id + '\')">閉じる</button>' +
+      '</div>' +
+      '<div class="exp-meta">最終使用: ' + esc(a.last_used || '記録なし') +
+        '（判定元: ' + esc(a.evidence) + '）</div>' +
+      '<div class="exp-meta">原本: ' + esc(a.path || '') + '</div>' +
+    '</div>';
   }
 
   // ============================================================
@@ -817,11 +962,9 @@
     // 関連先が現在のフィルタで非表示の場合は「すべて」タブに切り替えてから探す
     let el = document.getElementById('pcard-' + id);
     if (!el) {
-      currentTab = 'all';
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === 'all'));
       currentCat = '';
-      document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.cat === ''));
-      render();
+      document.querySelectorAll('#chip-row .chip').forEach(c => c.classList.toggle('active', c.dataset.cat === ''));
+      switchTab('all'); // チップ行の出し分けごと切り替える（render も中で走る）
       el = document.getElementById('pcard-' + id);
     }
     if (el) {
@@ -880,6 +1023,57 @@
       render();
     })
     .catch(err => {
+      showToast('保存に失敗しました: ' + err.message, true);
+    });
+  }
+
+  // ============================================================
+  // 資産のメタ更新（disposition / memo のみ）
+  // ============================================================
+  function saveAssetMeta(id) {
+    const btn = document.getElementById('save-' + id);
+    const disposition = document.getElementById('disp-' + id).value;
+    const memo        = document.getElementById('memo-' + id).value;
+
+    btn.disabled = true;
+    btn.textContent = '保存中...';
+
+    const applyLocal = () => {
+      const a = allAssets.find(x => x.id === id);
+      if (a) { a.disposition = disposition; a.memo = memo; }
+    };
+
+    if (USE_MOCK) {
+      applyLocal();
+      btn.disabled = false;
+      btn.textContent = '保存';
+      showToast('保存しました（モック）');
+      render();
+      return;
+    }
+
+    fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'updateMeta',
+        target: 'asset',        // これが無いと projects シート側を探しに行く
+        session_token: session.token,
+        id: id,
+        disposition: disposition,
+        memo: memo
+      })
+    })
+    .then(r => r.json())
+    .then(res => {
+      if (!res.success) throw new Error(res.message || res.error || '保存失敗');
+      applyLocal();
+      showToast('保存しました');
+      render();
+    })
+    .catch(err => {
+      btn.disabled = false;
+      btn.textContent = '保存';
       showToast('保存に失敗しました: ' + err.message, true);
     });
   }
