@@ -858,7 +858,7 @@
   <div class="nav-item" id="nav-settings" onclick="switchScreen('settings')">
     <span class="nav-icon">⚙️</span><span>設定</span>
   </div>
-  <div class="version-label" id="version-label">v1.24.6</div>
+  <div class="version-label" id="version-label">v1.25.0</div>
 </nav>
 
 <!-- ==============================
@@ -1035,7 +1035,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.24.6'; // UI改善: 修正発注ボタンに確認ダイアログ追加・完了表示をボタンと区別できるアラートバーに変更
+const APP_VERSION    = 'v1.25.0'; // 在庫タブにカート内数量バッジ表示
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1988,6 +1988,7 @@ function saveCart() {
   // ※同一カートを複数形式で出力する場合は saveCart が呼ばれない＝フラグ維持で重複保存を防ぐ。
   savedOrderNo = null;
   sessionStorage.setItem(SS_CART, JSON.stringify(cartItems));
+  if (currentScreen === 'inventory') renderInventoryList();
 }
 function updateItemQty(idx, val){ const q = parseInt(val); if (q > 0) { cartItems[idx].qty = q; saveCart(); } }
 function updateItemMemo(idx, v) { cartItems[idx].memo = v; saveCart(); }
@@ -3577,7 +3578,17 @@ function renderInventoryList() {
     const lastOrder   = hist && hist.date
       ? `<div style="font-size:11px;color:var(--primary);margin-top:1px">🛒 ${fmtDate(hist.date)} × ${hist.qty}${hist.unit||''}</div>`
       : '';
-    return `<div class="history-item" style="display:flex;align-items:center;${rowBorder}" onclick="openInventoryQtyModal(${idx})">
+    const cartQty = cartItems.reduce((sum, i) => {
+      if (i.isHandwritten) return sum;
+      if ((i.janCode && p.jan  && i.janCode === p.jan) ||
+          (i.code    && p.code && i.code    === p.code)) return sum + i.qty;
+      return sum;
+    }, 0);
+    const cartBadge = cartQty > 0
+      ? `<div style="font-size:11px;color:#fff;background:var(--primary);border-radius:10px;padding:1px 8px;display:inline-block;margin-top:2px;font-weight:bold">🛒 カート ${cartQty}</div>`
+      : '';
+    const cartRowBg = cartQty > 0 ? 'background:rgba(91,200,232,0.08);' : '';
+    return `<div class="history-item" style="display:flex;align-items:center;${rowBorder}${cartRowBg}" onclick="openInventoryQtyModal(${idx})">
       <div style="flex:1;min-width:0">
         <div style="font-size:14px;font-weight:500;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.4">${isBelow ? '⚠️ ' : ''}${p.name}</div>
         <div style="font-size:11px;color:var(--text-light);margin-top:2px">${p.supplierName || p.supplierCD}</div>
@@ -3587,6 +3598,7 @@ function renderInventoryList() {
         ${reorderBadge}
         <div style="font-size:11px;color:var(--text-light)">${fmtDate(p.lastSaleDate)}</div>
         ${lastOrder}
+        ${cartBadge}
       </div>
     </div>`;
   }).join('');
