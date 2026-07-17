@@ -16,7 +16,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.10.0';
+const VERSION         = 'v1.10.1';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -43,7 +43,7 @@ const ORDER_TEMPLATES = {
   'alpenrose':         '57.pdf',
   'melos':             '2.pdf',
   'melos_2025':        'メロス発注書2025年価格改定後.pdf',
-  'adelans':           'アデランス発注書.pdf',
+  'adelans':           '82.pdf',
   'rhythm':            'リズム注文書2023冬～.pdf',
   'hokkaido_natural':  '北海道ナチュラルバイオ.pdf'
 };
