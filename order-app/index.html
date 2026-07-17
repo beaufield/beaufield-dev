@@ -1037,7 +1037,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.27.0'; // アデランス メーカー発注書 出力を追加
+const APP_VERSION    = 'v1.27.1'; // 発注先ドロップダウンをあいうえお順に並び替え
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1215,7 +1215,8 @@ async function loadMasters() {
 function renderSupplierDropdown() {
   const sel = document.getElementById('sel-supplier');
   sel.innerHTML = '<option value="">-- 選択してください --</option>';
-  masters.suppliers.forEach(s => {
+  const sorted = [...masters.suppliers].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+  sorted.forEach(s => {
     const opt = document.createElement('option');
     opt.value = s.code; opt.textContent = s.name; opt.dataset.fax = s.fax || '';
     opt.dataset.outputMethods = JSON.stringify(s.outputMethods || []);
