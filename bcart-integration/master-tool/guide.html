@@ -52,6 +52,7 @@ tr:last-child td { border-bottom: none; }
 .badge-danger   { background: #fee2e2; color: #dc2626; border: 1px solid #fca5a5; }
 .badge-pending  { background: #f5f3ff; color: #7c3aed; border: 1px solid #ddd6fe; }
 .badge-info     { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+.badge-neutral  { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
 
 .flow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 14px 0; }
 .flow-box { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 16px; font-size: 12.5px; text-align: center; min-width: 130px; }
@@ -92,9 +93,10 @@ tr:last-child td { border-bottom: none; }
     <a href="#settings">5. 特別価格設定</a>
     <a href="#individual">6. 個別特価</a>
     <a href="#audit">7. 突合チェック</a>
-    <a href="#extract">8. 特価候補の抽出（初期構築・棚卸し）</a>
-    <a href="#routine">9. 月次運用フロー</a>
-    <a href="#faq">10. よくある質問</a>
+    <a href="#salesaudit">8. 実績突合</a>
+    <a href="#extract">9. 特価候補の抽出（初期構築・棚卸し）</a>
+    <a href="#routine">10. 月次運用フロー</a>
+    <a href="#faq">11. よくある質問</a>
   </nav>
 
   <main class="main">
@@ -150,6 +152,7 @@ tr:last-child td { border-bottom: none; }
         <tr><td><strong>例外表示（view_group_filter / visible_customer_id）</strong></td><td>「契約した顧客にしか見せない・買わせない」限定商品を作るためのBカートの設定項目</td></tr>
         <tr><td><strong>保留</strong></td><td>得意先コードをマスターに登録したが、その得意先がまだBカート会員登録されていない状態。会員登録されると自動的に解消される</td></tr>
         <tr><td><strong>除外設定</strong></td><td>突合チェックの対象から外す得意先の登録。テスト用の得意先などを登録しておくと、結果一覧に出てこなくなる（特価の反映処理には影響しない）</td></tr>
+        <tr><td><strong>実績突合</strong></td><td>販売履歴（sales.db）とBカートの特価設定を直接照合する機能。「突合チェック」（マスターとの照合）とは情報源が異なる</td></tr>
       </table>
     </section>
 
@@ -255,8 +258,34 @@ tr:last-child td { border-bottom: none; }
       </ol>
     </section>
 
+    <section id="salesaudit">
+      <h2>8. 実績突合</h2>
+      <p>「🔍 突合チェック」が<strong>このアプリのマスターとBカートの照合</strong>だったのに対し、この機能は<strong>実際の販売履歴とBカートの照合</strong>です。マスターにまだ登録していない特価の売り方（例えば口頭やFAXで決めた特価をまだこのアプリに入力していない場合など）も検出できます。</p>
+
+      <div class="callout callout-info">
+        🧾 <strong>このチェックが照合しているもの</strong><br>
+        販売管理システムの売上履歴（sales.db・毎晩の売上取り込み後に自動更新）と、Bカートの特価設定を直接突き合わせます。<br>
+        ※ 除外設定（テスト用得意先など）は「🔍 突合チェック」と<strong>共通</strong>です。どちらかで登録すれば両方に効きます。
+      </div>
+
+      <p>「🧾 実績突合を実行」を押すと、直近12ヶ月の販売実績とBカート全体の特価設定を照合します。結果は次の区分で表示されます。</p>
+      <table>
+        <tr><th>区分</th><th>意味</th><th>どう動くか</th></tr>
+        <tr><td><span class="badge badge-danger">🚨 実績の設定漏れ</span></td><td>販売履歴では特価で売っているのに、Bカートに特価設定がない（＝<strong>最優先。放置すると通常価格で注文されてしまう</strong>）</td><td>行を選んで「✔ 選択を個別特価に追加」→個別特価タブで「BCARTに反映」を実行</td></tr>
+        <tr><td><span class="badge badge-warn">⚠️ 金額ちがい</span></td><td>実際の販売価格とBカートの特価設定の金額が違う</td><td>どちらが正しいか確認し、正しい方に揃える</td></tr>
+        <tr><td><span class="badge badge-neutral">🧹 休眠特価</span></td><td>Bカートに特価設定はあるが、直近12ヶ月その得意先への販売実績がない</td><td>棚卸し・整理の候補（リスクは低め）。不要なら「🚫 除外」、確認したければ「▶ 個別特価を開く」</td></tr>
+      </table>
+
+      <div class="callout callout-tip">
+        💡 「実績の設定漏れ」で個別特価に追加した直後は<strong>まだBカートには反映されていません</strong>（未反映の状態で保存されます）。個別特価タブを開いて「BCARTに反映」を押すまでが1セットです。
+      </div>
+
+      <h3>データが古い場合</h3>
+      <p>集計データ（sales.dbからの自動集計）が48時間より古い場合、画面に警告が出ます。sales-dbの日次取り込み（<code>取り込み実行_自動.bat</code>）が動いているか確認してください。</p>
+    </section>
+
     <section id="extract">
-      <h2>8. 特価候補の抽出（初期構築・棚卸し）</h2>
+      <h2>9. 特価候補の抽出（初期構築・棚卸し）</h2>
       <p>マスターがまだ空の状態から始める場合や、過去の販売実績から「実は特価になっていた」ケースを洗い出したいときに使うツールです。<code>bcart-integration/price-master/derive_special_prices.py</code> というPythonスクリプトが、<strong>sales.db（販売履歴データベース）</strong>から特価候補を自動抽出します。</p>
 
       <h3>判定ルール</h3>
@@ -303,7 +332,7 @@ python derive_special_prices.py --no-api</code></pre>
     </section>
 
     <section id="routine">
-      <h2>9. 月次運用フロー</h2>
+      <h2>10. 月次運用フロー</h2>
       <p>初期構築（8章）が済んだ後の、日常的な回し方です。</p>
       <div class="grid2">
         <div>
@@ -335,7 +364,7 @@ python derive_special_prices.py --no-api</code></pre>
     </section>
 
     <section id="faq">
-      <h2>10. よくある質問</h2>
+      <h2>11. よくある質問</h2>
 
       <h3>Q. 得意先がまだBカートに登録されていない場合、特価設定は後回しにするべき？</h3>
       <p>A. いいえ、<strong>先に登録して構いません。</strong>導入サロングループ・個別特価のどちらも、未登録の得意先コードは「保留」として保持され、会員登録された後に「BCARTに反映」を押すだけで自動的に有効になります。</p>

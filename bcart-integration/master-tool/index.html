@@ -301,14 +301,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.10.0</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.11.0</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.10.0</span>
+    <span class="version">HTML v2.11.0</span>
   </div>
 
   <div class="tabs">
@@ -452,6 +452,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
         <button class="sp-subnav-btn active" id="sp-btn-settings" data-view="settings" onclick="switchSpSubview('settings',this)">特別価格設定</button>
         <button class="sp-subnav-btn" id="sp-btn-individual" data-view="individual" onclick="switchSpSubview('individual',this)">個別特価</button>
         <button class="sp-subnav-btn" id="sp-btn-audit" data-view="audit" onclick="switchSpSubview('audit',this)">🔍 突合チェック</button>
+        <button class="sp-subnav-btn" id="sp-btn-salesaudit" data-view="salesaudit" onclick="switchSpSubview('salesaudit',this)">🧾 実績突合</button>
         <a class="sp-help-link" id="spHelpLink" href="guide.html#settings" target="_blank" rel="noopener">❓ この画面の使い方</a>
       </div>
       <div id="sp-alert-area"></div>
@@ -3004,7 +3005,7 @@ function switchSpSubview(view, btn) {
 function updateSpHelpLink(view) {
   const link = document.getElementById('spHelpLink');
   if (!link) return;
-  const anchors = { groups: 'groups', settings: 'settings', individual: 'individual', audit: 'audit' };
+  const anchors = { groups: 'groups', settings: 'settings', individual: 'individual', audit: 'audit', salesaudit: 'salesaudit' };
   link.href = 'guide.html#' + (anchors[view] || 'why');
 }
 
@@ -3029,6 +3030,7 @@ function renderSpContent() {
   else if (spSubview === 'groups') renderSpGroups();
   else if (spSubview === 'individual') renderSpIndividual();
   else if (spSubview === 'audit') renderSpAudit();
+  else if (spSubview === 'salesaudit') renderSalesAudit();
 }
 
 function renderSpGroups() {
@@ -4276,13 +4278,14 @@ function spAuditExcludeRow(cat, i) {
   });
 }
 
-// 除外した得意先の行を全カテゴリの結果から取り除く（会員ID一致・得意先コード正規化一致）
-function removeExcludedRowsLocally(memberId, customerCode) {
+// 除外した得意先の行を、指定した結果オブジェクトの各カテゴリ配列から取り除く
+// （会員ID一致・得意先コード正規化一致）。突合チェック・実績突合の両方から使う共通ヘルパー。
+function removeExcludedFromResult_(resultObj, cats, memberId, customerCode) {
   const mid = String(memberId || '');
   const code = spaNormCode(customerCode);
-  ['unmanaged', 'mismatch', 'missing', 'pending'].forEach(function(cat) {
-    if (!spAuditResult[cat]) return;
-    spAuditResult[cat] = spAuditResult[cat].filter(function(r) {
+  cats.forEach(function(cat) {
+    if (!resultObj[cat]) return;
+    resultObj[cat] = resultObj[cat].filter(function(r) {
       const rmid = String(r.member_id || '');
       const rcode = spaNormCode(r.customer_code);
       const matchMid = mid && rmid && rmid === mid;
@@ -4290,6 +4293,10 @@ function removeExcludedRowsLocally(memberId, customerCode) {
       return !(matchMid || matchCode);
     });
   });
+}
+
+function removeExcludedRowsLocally(memberId, customerCode) {
+  removeExcludedFromResult_(spAuditResult, ['unmanaged', 'mismatch', 'missing', 'pending'], memberId, customerCode);
 }
 
 function adoptSelectedUnmanaged() {
@@ -4398,6 +4405,165 @@ function renderAuditPendingTable(rows) {
   html += spaOpen(['得意先コード', '出所', '操作']);
   rows.forEach(function(r, i) {
     html += '<tr>' + spaTdm(r.customer_code) + spaTd(r.source) + '<td>' + spaExcludeBtn('pending', i) + '</td></tr>';
+  });
+  return html + spaClose();
+}
+
+// ===================== 機能B-4: 実績突合（販売実績×BCART特価設定） =====================
+let salesAuditResult = null;
+let salesAuditLocalExcluded = 0;
+
+function renderSalesAudit() {
+  const exCount = spExclusions.length;
+  let html = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:16px;">' +
+    '<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#0c4a6e;line-height:1.7;">' +
+    '🧾 <strong>このチェックが照合しているもの</strong><br>' +
+    '販売履歴（sales.db・毎晩の売上取り込み後に自動更新）と、Bカートの特価設定を直接突き合わせます。<br>' +
+    '※ 既存の「🔍 突合チェック」は<strong>このアプリのマスター</strong>との照合、こちらは<strong>実際の販売実績</strong>との照合です。マスターに登録していない特価の売り方も検出できます。<br>' +
+    '※ 除外設定に登録した得意先はチェック対象外です（現在 <strong id="salesAuditExCount">' + exCount + '</strong> 件・突合チェックと共通）。' +
+    '</div>' +
+    '<button class="btn btn-primary" id="salesAuditRunBtn" onclick="runSalesAudit()">🧾 実績突合を実行</button>' +
+    '<span style="font-size:12px;color:#9ca3af;margin-left:10px;">数十秒ほどかかります。</span>' +
+    '</div>' +
+    '<div id="spExcludeSection"></div>' +
+    '<div id="salesAuditResultArea"></div>';
+  document.getElementById('sp-content').innerHTML = html;
+  renderExclusionSection();
+  if (salesAuditResult) renderSalesAuditResult();
+  loadAuditExclusions();
+}
+
+function runSalesAudit() {
+  const btn = document.getElementById('salesAuditRunBtn');
+  btn.textContent = '実行中...（数十秒お待ちください）'; btn.disabled = true;
+  gasPost({ action: 'auditSalesVsBcart' }, function(res) {
+    btn.textContent = '🧾 実績突合を実行'; btn.disabled = false;
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    salesAuditResult = res;
+    salesAuditLocalExcluded = 0;
+    renderSalesAuditResult();
+  });
+}
+
+function salesaExcludeBtn(cat, i) {
+  return '<button class="btn btn-sm btn-gray" onclick="salesAuditExcludeRow(\'' + cat + '\',' + i + ')">🚫 除外</button>';
+}
+
+function salesAuditExcludeRow(cat, i) {
+  const r = (salesAuditResult[cat] || [])[i];
+  if (!r) return;
+  const codeOrId = (r.customer_code && String(r.customer_code).trim()) ? r.customer_code : r.member_id;
+  const label = r.member_name || r.customer_code || r.member_id || '';
+  if (!confirm('「' + label + '」を実績突合の対象外にしますか？（突合チェックと共通の除外設定です）')) return;
+  gasPost({ action: 'addAuditExclusion', code_or_id: codeOrId, reason: '実績突合の結果画面から追加' }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    removeExcludedFromResult_(salesAuditResult, ['missing', 'mismatch', 'dormant'], r.member_id, r.customer_code);
+    salesAuditLocalExcluded++;
+    renderSalesAuditResult();
+    loadAuditExclusions();
+    showToast('「' + label + '」を除外しました（次回チェックから対象外）');
+  });
+}
+
+function adoptSelectedSalesMissing() {
+  const rows = salesAuditResult.missing || [];
+  const items = [];
+  rows.forEach(function(r, i) {
+    const chk = document.getElementById('saAdoptChk_' + i);
+    if (chk && chk.checked) {
+      const note = '実績突合: 履歴' + (r.count || 0) + '回 最終' + (r.last_sale_date || '');
+      items.push({ customer_code: r.customer_code, product_no: r.product_no, unit_price: r.expected_price, note: note });
+    }
+  });
+  if (items.length === 0) { showToast('取り込む行を選択してください', true); return; }
+  if (!confirm(items.length + '件を個別特価マスターに追加します（未反映の状態で保存されます。反映は個別特価タブで行ってください）。よろしいですか？')) return;
+  gasPost({ action: 'saveIndividualPrices', items: items }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    const adopted = {};
+    items.forEach(function(it) { adopted[String(it.customer_code) + '|' + String(it.product_no)] = true; });
+    salesAuditResult.missing = rows.filter(function(r) { return !adopted[String(r.customer_code) + '|' + String(r.product_no)]; });
+    renderSalesAuditResult();
+    let msg = (res.added + res.updated) + '件を個別特価に追加しました（未反映）。個別特価タブで「BCARTに反映」を押してください。';
+    if (res.unknownProducts && res.unknownProducts.length) msg += ' / 品番不明でスキップ' + res.unknownProducts.length + '件';
+    showToast(msg);
+  });
+}
+
+function renderSalesAuditResult() {
+  const area = document.getElementById('salesAuditResultArea');
+  if (!area || !salesAuditResult) return;
+  const s = salesAuditResult.summary || {};
+  const missing = salesAuditResult.missing || [];
+  const mismatch = salesAuditResult.mismatch || [];
+  const dormant = salesAuditResult.dormant || [];
+  const excludedN = (s.excluded || 0) + (salesAuditLocalExcluded || 0);
+
+  let html = '';
+  if (salesAuditResult.stale) {
+    html += '<div class="warn-bar" style="margin-bottom:12px;">⚠️ 集計データの更新が48時間より古いようです（最終更新: ' +
+      esc(salesAuditResult.csvUpdatedAt || '') + '）。sales-dbの日次取り込みが動いているか確認してください。</div>';
+  } else if (salesAuditResult.csvUpdatedAt) {
+    html += '<div style="font-size:12px;color:#9ca3af;margin-bottom:10px;">集計データ最終更新: ' + esc(salesAuditResult.csvUpdatedAt) + '</div>';
+  }
+
+  html += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">' +
+    spaTile('🚨 実績の設定漏れ', missing.length, '#fef2f2', '#fecaca') +
+    spaTile('⚠️ 金額ちがい', mismatch.length, '#fffbeb', '#fcd34d') +
+    spaTile('🧹 休眠特価', dormant.length, '#f1f5f9', '#cbd5e1') +
+    spaTile('✅ 一致', (s.matched || 0), '#ecfdf5', '#a7f3d0') +
+    spaTile('🚫 除外中', excludedN, '#f9fafb', '#e5e7eb') +
+    '</div>';
+  html += '<div style="font-size:11px;color:#9ca3af;margin-bottom:12px;">（参考・対象外: 未登録得意先の実績 ' + (s.unregistered || 0) +
+    '件／Bモール未登録商品の実績 ' + (s.noBcartProduct || 0) + '件）</div>';
+  if (salesAuditResult.truncated) {
+    html += '<div class="warn-bar" style="margin-bottom:12px;">⚠️ 件数が多いため各一覧は300件までの表示です。</div>';
+  }
+  html += renderSalesMissingTable(missing);
+  html += renderSalesMismatchTable(mismatch);
+  html += renderSalesDormantTable(dormant);
+  area.innerHTML = html;
+}
+
+function renderSalesMissingTable(rows) {
+  let html = '<div style="margin-bottom:20px;">' + spaSecHead('🚨 実績の設定漏れ', rows.length, '#dc2626',
+    '販売履歴では特価で売っているのに、Bカートに特価設定がありません。<strong style="color:#dc2626;">このままだと対象のサロンは通常価格で注文できてしまいます。</strong>正しい特価なら選択して「個別特価に追加」し、個別特価タブで「BCARTに反映」してください。');
+  if (rows.length === 0) return html + spaEmpty();
+  html += '<div style="margin-bottom:8px;"><button class="btn btn-success btn-sm" onclick="adoptSelectedSalesMissing()">✔ 選択を個別特価に追加（未反映）</button></div>';
+  html += spaOpen(['', '品番', '商品セット名', '得意先コード', '会員名', '実勢価格', '履歴', 'サロン価', '掛率%', '操作']);
+  rows.forEach(function(r, i) {
+    html += '<tr><td><input type="checkbox" id="saAdoptChk_' + i + '"></td>' + spaTdm(r.product_no) + spaTd(r.set_name) + spaTdm(r.customer_code) + spaTd(r.member_name) +
+      '<td style="font-weight:700;color:#1a56db;">' + spaAp(r.expected_price) + '</td>' +
+      '<td style="font-size:11px;color:#6b7280;">' + (r.count || 0) + '回 / ' + spaEsc(r.last_sale_date) + '</td>' +
+      '<td>' + spaAp(r.salon_price) + '</td>' +
+      '<td>' + (r.rate != null ? r.rate + '%' : '—') + '</td>' +
+      '<td>' + salesaExcludeBtn('missing', i) + '</td></tr>';
+  });
+  return html + spaClose();
+}
+
+function renderSalesMismatchTable(rows) {
+  let html = '<div style="margin-bottom:20px;">' + spaSecHead('⚠️ 金額ちがい', rows.length, '#d97706',
+    '実際の販売価格とBカートの特価設定の金額が一致しません。どちらが正しいか確認してください。');
+  if (rows.length === 0) return html + spaEmpty();
+  html += spaOpen(['品番', '商品セット名', '得意先コード', '会員名', '実勢価格', 'Bカート特価', '差額', '操作']);
+  rows.forEach(function(r, i) {
+    html += '<tr>' + spaTdm(r.product_no) + spaTd(r.set_name) + spaTdm(r.customer_code) + spaTd(r.member_name) +
+      '<td style="font-weight:700;color:#1a56db;">' + spaAp(r.expected_price) + '</td>' + '<td>' + spaAp(r.bcart_price) + '</td>' +
+      '<td>' + spaAp(r.diff) + '</td>' +
+      '<td>' + salesaExcludeBtn('mismatch', i) + '</td></tr>';
+  });
+  return html + spaClose();
+}
+
+function renderSalesDormantTable(rows) {
+  let html = '<div style="margin-bottom:20px;">' + spaSecHead('🧹 休眠特価', rows.length, '#475569',
+    'Bカートに特価設定はありますが、直近12ヶ月その得意先への販売実績がありません。棚卸し・整理の候補です（リスクは低め）。');
+  if (rows.length === 0) return html + spaEmpty();
+  html += spaOpen(['得意先コード', '会員名', '品番', '商品セット名', 'Bカート特価', '操作']);
+  rows.forEach(function(r, i) {
+    html += '<tr>' + spaTdm(r.customer_code) + spaTd(r.member_name) + spaTdm(r.product_no) + spaTd(r.set_name) +
+      '<td>' + spaAp(r.bcart_price) + '</td>' +
+      '<td>' + salesaExcludeBtn('dormant', i) + ' <button class="btn btn-sm btn-primary" onclick="gotoSpSubview(\'individual\')">▶ 個別特価を開く</button></td></tr>';
   });
   return html + spaClose();
 }
