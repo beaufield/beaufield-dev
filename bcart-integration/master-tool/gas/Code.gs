@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.18.4';
+const VERSION = 'v2.19.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -480,53 +480,122 @@ function getBcartToken() {
   return token;
 }
 
+// レスポンスJSONから一覧配列を取り出す（エンドポイントごとにキー名が異なるため）
+function bcartExtractRows_(parsed) {
+  const page = parsed.data || parsed.product_sets || parsed.products || parsed.specials || parsed.product_stock || parsed.categories || parsed.product_features || parsed.features || parsed;
+  return Array.isArray(page) ? page : [];
+}
+
+// 1ページを直列取得（429/502/503はバックオフ付きリトライ）。総件数meta.totalがあれば併せて返す
+function bcartFetchPage_(url, token) {
+  let res;
+  for (let retry = 0; retry <= 3; retry++) {
+    res = UrlFetchApp.fetch(url, {
+      method: 'get',
+      headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
+      muteHttpExceptions: true
+    });
+    const code = res.getResponseCode();
+    if (code === 429) {
+      if (retry < 3) { Utilities.sleep(5000 * (retry + 1)); continue; }
+      return { ok: false, error: 'BCART_API_ERROR: 429 レート制限（しばらく待ってから再読み込みしてください）' };
+    }
+    if (code === 503 || code === 502) {
+      if (retry < 3) { Utilities.sleep(5000 * (retry + 1)); continue; }
+      Logger.log('bcartFetchPage_ 502/503: ' + res.getContentText().slice(0, 300));
+      return { ok: false, error: 'BCART_API_ERROR: ' + code + ' 帯域幅エラー（しばらく待ってから再読み込みしてください）' };
+    }
+    break;
+  }
+  if (res.getResponseCode() !== 200) {
+    Logger.log('bcartFetchPage_ error: ' + res.getResponseCode() + ' ' + res.getContentText().slice(0, 300));
+    return { ok: false, error: 'BCART_API_ERROR: ' + res.getResponseCode() };
+  }
+  const parsed = JSON.parse(res.getContentText());
+  if (parsed.message || parsed.error) {
+    return { ok: false, error: 'BCART_API_ERROR: ' + (parsed.message || parsed.error) };
+  }
+  const total = (parsed.meta && isFinite(Number(parsed.meta.total))) ? Number(parsed.meta.total) : null;
+  return { ok: true, rows: bcartExtractRows_(parsed), total: total };
+}
+
+// 複数ページをfetchAllで並列取得。失敗ページは直列リトライで救済し、
+// それでも失敗したら全体をエラーにする（部分データは絶対に返さない）
+function bcartFetchPagesParallel_(urls, token) {
+  const reqs = urls.map(u => ({
+    url: u,
+    method: 'get',
+    headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
+    muteHttpExceptions: true
+  }));
+  let responses = null;
+  try {
+    responses = UrlFetchApp.fetchAll(reqs);
+  } catch (e) {
+    Logger.log('bcartFetchPagesParallel_ fetchAll例外（直列リトライへ）: ' + e.message);
+  }
+  const rowsList = new Array(urls.length);
+  for (let i = 0; i < urls.length; i++) {
+    let done = false;
+    if (responses && responses[i] && responses[i].getResponseCode() === 200) {
+      try {
+        const parsed = JSON.parse(responses[i].getContentText());
+        if (!parsed.message && !parsed.error) {
+          rowsList[i] = bcartExtractRows_(parsed);
+          done = true;
+        }
+      } catch (e) { /* パース失敗→直列リトライへ */ }
+    }
+    if (!done) {
+      const page = bcartFetchPage_(urls[i], token);
+      if (!page.ok) return page;
+      rowsList[i] = page.rows;
+    }
+  }
+  return { ok: true, rowsList: rowsList };
+}
+
 function bcartGetAll(path, extraParams) {
   try {
     const token = getBcartToken();
-    const allData = [];
     const limit = 100;
-    let offset = 0;
     const extraQs = extraParams
       ? Object.entries(extraParams).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&')
       : '';
+    const buildUrl = offset => BCART_BASE_URL + path + '?limit=' + limit + '&offset=' + offset + (extraQs ? '&' + extraQs : '');
 
-    while (true) {
-      const url = BCART_BASE_URL + path + '?limit=' + limit + '&offset=' + offset + (extraQs ? '&' + extraQs : '');
-      let res;
-      for (let retry = 0; retry <= 3; retry++) {
-        res = UrlFetchApp.fetch(url, {
-          method: 'get',
-          headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
-          muteHttpExceptions: true
-        });
-        const code = res.getResponseCode();
-        if (code === 429) {
-          if (retry < 3) { Utilities.sleep(5000 * (retry + 1)); continue; }
-          return { ok: false, error: 'BCART_API_ERROR: 429 レート制限（しばらく待ってから再読み込みしてください）' };
-        }
-        if (code === 503 || code === 502) {
-          if (retry < 3) { Utilities.sleep(5000 * (retry + 1)); continue; }
-          Logger.log('bcartGetAll 502/503: ' + res.getContentText().slice(0, 300));
-          return { ok: false, error: 'BCART_API_ERROR: ' + code + ' 帯域幅エラー（しばらく待ってから再読み込みしてください）' };
-        }
-        break;
+    const first = bcartFetchPage_(buildUrl(0), token);
+    if (!first.ok) return first;
+    const allData = first.rows.slice();
+    if (first.rows.length < limit) return { ok: true, data: allData };
+    if (first.total !== null && first.total <= limit) return { ok: true, data: allData };
+
+    if (first.total !== null && first.total > limit) {
+      // meta.totalから残りページを算出し、バッチ分割して並列取得
+      const offsets = [];
+      for (let off = limit; off < first.total; off += limit) offsets.push(off);
+      const batchSize = 15;
+      for (let i = 0; i < offsets.length; i += batchSize) {
+        const batchUrls = offsets.slice(i, i + batchSize).map(buildUrl);
+        const pages = bcartFetchPagesParallel_(batchUrls, token);
+        if (!pages.ok) return pages;
+        pages.rowsList.forEach(rows => allData.push(...rows));
+        if (i + batchSize < offsets.length) Utilities.sleep(200);
       }
-      if (res.getResponseCode() !== 200) {
-        Logger.log('bcartGetAll error: ' + res.getResponseCode() + ' ' + res.getContentText().slice(0, 300));
-        return { ok: false, error: 'BCART_API_ERROR: ' + res.getResponseCode() };
-      }
-      const parsed = JSON.parse(res.getContentText());
-      if (parsed.message || parsed.error) {
-        return { ok: false, error: 'BCART_API_ERROR: ' + (parsed.message || parsed.error) };
-      }
-      const page = parsed.data || parsed.product_sets || parsed.products || parsed.specials || parsed.product_stock || parsed.categories || parsed.product_features || parsed.features || parsed;
-      if (!Array.isArray(page) || page.length === 0) break;
-      allData.push(...page);
-      if (page.length < limit) break;
-      offset += limit;
-      Utilities.sleep(600);
+      return { ok: true, data: allData };
     }
 
+    // meta.totalが取れないエンドポイントは従来の直列ページングにフォールバック
+    let offset = limit;
+    while (true) {
+      Utilities.sleep(600);
+      const page = bcartFetchPage_(buildUrl(offset), token);
+      if (!page.ok) return page;
+      if (page.rows.length === 0) break;
+      allData.push(...page.rows);
+      if (page.rows.length < limit) break;
+      offset += limit;
+    }
     return { ok: true, data: allData };
   } catch (e) {
     Logger.log('bcartGetAll error: ' + e.message);
