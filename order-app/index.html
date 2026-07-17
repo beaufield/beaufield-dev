@@ -824,6 +824,7 @@
         <option value="999">全て</option>
       </select>
       <button id="inv-filter-reorder-btn" onclick="toggleReorderFilter()" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);white-space:nowrap">⚠️ 要発注</button>
+      <button id="inv-sort-jan-btn" onclick="toggleJanSort()" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);white-space:nowrap">🔢 JAN順</button>
     </div>
     <div style="display:flex;gap:4px">
       <button class="inv-sale-btn inv-sale-active" data-val="yesterday" onclick="setInvSaleFilter('yesterday')">前日</button>
@@ -1035,7 +1036,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.25.0'; // 在庫タブにカート内数量バッジ表示
+const APP_VERSION    = 'v1.26.0'; // 在庫タブにJANコード順ソートボタン追加
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -3469,6 +3470,23 @@ function setInvSaleFilter(val) {
   renderInventoryList();
 }
 
+let invSortByJan = false;
+
+function toggleJanSort() {
+  invSortByJan = !invSortByJan;
+  const btn = document.getElementById('inv-sort-jan-btn');
+  if (invSortByJan) {
+    btn.style.background  = 'var(--primary)';
+    btn.style.color       = '#fff';
+    btn.style.borderColor = 'var(--primary)';
+  } else {
+    btn.style.background  = 'var(--surface)';
+    btn.style.color       = 'var(--text)';
+    btn.style.borderColor = 'var(--border)';
+  }
+  renderInventoryList();
+}
+
 let invReorderFilterActive = false;
 
 function toggleReorderFilter() {
@@ -3539,8 +3557,13 @@ function renderInventoryList() {
     return true;
   });
 
-  // 在庫数の昇順（マイナスが上）
-  filtered.sort((a, b) => (parseFloat(a.stock)||0) - (parseFloat(b.stock)||0));
+  if (invSortByJan) {
+    // JANコード昇順
+    filtered.sort((a, b) => (a.jan||'').localeCompare(b.jan||'', undefined, {numeric:true}));
+  } else {
+    // 在庫数の昇順（マイナスが上）
+    filtered.sort((a, b) => (parseFloat(a.stock)||0) - (parseFloat(b.stock)||0));
+  }
 
   // 発注点更新日時を取得（データがある最初の商品から）
   const reorderDateSample = productMaster.find(p => p.reorderUpdatedAt)?.reorderUpdatedAt || '';
