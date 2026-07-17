@@ -735,6 +735,7 @@
       <button id="btn-chiyoda-pdf"    class="btn btn-secondary" onclick="outputChiyodaPDF()"    style="margin-bottom:8px;display:none">📋 千代田化学発注書 出力</button>
       <button id="btn-alpenrose-pdf"  class="btn btn-secondary" onclick="outputAlpenrosePDF()"  style="margin-bottom:8px;display:none">📋 アルペンローゼ発注書 出力</button>
       <button id="btn-melos-pdf"      class="btn btn-secondary" onclick="outputMelosPDF()"      style="margin-bottom:8px;display:none">📋 メロス発注書 出力</button>
+      <button id="btn-aderans-pdf"    class="btn btn-secondary" onclick="outputAderansPDF()"    style="margin-bottom:8px;display:none">📋 アデランス発注書 出力</button>
     </div>
     <div id="new-order-wrap" style="display:none">
       <button class="btn btn-outline" onclick="resumeOrderForRevision()" style="margin-bottom:8px">✏️ 修正発注（内容を変えて再発注）</button>
@@ -1036,7 +1037,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.26.0'; // 在庫タブにJANコード順ソートボタン追加
+const APP_VERSION    = 'v1.27.0'; // アデランス メーカー発注書 出力を追加
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -2119,6 +2120,10 @@ function applyOutputButtons() {
   // メロス：メーカーPDF対象の発注先の場合に表示
   show('btn-melos-pdf', methods.includes('メーカーPDF') &&
                         currentOrder.supplierCode === MELOS_SUPPLIER_CODE);
+
+  // アデランス：メーカーPDF対象の発注先の場合に表示
+  show('btn-aderans-pdf', methods.includes('メーカーPDF') &&
+                          currentOrder.supplierCode === ADERANS_SUPPLIER_CODE);
 }
 
 /* ===================================================
@@ -2636,6 +2641,83 @@ async function outputMelosPDF() {
   } finally { hideLoading(); }
 }
 
+/* ===================================================
+   アデランス メーカー発注書 出力
+=================================================== */
+const ADERANS_SUPPLIER_CODE = '82';
+
+// CFコード → 個数欄座標（pdf-lib座標系: 左下原点）
+// PDF: アデランス発注書(スパニストプロ).pdf (595.2 × 841.68 pt、スキャン画像)
+// 個数列 x=487.6（列中央）。5666はブラックプラス業務用1000ml（終売）のため対象外。
+const ADERANS_COORD_MAP = {
+  "5351":   {x:487.6, y:753.9}, "5352":   {x:487.6, y:704.4},
+  "5667":   {x:487.6, y:679.6}, "5353":   {x:487.6, y:654.8},
+  "5668":   {x:487.6, y:630.3}, "6009":   {x:487.6, y:606.0},
+  "6363":   {x:487.6, y:581.3}, "6010":   {x:487.6, y:556.7},
+  "6364":   {x:487.6, y:532.0}, "6011":   {x:487.6, y:507.3},
+  "6365":   {x:487.6, y:482.9}, "70620":  {x:487.6, y:458.2},
+  "5940":   {x:487.6, y:433.5}, "5941":   {x:487.6, y:409.1},
+  "5942":   {x:487.6, y:384.4}, "5943":   {x:487.6, y:359.7},
+  "6969":   {x:487.6, y:335.1}, "6970":   {x:487.6, y:310.4},
+  "6971":   {x:487.6, y:285.8}, "70658":  {x:487.6, y:261.1},
+  "6447":   {x:487.6, y:236.4}, "VLCP01": {x:487.6, y:211.8}
+};
+
+// 商品マスターの「かな」欄が "A" + CFコード の表記になっている前提でCFコードを抽出
+function getAderansCFCode(master) {
+  if (!master || !master.kana) return '';
+  const kana = master.kana.trim().toUpperCase();
+  return kana.charAt(0) === 'A' ? kana.slice(1) : '';
+}
+
+async function outputAderansPDF() {
+  const items = cartItems.filter(i => !i.isHandwritten);
+  const matched = [], unmatched = [];
+  for (const item of items) {
+    const master = productMaster.find(p => p.code === item.code || (item.janCode && p.jan === item.janCode));
+    const cfCode = getAderansCFCode(master);
+    if (cfCode && ADERANS_COORD_MAP[cfCode]) {
+      matched.push({ item, coord: ADERANS_COORD_MAP[cfCode] });
+    } else {
+      unmatched.push(item);
+    }
+  }
+  if (unmatched.length > 0) {
+    const names = unmatched.map(i => '・' + i.name).join('\n');
+    if (!confirm(`以下の商品はアデランス発注書に自動入力できません（手書き対応が必要）：\n\n${names}\n\n続けますか？`)) return;
+  }
+  showLoading('アデランス発注書を生成中...');
+  try {
+    const { PDFDocument, StandardFonts, rgb } = PDFLib;
+    const pdfBytes = await fetchTemplateAsArrayBuffer('adelans');
+    const pdfDoc = await PDFDocument.load(pdfBytes);
+    const page   = pdfDoc.getPages()[0];
+    const font   = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const black  = rgb(0, 0, 0);
+    const blue   = rgb(0, 0, 0.7);
+
+    // 注文日を記入（月・日のみ）
+    const [, mm, dd] = currentOrder.date.split('-').map(Number);
+    page.drawText(String(mm), { x: 495.7, y: 179.7, size: 10, font, color: black });
+    page.drawText(String(dd), { x: 534.0, y: 179.7, size: 10, font, color: black });
+
+    // 各商品の個数を記入
+    for (const { item, coord } of matched) {
+      page.drawText(String(item.qty), { x: coord.x, y: coord.y, size: 9, font, color: blue });
+    }
+
+    await saveOrderToGAS('メーカー発注書');
+    const pdfBytesOut = await pdfDoc.save();
+    const blob = new Blob([pdfBytesOut], { type: 'application/pdf' });
+    const dateStr = currentOrder.date.replace(/-/g, '');
+    downloadBlob(blob, `アデランス発注書_${dateStr}.pdf`);
+    showCompleteState();
+    showToast(`アデランス発注書を出力しました（自動記入: ${matched.length}件）`, 'success');
+  } catch(e) {
+    showToast('PDFエラー: ' + e.message, 'error');
+  } finally { hideLoading(); }
+}
+
 async function outputPDF() {
   showLoading('PDF生成中...');
   try {
@@ -2953,6 +3035,8 @@ function buildHistReOutputBtns(orderNo, supplierCode) {
     btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputAlpenrosePDF('${esc}');event.stopPropagation()">📋 アルペンローゼ再出力</button>`);
   if (methods.includes('メーカーPDF') && supplierCode === MELOS_SUPPLIER_CODE)
     btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputMelosPDF('${esc}');event.stopPropagation()">📋 メロス再出力</button>`);
+  if (methods.includes('メーカーPDF') && supplierCode === ADERANS_SUPPLIER_CODE)
+    btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputAderansPDF('${esc}');event.stopPropagation()">📋 アデランス再出力</button>`);
   // 複製して発注（常に表示）
   btns.push(`<button class="btn btn-primary btn-sm" onclick="copyOrderFromHistory('${esc}');event.stopPropagation()">📋 複製して発注</button>`);
   // 削除（管理者のみ表示）
@@ -3184,6 +3268,54 @@ async function reOutputMelosPDF(orderNo) {
     const dateStr = (orderInfo.date || '').replace(/\//g, '');
     downloadBlob(blob, `メロス発注書_${dateStr}_${orderNo}.pdf`);
     showToast(`メロス発注書を再出力しました（自動記入: ${matched.length}件）`, 'success');
+  } catch(e) {
+    showToast('PDFエラー: ' + e.message, 'error');
+  } finally { hideLoading(); }
+}
+
+// 履歴からアデランス発注書再出力
+async function reOutputAderansPDF(orderNo) {
+  const orderInfo = getHistoryOrderInfo(orderNo);
+  const items     = historyDetailCache[orderNo];
+  if (!items || !orderInfo) { showToast('データが見つかりません', 'error'); return; }
+
+  const matched = [], unmatched = [];
+  for (const item of items.filter(i => !i.isHandwritten)) {
+    const master = productMaster.find(p => p.code === item.code || (item.jan && p.jan === item.jan));
+    const cfCode = getAderansCFCode(master);
+    if (cfCode && ADERANS_COORD_MAP[cfCode]) {
+      matched.push({ item, coord: ADERANS_COORD_MAP[cfCode] });
+    } else {
+      unmatched.push(item);
+    }
+  }
+  if (unmatched.length > 0) {
+    const names = unmatched.map(i => '・' + i.name).join('\n');
+    if (!confirm(`以下の商品は自動入力できません（手書き対応が必要）：\n\n${names}\n\n続けますか？`)) return;
+  }
+  showLoading('アデランス発注書を生成中...');
+  try {
+    const { PDFDocument, StandardFonts, rgb } = PDFLib;
+    const pdfBytes = await fetchTemplateAsArrayBuffer('adelans');
+    const pdfDoc = await PDFDocument.load(pdfBytes);
+    const page   = pdfDoc.getPages()[0];
+    const font   = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const black  = rgb(0, 0, 0);
+    const blue   = rgb(0, 0, 0.7);
+
+    const [, mm, dd] = (orderInfo.date || '').split('/').map(Number);
+    if (mm) {
+      page.drawText(String(mm), { x: 495.7, y: 179.7, size: 10, font, color: black });
+      page.drawText(String(dd), { x: 534.0, y: 179.7, size: 10, font, color: black });
+    }
+    for (const { item, coord } of matched) {
+      page.drawText(String(item.qty), { x: coord.x, y: coord.y, size: 9, font, color: blue });
+    }
+    const pdfBytesOut = await pdfDoc.save();
+    const blob = new Blob([pdfBytesOut], { type: 'application/pdf' });
+    const dateStr = (orderInfo.date || '').replace(/\//g, '');
+    downloadBlob(blob, `アデランス発注書_${dateStr}_${orderNo}.pdf`);
+    showToast(`アデランス発注書を再出力しました（自動記入: ${matched.length}件）`, 'success');
   } catch(e) {
     showToast('PDFエラー: ' + e.message, 'error');
   } finally { hideLoading(); }
