@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.19.0';
+const VERSION = 'v2.20.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -26,6 +26,7 @@ const SHEET_HISTORY     = '更新履歴';
 const SHEET_SP_GROUPS   = '特別価格_顧客グループ';
 const SHEET_SP_DETAILS  = '特別価格_明細';
 const SHEET_SP_INDIVIDUAL = '特別価格_個別';
+const SHEET_SP_AUDIT_EXCLUDE = '特別価格_突合除外';
 const SHEET_VF_DETAILS  = '例外表示_明細';
 const SHEET_FEATURES    = '特集_管理';
 const SHEET_DESC_SKIP   = '説明文不要';
@@ -117,6 +118,10 @@ function doPost(e) {
       case 'applyIndividualPrices':     return jsonResponse(applyIndividualPrices(params));
       case 'deleteIndividualPrice':     return jsonResponse(deleteIndividualPrice(params));
       case 'auditSpecialPrices':        return jsonResponse(auditSpecialPrices(params));
+      case 'adoptUnmanagedPrices':      return jsonResponse(adoptUnmanagedPrices(params));
+      case 'getAuditExclusions':        return jsonResponse(getAuditExclusions());
+      case 'addAuditExclusion':         return jsonResponse(addAuditExclusion(params));
+      case 'deleteAuditExclusion':      return jsonResponse(deleteAuditExclusion(params));
       // 機能C: 説明文生成
       case 'getProductsForDescription': return jsonResponse(getProductsForDescription(params));
       case 'getSimilarProducts':        return jsonResponse(getSimilarProducts(params));
@@ -3049,7 +3054,25 @@ function auditSpecialPrices(params) {
     return (customers.ok && customers.byId[id]) ? customers.byId[id].ext_id : '';
   };
 
-  // 期待値マップ expected[setId][memberId] = {price, source}
+  // 除外設定を読み込み、会員ID・得意先コードのSetを構築（チェック対象外の得意先）
+  const exSheet = getOrCreateSheet(SHEET_SP_AUDIT_EXCLUDE);
+  const exRows = exSheet.getDataRange().getValues();
+  const excludedMemberIds = new Set();  // String(会員ID)
+  const excludedCodes = new Set();      // normCode_(得意先コード)
+  for (let i = 1; i < exRows.length; i++) {
+    if (!exRows[i][0]) continue;
+    const exCode = String(exRows[i][1] || '').trim();
+    const exMid = String(exRows[i][2] || '').trim();
+    if (exMid) excludedMemberIds.add(exMid);
+    if (exCode) {
+      excludedCodes.add(normCode_(exCode));
+      const m = findMemberByCode_(customers, exCode);
+      if (m) excludedMemberIds.add(String(m.id));
+    }
+  }
+  let excludedCount = 0;
+
+  // 期待値マップ expected[setId][memberId] = {price, source, sourceType, groupId}
   const expected = {};
   const pendingCodes = {};  // 未登録得意先コード → 出所
 
@@ -3070,12 +3093,13 @@ function auditSpecialPrices(params) {
   const detailRows = detailSheet.getDataRange().getValues();
   for (let i = 1; i < detailRows.length; i++) {
     if (!detailRows[i][0]) continue;
-    const g = groupInfo[String(detailRows[i][1])];
+    const gid = String(detailRows[i][1]);
+    const g = groupInfo[gid];
     if (!g) continue;
     const setId = String(detailRows[i][2]);
     const price = Number(detailRows[i][5]);
     if (!expected[setId]) expected[setId] = {};
-    g.memberIds.forEach(mid => { expected[setId][mid] = { price: price, source: 'グループ: ' + g.name }; });
+    g.memberIds.forEach(mid => { expected[setId][mid] = { price: price, source: 'グループ: ' + g.name, sourceType: 'group', groupId: gid }; });
   }
 
   const indSheet = getOrCreateSheet(SHEET_SP_INDIVIDUAL);
@@ -3087,7 +3111,7 @@ function auditSpecialPrices(params) {
     if (!mid) { if (!pendingCodes[code]) pendingCodes[code] = '個別特価'; continue; }
     const setId = String(indRows[i][4]);
     if (!expected[setId]) expected[setId] = {};
-    expected[setId][mid] = { price: Number(indRows[i][7]), source: '個別特価' };
+    expected[setId][mid] = { price: Number(indRows[i][7]), source: '個別特価', sourceType: 'individual' };
   }
 
   // BCART実態と突合
@@ -3104,18 +3128,20 @@ function auditSpecialPrices(params) {
     });
     const exp = expected[setId] || {};
     Object.keys(actual).forEach(mid => {
+      if (excludedMemberIds.has(mid)) { excludedCount++; return; }
       bcartEntries++;
       if (exp[mid] === undefined) {
-        if (unmanaged.length < LIMIT) unmanaged.push({ product_no: String(s.product_no || ''), set_name: s.name || '', member_id: mid, member_name: memberName(mid), customer_code: memberCode(mid), bcart_price: actual[mid] });
+        if (unmanaged.length < LIMIT) unmanaged.push({ product_no: String(s.product_no || ''), set_name: s.name || '', member_id: mid, member_name: memberName(mid), customer_code: memberCode(mid), bcart_price: actual[mid], set_id: setId });
       } else if (Number(exp[mid].price) !== Number(actual[mid])) {
-        if (mismatch.length < LIMIT) mismatch.push({ product_no: String(s.product_no || ''), set_name: s.name || '', member_id: mid, member_name: memberName(mid), customer_code: memberCode(mid), bcart_price: actual[mid], expected_price: exp[mid].price, source: exp[mid].source });
+        if (mismatch.length < LIMIT) mismatch.push({ product_no: String(s.product_no || ''), set_name: s.name || '', member_id: mid, member_name: memberName(mid), customer_code: memberCode(mid), bcart_price: actual[mid], expected_price: exp[mid].price, source: exp[mid].source, set_id: setId, source_type: exp[mid].sourceType, group_id: exp[mid].groupId });
       } else {
         matched++;
       }
     });
     Object.keys(exp).forEach(mid => {
       if (actual[mid] === undefined) {
-        if (missing.length < LIMIT) missing.push({ product_no: String(s.product_no || ''), set_name: s.name || '', member_id: mid, member_name: memberName(mid), customer_code: memberCode(mid), expected_price: exp[mid].price, source: exp[mid].source });
+        if (excludedMemberIds.has(mid)) { excludedCount++; return; }
+        if (missing.length < LIMIT) missing.push({ product_no: String(s.product_no || ''), set_name: s.name || '', member_id: mid, member_name: memberName(mid), customer_code: memberCode(mid), expected_price: exp[mid].price, source: exp[mid].source, set_id: setId, source_type: exp[mid].sourceType, group_id: exp[mid].groupId });
       }
     });
     delete expected[setId];
@@ -3123,11 +3149,16 @@ function auditSpecialPrices(params) {
   // アプリ内マスターにあるがBCARTに商品セット自体が存在しない
   Object.keys(expected).forEach(setId => {
     Object.keys(expected[setId]).forEach(mid => {
-      if (missing.length < LIMIT) missing.push({ product_no: '(セットID:' + setId + ')', set_name: '商品セットがBCARTに存在しません', member_id: mid, member_name: memberName(mid), customer_code: memberCode(mid), expected_price: expected[setId][mid].price, source: expected[setId][mid].source });
+      if (excludedMemberIds.has(mid)) { excludedCount++; return; }
+      const e = expected[setId][mid];
+      if (missing.length < LIMIT) missing.push({ product_no: '(セットID:' + setId + ')', set_name: '商品セットがBCARTに存在しません', member_id: mid, member_name: memberName(mid), customer_code: memberCode(mid), expected_price: e.price, source: e.source, set_id: setId, source_type: e.sourceType, group_id: e.groupId, set_missing: true });
     });
   });
 
-  const pending = Object.keys(pendingCodes).map(code => ({ customer_code: code, source: pendingCodes[code] }));
+  const pending = Object.keys(pendingCodes).filter(code => {
+    if (excludedCodes.has(normCode_(code))) { excludedCount++; return false; }
+    return true;
+  }).map(code => ({ customer_code: code, source: pendingCodes[code] }));
 
   return {
     ok: true,
@@ -3138,11 +3169,174 @@ function auditSpecialPrices(params) {
       unmanaged: unmanaged.length,
       mismatch: mismatch.length,
       missing: missing.length,
-      pending: pending.length
+      pending: pending.length,
+      excluded: excludedCount
     },
     unmanaged: unmanaged, mismatch: mismatch, missing: missing, pending: pending,
     truncated: unmanaged.length >= LIMIT || mismatch.length >= LIMIT || missing.length >= LIMIT
   };
+}
+
+// 得意先コード正規化（ext_id表記ゆれ吸収: ゼロ埋め差を数値化で吸収。非数値はそのまま）
+function normCode_(code) {
+  const s = String(code || '').trim();
+  const n = parseInt(s, 10);
+  return isNaN(n) ? s : String(n);
+}
+
+// 得意先コード（ext_id）から会員を解決。raw一致→正規化総当たりの2段構え
+function findMemberByCode_(customers, code) {
+  if (!customers || !customers.ok || !code) return null;
+  const raw = String(code).trim();
+  if (customers.byExtId[raw]) return customers.byExtId[raw];
+  const norm = normCode_(raw);
+  for (let i = 0; i < customers.members.length; i++) {
+    const m = customers.members[i];
+    if (m.ext_id && normCode_(m.ext_id) === norm) return m;
+  }
+  return null;
+}
+
+// 「マスター未登録の特価」を個別特価シートへ反映済み扱いで取り込む（BCARTには既に設定済みのためPATCHしない）
+function adoptUnmanagedPrices(params) {
+  const items = params.items || [];
+  if (!items.length) return { ok: false, error: 'items が空です' };
+
+  const sheet = getOrCreateSheet(SHEET_SP_INDIVIDUAL);
+  const rows = sheet.getDataRange().getValues();
+  const rowKey = {};  // customer_code|product_set_id → 行番号
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0]) rowKey[String(rows[i][1]) + '|' + String(rows[i][4])] = i + 1;
+  }
+
+  let added = 0, updated = 0;
+  const skipped = [];
+  const nowStr = new Date().toLocaleString('ja-JP');
+
+  items.forEach(item => {
+    const code = String(item.customer_code || '').trim();
+    const setId = String(item.set_id || '').trim();
+    const price = Number(item.unit_price);
+    if (!code) { skipped.push((item.product_no || '') + ' / ' + (item.member_name || item.member_id || '') + '：得意先コードが無いため取り込めません'); return; }
+    if (!setId || !(price > 0)) { skipped.push((item.product_no || '') + '：セットIDまたは価格が不正です'); return; }
+
+    const memberId = String(item.member_id || '');
+    const memberName = String(item.member_name || '');
+    const productNo = String(item.product_no || '');
+    const setName = String(item.set_name || '');
+
+    const key = code + '|' + setId;
+    if (rowKey[key]) {
+      const r = rowKey[key];
+      if (memberId) sheet.getRange(r, 3).setValue(memberId);
+      if (memberName) sheet.getRange(r, 4).setValue(memberName);
+      sheet.getRange(r, 8).setValue(price);
+      sheet.getRange(r, 9).setValue(nowStr);
+      sheet.getRange(r, 10).setValue(nowStr);  // 反映済み扱い（BCARTに既に設定あり）
+      updated++;
+    } else {
+      const newId = 'I' + new Date().getTime().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6);
+      sheet.appendRow([newId, code, memberId, memberName, setId, productNo, setName, price, nowStr, nowStr, '突合チェックから取り込み']);
+      rowKey[key] = sheet.getLastRow();
+      added++;
+    }
+  });
+
+  addHistory({
+    userName: params._userName, code: '', name: '個別特価',
+    type: '個別特価取り込み(突合)',
+    before: '', after: '新規' + added + '件 / 更新' + updated + '件',
+    result: skipped.length > 0 ? '一部スキップ' : '成功'
+  });
+
+  return { ok: true, added: added, updated: updated, skipped: skipped };
+}
+
+// ===================== 突合チェック 除外設定 =====================
+function getAuditExclusions() {
+  const sheet = getOrCreateSheet(SHEET_SP_AUDIT_EXCLUDE);
+  const rows = sheet.getDataRange().getValues();
+  const list = [];
+  for (let i = 1; i < rows.length; i++) {
+    if (!rows[i][0]) continue;
+    list.push({
+      exclude_id:    String(rows[i][0]),
+      customer_code: String(rows[i][1] || ''),
+      member_id:     String(rows[i][2] || ''),
+      label:         String(rows[i][3] || ''),
+      reason:        String(rows[i][4] || ''),
+      created_at:    String(rows[i][5] || '')
+    });
+  }
+  return { ok: true, exclusions: list };
+}
+
+function addAuditExclusion(params) {
+  const input = String(params.code_or_id || '').trim();
+  if (!input) return { ok: false, error: '得意先コードまたは会員IDを入力してください' };
+  const reason = String(params.reason || '').trim();
+
+  const customers = fetchCustomersCached();
+  let customerCode = '', memberId = '', label = '';
+
+  // ① 得意先コード（ext_id）として解決を試みる
+  const byCode = findMemberByCode_(customers, input);
+  if (byCode) {
+    memberId = String(byCode.id);
+    customerCode = String(byCode.ext_id || input);
+    label = byCode.comp_name || byCode.name || '';
+  } else if (customers.ok && customers.byId[input]) {
+    // ② 会員IDとして解決
+    const m = customers.byId[input];
+    memberId = String(m.id);
+    customerCode = String(m.ext_id || '');
+    label = m.comp_name || m.name || '';
+  } else {
+    // ③ 未解決でも登録は許可（未登録得意先の除外に必要）。入力値を得意先コードとして保持
+    customerCode = input;
+  }
+
+  const sheet = getOrCreateSheet(SHEET_SP_AUDIT_EXCLUDE);
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (!rows[i][0]) continue;
+    const rc = String(rows[i][1] || '').trim();
+    const rm = String(rows[i][2] || '').trim();
+    if ((customerCode && rc && normCode_(rc) === normCode_(customerCode)) || (memberId && rm && rm === memberId)) {
+      return { ok: true, duplicated: true, exclude_id: String(rows[i][0]), resolved: { customer_code: rc, member_id: rm, label: String(rows[i][3] || '') } };
+    }
+  }
+
+  const excludeId = 'X' + new Date().getTime().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6);
+  const nowStr = new Date().toLocaleString('ja-JP');
+  sheet.appendRow([excludeId, customerCode, memberId, label, reason, nowStr]);
+
+  addHistory({
+    userName: params._userName, code: customerCode, name: label,
+    type: '突合除外追加', before: '', after: (customerCode || memberId) + (reason ? '（' + reason + '）' : ''),
+    result: '成功'
+  });
+
+  return { ok: true, exclude_id: excludeId, resolved: { customer_code: customerCode, member_id: memberId, label: label } };
+}
+
+function deleteAuditExclusion(params) {
+  const id = String(params.exclude_id || '').trim();
+  if (!id) return { ok: false, error: 'exclude_id が指定されていません' };
+  const sheet = getOrCreateSheet(SHEET_SP_AUDIT_EXCLUDE);
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === id) {
+      const label = String(rows[i][3] || '') || String(rows[i][1] || '');
+      sheet.deleteRow(i + 1);
+      addHistory({
+        userName: params._userName, code: String(rows[i][1] || ''), name: label,
+        type: '突合除外削除', before: label, after: '', result: '成功'
+      });
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: '該当する除外設定が見つかりません' };
 }
 
 // ===================== 更新履歴 =====================
@@ -3252,6 +3446,11 @@ function getOrCreateSheet(sheetName) {
       sheet.setFrozenRows(1);
       sheet.getRange(1, 1, 1, 7).setFontWeight('bold').setBackground('#f3f4f6');
       sheet.getRange('D2:D').setNumberFormat('@');  // 品番（先頭ゼロの誤変換防止）
+    } else if (sheetName === SHEET_SP_AUDIT_EXCLUDE) {
+      sheet.appendRow(['exclude_id', 'customer_code', 'member_id', 'label', 'reason', 'created_at']);
+      sheet.setFrozenRows(1);
+      sheet.getRange(1, 1, 1, 6).setFontWeight('bold').setBackground('#f3f4f6');
+      sheet.getRange('B2:C').setNumberFormat('@');  // 得意先コード・会員IDを文字列扱い
     }
   } else {
     // 既存シートのマイグレーション処理

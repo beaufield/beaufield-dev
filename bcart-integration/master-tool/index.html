@@ -301,14 +301,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.9.11</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.10.0</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.9.11</span>
+    <span class="version">HTML v2.10.0</span>
   </div>
 
   <div class="tabs">
@@ -452,7 +452,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
         <button class="sp-subnav-btn active" id="sp-btn-settings" data-view="settings" onclick="switchSpSubview('settings',this)">特別価格設定</button>
         <button class="sp-subnav-btn" id="sp-btn-individual" data-view="individual" onclick="switchSpSubview('individual',this)">個別特価</button>
         <button class="sp-subnav-btn" id="sp-btn-audit" data-view="audit" onclick="switchSpSubview('audit',this)">🔍 突合チェック</button>
-        <a class="sp-help-link" href="guide.html" target="_blank" rel="noopener">❓ ヘルプ（使い方ガイド）</a>
+        <a class="sp-help-link" id="spHelpLink" href="guide.html#settings" target="_blank" rel="noopener">❓ この画面の使い方</a>
       </div>
       <div id="sp-alert-area"></div>
       <div id="sp-content">
@@ -2988,6 +2988,7 @@ function openSpecialPriceTab() {
   spSubview = 'settings';
   document.querySelectorAll('.sp-subnav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('sp-btn-settings').classList.add('active');
+  updateSpHelpLink('settings');
   loadSpecialPriceData();
 }
 
@@ -2995,7 +2996,22 @@ function switchSpSubview(view, btn) {
   spSubview = view;
   document.querySelectorAll('.sp-subnav-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+  updateSpHelpLink(view);
   renderSpContent();
+}
+
+// ヘルプリンクを表示中サブビューに対応するguide.htmlの節へ向ける（案B）
+function updateSpHelpLink(view) {
+  const link = document.getElementById('spHelpLink');
+  if (!link) return;
+  const anchors = { groups: 'groups', settings: 'settings', individual: 'individual', audit: 'audit' };
+  link.href = 'guide.html#' + (anchors[view] || 'why');
+}
+
+// 結果行の「反映画面を開く」等からサブビューを切り替える
+function gotoSpSubview(view) {
+  const btn = document.getElementById('sp-btn-' + view);
+  if (btn) switchSpSubview(view, btn);
 }
 
 function loadSpecialPriceData() {
@@ -3052,6 +3068,7 @@ function switchToSettings(groupId) {
   document.querySelectorAll('.sp-subnav-btn').forEach(b => b.classList.remove('active'));
   const settingsBtn = document.querySelector('.sp-subnav-btn[data-view="settings"]');
   if (settingsBtn) settingsBtn.classList.add('active');
+  updateSpHelpLink('settings');
   renderSpContent();
 }
 
@@ -4098,83 +4115,291 @@ function deleteIndPrice(detailId, code, productNo) {
 
 // ===================== 機能B-3: 突合チェック =====================
 let spAuditResult = null;
+let spExclusions = [];
+let spExclusionsOpen = false;
+let spAuditLocalExcluded = 0;
 
 function renderSpAudit() {
+  const exCount = spExclusions.length;
   let html = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:16px;">' +
-    '<p style="font-size:13px;color:#374151;margin-bottom:6px;">BCART上の特別価格（special_price）の実態と、このアプリのマスター（導入サロングループ＋個別特価）を突合します。</p>' +
-    '<p style="font-size:12px;color:#9ca3af;margin-bottom:12px;">BCART管理画面で直接変更された「管理外の特価」や、マスターにあるのに未反映の設定を検出できます。全商品セットを取得するため1〜2分かかることがあります。</p>' +
-    '<button class="btn btn-primary" id="spAuditRunBtn" onclick="runSpAudit()">🔍 突合チェックを実行</button>' +
+    '<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#0c4a6e;line-height:1.7;">' +
+    '🔍 <strong>このチェックが照合しているもの</strong><br>' +
+    'Bカートの各商品セットに登録されている「特価設定」と、このアプリの特価マスター（導入サロングループ＋個別特価）を突き合わせます。<br>' +
+    '※ 販売履歴（いつ・何を売ったか）とは無関係です。「設定」同士の照合です。<br>' +
+    '※ 除外設定に登録した得意先はチェック対象外です（現在 <strong id="spAuditExCount">' + exCount + '</strong> 件）。' +
     '</div>' +
+    '<button class="btn btn-primary" id="spAuditRunBtn" onclick="runSpAudit()">🔍 突合チェックを実行</button>' +
+    '<span style="font-size:12px;color:#9ca3af;margin-left:10px;">全商品セットを取得するため十数秒〜1分ほどかかります。</span>' +
+    '</div>' +
+    '<div id="spExcludeSection"></div>' +
     '<div id="spAuditResultArea"></div>';
   document.getElementById('sp-content').innerHTML = html;
+  renderExclusionSection();
   if (spAuditResult) renderSpAuditResult();
+  loadAuditExclusions();
 }
 
 function runSpAudit() {
   const btn = document.getElementById('spAuditRunBtn');
-  btn.textContent = '実行中...（1〜2分お待ちください）'; btn.disabled = true;
+  btn.textContent = '実行中...（十数秒〜1分お待ちください）'; btn.disabled = true;
   gasPost({ action: 'auditSpecialPrices' }, function(res) {
     btn.textContent = '🔍 突合チェックを実行'; btn.disabled = false;
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
     spAuditResult = res;
+    spAuditLocalExcluded = 0;
     renderSpAuditResult();
   });
 }
 
-function spAuditTable(title, color, rows, cols) {
-  let html = '<div style="margin-bottom:20px;">' +
-    '<div style="font-size:13px;font-weight:700;color:' + color + ';margin-bottom:6px;">' + title + '（' + rows.length + '件）</div>';
-  if (rows.length === 0) {
-    html += '<div style="font-size:12px;color:#9ca3af;">なし</div></div>';
-    return html;
-  }
-  html += '<div style="overflow-x:auto;max-height:320px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px;"><table class="sp-table"><thead><tr>' +
-    cols.map(c => '<th>' + c.label + '</th>').join('') + '</tr></thead><tbody>';
-  rows.forEach(r => {
-    html += '<tr>' + cols.map(c => {
-      let v = r[c.key];
-      if (c.key === 'bcart_price' || c.key === 'expected_price') v = (v === undefined || v === null || isNaN(v)) ? '' : '¥' + Number(v).toLocaleString();
-      return '<td style="font-size:12px;">' + esc(String(v === undefined || v === null ? '' : v)) + '</td>';
-    }).join('') + '</tr>';
+// ---- 除外設定 ----
+function loadAuditExclusions(cb) {
+  gasPost({ action: 'getAuditExclusions' }, function(res) {
+    if (res.ok) {
+      spExclusions = res.exclusions || [];
+      const c = document.getElementById('spAuditExCount');
+      if (c) c.textContent = spExclusions.length;
+      renderExclusionSection();
+    }
+    if (cb) cb(res);
   });
-  html += '</tbody></table></div></div>';
-  return html;
+}
+
+function toggleExclusionSection() { spExclusionsOpen = !spExclusionsOpen; renderExclusionSection(); }
+
+function renderExclusionSection() {
+  const el = document.getElementById('spExcludeSection');
+  if (!el) return;
+  const n = spExclusions.length;
+  let html = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:16px;">' +
+    '<div onclick="toggleExclusionSection()" style="padding:12px 16px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:600;color:#374151;">' +
+    '<span>🚫 除外設定（チェック対象外の得意先）— ' + n + '件</span>' +
+    '<span>' + (spExclusionsOpen ? '▲' : '▼') + '</span>' +
+    '</div>';
+  if (spExclusionsOpen) {
+    html += '<div style="padding:0 16px 16px;">' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">' +
+      '<input type="text" id="spExcludeCodeInput" placeholder="得意先コード または 会員ID" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;width:220px;">' +
+      '<input type="text" id="spExcludeReasonInput" placeholder="理由（任意・例: テスト用）" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;width:220px;">' +
+      '<button class="btn btn-primary btn-sm" onclick="submitAddExclusion()">＋ 追加</button>' +
+      '</div>';
+    if (n === 0) {
+      html += '<div style="font-size:12px;color:#9ca3af;">除外設定はありません。</div>';
+    } else {
+      html += '<div style="overflow-x:auto;"><table class="sp-table"><thead><tr><th>得意先コード</th><th>会員名</th><th>理由</th><th>登録日</th><th></th></tr></thead><tbody>';
+      spExclusions.forEach(function(x) {
+        html += '<tr>' +
+          '<td style="font-family:monospace;font-size:12px;">' + esc(x.customer_code || (x.member_id ? 'ID:' + x.member_id : '')) + '</td>' +
+          '<td style="font-size:12px;">' + esc(x.label || '') + '</td>' +
+          '<td style="font-size:12px;color:#6b7280;">' + esc(x.reason || '') + '</td>' +
+          '<td style="font-size:11px;color:#9ca3af;">' + esc(String(x.created_at || '').substring(0, 16)) + '</td>' +
+          '<td><button class="btn btn-sm btn-danger" onclick="deleteExclusion(\'' + esc(x.exclude_id) + '\')">削除</button></td>' +
+          '</tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    html += '<div style="font-size:11px;color:#9ca3af;margin-top:8px;">※ 追加・削除は次回のチェック実行から反映されます。</div>' +
+      '</div>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function submitAddExclusion() {
+  const codeEl = document.getElementById('spExcludeCodeInput');
+  const reasonEl = document.getElementById('spExcludeReasonInput');
+  const input = (codeEl.value || '').trim();
+  if (!input) { showToast('得意先コードまたは会員IDを入力してください', true); return; }
+  gasPost({ action: 'addAuditExclusion', code_or_id: input, reason: (reasonEl.value || '').trim() }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    showToast(res.duplicated ? 'すでに除外設定に登録されています' : '除外設定に追加しました');
+    loadAuditExclusions();
+  });
+}
+
+function deleteExclusion(id) {
+  if (!confirm('この除外設定を削除しますか？')) return;
+  gasPost({ action: 'deleteAuditExclusion', exclude_id: id }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    showToast('除外設定を削除しました');
+    loadAuditExclusions();
+  });
+}
+
+// ---- 結果の描画ヘルパー ----
+function spaAp(v) { return (v === undefined || v === null || isNaN(v)) ? '—' : '¥' + Number(v).toLocaleString(); }
+function spaEsc(v) { return esc(String(v === undefined || v === null ? '' : v)); }
+function spaTd(v) { return '<td style="font-size:12px;">' + spaEsc(v) + '</td>'; }
+function spaTdm(v) { return '<td style="font-family:monospace;font-size:12px;color:#6b7280;">' + spaEsc(v) + '</td>'; }
+function spaTile(label, n, bg, bd) {
+  return '<div style="background:' + bg + ';border:1px solid ' + bd + ';border-radius:8px;padding:10px 14px;font-size:12px;min-width:110px;">' + label + '<br><strong style="font-size:18px;">' + n + '</strong></div>';
+}
+function spaSecHead(title, n, color, desc) {
+  return '<div style="font-size:14px;font-weight:700;color:' + color + ';margin-bottom:4px;">' + title + '（' + n + '件）</div>' +
+    '<div style="font-size:12px;color:#6b7280;line-height:1.7;margin-bottom:8px;">' + desc + '</div>';
+}
+function spaOpen(cols) {
+  return '<div style="overflow-x:auto;max-height:360px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px;"><table class="sp-table"><thead><tr>' +
+    cols.map(function(c) { return '<th>' + c + '</th>'; }).join('') + '</tr></thead><tbody>';
+}
+function spaClose() { return '</tbody></table></div></div>'; }
+function spaEmpty() { return '<div style="font-size:12px;color:#9ca3af;">なし</div></div>'; }
+function spaNormCode(c) { const s = String(c || '').trim(); const num = parseInt(s, 10); return isNaN(num) ? s : String(num); }
+function spaGotoBtn(cat, i) {
+  const r = (spAuditResult[cat] || [])[i];
+  const label = (r && r.source_type === 'individual') ? '▶ 個別特価を開く' : '▶ 反映画面を開く';
+  return '<button class="btn btn-sm btn-primary" onclick="spAuditGoto(\'' + cat + '\',' + i + ')">' + label + '</button>';
+}
+function spaExcludeBtn(cat, i) {
+  return '<button class="btn btn-sm btn-gray" onclick="spAuditExcludeRow(\'' + cat + '\',' + i + ')">🚫 除外</button>';
+}
+
+function spAuditGoto(cat, i) {
+  const r = (spAuditResult[cat] || [])[i];
+  if (!r) return;
+  if (r.source_type === 'group' && r.group_id) switchToSettings(r.group_id);
+  else gotoSpSubview('individual');
+}
+
+function spAuditExcludeRow(cat, i) {
+  const r = (spAuditResult[cat] || [])[i];
+  if (!r) return;
+  const codeOrId = (r.customer_code && String(r.customer_code).trim()) ? r.customer_code : r.member_id;
+  const label = r.member_name || r.customer_code || r.member_id || '';
+  if (!confirm('「' + label + '」を突合チェックの対象外にしますか？')) return;
+  gasPost({ action: 'addAuditExclusion', code_or_id: codeOrId, reason: '結果画面から追加' }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    removeExcludedRowsLocally(r.member_id, r.customer_code);
+    spAuditLocalExcluded++;
+    renderSpAuditResult();
+    loadAuditExclusions();
+    showToast('「' + label + '」を除外しました（次回チェックから対象外）');
+  });
+}
+
+// 除外した得意先の行を全カテゴリの結果から取り除く（会員ID一致・得意先コード正規化一致）
+function removeExcludedRowsLocally(memberId, customerCode) {
+  const mid = String(memberId || '');
+  const code = spaNormCode(customerCode);
+  ['unmanaged', 'mismatch', 'missing', 'pending'].forEach(function(cat) {
+    if (!spAuditResult[cat]) return;
+    spAuditResult[cat] = spAuditResult[cat].filter(function(r) {
+      const rmid = String(r.member_id || '');
+      const rcode = spaNormCode(r.customer_code);
+      const matchMid = mid && rmid && rmid === mid;
+      const matchCode = code && rcode && rcode === code;
+      return !(matchMid || matchCode);
+    });
+  });
+}
+
+function adoptSelectedUnmanaged() {
+  const rows = spAuditResult.unmanaged || [];
+  const items = [];
+  rows.forEach(function(r, i) {
+    const chk = document.getElementById('spAdoptChk_' + i);
+    if (chk && chk.checked) {
+      items.push({ customer_code: r.customer_code, member_id: r.member_id, member_name: r.member_name, set_id: r.set_id, product_no: r.product_no, set_name: r.set_name, unit_price: r.bcart_price });
+    }
+  });
+  if (items.length === 0) { showToast('取り込む行を選択してください', true); return; }
+  if (!confirm(items.length + '件を個別特価マスターに取り込みます（Bカートには既に設定済みのため反映済み扱いになります）。よろしいですか？')) return;
+  gasPost({ action: 'adoptUnmanagedPrices', items: items }, function(res) {
+    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    const adopted = {};
+    items.forEach(function(it) { adopted[String(it.customer_code) + '|' + String(it.set_id)] = true; });
+    spAuditResult.unmanaged = rows.filter(function(r) { return !adopted[String(r.customer_code) + '|' + String(r.set_id)]; });
+    renderSpAuditResult();
+    let msg = (res.added + res.updated) + '件をマスターへ取り込みました（個別特価・反映済み扱い）';
+    if (res.skipped && res.skipped.length) msg += ' / スキップ' + res.skipped.length + '件';
+    showToast(msg);
+  });
 }
 
 function renderSpAuditResult() {
   const area = document.getElementById('spAuditResultArea');
   if (!area || !spAuditResult) return;
   const s = spAuditResult.summary || {};
+  const missing = spAuditResult.missing || [];
+  const mismatch = spAuditResult.mismatch || [];
+  const unmanaged = spAuditResult.unmanaged || [];
+  const pending = spAuditResult.pending || [];
+  const excludedN = (s.excluded || 0) + (spAuditLocalExcluded || 0);
+
   let html = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">' +
-    '<div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;padding:10px 14px;font-size:12px;">✅ 一致<br><strong style="font-size:18px;">' + (s.matched || 0) + '</strong></div>' +
-    '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;font-size:12px;">🚨 管理外の特価<br><strong style="font-size:18px;">' + (s.unmanaged || 0) + '</strong></div>' +
-    '<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 14px;font-size:12px;">⚠️ 価格不一致<br><strong style="font-size:18px;">' + (s.mismatch || 0) + '</strong></div>' +
-    '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;font-size:12px;">📤 未反映<br><strong style="font-size:18px;">' + (s.missing || 0) + '</strong></div>' +
-    '<div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:10px 14px;font-size:12px;">⏸ 未登録得意先（保留）<br><strong style="font-size:18px;">' + (s.pending || 0) + '</strong></div>' +
+    spaTile('🚨 特価の設定漏れ', missing.length, '#fef2f2', '#fecaca') +
+    spaTile('⚠️ 金額ちがい', mismatch.length, '#fffbeb', '#fcd34d') +
+    spaTile('❓ マスター未登録の特価', unmanaged.length, '#f1f5f9', '#cbd5e1') +
+    spaTile('✅ 一致', (s.matched || 0), '#ecfdf5', '#a7f3d0') +
+    spaTile('⏸ Bカート未登録の得意先', pending.length, '#f5f3ff', '#ddd6fe') +
+    spaTile('🚫 除外中', excludedN, '#f9fafb', '#e5e7eb') +
     '</div>';
   if (spAuditResult.truncated) {
-    html += '<div class="warn-bar" style="margin-bottom:12px;">⚠️ 件数が多いため各一覧は300件までの表示です。</div>';
+    html += '<div class="warn-bar" style="margin-bottom:12px;">⚠️ 件数が多いため各一覧は300件までの表示です。除外設定でテスト用得意先などを除くと見やすくなります。</div>';
   }
-  html += spAuditTable('🚨 管理外の特価（BCARTにあるがマスターにない）', '#dc2626', spAuditResult.unmanaged || [], [
-    { key: 'product_no', label: '品番' }, { key: 'set_name', label: '商品セット名' },
-    { key: 'customer_code', label: '得意先コード' }, { key: 'member_name', label: '会員名' },
-    { key: 'member_id', label: '会員ID' }, { key: 'bcart_price', label: 'BCART価格' }
-  ]);
-  html += spAuditTable('⚠️ 価格不一致（マスターとBCARTで金額が違う）', '#d97706', spAuditResult.mismatch || [], [
-    { key: 'product_no', label: '品番' }, { key: 'set_name', label: '商品セット名' },
-    { key: 'customer_code', label: '得意先コード' }, { key: 'member_name', label: '会員名' },
-    { key: 'bcart_price', label: 'BCART価格' }, { key: 'expected_price', label: 'マスター価格' },
-    { key: 'source', label: '出所' }
-  ]);
-  html += spAuditTable('📤 未反映（マスターにあるがBCARTにない）', '#1d4ed8', spAuditResult.missing || [], [
-    { key: 'product_no', label: '品番' }, { key: 'set_name', label: '商品セット名' },
-    { key: 'customer_code', label: '得意先コード' }, { key: 'member_name', label: '会員名' },
-    { key: 'expected_price', label: 'マスター価格' }, { key: 'source', label: '出所' }
-  ]);
-  html += spAuditTable('⏸ 未登録得意先（会員登録待ちの保留）', '#7c3aed', spAuditResult.pending || [], [
-    { key: 'customer_code', label: '得意先コード' }, { key: 'source', label: '出所' }
-  ]);
+  html += renderAuditMissingTable(missing);
+  html += renderAuditMismatchTable(mismatch);
+  html += renderAuditUnmanagedTable(unmanaged);
+  html += renderAuditPendingTable(pending);
   area.innerHTML = html;
+}
+
+function renderAuditMissingTable(rows) {
+  let html = '<div style="margin-bottom:20px;">' + spaSecHead('🚨 特価の設定漏れ', rows.length, '#dc2626',
+    'マスターでは特価のはずが、Bカートに設定がありません。<strong style="color:#dc2626;">このままだと対象のサロンは通常価格で注文できてしまいます。</strong>「反映画面を開く」から該当画面へ移動し、「BCART反映」を実行してください（保存しただけで反映し忘れている明細もここに出ます）。');
+  if (rows.length === 0) return html + spaEmpty();
+  html += spaOpen(['品番', '商品セット名', '得意先コード', '会員名', 'マスター価格', '出所', '操作']);
+  rows.forEach(function(r, i) {
+    const setName = r.set_missing
+      ? '⚠️ この商品はBカートから削除されています<div style="font-size:10px;color:#9ca3af;">マスター側の該当行を削除してください</div>'
+      : spaEsc(r.set_name);
+    html += '<tr>' + spaTdm(r.product_no) + '<td style="font-size:12px;">' + setName + '</td>' + spaTdm(r.customer_code) + spaTd(r.member_name) +
+      '<td style="font-weight:700;color:#1a56db;">' + spaAp(r.expected_price) + '</td>' + spaTd(r.source) +
+      '<td>' + spaGotoBtn('missing', i) + '</td></tr>';
+  });
+  return html + spaClose();
+}
+
+function renderAuditMismatchTable(rows) {
+  let html = '<div style="margin-bottom:20px;">' + spaSecHead('⚠️ 金額ちがい', rows.length, '#d97706',
+    'マスターとBカートで特価の金額が一致しません。どちらが正しいか確認してください。マスターが正しい場合 →「反映画面を開く」から再反映（Bカートを上書き）。Bカートが正しい場合 → マスター側の金額を修正してください。');
+  if (rows.length === 0) return html + spaEmpty();
+  html += spaOpen(['品番', '商品セット名', '得意先コード', '会員名', 'Bカート価格', 'マスター価格', '出所', '操作']);
+  rows.forEach(function(r, i) {
+    html += '<tr>' + spaTdm(r.product_no) + spaTd(r.set_name) + spaTdm(r.customer_code) + spaTd(r.member_name) +
+      '<td>' + spaAp(r.bcart_price) + '</td><td style="font-weight:700;color:#1a56db;">' + spaAp(r.expected_price) + '</td>' + spaTd(r.source) +
+      '<td>' + spaGotoBtn('mismatch', i) + '</td></tr>';
+  });
+  return html + spaClose();
+}
+
+function renderAuditUnmanagedTable(rows) {
+  let html = '<div style="margin-bottom:20px;">' + spaSecHead('❓ マスター未登録の特価', rows.length, '#475569',
+    'Bカートに特価が設定されていますが、このアプリのマスターに記録がありません。Bカート管理画面で直接設定された特価などがここに出ます。正しい特価なら「マスターへ取り込む」で個別特価として記録してください。テスト用の得意先は「除外」ボタンでチェック対象から外せます。（Bカート側から特価設定を削除する機能は今後追加予定。それまではBカート管理画面で削除してください）');
+  if (rows.length === 0) return html + spaEmpty();
+  html += '<div style="margin-bottom:8px;"><button class="btn btn-success btn-sm" onclick="adoptSelectedUnmanaged()">✔ 選択をマスターへ取り込む（個別特価に追加）</button></div>';
+  html += spaOpen(['', '品番', '商品セット名', '得意先コード', '会員名', '会員ID', 'Bカート価格', '操作']);
+  rows.forEach(function(r, i) {
+    const hasCode = r.customer_code && String(r.customer_code).trim();
+    const priceOk = !(r.bcart_price === undefined || r.bcart_price === null || isNaN(r.bcart_price));
+    const chk = (hasCode && priceOk)
+      ? '<input type="checkbox" id="spAdoptChk_' + i + '">'
+      : '<input type="checkbox" id="spAdoptChk_' + i + '" disabled title="得意先コードが無いため取り込めません（除外は可能）">';
+    html += '<tr><td>' + chk + '</td>' + spaTdm(r.product_no) + spaTd(r.set_name) + spaTdm(r.customer_code) + spaTd(r.member_name) + spaTdm(r.member_id) +
+      '<td style="font-weight:700;color:#1a56db;">' + spaAp(r.bcart_price) + '</td>' +
+      '<td>' + spaExcludeBtn('unmanaged', i) + '</td></tr>';
+  });
+  return html + spaClose();
+}
+
+function renderAuditPendingTable(rows) {
+  let html = '<div style="margin-bottom:20px;">' + spaSecHead('⏸ Bカート未登録の得意先', rows.length, '#7c3aed',
+    '対応は不要です（情報）。マスターに登録済みですが、まだBカート会員になっていない得意先です。会員登録されると、次回の反映時に自動で特価が適用されます。');
+  if (rows.length === 0) return html + spaEmpty();
+  html += spaOpen(['得意先コード', '出所', '操作']);
+  rows.forEach(function(r, i) {
+    html += '<tr>' + spaTdm(r.customer_code) + spaTd(r.source) + '<td>' + spaExcludeBtn('pending', i) + '</td></tr>';
+  });
+  return html + spaClose();
 }
 
 // ===================== 機能C: 説明文生成 =====================
