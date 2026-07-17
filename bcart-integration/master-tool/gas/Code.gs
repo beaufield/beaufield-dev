@@ -7,7 +7,7 @@
 //   CSV_FOLDER_ID     : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL      : portal GAS WebApp URL（セッション検証用）
 
-const VERSION = 'v2.17.4';
+const VERSION = 'v2.18.4';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -31,6 +31,11 @@ const SHEET_FEATURES    = '特集_管理';
 const SHEET_DESC_SKIP   = '説明文不要';
 const SHEET_DRAFT       = '登録ドラフト';
 const SHEET_DRAFT_SETS  = '登録ドラフト_セット';
+const SHEET_STOCK_LOG   = '在庫同期ログ';
+const SHEET_STOCK_LOG_DETAIL = '在庫同期ログ_明細';
+
+// 在庫夜間自動同期の設定
+const STOCK_SYNC_CSV_MAX_AGE_HOURS = 24; // これより古いCSVでは同期を中止
 
 // ===================== エントリポイント =====================
 function doPost(e) {
@@ -151,6 +156,8 @@ function doPost(e) {
       case 'approveDraft':            return jsonResponse(approveDraft(params));
       case 'rejectDraft':             return jsonResponse(rejectDraft(params));
       case 'publishDraft':            return jsonResponse(publishDraft(params));
+      // 在庫夜間自動同期
+      case 'previewStockSync':        return jsonResponse(nightlyStockSync(true));
       default:                         return jsonResponse({ ok: false, error: 'UNKNOWN_ACTION' });
     }
   } catch (err) {
@@ -320,14 +327,15 @@ function loadCsvFromDrive() {
     if (!files.hasNext()) return { ok: false, error: 'CSV_NOT_FOUND' };
 
     const file = files.next();
-    const updatedAt = file.getLastUpdated().toLocaleString('ja-JP');
-    const daysDiff = (new Date() - file.getLastUpdated()) / (1000 * 60 * 60 * 24);
+    const updatedAtDate = file.getLastUpdated();
+    const updatedAt = updatedAtDate.toLocaleString('ja-JP');
+    const daysDiff = (new Date() - updatedAtDate) / (1000 * 60 * 60 * 24);
     const isOld = daysDiff > 3;
 
     const content = file.getBlob().getDataAsString('Shift_JIS');
     const rows = parseCsv(content);
 
-    return { ok: true, rows: rows, updatedAt: updatedAt, isOld: isOld };
+    return { ok: true, rows: rows, updatedAt: updatedAt, updatedAtDate: updatedAtDate, isOld: isOld };
   } catch (e) {
     Logger.log('loadCsvFromDrive error: ' + e.message);
     return { ok: false, error: 'INTERNAL_ERROR' };
@@ -3166,6 +3174,15 @@ function getOrCreateSheet(sheetName) {
       sheet.getRange(1, 1, 1, 9).setFontWeight('bold').setBackground('#f3f4f6');
       sheet.getRange('B2:B').setNumberFormat('@');  // code
       sheet.getRange('D2:D').setNumberFormat('@');  // jan（先頭ゼロ・大桁数の誤変換防止）
+    } else if (sheetName === SHEET_STOCK_LOG) {
+      sheet.appendRow(['日時', 'モード', '対象数', '更新数', '0維持スキップ', 'CSV無しスキップ', '差分無しスキップ', '要確認件数', 'エラー']);
+      sheet.setFrozenRows(1);
+      sheet.getRange(1, 1, 1, 9).setFontWeight('bold').setBackground('#f3f4f6');
+    } else if (sheetName === SHEET_STOCK_LOG_DETAIL) {
+      sheet.appendRow(['日時', 'モード', '種別', '品番', '商品名', '変更前', '変更後']);
+      sheet.setFrozenRows(1);
+      sheet.getRange(1, 1, 1, 7).setFontWeight('bold').setBackground('#f3f4f6');
+      sheet.getRange('D2:D').setNumberFormat('@');  // 品番（先頭ゼロの誤変換防止）
     }
   } else {
     // 既存シートのマイグレーション処理
@@ -3646,12 +3663,217 @@ function weeklyCheck() {
     UrlFetchApp.fetch(webhook, {
       method: 'post',
       contentType: 'application/json',
-      payload: JSON.stringify({ content: msg }),
+      payload: JSON.stringify({ body: { text: msg } }),
       muteHttpExceptions: true
     });
   } catch (e) {
     Logger.log('LINE WORKS通知エラー: ' + e);
   }
+}
+
+// ===================== 在庫夜間自動同期 =====================
+// 商品.CSVの「在庫数」列を正として、BCART側で在庫管理（stock_flag:0）している
+// 商品セットの在庫数を毎晩上書き同期する。
+//   - BCART側の在庫がすでに0のセットは同期対象外（手動欠品設定を尊重して0のまま維持）。
+//     ただしCSV側が0より大きい場合は「要確認」としてログ・通知に記録する。
+//   - CSVの在庫数がマイナスの場合は0として送信する。
+//   - コード突合は calcDiffs() と同じロジック（先頭ゼロを parseInt で吸収）を用いる。
+function nightlyStockSync(dryRun) {
+  const isDry = !!dryRun;
+  try {
+    const csvData = loadCsvFromDrive();
+    if (!csvData.ok) {
+      logStockSync_({ mode: isDry ? 'dry' : 'real', error: 'CSV読み込み失敗: ' + csvData.error });
+      notifyStockSyncAlert_('【在庫夜間同期】CSV読み込みに失敗しました（' + csvData.error + '）。同期は中止しました。');
+      return { ok: false, error: csvData.error };
+    }
+
+    const ageHours = (new Date() - csvData.updatedAtDate) / (1000 * 60 * 60);
+    if (ageHours > STOCK_SYNC_CSV_MAX_AGE_HOURS) {
+      const msg = '商品.CSVの更新が' + Math.floor(ageHours) + '時間前と古いため同期を中止しました（最終更新: ' + csvData.updatedAt + '）';
+      logStockSync_({ mode: isDry ? 'dry' : 'real', error: msg });
+      notifyStockSyncAlert_('【在庫夜間同期】' + msg);
+      return { ok: false, error: 'CSV_TOO_OLD' };
+    }
+
+    const stockRes = bcartGetAll('/product_stock', { stock_flag: 0 });
+    if (!stockRes.ok) {
+      logStockSync_({ mode: isDry ? 'dry' : 'real', error: 'BCART在庫取得失敗: ' + stockRes.error });
+      notifyStockSyncAlert_('【在庫夜間同期】BCART在庫取得に失敗しました（' + stockRes.error + '）。同期は中止しました。');
+      return { ok: false, error: stockRes.error };
+    }
+
+    // CSVの商品コード→在庫数マップ（calcDiffsと同じキー正規化: 先頭ゼロをparseIntで吸収）
+    const csvStockMap = {};
+    csvData.rows.forEach(row => {
+      const code = row['コード'];
+      if (!code) return;
+      const codeKey = String(parseInt(code, 10) || code);
+      const rawStock = String(row['在庫数'] || '').replace(/,/g, '').trim();
+      if (rawStock === '') return;
+      const num = parseInt(rawStock, 10);
+      if (isNaN(num)) return;
+      csvStockMap[codeKey] = Math.max(0, num);
+    });
+
+    let skipZeroKeep = 0, skipNoCsv = 0, skipNoDiff = 0;
+    const updates = [];
+    const needCheck = [];
+
+    stockRes.data.forEach(s => {
+      const productNo = s.product_no;
+      if (!productNo) return;
+      const bcartStock = Number(s.stock) || 0;
+      const hasCsv = csvStockMap.hasOwnProperty(productNo);
+
+      if (bcartStock === 0) {
+        skipZeroKeep++;
+        if (hasCsv && csvStockMap[productNo] > 0) {
+          needCheck.push({ product_no: productNo, name: s.name || '', csvStock: csvStockMap[productNo] });
+        }
+        return;
+      }
+      if (!hasCsv) { skipNoCsv++; return; }
+
+      const csvStock = csvStockMap[productNo];
+      if (csvStock === bcartStock) { skipNoDiff++; return; }
+
+      updates.push({ product_no: String(productNo), stock: csvStock, _before: bcartStock, _name: s.name || '' });
+    });
+
+    if (isDry) {
+      logStockSync_({
+        mode: 'dry', target: stockRes.data.length, updated: updates.length,
+        skipZeroKeep: skipZeroKeep, skipNoCsv: skipNoCsv, skipNoDiff: skipNoDiff,
+        needCheck: needCheck.length
+      });
+      logStockSyncDetail_('dry', updates.map(u => ({ product_no: u.product_no, name: u._name, before: u._before, after: u.stock, status: '予定' })), needCheck);
+      return {
+        ok: true, dryRun: true, target: stockRes.data.length, planned: updates.length,
+        updates: updates, skipZeroKeep: skipZeroKeep, skipNoCsv: skipNoCsv, skipNoDiff: skipNoDiff,
+        needCheck: needCheck
+      };
+    }
+
+    let updatedCount = 0;
+    const patchErrors = [];
+    const chunkSize = 100;
+    for (let i = 0; i < updates.length; i += chunkSize) {
+      const chunkItems = updates.slice(i, i + chunkSize);
+      const chunk = chunkItems.map(u => ({ product_no: u.product_no, stock: u.stock }));
+      const res = bcartPatch('/product_stock', { product_stock: chunk });
+      if (!res.ok) {
+        patchErrors.push('件数' + chunk.length + ': ' + res.error);
+        chunkItems.forEach(u => { u._success = false; });
+      } else {
+        updatedCount += chunk.length;
+        chunkItems.forEach(u => { u._success = true; });
+      }
+      Utilities.sleep(400);
+    }
+
+    logStockSync_({
+      mode: 'real', target: stockRes.data.length, updated: updatedCount,
+      skipZeroKeep: skipZeroKeep, skipNoCsv: skipNoCsv, skipNoDiff: skipNoDiff,
+      needCheck: needCheck.length, error: patchErrors.join(' / ')
+    });
+    logStockSyncDetail_('real', updates.map(u => ({
+      product_no: u.product_no, name: u._name, before: u._before, after: u.stock,
+      status: u._success === false ? '失敗' : '更新済'
+    })), needCheck);
+
+    if (patchErrors.length > 0) {
+      notifyStockSyncAlert_('【在庫夜間同期】一部の更新に失敗しました\n' + patchErrors.join('\n'));
+    }
+    if (needCheck.length > 0) {
+      const lines = needCheck.slice(0, 20).map(n => '・' + n.product_no + ' ' + n.name + '（CSV在庫' + n.csvStock + '）');
+      let msg = '【在庫夜間同期】BCART在庫0（欠品設定中）だがCSV在庫が0より大きい商品が' + needCheck.length + '件あります（自動同期対象外・現状の0を維持）\n' + lines.join('\n');
+      if (needCheck.length > 20) msg += '\n…他' + (needCheck.length - 20) + '件';
+      notifyStockSyncAlert_(msg);
+    }
+
+    return {
+      ok: true, dryRun: false, target: stockRes.data.length, updated: updatedCount,
+      skipZeroKeep: skipZeroKeep, skipNoCsv: skipNoCsv, skipNoDiff: skipNoDiff,
+      needCheck: needCheck, errors: patchErrors
+    };
+  } catch (e) {
+    Logger.log('nightlyStockSync error: ' + e.message);
+    logStockSync_({ mode: isDry ? 'dry' : 'real', error: 'INTERNAL_ERROR: ' + e.message });
+    notifyStockSyncAlert_('【在庫夜間同期】予期しないエラーが発生しました: ' + e.message);
+    return { ok: false, error: 'INTERNAL_ERROR' };
+  }
+}
+
+function logStockSync_(entry) {
+  try {
+    const sheet = getOrCreateSheet(SHEET_STOCK_LOG);
+    sheet.appendRow([
+      new Date().toLocaleString('ja-JP'),
+      entry.mode || '',
+      entry.target != null ? entry.target : '',
+      entry.updated != null ? entry.updated : '',
+      entry.skipZeroKeep != null ? entry.skipZeroKeep : '',
+      entry.skipNoCsv != null ? entry.skipNoCsv : '',
+      entry.skipNoDiff != null ? entry.skipNoDiff : '',
+      entry.needCheck != null ? entry.needCheck : '',
+      entry.error || ''
+    ]);
+  } catch (e) {
+    Logger.log('在庫同期ログ書き込みエラー: ' + e);
+  }
+}
+
+// 品番ごとの変更前後を「在庫同期ログ_明細」に記録（更新分＋要確認分の両方）
+function logStockSyncDetail_(mode, updateEntries, needCheck) {
+  try {
+    const sheet = getOrCreateSheet(SHEET_STOCK_LOG_DETAIL);
+    const now = new Date().toLocaleString('ja-JP');
+    const rows = [];
+    (updateEntries || []).forEach(u => {
+      rows.push([now, mode, u.status || '', String(u.product_no || ''), u.name || '', u.before, u.after]);
+    });
+    (needCheck || []).forEach(n => {
+      rows.push([now, mode, '要確認(0維持)', String(n.product_no || ''), n.name || '', 0, n.csvStock]);
+    });
+    if (rows.length > 0) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, 7).setValues(rows);
+    }
+  } catch (e) {
+    Logger.log('在庫同期明細ログ書き込みエラー: ' + e);
+  }
+}
+
+function notifyStockSyncAlert_(msg) {
+  const webhook = PropertiesService.getScriptProperties().getProperty('LINEWORKS_WEBHOOK');
+  if (!webhook) return;
+  try {
+    // ⚠️ LINE WORKS Incoming Webhook（webhook.worksmobile.com）のペイロードは
+    //    { body: { text } } が正（kiki-kanri で動作実績あり）。{ content } では表示されない。
+    UrlFetchApp.fetch(webhook, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({ body: { text: msg } }),
+      muteHttpExceptions: true
+    });
+  } catch (e) {
+    Logger.log('LINE WORKS通知エラー(在庫同期): ' + e);
+  }
+}
+
+// GASエディタの「▶実行」は選択した関数を引数なしで呼ぶため、nightlyStockSync()を直接実行すると
+// dryRun=undefined→本番更新になってしまう。安全にdry-run確認するにはこちらを選んで実行すること。
+function test_dryRunStockSync() {
+  const result = nightlyStockSync(true);
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+// CSV/在庫には一切触れず、LINE WORKS Webhookの疎通とペイロード形式だけを確認する。
+// スクリプトプロパティ LINEWORKS_WEBHOOK を設定した直後の動作確認用。
+function test_notifyStockSync() {
+  notifyStockSyncAlert_('【テスト通知】在庫夜間同期のLINE WORKS疎通確認です。これが表示されれば設定OKです。');
+  Logger.log('送信しました（LINEWORKS_WEBHOOK未設定の場合は何も起きません）');
 }
 
 // ===================== 機能D: 特集管理 =====================
@@ -3671,7 +3893,7 @@ function getFeatureList() {
 
   const typeMap = getFeatureTypeMap_();
   list.forEach(f => { f.type = typeMap[String(f.id)] || ''; });
-  list.sort((a, b) => a.priority - b.priority);
+  list.sort((a, b) => b.priority - a.priority);
   return { ok: true, features: list };
 }
 

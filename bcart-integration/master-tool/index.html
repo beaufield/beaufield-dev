@@ -298,14 +298,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.9.9</div>
+    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.9.10</div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.9.9</span>
+    <span class="version">HTML v2.9.10</span>
   </div>
 
   <div class="tabs">
@@ -4742,7 +4742,7 @@ function moveFeatureRow(idx, dir) {
 }
 
 function recalcFeaturePriority() {
-  featureList.forEach(function(f, i) { f.priority = i + 1; });
+  featureList.forEach(function(f, i) { f.priority = featureList.length - i; });
   featureOrderChanged = true;
   document.getElementById('feature-order-save-btn').style.display = '';
 }
@@ -4804,7 +4804,7 @@ function openNewFeatureModal() {
   document.getElementById('featureModalTitle').textContent = '特集を作成';
   document.getElementById('featureModalName').value = '';
   document.getElementById('featureModalDesc').value = '';
-  document.getElementById('featureModalPriority').value = featureList.length ? featureList[featureList.length - 1].priority + 1 : 1;
+  document.getElementById('featureModalPriority').value = featureList.length ? featureList[0].priority + 1 : 1;
   document.getElementById('featureModalFlag').value = '1';
   document.getElementById('featureModalType').value = '';
   document.getElementById('featureModal').classList.add('open');
