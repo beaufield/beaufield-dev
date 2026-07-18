@@ -6,9 +6,9 @@
 //   LINEWORKS_WEBHOOK   : LINE WORKS Webhook URL（任意）
 //   CSV_FOLDER_ID       : 商品.CSV保管Driveフォルダ ID
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
-//   PRICE_AUDIT_FOLDER_ID : 実績突合の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
+//   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.21.0';
+const VERSION = 'v2.22.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -107,6 +107,7 @@ function doPost(e) {
       // 機能B: 特別価格管理
       case 'getSpecialPriceData':       return jsonResponse(getSpecialPriceData());
       case 'saveCustomerGroup':         return jsonResponse(saveCustomerGroup(params));
+      case 'addCustomerCodesToGroup':   return jsonResponse(addCustomerCodesToGroup(params));
       case 'deleteCustomerGroup':       return jsonResponse(deleteCustomerGroup(params));
       case 'getProductSetsForFeature':  return jsonResponse(getProductSetsForFeature(params));
       case 'searchProductSets':         return jsonResponse(searchProductSets(params));
@@ -353,7 +354,7 @@ function loadCsvFromDrive() {
   }
 }
 
-// 実績突合の集計CSV読み込み（UTF-8。loadCsvFromDriveはCSV_FOLDER_ID固定・Shift_JIS固定のため流用不可）
+// 特価もれ検出の集計CSV読み込み（UTF-8。loadCsvFromDriveはCSV_FOLDER_ID固定・Shift_JIS固定のため流用不可）
 function loadAuditCsv_(folderId, filename) {
   const folder = DriveApp.getFolderById(folderId);
   const files = folder.getFilesByName(filename);
@@ -2418,6 +2419,61 @@ function saveCustomerGroup(params) {
   return { ok: true, group_id: newId };
 }
 
+// 得意先コードをグループのcustomer_codes列だけに追記する（既存の会員・note・use_view_filterは変更しない）。
+// saveCustomerGroupは全項目上書き型で会員を"置換"してしまうため流用できず、この専用アクションを用意した。
+// 特価もれ検出①の結果から選択会員を（既存/新規）グループへ追加する動線で使う。
+function addCustomerCodesToGroup(params) {
+  const codes = (params.codes || []).map(c => String(c).trim()).filter(c => c);
+  if (codes.length === 0) return { ok: false, error: 'codesが空です' };
+
+  ensureSpGroupCodesHeader(getOrCreateSheet(SHEET_SP_GROUPS));
+  const sheet = getOrCreateSheet(SHEET_SP_GROUPS);
+  const rows = sheet.getDataRange().getValues();
+
+  if (params.group_id) {
+    for (let i = 1; i < rows.length; i++) {
+      if (String(rows[i][0]) === String(params.group_id)) {
+        const existing = String(rows[i][6] || '').split(',').map(s => s.trim()).filter(s => s);
+        const existingNorm = new Set(existing.map(normCode_));
+        let added = 0;
+        codes.forEach(code => {
+          if (!existingNorm.has(normCode_(code))) {
+            existing.push(code);
+            existingNorm.add(normCode_(code));
+            added++;
+          }
+        });
+        const cCell = sheet.getRange(i + 1, 7);
+        cCell.setNumberFormat('@');
+        cCell.setValue(existing.join(','));
+        addHistory({
+          userName: params._userName, code: '', name: String(rows[i][1] || ''),
+          type: 'グループ会員追加(特価もれ)', before: '', after: String(rows[i][1] || '') + ' / ' + added + '件',
+          result: '成功'
+        });
+        return { ok: true, group_id: String(params.group_id), group_name: String(rows[i][1] || ''), added: added };
+      }
+    }
+    return { ok: false, error: '指定されたグループが見つかりません' };
+  }
+
+  if (!params.group_name) return { ok: false, error: 'group_idまたはgroup_nameが必要です' };
+  const newId = 'G' + new Date().getTime().toString(36).toUpperCase();
+  sheet.appendRow([newId, params.group_name, '', new Date().toLocaleString('ja-JP'), '', 'FALSE']);
+  const lastRow = sheet.getLastRow();
+  const cCell = sheet.getRange(lastRow, 7);
+  cCell.setNumberFormat('@');
+  cCell.setValue(codes.join(','));
+
+  addHistory({
+    userName: params._userName, code: '', name: params.group_name,
+    type: 'グループ会員追加(特価もれ)', before: '', after: params.group_name + ' / ' + codes.length + '件（新規グループ）',
+    result: '成功'
+  });
+
+  return { ok: true, group_id: newId, group_name: params.group_name, added: codes.length };
+}
+
 function deleteCustomerGroup(params) {
   const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
   const groupRows = groupSheet.getDataRange().getValues();
@@ -3059,7 +3115,7 @@ function deleteIndividualPrice(params) {
   return { ok: true };
 }
 
-// ===================== 特価突合チェック =====================
+// ===================== マスター整合チェック =====================
 // BCART実態（special_price）とアプリ内マスター（グループ明細＋個別特価）を突合する
 function auditSpecialPrices(params) {
   const allSets = bcartGetAll('/product_sets');
@@ -3176,7 +3232,7 @@ function auditSpecialPrices(params) {
   };
 }
 
-// ===================== 実績突合（販売実績×BCART特価設定） =====================
+// ===================== 特価もれ検出（販売実績×BCART特価設定） =====================
 // sales.db由来の集計CSV（price_audit_seed.csv/price_audit_activity.csv）とBCART実態を突合する。
 // auditSpecialPrices（アプリのマスター↔BCART）とは情報源が異なり、こちらは販売履歴↔BCARTを直接照合する。
 function auditSalesVsBcart(params) {
@@ -3324,7 +3380,7 @@ function expandSpecialPrice_(sp) {
   return actual;
 }
 
-// 突合チェック共通: 除外設定シートから除外対象の会員ID・得意先コードのSetを構築する。
+// マスター整合チェック・特価もれ検出 共通: 除外設定シートから除外対象の会員ID・得意先コードのSetを構築する。
 // auditSpecialPrices / auditSalesVsBcart の両方から使う（同じ`特別価格_突合除外`シートを共用）。
 function buildAuditExclusionSets_(customers) {
   const exSheet = getOrCreateSheet(SHEET_SP_AUDIT_EXCLUDE);
@@ -3404,7 +3460,7 @@ function adoptUnmanagedPrices(params) {
       updated++;
     } else {
       const newId = 'I' + new Date().getTime().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6);
-      sheet.appendRow([newId, code, memberId, memberName, setId, productNo, setName, price, nowStr, nowStr, '突合チェックから取り込み']);
+      sheet.appendRow([newId, code, memberId, memberName, setId, productNo, setName, price, nowStr, nowStr, 'マスター整合チェックから取り込み']);
       rowKey[key] = sheet.getLastRow();
       added++;
     }
@@ -3412,7 +3468,7 @@ function adoptUnmanagedPrices(params) {
 
   addHistory({
     userName: params._userName, code: '', name: '個別特価',
-    type: '個別特価取り込み(突合)',
+    type: '個別特価取り込み(マスター整合チェック)',
     before: '', after: '新規' + added + '件 / 更新' + updated + '件',
     result: skipped.length > 0 ? '一部スキップ' : '成功'
   });
@@ -3420,7 +3476,7 @@ function adoptUnmanagedPrices(params) {
   return { ok: true, added: added, updated: updated, skipped: skipped };
 }
 
-// ===================== 突合チェック 除外設定 =====================
+// ===================== マスター整合チェック・特価もれ検出 共通の除外設定 =====================
 function getAuditExclusions() {
   const sheet = getOrCreateSheet(SHEET_SP_AUDIT_EXCLUDE);
   const rows = sheet.getDataRange().getValues();
@@ -3481,7 +3537,7 @@ function addAuditExclusion(params) {
 
   addHistory({
     userName: params._userName, code: customerCode, name: label,
-    type: '突合除外追加', before: '', after: (customerCode || memberId) + (reason ? '（' + reason + '）' : ''),
+    type: '除外設定追加', before: '', after: (customerCode || memberId) + (reason ? '（' + reason + '）' : ''),
     result: '成功'
   });
 
@@ -3499,7 +3555,7 @@ function deleteAuditExclusion(params) {
       sheet.deleteRow(i + 1);
       addHistory({
         userName: params._userName, code: String(rows[i][1] || ''), name: label,
-        type: '突合除外削除', before: label, after: '', result: '成功'
+        type: '除外設定削除', before: label, after: '', result: '成功'
       });
       return { ok: true };
     }
