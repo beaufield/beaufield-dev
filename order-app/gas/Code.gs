@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.11.0';
+const VERSION         = 'v1.11.1';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -178,7 +178,7 @@ function doPost(e) {
   }
 
   // APIキー認証アクション（Pythonスクリプト用・セッション不要）
-  const API_KEY_ACTIONS = ['updateReorderPoints', 'getReorderConfig', 'updateOrderProposals', 'updateProposalExplanations'];
+  const API_KEY_ACTIONS = ['updateReorderPoints', 'getReorderConfig', 'updateOrderProposals', 'updateProposalExplanations', 'testNotify'];
   if (API_KEY_ACTIONS.indexOf(action) !== -1) {
     const apiKey = p.api_key || '';
     if (!apiKey || apiKey !== _PROPS.getProperty('REORDER_API_KEY')) {
@@ -190,6 +190,7 @@ function doPost(e) {
         case 'getReorderConfig':           return jsonResponse(getReorderConfig());
         case 'updateOrderProposals':       return jsonResponse(updateOrderProposals(p));
         case 'updateProposalExplanations': return jsonResponse(updateProposalExplanations(p));
+        case 'testNotify':                 return jsonResponse(testNotify());
       }
     } catch(err) {
       Logger.log(action + ' error: ' + err);
@@ -875,7 +876,7 @@ function saveStaff(p, user_id) {
 
 // 発注提案シートの列定義（updateOrderProposals / getOrderProposals で共有）
 const PROPOSAL_HEADERS = ['商品コード','商品名','仕入先コード','仕入先名','パターン',
-                          '現在庫','推奨在庫','提案数量','推定ロット','月平均',
+                          '現在庫','発注済','推奨在庫','提案数量','推定ロット','月平均',
                           '注文P95','最大注文','根拠メモ','AI説明','分析日時'];
 
 // POST(APIキー): 分析に必要な設定を返す
@@ -903,8 +904,15 @@ function getReorderConfig() {
 
   // 過去の発注明細から商品別のロット推定材料を集計
   // gcdQty: 全発注数量の最大公約数（ケース単位の推定に使う）
+  // あわせて直近60日の発注（発注済み・未入荷の可能性がある分）も商品別に返す
+  // 発注日は発注No（YYYYMMDD-NNN）の先頭8桁から取得
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 60);
+  const cutoffStr = Utilities.formatDate(cutoff, 'Asia/Tokyo', 'yyyyMMdd');
+
   const itemsData = getSheet(SHEET_ITEMS).getDataRange().getValues();
   const lotStats = {};
+  const recentOrders = {};
   itemsData.slice(1).forEach(r => {
     const code = String(r[2] || '').trim();
     const qty  = Math.round(parseFloat(r[4]) || 0);
@@ -914,6 +922,12 @@ function getReorderConfig() {
     s.orderCount++;
     if (qty < s.minQty) s.minQty = qty;
     s.gcdQty = gcdInt(s.gcdQty, qty);
+
+    const orderDate = String(r[0] || '').split('-')[0];  // 発注No先頭のYYYYMMDD
+    if (orderDate.length === 8 && orderDate >= cutoffStr) {
+      if (!recentOrders[code]) recentOrders[code] = [];
+      recentOrders[code].push({ date: orderDate, qty });
+    }
   });
 
   return {
@@ -921,6 +935,7 @@ function getReorderConfig() {
     suppliers,
     exclusions,
     lotStats,
+    recentOrders,
     defaults: { leadTimeDays: DEFAULT_LEAD_TIME_DAYS, orderCycleDays: DEFAULT_ORDER_CYCLE_DAYS }
   };
 }
@@ -953,6 +968,7 @@ function updateOrderProposals(p) {
       String(x.supplierName || ''),
       String(x.pattern      || ''),
       parseFloat(x.stock)       || 0,
+      parseFloat(x.onOrder)     || 0,
       parseFloat(x.recommended) || 0,
       parseFloat(x.proposedQty) || 0,
       parseFloat(x.lot)         || 1,
@@ -1031,16 +1047,17 @@ function getOrderProposals() {
         supplierName: String(r[3] || ''),
         pattern:      String(r[4] || ''),
         stock:        parseFloat(r[5])  || 0,
-        recommended:  parseFloat(r[6])  || 0,
-        proposedQty:  parseFloat(r[7])  || 0,
-        lot:          parseFloat(r[8])  || 1,
-        meanMonthly:  parseFloat(r[9])  || 0,
-        p95Order:     parseFloat(r[10]) || 0,
-        maxOrder:     parseFloat(r[11]) || 0,
-        note:         String(r[12] || ''),
-        aiNote:       String(r[13] || '')
+        onOrder:      parseFloat(r[6])  || 0,
+        recommended:  parseFloat(r[7])  || 0,
+        proposedQty:  parseFloat(r[8])  || 0,
+        lot:          parseFloat(r[9])  || 1,
+        meanMonthly:  parseFloat(r[10]) || 0,
+        p95Order:     parseFloat(r[11]) || 0,
+        maxOrder:     parseFloat(r[12]) || 0,
+        note:         String(r[13] || ''),
+        aiNote:       String(r[14] || '')
       }));
-    analyzedAt = cellToStr(data[1][14], 'yyyy-MM-dd HH:mm');
+    analyzedAt = cellToStr(data[1][15], 'yyyy-MM-dd HH:mm');
   }
 
   // 除外リスト（除外管理UIでの表示・解除用）
@@ -1107,19 +1124,35 @@ function saveProposalExclusion(p, user_id) {
 
 // ヘルパー: LINE WORKS Incoming Webhook 通知（失敗しても本処理は継続）
 // ペイロードは {body:{text}} 形式が正（LINE WORKS Incoming Webhook仕様）
+// 戻り値: { sent, hasWebhook, httpStatus, responseBody } — testNotify のデバッグにも使う
 function notifyLineWorks(text) {
+  const result = { sent: false, hasWebhook: false, httpStatus: null, responseBody: '' };
   try {
     const webhook = _PROPS.getProperty('LINEWORKS_WEBHOOK');
-    if (!webhook) return;
-    UrlFetchApp.fetch(webhook, {
+    if (!webhook) return result;
+    result.hasWebhook = true;
+    const res = UrlFetchApp.fetch(webhook.trim(), {
       method: 'post',
       contentType: 'application/json',
       payload: JSON.stringify({ body: { text: text } }),
       muteHttpExceptions: true
     });
+    result.httpStatus = res.getResponseCode();
+    result.responseBody = String(res.getContentText() || '').slice(0, 300);
+    result.sent = result.httpStatus >= 200 && result.httpStatus < 300;
+    if (!result.sent) Logger.log('LINE WORKS通知 HTTPエラー: ' + result.httpStatus + ' ' + result.responseBody);
   } catch(e) {
     Logger.log('LINE WORKS通知エラー（無視）: ' + e);
+    result.responseBody = String(e).slice(0, 300);
   }
+  return result;
+}
+
+// POST(APIキー): LINE WORKS通知の疎通テスト（デバッグ用）
+// レスポンスに webhook の設定有無・HTTPステータス・応答本文を返す
+function testNotify() {
+  const r = notifyLineWorks('🔔 発注アプリからのテスト通知です（testNotify）');
+  return { success: true, ...r };
 }
 
 // ============================================================

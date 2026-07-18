@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.0.0
+# Version: v1.1.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -21,7 +21,9 @@
 #
 # 発注提案の対象:
 #   月平均1個以上・販売歴6ヶ月以上・提案除外設定に無い商品のうち、
-#   現在庫が推奨在庫を下回ったもの。提案数量は推定ロット単位に切り上げ。
+#   「現在庫＋発注済み未入荷分」が推奨在庫を下回ったもの。
+#   発注済み未入荷分 = リードタイム内に発注アプリから発注した数量（二重発注防止）
+#   提案数量は推定ロット単位に切り上げ。
 #   推定ロット = 過去の発注明細の数量の最大公約数（発注3回以上かつ2以上のときのみ採用）
 #
 # 実行方法:
@@ -286,10 +288,12 @@ def estimate_lot(lot_stats_entry):
     return gcd_qty if gcd_qty >= 2 else 1
 
 
-def build_note(stat, protect_days, lot):
+def build_note(stat, protect_days, lot, on_order=0):
     """提案根拠の短い説明文（ルールベース）"""
     parts = []
     pattern = stat['pattern']
+    if on_order > 0:
+        parts.append(f"発注済み未入荷{on_order:.0f}個を在庫に加算済み")
     if pattern == 'まとめ買い型':
         if stat['adi']:
             parts.append(f"約{stat['adi']:.1f}ヶ月間隔で、1回あたり最大{stat['max_order_size']:.0f}個のまとまり注文あり")
@@ -348,6 +352,7 @@ def main():
     suppliers_cfg = {}
     exclusions = set()
     lot_stats = {}
+    recent_orders = {}
     try:
         cfg = fetch_reorder_config(config['gas_url'], config['api_key'])
         for s in cfg.get('suppliers', []):
@@ -357,6 +362,8 @@ def main():
         exclusions = {normalize_code(c) for c in cfg.get('exclusions', [])} - {None}
         lot_stats = {normalize_code(k): v for k, v in cfg.get('lotStats', {}).items()
                      if normalize_code(k)}
+        recent_orders = {normalize_code(k): v for k, v in cfg.get('recentOrders', {}).items()
+                         if normalize_code(k)}
     except Exception as e:
         if args.dry_run:
             logging.warning(f'GAS設定取得失敗（dry-runのため既定値で続行）: {e}')
@@ -421,7 +428,16 @@ def main():
 
         stock = float(prod['stock'])
         lot = estimate_lot(lot_stats.get(code))
-        shortage = stat['recommended'] - stock
+
+        # 発注済み・未入荷分: リードタイム内に発注したものはまだ在庫に反映されて
+        # いない可能性が高いため、在庫に加算して二重発注を防ぐ
+        on_order = 0.0
+        lt_cutoff = (date.today() - timedelta(days=int(lead_time))).strftime('%Y%m%d')
+        for o in recent_orders.get(code, []):
+            if str(o.get('date', '')) >= lt_cutoff:
+                on_order += float(o.get('qty', 0))
+
+        shortage = stat['recommended'] - (stock + on_order)
 
         excluded = code in exclusions
         eligible = (not insufficient) and (not excluded) and stat['mean_monthly'] >= min_mean
@@ -438,6 +454,7 @@ def main():
             'pattern': pattern_label,
             'excluded': excluded,
             'stock': stock,
+            'on_order': on_order,
             'recommended': stat['recommended'],
             'proposed_qty': proposed_qty,
             'lot': lot,
@@ -464,13 +481,14 @@ def main():
                 'supplierName': prod['supplier'],
                 'pattern': pattern_label,
                 'stock': stock,
+                'onOrder': on_order,
                 'recommended': stat['recommended'],
                 'proposedQty': proposed_qty,
                 'lot': lot,
                 'meanMonthly': stat['mean_monthly'],
                 'p95Order': stat['p95_order_size'],
                 'maxOrder': stat['max_order_size'],
-                'note': build_note(stat, protect_days, lot),
+                'note': build_note(stat, protect_days, lot, on_order),
             })
 
     # 仕入先→提案数量の多い順で並べる（アプリでの見やすさ優先）
