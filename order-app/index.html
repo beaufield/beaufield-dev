@@ -601,9 +601,13 @@
     .jan-not-found-opts { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
 
     /* 発注提案タブ */
-    .prop-group-head  { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
-    .prop-group-name  { font-weight: 700; font-size: 15px; }
-    .prop-group-count { font-size: 12px; color: var(--text-light); }
+    .prop-group-head  { display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    .prop-group-name  { font-weight: 700; font-size: 15px; flex: 1; }
+    .prop-group-count { font-size: 12px; color: var(--text-light); white-space: nowrap; }
+    .prop-group-chev  { font-size: 12px; color: var(--text-light); transition: transform 0.15s; }
+    .prop-group.open .prop-group-chev { transform: rotate(90deg); }
+    .prop-group-body  { display: none; margin-top: 4px; }
+    .prop-group.open .prop-group-body { display: block; }
     .prop-item        { border-top: 1px solid var(--border); padding: 10px 0; }
     .prop-item-top    { display: flex; gap: 8px; align-items: flex-start; }
     .prop-check       { width: 18px; height: 18px; margin-top: 2px; }
@@ -1082,7 +1086,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.28.0'; // 発注提案タブ追加（週次需要分析・除外設定・提案からカート投入）
+const APP_VERSION    = 'v1.29.0'; // 提案タブ改善（メーカー別アコーディオン・発注済み未入荷の表示）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -3936,7 +3940,7 @@ function renderProposalList() {
   if (props.length === 0) {
     wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">🎉</div><div>現在、発注提案はありません</div></div>';
   } else {
-    // 仕入先ごとにグループ表示
+    // 仕入先ごとにアコーディオン表示（タップで開閉・デフォルト閉）
     const groups = {};
     props.forEach(p => {
       (groups[p.supplierCode] = groups[p.supplierCode] || { name: p.supplierName, items: [] }).items.push(p);
@@ -3948,6 +3952,7 @@ function renderProposalList() {
         const items = g.items.map(p => {
           const badgeCls = PROP_PATTERN_CLASS[p.pattern] || 'sporadic';
           const note = p.aiNote || p.note || '';
+          const onOrder = p.onOrder > 0 ? `<span style="color:var(--text-light)">＋発注済 <b>${p.onOrder}</b></span> ` : '';
           return `
           <div class="prop-item" data-code="${escHtml(p.code)}">
             <div class="prop-item-top">
@@ -3958,24 +3963,43 @@ function renderProposalList() {
               <button class="prop-excl-btn" onclick="excludeProposal('${escAttr(p.code)}','${escAttr(p.name)}')">🚫 除外</button>
             </div>
             <div class="prop-item-stats">
-              <span>在庫 <b>${p.stock}</b> → 推奨 <b>${p.recommended}</b></span>
+              <span>在庫 <b>${p.stock}</b> ${onOrder}→ 推奨 <b>${p.recommended}</b></span>
               <span>発注数 <input type="number" class="prop-qty" value="${p.proposedQty}" min="1" step="1">${p.lot > 1 ? `<span style="font-size:11px;color:var(--text-light)"> ロット${p.lot}</span>` : ''}</span>
             </div>
             ${note ? `<div class="prop-note">${escHtml(note)}</div>` : ''}
           </div>`;
         }).join('');
+        const totalQty = g.items.reduce((s, p) => s + (p.proposedQty || 0), 0);
+        const isOpen = propOpenGroups.has(code);
         return `
-        <div class="card" id="prop-group-${escHtml(code)}">
-          <div class="prop-group-head">
+        <div class="card prop-group${isOpen ? ' open' : ''}" id="prop-group-${escHtml(code)}">
+          <div class="prop-group-head" onclick="toggleProposalGroup('${escAttr(code)}')">
+            <span class="prop-group-chev">▶</span>
             <span class="prop-group-name">${escHtml(g.name)}</span>
-            <span class="prop-group-count">${g.items.length}件</span>
+            <span class="prop-group-count">${g.items.length}件 / 計${totalQty}個</span>
           </div>
-          ${items}
-          <button class="btn btn-primary" style="margin-top:10px" onclick="startOrderFromProposals('${escAttr(code)}')">🛒 チェックした商品で発注画面へ</button>
+          <div class="prop-group-body">
+            ${items}
+            <button class="btn btn-primary" style="margin-top:10px" onclick="startOrderFromProposals('${escAttr(code)}')">🛒 チェックした商品で発注画面へ</button>
+          </div>
         </div>`;
       }).join('');
   }
   renderProposalExclusions();
+}
+
+// グループ開閉（開閉状態は再描画後も維持する）
+const propOpenGroups = new Set();
+function toggleProposalGroup(code) {
+  const el = document.getElementById('prop-group-' + code);
+  if (!el) return;
+  if (propOpenGroups.has(code)) {
+    propOpenGroups.delete(code);
+    el.classList.remove('open');
+  } else {
+    propOpenGroups.add(code);
+    el.classList.add('open');
+  }
 }
 
 function renderProposalExclusions() {
