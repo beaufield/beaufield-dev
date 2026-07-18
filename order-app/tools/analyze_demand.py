@@ -74,6 +74,9 @@ PRODUCT_CSV_CANDIDATES = [str(d / '商品.CSV') for d in _ONEDRIVE_DATA_DIRS]
 def setup_logger():
     LOG_DIR.mkdir(exist_ok=True)
     log_file = LOG_DIR / f"analyze_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    # cp932コンソールでも絵文字入りログで落ちないようにする
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(errors='replace')
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s [%(levelname)s] %(message)s',
