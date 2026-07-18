@@ -599,6 +599,25 @@
     }
 
     .jan-not-found-opts { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+
+    /* 発注提案タブ */
+    .prop-group-head  { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+    .prop-group-name  { font-weight: 700; font-size: 15px; }
+    .prop-group-count { font-size: 12px; color: var(--text-light); }
+    .prop-item        { border-top: 1px solid var(--border); padding: 10px 0; }
+    .prop-item-top    { display: flex; gap: 8px; align-items: flex-start; }
+    .prop-check       { width: 18px; height: 18px; margin-top: 2px; }
+    .prop-item-name   { font-size: 14px; font-weight: 600; flex: 1; }
+    .prop-item-code   { font-size: 11px; color: var(--text-light); font-weight: 400; margin-top: 2px; }
+    .prop-badge          { display: inline-block; font-size: 10px; font-weight: 700; border-radius: 8px; padding: 1px 6px; margin-left: 4px; }
+    .prop-badge.lumpy    { background: #fff3e0; color: #e65100; }
+    .prop-badge.smooth   { background: #e8f5e9; color: #2e7d32; }
+    .prop-badge.erratic  { background: #e3f2fd; color: #1565c0; }
+    .prop-badge.sporadic { background: #f5f5f5; color: #616161; }
+    .prop-item-stats  { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-size: 13px; flex-wrap: wrap; }
+    .prop-qty         { width: 64px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; font-weight: 700; text-align: center; }
+    .prop-note        { font-size: 11px; color: var(--text-light); margin-top: 4px; line-height: 1.5; }
+    .prop-excl-btn    { margin-left: auto; padding: 4px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-light); cursor: pointer; white-space: nowrap; }
   </style>
 </head>
 <body>
@@ -845,10 +864,36 @@
   </div>
 </div>
 
+<!-- ==============================
+     発注提案画面
+============================== -->
+<div class="screen" id="screen-proposal">
+  <div class="card" style="padding:12px 14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <span id="prop-analyzed-at" style="font-size:12px;color:var(--text-light)">—</span>
+      <button class="btn btn-outline btn-sm" onclick="loadProposals(true)">🔄 更新</button>
+    </div>
+    <select id="prop-filter-supplier" onchange="renderProposalList()" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text)">
+      <option value="">-- メーカー: 全て --</option>
+    </select>
+  </div>
+  <div id="prop-list">
+    <div class="empty-state">
+      <div class="spinner"></div>
+      <div style="margin-top:8px">読み込み中...</div>
+    </div>
+  </div>
+  <div id="prop-exclusions"></div>
+</div>
+
 <!-- ボトムナビ -->
 <nav class="bottom-nav">
   <div class="nav-item active" id="nav-order" onclick="switchScreen('order')">
     <span class="nav-icon">🛒</span><span>発注</span>
+  </div>
+  <div class="nav-item" id="nav-proposal" onclick="switchScreen('proposal')" style="position:relative">
+    <span class="nav-icon">💡</span><span>提案</span>
+    <span id="prop-badge-count" style="display:none;position:absolute;top:6px;right:6px;background:var(--danger);color:#fff;font-size:10px;font-weight:bold;border-radius:10px;padding:1px 5px;min-width:16px;text-align:center;line-height:1.4"></span>
   </div>
   <div class="nav-item" id="nav-history" onclick="switchScreen('history')">
     <span class="nav-icon">📋</span><span>履歴</span>
@@ -1037,7 +1082,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.27.1'; // 発注先ドロップダウンをあいうえお順に並び替え
+const APP_VERSION    = 'v1.28.0'; // 発注提案タブ追加（週次需要分析・除外設定・提案からカート投入）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1441,6 +1486,9 @@ function switchScreen(name) {
     renderInventorySupplierFilter();
     renderInventoryList();
     document.getElementById('header-sub').textContent = '在庫一覧';
+  } else if (name === 'proposal') {
+    loadProposals(false);
+    document.getElementById('header-sub').textContent = '発注提案';
   }
 }
 function showStep(id) {
@@ -3817,6 +3865,239 @@ function getTodayStr() {
 
 function openModal(id)  { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+/* ===================================================
+   発注提案タブ
+   analyze_demand.py（週次）が「発注提案」シートに書いた提案を表示し、
+   チェックした商品をカートに積んで発注フローへ流し込む
+=================================================== */
+let proposalsData    = { proposals: [], analyzedAt: '', exclusions: [] };
+let proposalsLoaded  = false;
+let proposalsLoading = false;
+
+const PROP_PATTERN_CLASS = {
+  'まとめ買い型': 'lumpy', '安定型': 'smooth', '変動型': 'erratic', '散発型': 'sporadic'
+};
+
+async function loadProposals(force = false) {
+  if (proposalsLoading) return;
+  if (proposalsLoaded && !force) { renderProposalList(); return; }
+  proposalsLoading = true;
+  const wrap = document.getElementById('prop-list');
+  wrap.innerHTML = '<div class="empty-state"><div class="spinner"></div><div style="margin-top:8px">読み込み中...</div></div>';
+  try {
+    const res = await gasGet({ action: 'getOrderProposals' });
+    if (res.success) {
+      proposalsData = {
+        proposals:  res.proposals  || [],
+        analyzedAt: res.analyzedAt || '',
+        exclusions: res.exclusions || []
+      };
+      proposalsLoaded = true;
+      document.getElementById('prop-analyzed-at').textContent =
+        proposalsData.analyzedAt ? '分析日時: ' + proposalsData.analyzedAt : '分析結果がまだありません';
+      renderProposalFilter();
+      renderProposalList();
+      updateProposalBadge();
+    } else {
+      wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div>取得エラー: ${escHtml(res.error || '不明')}</div></div>`;
+    }
+  } catch(e) {
+    wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><div>通信エラー。ネットワークを確認してください。</div></div>';
+  } finally {
+    proposalsLoading = false;
+  }
+}
+
+function updateProposalBadge() {
+  const badge = document.getElementById('prop-badge-count');
+  const n = proposalsData.proposals.length;
+  badge.style.display = n > 0 ? '' : 'none';
+  badge.textContent = n > 99 ? '99+' : String(n);
+}
+
+function renderProposalFilter() {
+  const sel = document.getElementById('prop-filter-supplier');
+  const prev = sel.value;
+  const seen = {};
+  proposalsData.proposals.forEach(p => { seen[p.supplierCode] = p.supplierName; });
+  const opts = Object.keys(seen)
+    .sort((a, b) => seen[a].localeCompare(seen[b], 'ja'))
+    .map(code => `<option value="${escHtml(code)}">${escHtml(seen[code])} (${proposalsData.proposals.filter(p => p.supplierCode === code).length}件)</option>`);
+  sel.innerHTML = '<option value="">-- メーカー: 全て --</option>' + opts.join('');
+  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+}
+
+function renderProposalList() {
+  const wrap = document.getElementById('prop-list');
+  const filter = document.getElementById('prop-filter-supplier').value;
+  const props = proposalsData.proposals.filter(p => !filter || p.supplierCode === filter);
+
+  if (props.length === 0) {
+    wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">🎉</div><div>現在、発注提案はありません</div></div>';
+  } else {
+    // 仕入先ごとにグループ表示
+    const groups = {};
+    props.forEach(p => {
+      (groups[p.supplierCode] = groups[p.supplierCode] || { name: p.supplierName, items: [] }).items.push(p);
+    });
+    wrap.innerHTML = Object.keys(groups)
+      .sort((a, b) => groups[a].name.localeCompare(groups[b].name, 'ja'))
+      .map(code => {
+        const g = groups[code];
+        const items = g.items.map(p => {
+          const badgeCls = PROP_PATTERN_CLASS[p.pattern] || 'sporadic';
+          const note = p.aiNote || p.note || '';
+          return `
+          <div class="prop-item" data-code="${escHtml(p.code)}">
+            <div class="prop-item-top">
+              <input type="checkbox" class="prop-check" checked>
+              <div class="prop-item-name">${escHtml(p.name)}
+                <div class="prop-item-code">${escHtml(p.code)}<span class="prop-badge ${badgeCls}">${escHtml(p.pattern)}</span></div>
+              </div>
+              <button class="prop-excl-btn" onclick="excludeProposal('${escAttr(p.code)}','${escAttr(p.name)}')">🚫 除外</button>
+            </div>
+            <div class="prop-item-stats">
+              <span>在庫 <b>${p.stock}</b> → 推奨 <b>${p.recommended}</b></span>
+              <span>発注数 <input type="number" class="prop-qty" value="${p.proposedQty}" min="1" step="1">${p.lot > 1 ? `<span style="font-size:11px;color:var(--text-light)"> ロット${p.lot}</span>` : ''}</span>
+            </div>
+            ${note ? `<div class="prop-note">${escHtml(note)}</div>` : ''}
+          </div>`;
+        }).join('');
+        return `
+        <div class="card" id="prop-group-${escHtml(code)}">
+          <div class="prop-group-head">
+            <span class="prop-group-name">${escHtml(g.name)}</span>
+            <span class="prop-group-count">${g.items.length}件</span>
+          </div>
+          ${items}
+          <button class="btn btn-primary" style="margin-top:10px" onclick="startOrderFromProposals('${escAttr(code)}')">🛒 チェックした商品で発注画面へ</button>
+        </div>`;
+      }).join('');
+  }
+  renderProposalExclusions();
+}
+
+function renderProposalExclusions() {
+  const wrap = document.getElementById('prop-exclusions');
+  const ex = proposalsData.exclusions;
+  if (!ex || ex.length === 0) { wrap.innerHTML = ''; return; }
+  const rows = ex.map(x => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:13px">
+      <div style="flex:1">
+        <div>${escHtml(x.name || x.code)}</div>
+        <div style="font-size:11px;color:var(--text-light)">${escHtml(x.code)}${x.reason ? '・' + escHtml(x.reason) : ''}</div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="restoreProposalExclusion('${escAttr(x.code)}')">解除</button>
+    </div>`).join('');
+  wrap.innerHTML = `
+    <div class="card">
+      <details>
+        <summary style="font-size:13px;font-weight:600;cursor:pointer">🚫 提案から除外中の商品（${ex.length}件）</summary>
+        <div style="margin-top:6px">${rows}</div>
+      </details>
+    </div>`;
+}
+
+async function excludeProposal(code, name) {
+  const reason = prompt(`「${name}」を今後の発注提案から除外します。\n理由（任意・空欄可）:`);
+  if (reason === null) return; // キャンセル
+  showLoading('除外を登録中...');
+  try {
+    const res = await gasPost({ action: 'saveProposalExclusion', mode: 'add', code, name, reason: reason.trim() });
+    if (res.success) {
+      proposalsData.proposals = proposalsData.proposals.filter(p => p.code !== code);
+      proposalsData.exclusions.push({ code, name, reason: reason.trim() });
+      renderProposalFilter();
+      renderProposalList();
+      updateProposalBadge();
+      showToast(`「${name}」を提案から除外しました`, 'success');
+    } else {
+      showToast('除外登録エラー: ' + (res.error || '不明'), 'error');
+    }
+  } catch(e) {
+    showToast('通信エラー。ネットワークを確認してください。', 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+async function restoreProposalExclusion(code) {
+  showLoading('除外を解除中...');
+  try {
+    const res = await gasPost({ action: 'saveProposalExclusion', mode: 'delete', code });
+    if (res.success) {
+      proposalsData.exclusions = proposalsData.exclusions.filter(x => x.code !== code);
+      renderProposalExclusions();
+      showToast('除外を解除しました。次回の分析から提案対象に戻ります', 'success');
+    } else {
+      showToast('解除エラー: ' + (res.error || '不明'), 'error');
+    }
+  } catch(e) {
+    showToast('通信エラー。ネットワークを確認してください。', 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// チェック済みの提案をカートに積んで発注フロー（商品入力ステップ）へ
+function startOrderFromProposals(supplierCode) {
+  const group = document.getElementById('prop-group-' + supplierCode);
+  if (!group) return;
+
+  const picked = [];
+  group.querySelectorAll('.prop-item').forEach(el => {
+    if (!el.querySelector('.prop-check').checked) return;
+    const code = el.dataset.code;
+    const p = proposalsData.proposals.find(x => x.code === code && x.supplierCode === supplierCode);
+    if (!p) return;
+    const qty = parseInt(el.querySelector('.prop-qty').value) || p.proposedQty;
+    if (qty < 1) return;
+    picked.push({ p, qty });
+  });
+  if (picked.length === 0) { showToast('商品にチェックを入れてください', 'error'); return; }
+
+  if (cartItems.length > 0 &&
+      !confirm('カートに商品が残っています。\n破棄して提案から新しい発注を始めますか？')) return;
+  if (productMaster.length === 0 &&
+      !confirm('商品マスターが未読込のため、JAN・単位なしで追加します。\nこのまま続けますか？')) return;
+
+  const supplier = masters.suppliers.find(s => s.code === supplierCode);
+  const supplierName = supplier ? supplier.name : (picked[0].p.supplierName || '');
+  currentOrder = {
+    supplierCode,
+    supplierName,
+    fax: supplier ? (supplier.fax || '') : '',
+    staff: currentUser.name,
+    date: getTodayStr(),
+    outputType: ''
+  };
+  savedOrderNo = null; revisionBaseOrderNo = null;
+
+  cartItems = picked.map(({ p, qty }) => {
+    const master = productMaster.find(m => m.code === p.code) || {};
+    return {
+      janCode:       master.jan           || '',
+      code:          p.code,
+      name:          p.name,
+      qty,
+      unit:          master.unit          || '',
+      memo:          '',
+      isHandwritten: false,
+      supplierCD:    master.supplierCD    || supplierCode,
+      makerCode:     master.makerCode     || '',
+      purchasePrice: master.purchasePrice || 0
+    };
+  });
+  saveCart();
+
+  switchScreen('order');
+  updateInputHeader();
+  showStep('step-input');
+  renderItemList();
+  updateInventoryCartBtn();
+  showToast(`提案から${cartItems.length}件をカートに追加しました`, 'success');
+}
 
 function showLoading(msg = '処理中...') {
   document.getElementById('loading-msg').textContent = msg;

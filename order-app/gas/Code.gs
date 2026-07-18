@@ -5,9 +5,14 @@
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
 // GASエディタ → 「プロジェクトの設定」→「スクリプトプロパティ」→「プロパティを追加」
-//   SPREADSHEET_ID  : 発注管理データのスプレッドシートID
-//   AUTH_SHEET_ID   : beaufield-auth スプレッドシートID（共通）
-//   REORDER_API_KEY : 発注点更新用APIキー（Pythonスクリプトと共有）
+//   SPREADSHEET_ID    : 発注管理データのスプレッドシートID
+//   AUTH_SHEET_ID     : beaufield-auth スプレッドシートID（共通）
+//   REORDER_API_KEY   : 発注点・発注提案更新用APIキー（Pythonスクリプトと共有）
+//   LINEWORKS_WEBHOOK : LINE WORKS Incoming Webhook URL（任意・発注提案の通知用）
+//
+// 発注先マスターの拡張列（シートに直接入力・空欄なら既定値7日）:
+//   F列 = リードタイム(日)   発注してから入荷するまでの日数
+//   G列 = 発注サイクル(日)   そのメーカーへ発注する間隔（週1なら7）
 //
 // ============================================================
 
@@ -16,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.10.1';
+const VERSION         = 'v1.11.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -34,6 +39,13 @@ const SHEET_SUPPLIERS = '発注先マスター';
 const SHEET_STAFF     = '担当者マスター';
 const SHEET_PRODUCTS  = '商品マスター';
 const SHEET_REORDER   = '発注点マスター';
+const SHEET_PROPOSALS = '発注提案';       // analyze_demand.py が週次で書き込む発注提案リスト
+const SHEET_PROPOSAL_EXCL = '提案除外設定'; // 発注提案の対象外にする商品（カタログ等のノイズ除外用）
+
+// 発注先マスターの拡張列（F=リードタイム(日), G=発注サイクル(日)）
+// 未入力の場合のフォールバック値。analyze_demand.py の計算に使う
+const DEFAULT_LEAD_TIME_DAYS  = 7;
+const DEFAULT_ORDER_CYCLE_DAYS = 7;
 
 // メーカー発注書テンプレート定義（Drive配信用）
 // スクリプトプロパティ ORDER_TEMPLATE_FOLDER_ID に Drive フォルダIDを設定すること
@@ -120,6 +132,7 @@ function doGet(e) {
       case 'getOrders':         return jsonResponse(getOrders(p.supplierCode || ''));
       case 'getOrderDetail':    return jsonResponse(getOrderDetail(p.orderNo));
       case 'getOrderTemplate':  return jsonResponse(getOrderTemplate(p.makerKey || ''));
+      case 'getOrderProposals': return jsonResponse(getOrderProposals());
       default:                  return jsonResponse({ success: false, error: '不明なアクション: ' + action });
     }
   } catch(err) {
@@ -164,17 +177,22 @@ function doPost(e) {
     }
   }
 
-  // updateReorderPoints: APIキー認証（Pythonスクリプト用・セッション不要）
-  if (action === 'updateReorderPoints') {
+  // APIキー認証アクション（Pythonスクリプト用・セッション不要）
+  const API_KEY_ACTIONS = ['updateReorderPoints', 'getReorderConfig', 'updateOrderProposals', 'updateProposalExplanations'];
+  if (API_KEY_ACTIONS.indexOf(action) !== -1) {
     const apiKey = p.api_key || '';
     if (!apiKey || apiKey !== _PROPS.getProperty('REORDER_API_KEY')) {
       return jsonResponse({ success: false, error: 'UNAUTHORIZED' });
     }
     try {
-      const products = p.products || [];
-      return jsonResponse(updateReorderPoints(products));
+      switch (action) {
+        case 'updateReorderPoints':        return jsonResponse(updateReorderPoints(p.products || []));
+        case 'getReorderConfig':           return jsonResponse(getReorderConfig());
+        case 'updateOrderProposals':       return jsonResponse(updateOrderProposals(p));
+        case 'updateProposalExplanations': return jsonResponse(updateProposalExplanations(p));
+      }
     } catch(err) {
-      Logger.log('updateReorderPoints error: ' + err);
+      Logger.log(action + ' error: ' + err);
       return jsonResponse({ success: false, error: 'INTERNAL_ERROR' });
     }
   }
@@ -192,6 +210,7 @@ function doPost(e) {
       case 'deleteOrder':  return jsonResponse(deleteOrder(p, auth.user_id));
       case 'saveSupplier': return jsonResponse(saveSupplier(p, auth.user_id));
       case 'saveStaff':    return jsonResponse(saveStaff(p, auth.user_id));
+      case 'saveProposalExclusion': return jsonResponse(saveProposalExclusion(p, auth.user_id));
       default:             return jsonResponse({ success: false, error: '不明なアクション: ' + action });
     }
   } catch(err) {
@@ -838,6 +857,268 @@ function saveStaff(p, user_id) {
     return { success: false, error: '「' + name + '」が見つかりません' };
   } else {
     return { success: false, error: '不明なmode: ' + mode };
+  }
+}
+
+// ============================================================
+// 発注提案機能（analyze_demand.py 連携）
+// ============================================================
+// フロー:
+//   1. analyze_demand.py が getReorderConfig で設定取得
+//      （発注先別リードタイム・除外商品・過去発注からのロット推定材料）
+//   2. 売上データを分析して updateOrderProposals で「発注提案」シートを更新
+//      提案があれば LINEWORKS_WEBHOOK（スクリプトプロパティ・任意）へ通知
+//   3. アプリは getOrderProposals で提案を表示
+//   4. 不要な商品は saveProposalExclusion で除外登録（以後提案されない）
+//   5. Claude Code が updateProposalExplanations でAI説明を追記（任意）
+// ============================================================
+
+// 発注提案シートの列定義（updateOrderProposals / getOrderProposals で共有）
+const PROPOSAL_HEADERS = ['商品コード','商品名','仕入先コード','仕入先名','パターン',
+                          '現在庫','推奨在庫','提案数量','推定ロット','月平均',
+                          '注文P95','最大注文','根拠メモ','AI説明','分析日時'];
+
+// POST(APIキー): 分析に必要な設定を返す
+// レスポンス: { success, suppliers: [{code,name,leadTimeDays,orderCycleDays}],
+//              exclusions: [商品コード], lotStats: {code: {orderCount,minQty,gcdQty}} }
+function getReorderConfig() {
+  // 発注先マスター（F列=リードタイム(日), G列=発注サイクル(日)。未入力はnull→Python側で既定値）
+  const suppData = getSheet(SHEET_SUPPLIERS).getDataRange().getValues();
+  const suppliers = suppData.slice(1)
+    .filter(r => r[0] !== '' && r[0] !== null)
+    .map(r => ({
+      code:           String(r[0]).trim(),
+      name:           String(r[1]).trim(),
+      leadTimeDays:   parseFloat(r[5]) > 0 ? parseFloat(r[5]) : null,
+      orderCycleDays: parseFloat(r[6]) > 0 ? parseFloat(r[6]) : null
+    }));
+
+  // 提案除外設定（シート未作成なら空）
+  let exclusions = [];
+  const exSh = getSS().getSheetByName(SHEET_PROPOSAL_EXCL);
+  if (exSh && exSh.getLastRow() > 1) {
+    exclusions = exSh.getDataRange().getValues().slice(1)
+      .map(r => String(r[0]).trim()).filter(Boolean);
+  }
+
+  // 過去の発注明細から商品別のロット推定材料を集計
+  // gcdQty: 全発注数量の最大公約数（ケース単位の推定に使う）
+  const itemsData = getSheet(SHEET_ITEMS).getDataRange().getValues();
+  const lotStats = {};
+  itemsData.slice(1).forEach(r => {
+    const code = String(r[2] || '').trim();
+    const qty  = Math.round(parseFloat(r[4]) || 0);
+    if (!code || qty <= 0) return;
+    if (!lotStats[code]) lotStats[code] = { orderCount: 0, minQty: qty, gcdQty: 0 };
+    const s = lotStats[code];
+    s.orderCount++;
+    if (qty < s.minQty) s.minQty = qty;
+    s.gcdQty = gcdInt(s.gcdQty, qty);
+  });
+
+  return {
+    success: true,
+    suppliers,
+    exclusions,
+    lotStats,
+    defaults: { leadTimeDays: DEFAULT_LEAD_TIME_DAYS, orderCycleDays: DEFAULT_ORDER_CYCLE_DAYS }
+  };
+}
+
+function gcdInt(a, b) {
+  a = Math.abs(a); b = Math.abs(b);
+  while (b) { const t = b; b = a % b; a = t; }
+  return a;
+}
+
+// POST(APIキー): 発注提案シートを全面書き換え
+// リクエスト: { proposals: [{code,name,supplierCode,supplierName,pattern,stock,recommended,
+//              proposedQty,lot,meanMonthly,p95Order,maxOrder,note}], analyzedAt }
+function updateOrderProposals(p) {
+  const proposals  = p.proposals || [];
+  const analyzedAt = String(p.analyzedAt || '');
+
+  const ss = getSS();
+  let sh = ss.getSheetByName(SHEET_PROPOSALS);
+  if (!sh) sh = ss.insertSheet(SHEET_PROPOSALS);
+
+  sh.clearContents();
+  sh.getRange(1, 1, 1, PROPOSAL_HEADERS.length).setValues([PROPOSAL_HEADERS]);
+
+  if (proposals.length > 0) {
+    const rows = proposals.map(x => [
+      String(x.code         || '').trim(),
+      String(x.name         || ''),
+      String(x.supplierCode || ''),
+      String(x.supplierName || ''),
+      String(x.pattern      || ''),
+      parseFloat(x.stock)       || 0,
+      parseFloat(x.recommended) || 0,
+      parseFloat(x.proposedQty) || 0,
+      parseFloat(x.lot)         || 1,
+      parseFloat(x.meanMonthly) || 0,
+      parseFloat(x.p95Order)    || 0,
+      parseFloat(x.maxOrder)    || 0,
+      String(x.note || ''),
+      '',           // AI説明（updateProposalExplanations で追記）
+      analyzedAt
+    ]);
+    sh.getRange(2, 1, rows.length, PROPOSAL_HEADERS.length).setValues(rows);
+  }
+
+  // LINE WORKS通知（LINEWORKS_WEBHOOK 未設定なら何もしない）
+  if (proposals.length > 0) {
+    const bySupplier = {};
+    proposals.forEach(x => {
+      const key = String(x.supplierName || '不明');
+      bySupplier[key] = (bySupplier[key] || 0) + 1;
+    });
+    const lines = Object.keys(bySupplier)
+      .sort((a, b) => bySupplier[b] - bySupplier[a])
+      .slice(0, 8)
+      .map(name => '・' + name + ': ' + bySupplier[name] + '件');
+    const more = Object.keys(bySupplier).length > 8 ? '\n…ほか' + (Object.keys(bySupplier).length - 8) + '社' : '';
+    notifyLineWorks(
+      '📋 発注提案の分析が完了しました（' + analyzedAt + '）\n' +
+      '提案: ' + proposals.length + '件\n' + lines.join('\n') + more + '\n' +
+      '発注アプリの「発注提案」タブで確認してください。'
+    );
+  }
+
+  Logger.log('✅ 発注提案更新完了: ' + proposals.length + '件');
+  return { success: true, count: proposals.length };
+}
+
+// POST(APIキー): AI説明の追記（Claude Code から実行）
+// リクエスト: { explanations: [{code, text}] }
+function updateProposalExplanations(p) {
+  const explanations = p.explanations || [];
+  if (explanations.length === 0) return { success: true, count: 0 };
+
+  const sh = getSS().getSheetByName(SHEET_PROPOSALS);
+  if (!sh || sh.getLastRow() < 2) return { success: false, error: '発注提案シートが空です' };
+
+  const data = sh.getDataRange().getValues();
+  const colAi = PROPOSAL_HEADERS.indexOf('AI説明');  // 0-based
+  const map = {};
+  explanations.forEach(x => { map[String(x.code || '').trim()] = String(x.text || ''); });
+
+  let count = 0;
+  for (let i = 1; i < data.length; i++) {
+    const code = String(data[i][0]).trim();
+    if (map[code] !== undefined) {
+      sh.getRange(i + 1, colAi + 1).setValue(map[code]);
+      count++;
+    }
+  }
+  return { success: true, count };
+}
+
+// GET(セッション): 発注提案の取得（アプリの発注提案タブ用）
+function getOrderProposals() {
+  const ss = getSS();
+  const sh = ss.getSheetByName(SHEET_PROPOSALS);
+  let proposals = [];
+  let analyzedAt = '';
+  if (sh && sh.getLastRow() > 1) {
+    const data = sh.getDataRange().getValues();
+    proposals = data.slice(1)
+      .filter(r => String(r[0]).trim() !== '')
+      .map(r => ({
+        code:         String(r[0]).trim(),
+        name:         String(r[1] || ''),
+        supplierCode: String(r[2] || '').trim(),
+        supplierName: String(r[3] || ''),
+        pattern:      String(r[4] || ''),
+        stock:        parseFloat(r[5])  || 0,
+        recommended:  parseFloat(r[6])  || 0,
+        proposedQty:  parseFloat(r[7])  || 0,
+        lot:          parseFloat(r[8])  || 1,
+        meanMonthly:  parseFloat(r[9])  || 0,
+        p95Order:     parseFloat(r[10]) || 0,
+        maxOrder:     parseFloat(r[11]) || 0,
+        note:         String(r[12] || ''),
+        aiNote:       String(r[13] || '')
+      }));
+    analyzedAt = cellToStr(data[1][14], 'yyyy-MM-dd HH:mm');
+  }
+
+  // 除外リスト（除外管理UIでの表示・解除用）
+  let exclusions = [];
+  const exSh = ss.getSheetByName(SHEET_PROPOSAL_EXCL);
+  if (exSh && exSh.getLastRow() > 1) {
+    exclusions = exSh.getDataRange().getValues().slice(1)
+      .filter(r => String(r[0]).trim() !== '')
+      .map(r => ({
+        code:   String(r[0]).trim(),
+        name:   String(r[1] || ''),
+        reason: String(r[2] || ''),
+        addedBy: String(r[3] || ''),
+        addedAt: cellToStr(r[4], 'yyyy-MM-dd HH:mm')
+      }));
+  }
+
+  return { success: true, proposals, analyzedAt, exclusions };
+}
+
+// POST(セッション): 提案除外の登録/解除
+// リクエスト: { action:'saveProposalExclusion', mode:'add'|'delete', code, name, reason }
+function saveProposalExclusion(p, user_id) {
+  const mode   = p.mode || '';
+  const code   = String(p.code   || '').trim();
+  const name   = String(p.name   || '').trim();
+  const reason = String(p.reason || '').trim();
+  if (!code) return { success: false, error: '商品コードが未指定です' };
+
+  const ss = getSS();
+  let sh = ss.getSheetByName(SHEET_PROPOSAL_EXCL);
+  if (!sh) {
+    sh = ss.insertSheet(SHEET_PROPOSAL_EXCL);
+    sh.appendRow(['商品コード','商品名','理由','登録者','登録日時']);
+  }
+  const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+
+  if (mode === 'add') {
+    const data = sh.getDataRange().getValues();
+    const exists = data.slice(1).some(r => String(r[0]).trim() === code);
+    if (exists) return { success: false, error: '商品コード「' + code + '」はすでに除外登録されています' };
+    sh.appendRow([code, name, reason, user_id, now]);
+    // 現在の提案シートからも即時削除（次回分析を待たずに消す）
+    const prSh = ss.getSheetByName(SHEET_PROPOSALS);
+    if (prSh && prSh.getLastRow() > 1) {
+      const prData = prSh.getDataRange().getValues();
+      for (let i = prData.length - 1; i >= 1; i--) {
+        if (String(prData[i][0]).trim() === code) prSh.deleteRow(i + 1);
+      }
+    }
+    return { success: true };
+  } else if (mode === 'delete') {
+    const data = sh.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() === code) {
+        sh.deleteRow(i + 1);
+        return { success: true };
+      }
+    }
+    return { success: false, error: '商品コード「' + code + '」が見つかりません' };
+  }
+  return { success: false, error: '不明なmode: ' + mode };
+}
+
+// ヘルパー: LINE WORKS Incoming Webhook 通知（失敗しても本処理は継続）
+// ペイロードは {body:{text}} 形式が正（LINE WORKS Incoming Webhook仕様）
+function notifyLineWorks(text) {
+  try {
+    const webhook = _PROPS.getProperty('LINEWORKS_WEBHOOK');
+    if (!webhook) return;
+    UrlFetchApp.fetch(webhook, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({ body: { text: text } }),
+      muteHttpExceptions: true
+    });
+  } catch(e) {
+    Logger.log('LINE WORKS通知エラー（無視）: ' + e);
   }
 }
 
