@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.15.0';
+const VERSION         = 'v1.16.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -282,10 +282,13 @@ function getMasters() {
       name:          String(r[1]).trim(),
       fax:           String(r[2] || '').trim(),
       // 発注方法: カンマ区切り文字列 → 配列。空欄は空配列（アプリ側で全ボタン表示）
+      // 'Web' = 仕入先独自サイトで発注する仕入先（このアプリからは出力しない・在庫/数量確認用途）
       outputMethods: String(r[4] || '').trim()
                        .split(',')
                        .map(s => s.trim())
-                       .filter(Boolean)
+                       .filter(Boolean),
+      // 備考: 発注締め時間・最低発注金額等。発注入力画面の上部に常時表示する
+      note:          String(r[7] || '').trim()
     }));
 
   const staffData = staffSheet.getDataRange().getValues();
@@ -800,6 +803,7 @@ function saveSupplier(p, user_id) {
   const name          = String(p.name          || '').trim();
   const fax           = String(p.fax           || '').trim();
   const outputMethods = String(p.outputMethods || '').trim(); // カンマ区切り文字列で受け取る
+  const note          = String(p.note          || '').trim(); // 締め時間・最低発注金額等
 
   if (!code) return { success: false, error: 'コードが未入力です' };
 
@@ -807,15 +811,18 @@ function saveSupplier(p, user_id) {
   const data = sh.getDataRange().getValues();
   const now  = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
 
+  // 列: A=コード B=発注先名 C=FAX D=登録日時 E=発注方法 F=リードタイム(日) G=発注サイクル(日) H=備考
+  // F・G はシート直接入力のみ（このフォームからは触らない）
   if (mode === 'add') {
     const exists = data.slice(1).some(r => String(r[0]).trim() === code);
     if (exists) return { success: false, error: 'コード「' + code + '」はすでに登録されています' };
-    sh.appendRow([code, name, fax, now, outputMethods]);
+    sh.appendRow([code, name, fax, now, outputMethods, '', '', note]);
     return { success: true };
   } else if (mode === 'update') {
     for (let i = 1; i < data.length; i++) {
       if (String(data[i][0]).trim() === code) {
         sh.getRange(i + 1, 1, 1, 5).setValues([[code, name, fax, now, outputMethods]]);
+        sh.getRange(i + 1, 8, 1, 1).setValue(note);
         return { success: true };
       }
     }
