@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.3.0
+# Version: v1.4.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -36,6 +36,11 @@
 #   推定ロット = 過去の発注明細の数量の最大公約数（発注3回以上かつ2以上のときのみ採用）
 #   提案金額 = 仕入単価（商品.CSV）× 提案数量。仕入単価未設定（0円）の商品は金額0円扱い
 #   （アプリ側で「—」表示。合計からは除外しない）
+#
+# 過剰在庫（v1.4.0で追加）:
+#   現在庫が「推奨在庫のEXCESS_RATIO倍」を超え、かつ超過数量がEXCESS_MIN_QTY以上の商品を
+#   「過剰在庫」シートへ書き込む（提案とは別枠）。アプリの提案タブで金額降順に表示し、
+#   意図的なまとめ仕入等で問題ない場合は「確認済み」登録すると次回分析後もリストから消える
 #
 # 実行方法:
 #   py -3.12 analyze_demand.py             # 分析＋GASへ書き込み＋通知
@@ -82,6 +87,10 @@ ABC_A_CUM        = 0.80   # 月次原価貢献の累積構成比しきい値（�
 ABC_B_CUM        = 0.95   # 同上（ここまでB。超えたらC）
 CAP_MONTHS_B     = 3.0    # BランクのまとめP95フロア上限（月数）
 CAP_MONTHS_GLOBAL = 6.0   # 全ランク共通の推奨在庫上限（月平均の何ヶ月分まで許すか）
+
+# ---- 過剰在庫検出パラメータ（v1.4.0） ----
+EXCESS_RATIO   = 2.0   # 過剰判定: 現在庫が推奨在庫の何倍を超えたら対象にするか
+EXCESS_MIN_QTY = 3     # 過剰判定: 超過数量がこれ未満なら対象外（少額商品のノイズ除外）
 
 # ---- CSVパスの候補（デバイスによりドライブ構成が異なる） ----
 _ONEDRIVE_DATA_DIRS = [
@@ -366,21 +375,23 @@ def build_note(stat, protect_days, lot, on_order=0, abc='A'):
     return '。'.join(parts)
 
 
-def post_proposals(gas_url, api_key, proposals, analyzed_at):
+def post_proposals(gas_url, api_key, proposals, excess, analyzed_at):
     payload = {
         'action': 'updateOrderProposals',
         'api_key': api_key,
         'analyzedAt': analyzed_at,
         'proposals': proposals,
+        'excess': excess,
     }
-    logging.info(f'GASへ発注提案を送信中... ({len(proposals)}件)')
+    logging.info(f'GASへ発注提案・過剰在庫を送信中... (提案{len(proposals)}件 / 過剰在庫{len(excess)}件)')
     for attempt in range(1, 4):
         try:
             resp = requests.post(gas_url, json=payload, timeout=300)
             resp.raise_for_status()
             result = resp.json()
             if result.get('success'):
-                logging.info(f'✅ 発注提案書き込み成功: {result.get("count")}件 (試行{attempt}回目)')
+                logging.info(f'✅ 書き込み成功: 提案{result.get("count")}件 / '
+                             f'過剰在庫{result.get("excessCount")}件 (試行{attempt}回目)')
                 return True
             logging.warning(f'GASエラー応答 (試行{attempt}): {result.get("error")}')
         except Exception as e:
@@ -397,7 +408,7 @@ def main():
 
     log_file = setup_logger()
     logging.info('=' * 60)
-    logging.info('Beaufield 需要分析・発注提案スクリプト v1.3.0 開始'
+    logging.info('Beaufield 需要分析・発注提案スクリプト v1.4.0 開始'
                  + ('（dry-run）' if args.dry_run else ''))
 
     config = load_config()
@@ -512,6 +523,7 @@ def main():
     results = []
     stats_json = {}
     proposals = []
+    excess_rows = []      # 過剰在庫（提案対象かどうかに関わらず全商品が対象）
     comparison_rows = []  # --dry-run時の新旧比較レポート用
     for item in analyzed:
         code, prod, stat, abc = item['code'], item['prod'], item['stat'], item['abc']
@@ -572,6 +584,24 @@ def main():
         results.append(row)
         stats_json[code] = {**row, 'monthly': dict(zip(months, stat['monthly']))}
 
+        # 過剰在庫: 現在庫が推奨在庫のEXCESS_RATIO倍を超え、超過数量がEXCESS_MIN_QTY以上
+        excess_qty = stock - recommended
+        if stock > recommended * EXCESS_RATIO and excess_qty >= EXCESS_MIN_QTY:
+            excess_rows.append({
+                'code': code,
+                'name': prod['name'],
+                'supplierCode': supp_key or prod['supplier_cd'],
+                'supplierName': prod['supplier'],
+                'stock': stock,
+                'recommended': recommended,
+                'excessQty': excess_qty,
+                'unitCost': unit_cost,
+                'excessAmount': round(unit_cost * excess_qty),
+                'monthsOfStock': round(stock / stat['mean_monthly'], 1),
+                'abcRank': abc,
+                'pattern': pattern_label,
+            })
+
         if proposed_qty > 0:
             proposals.append({
                 'code': code,
@@ -610,6 +640,8 @@ def main():
 
     # 仕入先→提案数量の多い順で並べる（アプリでの見やすさ優先）
     proposals.sort(key=lambda x: (x['supplierName'], -x['proposedQty']))
+    # 過剰在庫は金額の多い順（資金インパクトが大きい商品から見せる）
+    excess_rows.sort(key=lambda x: -x['excessAmount'])
 
     # ---- ローカル出力 ----
     OUTPUT_DIR.mkdir(exist_ok=True)
@@ -619,6 +651,9 @@ def main():
     df_out = pd.DataFrame(results)
     csv_out = OUTPUT_DIR / f'demand_analysis_{stamp}.csv'
     df_out.to_csv(csv_out, index=False, encoding='utf-8-sig')
+
+    excess_csv_out = OUTPUT_DIR / f'excess_stock_{stamp}.csv'
+    pd.DataFrame(excess_rows).to_csv(excess_csv_out, index=False, encoding='utf-8-sig')
 
     json_out = OUTPUT_DIR / 'demand_stats.json'
     with open(json_out, 'w', encoding='utf-8') as f:
@@ -646,7 +681,11 @@ def main():
     total_amount = sum(p['amount'] for p in proposals)
     logging.info(f'発注提案: {len(proposals):,}件 / 合計 {total_amount:,.0f}円'
                  f'（月平均{min_mean}個以上・除外設定{len(exclusions)}件を反映）')
+    excess_total = sum(r['excessAmount'] for r in excess_rows)
+    logging.info(f'過剰在庫: {len(excess_rows):,}件 / 過剰額合計 {excess_total:,.0f}円'
+                 f'（推奨の{EXCESS_RATIO}倍超・超過{EXCESS_MIN_QTY}個以上が対象）')
     logging.info(f'出力: {csv_out}')
+    logging.info(f'出力: {excess_csv_out}')
     logging.info(f'出力: {json_out}')
 
     # ---- 新旧比較レポート（--dry-run時のみ・本適用前のレビュー用） ----
@@ -686,7 +725,7 @@ def main():
     if args.dry_run:
         logging.info('dry-run のため GAS への送信をスキップしました')
     else:
-        if not post_proposals(config['gas_url'], config['api_key'], proposals, analyzed_at):
+        if not post_proposals(config['gas_url'], config['api_key'], proposals, excess_rows, analyzed_at):
             logging.error('GASへの発注提案送信が3回すべて失敗しました。ログ: %s', log_file)
             sys.exit(1)
 

@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.13.0';
+const VERSION         = 'v1.14.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -41,6 +41,8 @@ const SHEET_PRODUCTS  = '商品マスター';
 const SHEET_REORDER   = '発注点マスター';
 const SHEET_PROPOSALS = '発注提案';       // analyze_demand.py が週次で書き込む発注提案リスト
 const SHEET_PROPOSAL_EXCL = '提案除外設定'; // 発注提案の対象外にする商品（カタログ等のノイズ除外用）
+const SHEET_EXCESS     = '過剰在庫';       // analyze_demand.py が週次で書き込む過剰在庫リスト
+const SHEET_EXCESS_ACK = '過剰在庫確認済み'; // 持ちすぎを承知の上で確認済みにした商品（意図的なまとめ仕入等）
 
 // 発注先マスターの拡張列（F=リードタイム(日), G=発注サイクル(日)）
 // 未入力の場合のフォールバック値。analyze_demand.py の計算に使う
@@ -212,6 +214,7 @@ function doPost(e) {
       case 'saveSupplier': return jsonResponse(saveSupplier(p, auth.user_id));
       case 'saveStaff':    return jsonResponse(saveStaff(p, auth.user_id));
       case 'saveProposalExclusion': return jsonResponse(saveProposalExclusion(p, auth.user_id));
+      case 'saveExcessAck': return jsonResponse(saveExcessAck(p, auth.user_id));
       default:             return jsonResponse({ success: false, error: '不明なアクション: ' + action });
     }
   } catch(err) {
@@ -867,17 +870,22 @@ function saveStaff(p, user_id) {
 // フロー:
 //   1. analyze_demand.py が getReorderConfig で設定取得
 //      （発注先別リードタイム・除外商品・過去発注からのロット推定材料）
-//   2. 売上データを分析して updateOrderProposals で「発注提案」シートを更新
-//      提案があれば LINEWORKS_WEBHOOK（スクリプトプロパティ・任意）へ通知
-//   3. アプリは getOrderProposals で提案を表示
+//   2. 売上データを分析して updateOrderProposals で「発注提案」「過剰在庫」シートを更新
+//      提案・過剰在庫があれば LINEWORKS_WEBHOOK（スクリプトプロパティ・任意）へ通知
+//   3. アプリは getOrderProposals で提案・過剰在庫を表示
 //   4. 不要な商品は saveProposalExclusion で除外登録（以後提案されない）
-//   5. Claude Code が updateProposalExplanations でAI説明を追記（任意）
+//   5. 持ちすぎを承知の上の商品は saveExcessAck で確認済み登録（次回分析後もリストから消える）
+//   6. Claude Code が updateProposalExplanations でAI説明を追記（任意）
 // ============================================================
 
 // 発注提案シートの列定義（updateOrderProposals / getOrderProposals で共有）
 const PROPOSAL_HEADERS = ['商品コード','商品名','仕入先コード','仕入先名','パターン',
                           '現在庫','発注済','推奨在庫','提案数量','推定ロット','月平均',
                           '注文P95','最大注文','根拠メモ','AI説明','分析日時','仕入単価','提案金額','ABCランク'];
+
+// 過剰在庫シートの列定義（updateOrderProposals / getOrderProposals で共有）
+const EXCESS_HEADERS = ['商品コード','商品名','仕入先コード','仕入先名','現在庫','推奨在庫',
+                        '過剰数量','仕入単価','過剰金額','在庫月数','ABCランク','パターン','分析日時'];
 
 // POST(APIキー): 分析に必要な設定を返す
 // レスポンス: { success, suppliers: [{code,name,leadTimeDays,orderCycleDays}],
@@ -951,11 +959,14 @@ function formatManYen(yen) {
   return (yen / 10000).toFixed(1) + '万円';
 }
 
-// POST(APIキー): 発注提案シートを全面書き換え
+// POST(APIキー): 発注提案・過剰在庫シートを全面書き換え
 // リクエスト: { proposals: [{code,name,supplierCode,supplierName,pattern,stock,recommended,
-//              proposedQty,lot,meanMonthly,p95Order,maxOrder,note}], analyzedAt }
+//              proposedQty,lot,meanMonthly,p95Order,maxOrder,note}],
+//              excess: [{code,name,supplierCode,supplierName,stock,recommended,excessQty,
+//              unitCost,excessAmount,monthsOfStock,abcRank,pattern}], analyzedAt }
 function updateOrderProposals(p) {
   const proposals  = p.proposals || [];
+  const excess     = p.excess || [];
   const analyzedAt = String(p.analyzedAt || '');
 
   const ss = getSS();
@@ -990,6 +1001,30 @@ function updateOrderProposals(p) {
     sh.getRange(2, 1, rows.length, PROPOSAL_HEADERS.length).setValues(rows);
   }
 
+  // 過剰在庫シート（全面書き換え）
+  let exSh = ss.getSheetByName(SHEET_EXCESS);
+  if (!exSh) exSh = ss.insertSheet(SHEET_EXCESS);
+  exSh.clearContents();
+  exSh.getRange(1, 1, 1, EXCESS_HEADERS.length).setValues([EXCESS_HEADERS]);
+  if (excess.length > 0) {
+    const exRows = excess.map(x => [
+      String(x.code         || '').trim(),
+      String(x.name         || ''),
+      String(x.supplierCode || ''),
+      String(x.supplierName || ''),
+      parseFloat(x.stock)         || 0,
+      parseFloat(x.recommended)   || 0,
+      parseFloat(x.excessQty)     || 0,
+      parseFloat(x.unitCost)      || 0,
+      parseFloat(x.excessAmount)  || 0,
+      parseFloat(x.monthsOfStock) || 0,
+      String(x.abcRank || ''),
+      String(x.pattern || ''),
+      analyzedAt
+    ]);
+    exSh.getRange(2, 1, exRows.length, EXCESS_HEADERS.length).setValues(exRows);
+  }
+
   // LINE WORKS通知（LINEWORKS_WEBHOOK 未設定なら何もしない）
   if (proposals.length > 0) {
     const bySupplier = {};
@@ -1003,15 +1038,20 @@ function updateOrderProposals(p) {
       .map(name => '・' + name + ': ' + bySupplier[name] + '件');
     const more = Object.keys(bySupplier).length > 8 ? '\n…ほか' + (Object.keys(bySupplier).length - 8) + '社' : '';
     const totalAmount = proposals.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0);
+    const excessAmount = excess.reduce((s, x) => s + (parseFloat(x.excessAmount) || 0), 0);
+    const excessLine = excess.length > 0
+      ? ('\n⚠️ 持ちすぎ在庫: ' + excess.length + '件・過剰' + formatManYen(excessAmount))
+      : '';
     notifyLineWorks(
       '📋 発注提案の分析が完了しました（' + analyzedAt + '）\n' +
-      '提案: ' + proposals.length + '件・合計' + formatManYen(totalAmount) + '\n' + lines.join('\n') + more + '\n' +
+      '提案: ' + proposals.length + '件・合計' + formatManYen(totalAmount) + '\n' + lines.join('\n') + more +
+      excessLine + '\n' +
       '発注アプリの「発注提案」タブで確認してください。'
     );
   }
 
-  Logger.log('✅ 発注提案更新完了: ' + proposals.length + '件');
-  return { success: true, count: proposals.length };
+  Logger.log('✅ 発注提案更新完了: ' + proposals.length + '件 / 過剰在庫 ' + excess.length + '件');
+  return { success: true, count: proposals.length, excessCount: excess.length };
 }
 
 // POST(APIキー): AI説明の追記（Claude Code から実行）
@@ -1087,7 +1127,82 @@ function getOrderProposals() {
       }));
   }
 
-  return { success: true, proposals, analyzedAt, exclusions };
+  // 過剰在庫の確認済みリスト（先に読み、確認済みの商品を過剰在庫リストから除外する）
+  let excessAcks = [];
+  const ackSh = ss.getSheetByName(SHEET_EXCESS_ACK);
+  if (ackSh && ackSh.getLastRow() > 1) {
+    excessAcks = ackSh.getDataRange().getValues().slice(1)
+      .filter(r => String(r[0]).trim() !== '')
+      .map(r => ({
+        code:    String(r[0]).trim(),
+        name:    String(r[1] || ''),
+        reason:  String(r[2] || ''),
+        ackedBy: String(r[3] || ''),
+        ackedAt: cellToStr(r[4], 'yyyy-MM-dd HH:mm')
+      }));
+  }
+  const ackedCodes = new Set(excessAcks.map(x => x.code));
+
+  // 過剰在庫リスト（確認済みは除く）
+  let excess = [];
+  const excSh = ss.getSheetByName(SHEET_EXCESS);
+  if (excSh && excSh.getLastRow() > 1) {
+    excess = excSh.getDataRange().getValues().slice(1)
+      .filter(r => String(r[0]).trim() !== '')
+      .map(r => ({
+        code:          String(r[0]).trim(),
+        name:          String(r[1] || ''),
+        supplierCode:  String(r[2] || '').trim(),
+        supplierName:  String(r[3] || ''),
+        stock:         parseFloat(r[4]) || 0,
+        recommended:   parseFloat(r[5]) || 0,
+        excessQty:     parseFloat(r[6]) || 0,
+        unitCost:      parseFloat(r[7]) || 0,
+        excessAmount:  parseFloat(r[8]) || 0,
+        monthsOfStock: parseFloat(r[9]) || 0,
+        abcRank:       String(r[10] || ''),
+        pattern:       String(r[11] || '')
+      }))
+      .filter(x => !ackedCodes.has(x.code));
+  }
+
+  return { success: true, proposals, analyzedAt, exclusions, excess, excessAcks };
+}
+
+// POST(セッション): 過剰在庫の確認済み登録/解除
+// リクエスト: { action:'saveExcessAck', mode:'add'|'delete', code, name, reason }
+function saveExcessAck(p, user_id) {
+  const mode   = p.mode || '';
+  const code   = String(p.code   || '').trim();
+  const name   = String(p.name   || '').trim();
+  const reason = String(p.reason || '').trim();
+  if (!code) return { success: false, error: '商品コードが未指定です' };
+
+  const ss = getSS();
+  let sh = ss.getSheetByName(SHEET_EXCESS_ACK);
+  if (!sh) {
+    sh = ss.insertSheet(SHEET_EXCESS_ACK);
+    sh.appendRow(['商品コード','商品名','理由','確認者','確認日時']);
+  }
+  const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+
+  if (mode === 'add') {
+    const data = sh.getDataRange().getValues();
+    const exists = data.slice(1).some(r => String(r[0]).trim() === code);
+    if (exists) return { success: false, error: '商品コード「' + code + '」はすでに確認済みです' };
+    sh.appendRow([code, name, reason, user_id, now]);
+    return { success: true };
+  } else if (mode === 'delete') {
+    const data = sh.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() === code) {
+        sh.deleteRow(i + 1);
+        return { success: true };
+      }
+    }
+    return { success: false, error: '商品コード「' + code + '」が見つかりません' };
+  }
+  return { success: false, error: '不明なmode: ' + mode };
 }
 
 // POST(セッション): 提案除外の登録/解除
