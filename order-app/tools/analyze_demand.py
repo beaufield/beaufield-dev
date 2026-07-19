@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.1.0
+# Version: v1.2.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -25,6 +25,8 @@
 #   発注済み未入荷分 = リードタイム内に発注アプリから発注した数量（二重発注防止）
 #   提案数量は推定ロット単位に切り上げ。
 #   推定ロット = 過去の発注明細の数量の最大公約数（発注3回以上かつ2以上のときのみ採用）
+#   提案金額 = 仕入単価（商品.CSV）× 提案数量。仕入単価未設定（0円）の商品は金額0円扱い
+#   （アプリ側で「—」表示。合計からは除外しない）
 #
 # 実行方法:
 #   py -3.12 analyze_demand.py             # 分析＋GASへ書き込み＋通知
@@ -176,14 +178,14 @@ def load_sales(csv_path, start_str, end_str):
 
 
 def load_products(csv_path):
-    """商品マスターCSV読み込み（コード・商品名・仕入先・在庫・廃番・在庫管理対象）"""
+    """商品マスターCSV読み込み（コード・商品名・仕入先・在庫・廃番・在庫管理対象・仕入単価）"""
     logging.info(f'商品CSV読み込み: {csv_path}')
     df = pd.read_csv(
         csv_path,
         encoding='cp932',
         header=0,
-        usecols=[0, 2, 11, 12, 13, 23, 28],
-        names=['code', 'name', 'stock_mgmt', 'supplier_cd', 'supplier', 'discontinued', 'stock'],
+        usecols=[0, 2, 11, 12, 13, 19, 23, 28],
+        names=['code', 'name', 'stock_mgmt', 'supplier_cd', 'supplier', 'cost', 'discontinued', 'stock'],
         dtype=str,
         on_bad_lines='skip',
     )
@@ -193,6 +195,8 @@ def load_products(csv_path):
         df[col] = df[col].fillna('').str.strip()
     df['stock'] = pd.to_numeric(
         df['stock'].fillna('0').str.replace(',', '', regex=False), errors='coerce').fillna(0)
+    df['cost'] = pd.to_numeric(
+        df['cost'].fillna('0').str.replace(',', '', regex=False), errors='coerce').fillna(0)
     return df.set_index('code')
 
 
@@ -341,7 +345,7 @@ def main():
 
     log_file = setup_logger()
     logging.info('=' * 60)
-    logging.info('Beaufield 需要分析・発注提案スクリプト v1.0.0 開始'
+    logging.info('Beaufield 需要分析・発注提案スクリプト v1.2.0 開始'
                  + ('（dry-run）' if args.dry_run else ''))
 
     config = load_config()
@@ -427,6 +431,7 @@ def main():
         insufficient = months_of_history < MIN_MONTHS_DATA
 
         stock = float(prod['stock'])
+        unit_cost = float(prod['cost'])
         lot = estimate_lot(lot_stats.get(code))
 
         # 発注済み・未入荷分: リードタイム内に発注したものはまだ在庫に反映されて
@@ -457,6 +462,8 @@ def main():
             'on_order': on_order,
             'recommended': stat['recommended'],
             'proposed_qty': proposed_qty,
+            'unit_cost': unit_cost,
+            'amount': round(unit_cost * proposed_qty),
             'lot': lot,
             'protect_days': protect_days,
             'current_rp_6mo': round(float(recent6.get(code, 0.0)), 1),
@@ -484,6 +491,8 @@ def main():
                 'onOrder': on_order,
                 'recommended': stat['recommended'],
                 'proposedQty': proposed_qty,
+                'unitCost': unit_cost,
+                'amount': round(unit_cost * proposed_qty),
                 'lot': lot,
                 'meanMonthly': stat['mean_monthly'],
                 'p95Order': stat['p95_order_size'],
@@ -519,7 +528,9 @@ def main():
     logging.info(f'分析対象商品数: {len(df_out):,}件（在庫管理対象・廃番除く・期間内販売あり）')
     for pat, cnt in df_out['pattern'].value_counts().items():
         logging.info(f'  {pat}: {cnt:,}件')
-    logging.info(f'発注提案: {len(proposals):,}件（月平均{min_mean}個以上・除外設定{len(exclusions)}件を反映）')
+    total_amount = sum(p['amount'] for p in proposals)
+    logging.info(f'発注提案: {len(proposals):,}件 / 合計 {total_amount:,.0f}円'
+                 f'（月平均{min_mean}個以上・除外設定{len(exclusions)}件を反映）')
     logging.info(f'出力: {csv_out}')
     logging.info(f'出力: {json_out}')
 

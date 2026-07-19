@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.11.1';
+const VERSION         = 'v1.12.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -877,7 +877,7 @@ function saveStaff(p, user_id) {
 // 発注提案シートの列定義（updateOrderProposals / getOrderProposals で共有）
 const PROPOSAL_HEADERS = ['商品コード','商品名','仕入先コード','仕入先名','パターン',
                           '現在庫','発注済','推奨在庫','提案数量','推定ロット','月平均',
-                          '注文P95','最大注文','根拠メモ','AI説明','分析日時'];
+                          '注文P95','最大注文','根拠メモ','AI説明','分析日時','仕入単価','提案金額'];
 
 // POST(APIキー): 分析に必要な設定を返す
 // レスポンス: { success, suppliers: [{code,name,leadTimeDays,orderCycleDays}],
@@ -946,6 +946,11 @@ function gcdInt(a, b) {
   return a;
 }
 
+// 金額を「◯◯.◯万円」表記にする（LINE WORKS通知用）
+function formatManYen(yen) {
+  return (yen / 10000).toFixed(1) + '万円';
+}
+
 // POST(APIキー): 発注提案シートを全面書き換え
 // リクエスト: { proposals: [{code,name,supplierCode,supplierName,pattern,stock,recommended,
 //              proposedQty,lot,meanMonthly,p95Order,maxOrder,note}], analyzedAt }
@@ -977,7 +982,9 @@ function updateOrderProposals(p) {
       parseFloat(x.maxOrder)    || 0,
       String(x.note || ''),
       '',           // AI説明（updateProposalExplanations で追記）
-      analyzedAt
+      analyzedAt,
+      parseFloat(x.unitCost) || 0,
+      parseFloat(x.amount)   || 0
     ]);
     sh.getRange(2, 1, rows.length, PROPOSAL_HEADERS.length).setValues(rows);
   }
@@ -994,9 +1001,10 @@ function updateOrderProposals(p) {
       .slice(0, 8)
       .map(name => '・' + name + ': ' + bySupplier[name] + '件');
     const more = Object.keys(bySupplier).length > 8 ? '\n…ほか' + (Object.keys(bySupplier).length - 8) + '社' : '';
+    const totalAmount = proposals.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0);
     notifyLineWorks(
       '📋 発注提案の分析が完了しました（' + analyzedAt + '）\n' +
-      '提案: ' + proposals.length + '件\n' + lines.join('\n') + more + '\n' +
+      '提案: ' + proposals.length + '件・合計' + formatManYen(totalAmount) + '\n' + lines.join('\n') + more + '\n' +
       '発注アプリの「発注提案」タブで確認してください。'
     );
   }
@@ -1055,7 +1063,9 @@ function getOrderProposals() {
         p95Order:     parseFloat(r[11]) || 0,
         maxOrder:     parseFloat(r[12]) || 0,
         note:         String(r[13] || ''),
-        aiNote:       String(r[14] || '')
+        aiNote:       String(r[14] || ''),
+        unitCost:     parseFloat(r[16]) || 0,
+        amount:       parseFloat(r[17]) || 0
       }));
     analyzedAt = cellToStr(data[1][15], 'yyyy-MM-dd HH:mm');
   }
