@@ -842,20 +842,38 @@
     <button class="btn btn-outline" onclick="openAddSupplier()" style="margin-top:10px;width:100%">＋ 発注先を追加</button>
   </div>
   <div class="card">
-    <div class="card-label">仕入先CD 対応確認</div>
-    <p style="font-size:13px;color:var(--text-light);margin-bottom:8px">
-      商品マスターCSVの仕入先CDと発注先マスターのコードを突合します
+    <div class="card-label">仕入先コードの対応確認</div>
+    <p style="font-size:13px;color:var(--text-light);margin-bottom:8px;line-height:1.6">
+      商品リスト（CSV）に出てくる仕入先と、上の「発注先マスター」に登録されている仕入先が
+      きちんと対応しているかを確認する機能です。<br>
+      「在庫一覧に出てくるはずの商品が見当たらない」など様子がおかしいときに
+      「突合チェック実行」を押してください。結果に「❌未登録」と出た仕入先は
+      発注先マスターへの登録が必要です（登録内容の追加・修正はたかしさんにご相談ください）。<br>
+      ボタンを押しても商品データや設定が変わることはありません（確認するだけの機能です）。
     </p>
     <div id="supplier-check-result"></div>
     <button class="btn btn-secondary" onclick="checkSupplierCodes()" style="margin-top:8px;width:100%">🔍 突合チェック実行</button>
   </div>
   <div class="card">
-    <div class="card-label">商品マスターキャッシュ管理</div>
+    <div class="card-label">商品マスタキャッシュ管理</div>
+    <p style="font-size:13px;color:var(--text-light);margin-bottom:8px;line-height:1.6">
+      この端末に保存されている商品データ（商品名・在庫数などをCSVから取り込んだもの）を消去します。
+      消去すると、次に使うときにCSVファイルの再読み込みが必要になります。<br>
+      「商品名や在庫数が古いまま更新されない」など表示がおかしいときに使ってください。
+      普段の操作では押す必要はありません。<br>
+      ※この端末だけに保存されているデータなので、消去しても他の人が使っている端末には影響しません。
+    </p>
     <button class="btn btn-danger" onclick="clearMasterCache()">🗑️ キャッシュを削除</button>
   </div>
   <div class="card">
     <div class="card-label">備考履歴管理</div>
-    <p style="font-size:13px;color:var(--text-light);margin-bottom:8px">過去に入力した備考の候補をすべて削除します</p>
+    <p style="font-size:13px;color:var(--text-light);margin-bottom:8px;line-height:1.6">
+      発注入力画面の「備考」欄に文字を打つと、この端末で過去に入力した内容が候補として
+      表示されます。この候補一覧をすべて消去する機能です。<br>
+      すでに確定した発注の履歴が消えるわけではありません。候補が増えすぎて選びにくいときに
+      整理する目的で使ってください。<br>
+      ※この端末だけの候補一覧です。
+    </p>
     <button class="btn btn-danger" onclick="clearMemoHistory()">🗑️ 備考履歴を削除</button>
   </div>
   <div class="card">
@@ -1122,7 +1140,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.37.0'; // 発注先選択からWeb仕入先を除外・担当者マスター廃止・ログアウト機能廃止
+const APP_VERSION    = 'v1.38.0'; // 設定タブの機能説明を事務スタッフ向けに分かりやすく拡充
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
