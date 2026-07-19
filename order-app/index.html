@@ -359,6 +359,16 @@
       white-space: pre-wrap;
       line-height: 1.4;
     }
+    .order-summary-deadline {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--danger);
+      background: #ffebee;
+      border: 1px solid #ffcdd2;
+      border-radius: 6px;
+      padding: 6px 8px;
+      margin-top: 8px;
+    }
 
     /* 履歴 */
     .history-item {
@@ -635,7 +645,11 @@
     .abc-badge.b         { background: #eceff1; color: #546e7a; }
     .abc-badge.c         { background: #f5f5f5; color: #9e9e9e; }
     .prop-item-stats  { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-size: 13px; flex-wrap: wrap; }
-    .prop-qty         { width: 64px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; font-weight: 700; text-align: center; }
+    .prop-qty         { width: 44px; padding: 6px 4px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; font-weight: 700; text-align: center; }
+    .prop-qty-chips   { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+    .prop-qty-chip    { padding: 3px 8px; font-size: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text-light); cursor: pointer; }
+    .prop-qty-chip.active { background: var(--primary); color: #fff; border-color: var(--primary); font-weight: bold; }
+    .prop-lot-btn     { padding: 3px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-light); cursor: pointer; white-space: nowrap; }
     .prop-item-amount { margin-left: auto; font-weight: 700; font-size: 13px; color: var(--text); }
     .prop-note        { font-size: 11px; color: var(--text-light); margin-top: 4px; line-height: 1.5; }
     .prop-item-actions { margin-left: auto; display: flex; gap: 6px; flex-shrink: 0; }
@@ -711,6 +725,7 @@
     <div class="order-summary-card">
       <div class="order-summary-supplier" id="input-supplier"></div>
       <div class="order-summary-meta" id="input-meta"></div>
+      <div class="order-summary-deadline" id="input-deadline" style="display:none"></div>
       <div class="order-summary-note" id="input-note" style="display:none"></div>
     </div>
 
@@ -951,6 +966,7 @@
   <div id="prop-excess"></div>
   <div id="prop-exclusions"></div>
   <div id="prop-eol"></div>
+  <div id="prop-lot"></div>
 </div>
 
 <!-- ボトムナビ -->
@@ -1109,8 +1125,12 @@
       <div style="font-size:11px;color:var(--text-light);margin-top:4px">「Web」は仕入先独自サイトで発注する仕入先用です。このアプリからは発注データを出力せず、在庫・発注量の確認用途になります</div>
     </div>
     <div class="form-group">
-      <label>備考（任意・発注締め時間や最低発注金額など）</label>
-      <textarea id="new-sup-note" rows="2" placeholder="例: 15時までに発注／5,000円以上で送料無料" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:14px;font-family:inherit;resize:vertical;background:var(--surface);color:var(--text)"></textarea>
+      <label>発注限時刻（任意）</label>
+      <input type="time" id="new-sup-deadline" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:14px;font-family:inherit;background:var(--surface);color:var(--text)">
+    </div>
+    <div class="form-group">
+      <label>備考（任意・最低発注金額など。締め時間は上の欄へ）</label>
+      <textarea id="new-sup-note" rows="2" placeholder="例: 5,000円以上で送料無料" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:14px;font-family:inherit;resize:vertical;background:var(--surface);color:var(--text)"></textarea>
     </div>
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="closeModal('modal-add-supplier')">キャンセル</button>
@@ -1140,7 +1160,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.38.0'; // 設定タブの機能説明を事務スタッフ向けに分かりやすく拡充
+const APP_VERSION    = 'v1.39.0'; // 発注限時刻・直近発注の赤字強調・発注数タップ選択・手動ロット設定を追加
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1592,6 +1612,13 @@ function updateInputHeader() {
   document.getElementById('header-sub').textContent = '商品入力中 | ' + currentOrder.supplierName;
 
   const sup = masters.suppliers.find(s => s.code === currentOrder.supplierCode);
+  const deadlineEl = document.getElementById('input-deadline');
+  if (sup && sup.deadline) {
+    deadlineEl.textContent = '⏰ 発注限 ' + sup.deadline;
+    deadlineEl.style.display = 'block';
+  } else {
+    deadlineEl.style.display = 'none';
+  }
   const noteEl = document.getElementById('input-note');
   if (sup && sup.note) {
     noteEl.textContent = '📌 ' + sup.note;
@@ -2148,6 +2175,7 @@ function renderConfirmPage() {
         発注日: ${currentOrder.date} / 担当: ${currentOrder.staff}
         ${currentOrder.fax ? ' / FAX: ' + currentOrder.fax : ''}
       </div>
+      ${confirmSup && confirmSup.deadline ? `<div class="order-summary-deadline" style="margin-top:8px">⏰ 発注限 ${escHtml(confirmSup.deadline)}</div>` : ''}
       ${confirmSup && confirmSup.note ? `<div class="order-summary-note" style="margin-top:8px">📌 ${escHtml(confirmSup.note)}</div>` : ''}
     </div>`;
 
@@ -3553,6 +3581,7 @@ function renderSettingsSuppliers() {
       <div style="flex:1;min-width:0">
         <div class="setting-row-info">${escHtml(s.name)}</div>
         <div class="setting-row-sub">CD: ${s.code} | FAX: ${s.fax || '未登録'} | 発注方法: ${escHtml(methods)}</div>
+        ${s.deadline ? `<div class="setting-row-sub" style="color:var(--danger);font-weight:bold">⏰ 発注限 ${escHtml(s.deadline)}</div>` : ''}
         ${s.note ? `<div class="setting-row-sub">備考: ${escHtml(s.note)}</div>` : ''}
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0">
@@ -3568,7 +3597,7 @@ function openAddSupplier() {
   document.getElementById('sup-modal-mode').value          = 'add';
   document.getElementById('sup-modal-save-btn').textContent = '追加';
   document.getElementById('new-sup-code').disabled = false;
-  ['new-sup-code','new-sup-name','new-sup-fax','new-sup-note'].forEach(id => { document.getElementById(id).value = ''; });
+  ['new-sup-code','new-sup-name','new-sup-fax','new-sup-deadline','new-sup-note'].forEach(id => { document.getElementById(id).value = ''; });
   document.querySelectorAll('.sup-method-chk').forEach(cb => { cb.checked = false; });
   openModal('modal-add-supplier');
 }
@@ -3583,6 +3612,7 @@ function openEditSupplier(code) {
   document.getElementById('new-sup-code').disabled = true; // コードは変更不可
   document.getElementById('new-sup-name').value    = s.name;
   document.getElementById('new-sup-fax').value     = s.fax || '';
+  document.getElementById('new-sup-deadline').value = s.deadline || '';
   document.getElementById('new-sup-note').value    = s.note || '';
   document.querySelectorAll('.sup-method-chk').forEach(cb => {
     cb.checked = (s.outputMethods || []).includes(cb.value);
@@ -3595,6 +3625,7 @@ async function saveSupplierModal() {
   const code          = document.getElementById('new-sup-code').value.trim();
   const name          = document.getElementById('new-sup-name').value.trim();
   const fax           = document.getElementById('new-sup-fax').value.trim();
+  const deadline      = document.getElementById('new-sup-deadline').value.trim();
   const note          = document.getElementById('new-sup-note').value.trim();
   const outputMethods = [...document.querySelectorAll('.sup-method-chk:checked')]
                           .map(cb => cb.value).join(',');
@@ -3602,7 +3633,7 @@ async function saveSupplierModal() {
   if (!name) { showToast('発注先名を入力してください', 'error'); return; }
   showLoading('保存中...');
   try {
-    const res = await gasPost({ action: 'saveSupplier', code, name, fax, note, outputMethods, mode });
+    const res = await gasPost({ action: 'saveSupplier', code, name, fax, deadline, note, outputMethods, mode });
     if (res.success) {
       closeModal('modal-add-supplier');
       await loadMasters();
@@ -3905,7 +3936,7 @@ function closeModal(id) { document.getElementById(id).classList.remove('open'); 
    analyze_demand.py（週次）が「発注提案」シートに書いた提案を表示し、
    チェックした商品をカートに積んで発注フローへ流し込む
 =================================================== */
-let proposalsData    = { proposals: [], analyzedAt: '', exclusions: [], eol: [], excess: [], excessAcks: [], kpi: null };
+let proposalsData    = { proposals: [], analyzedAt: '', exclusions: [], eol: [], excess: [], excessAcks: [], kpi: null, lotOverrides: [] };
 let proposalsLoaded  = false;
 let proposalsLoading = false;
 let proposalsSort    = 'name'; // 'name'（あ順・既定）| 'amount'（金額が多い順）
@@ -3949,7 +3980,8 @@ async function loadProposals(force = false) {
         eol:        res.eol        || [],
         excess:     res.excess     || [],
         excessAcks: res.excessAcks || [],
-        kpi:        res.kpi        || null
+        kpi:        res.kpi        || null,
+        lotOverrides: res.lotOverrides || []
       };
       proposalsLoaded = true;
       excessShowCount = 20;
@@ -4085,7 +4117,7 @@ function renderProposalList() {
           const abcBadge = p.abcRank ? `<span class="abc-badge ${abcCls}">${escHtml(p.abcRank)}</span>` : '';
           const hist = productHistory[p.code] || null;
           const lastOrder = hist && hist.date
-            ? `<span style="color:var(--text-light)">🛒 直近発注 ${fmtOrderDate(hist.date)}×${hist.qty}${hist.unit||''}</span>`
+            ? `<span style="color:var(--danger);font-weight:bold">🛒 直近発注 ${fmtOrderDate(hist.date)}×${hist.qty}${hist.unit||''}</span>`
             : '';
           return `
           <div class="prop-item" data-code="${escHtml(p.code)}" data-unit-cost="${unitCost}">
@@ -4101,7 +4133,9 @@ function renderProposalList() {
             </div>
             <div class="prop-item-stats">
               <span>在庫 <b>${p.stock}</b> ${onOrder}→ 推奨 <b>${p.recommended}</b></span>
-              <span>発注数 <input type="number" class="prop-qty" value="${p.proposedQty}" min="1" step="1">${p.lot > 1 ? `<span style="font-size:11px;color:var(--text-light)"> ロット${p.lot}</span>` : ''}</span>
+              <span>発注数 <input type="number" class="prop-qty" value="${p.proposedQty}" min="1" step="1"></span>
+              <span class="prop-qty-chips">${PROP_QTY_CHIPS.map(v => `<button type="button" class="prop-qty-chip${p.proposedQty === v ? ' active' : ''}" onclick="setPropQty(this,${v})">${v}</button>`).join('')}</span>
+              <button type="button" class="prop-lot-btn" onclick="setLotOverride('${escAttr(p.code)}','${escAttr(p.name)}')">ロット ${p.lot} ✏️</button>
               <span class="prop-item-amount">${formatItemAmount(unitCost, p.proposedQty)}</span>
             </div>
             ${lastOrder ? `<div class="prop-item-stats" style="margin-top:2px;font-size:11px">${lastOrder}</div>` : ''}
@@ -4130,6 +4164,7 @@ function renderProposalList() {
   renderProposalExcess();
   renderProposalExclusions();
   renderEolList();
+  renderLotOverrides();
 }
 
 // 金額表示（¥12,400 形式）。仕入単価0円（マスター未整備）の商品行は「—」表示にする
@@ -4139,6 +4174,16 @@ function formatYen(n) {
 function formatItemAmount(unitCost, qty) {
   if (!unitCost) return '—';
   return formatYen(unitCost * (parseFloat(qty) || 0));
+}
+
+// 発注数のタップ選択チップ
+const PROP_QTY_CHIPS = [1, 2, 3, 6, 12];
+function setPropQty(btn, value) {
+  const item = btn.closest('.prop-item');
+  if (!item) return;
+  const input = item.querySelector('.prop-qty');
+  input.value = value;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 // チェック・数量変更のたびに該当行の金額とグループの選択サマリーを再計算する
@@ -4153,6 +4198,9 @@ function handlePropItemInputChange(e) {
   const qty = parseFloat(item.querySelector('.prop-qty').value) || 0;
   const amountEl = item.querySelector('.prop-item-amount');
   if (amountEl) amountEl.textContent = formatItemAmount(unitCost, qty);
+  item.querySelectorAll('.prop-qty-chip').forEach(c => {
+    c.classList.toggle('active', parseInt(c.textContent, 10) === qty);
+  });
   updatePropGroupSummary(group);
 }
 function updatePropGroupSummary(group) {
@@ -4400,6 +4448,83 @@ async function restoreEol(code) {
       proposalsData.eol = proposalsData.eol.filter(x => x.code !== code);
       renderEolList();
       showToast('終売設定を解除しました。次回の分析から提案対象に戻ります', 'success');
+    } else {
+      showToast('解除エラー: ' + (res.error || '不明'), 'error');
+    }
+  } catch(e) {
+    showToast('通信エラー。ネットワークを確認してください。', 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// ロット（最低注文数）: 不足数をロット単位に切り上げて発注数を求める
+function computeProposedQty(p) {
+  const shortage = (p.recommended || 0) - ((p.stock || 0) + (p.onOrder || 0));
+  if (shortage <= 0) return 0;
+  const lot = p.lot > 1 ? p.lot : 1;
+  return Math.ceil(shortage / lot) * lot;
+}
+
+// 手動ロット設定（過去発注実績からの自動推定より優先して使う。次回の週次分析にも反映される）
+function renderLotOverrides() {
+  const wrap = document.getElementById('prop-lot');
+  const lots = proposalsData.lotOverrides;
+  if (!lots || lots.length === 0) { wrap.innerHTML = ''; return; }
+  const rows = lots.map(x => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:13px">
+      <div style="flex:1">
+        <div>${escHtml(x.name || x.code)}</div>
+        <div style="font-size:11px;color:var(--text-light)">${escHtml(x.code)}・ロット${x.lot}</div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="restoreLotOverride('${escAttr(x.code)}')">解除</button>
+    </div>`).join('');
+  wrap.innerHTML = `
+    <div class="card">
+      <details>
+        <summary style="font-size:13px;font-weight:600;cursor:pointer">📦 手動ロット設定中の商品（${lots.length}件）</summary>
+        <div style="margin-top:6px">${rows}</div>
+      </details>
+    </div>`;
+}
+
+async function setLotOverride(code, name) {
+  const p = proposalsData.proposals.find(x => x.code === code);
+  const current = p && p.lot > 1 ? String(p.lot) : '';
+  const input = prompt(`「${name}」のロット（最低注文数）を入力してください。\n次回以降の週次分析でも、この数値を過去実績からの自動推定より優先して使います。`, current);
+  if (input === null) return; // キャンセル
+  const lot = parseInt(input, 10);
+  if (!(lot > 0)) { showToast('1以上の整数を入力してください', 'error'); return; }
+  showLoading('ロット設定を保存中...');
+  try {
+    const res = await gasPost({ action: 'saveLotOverride', mode: 'add', code, name, lot });
+    if (res.success) {
+      proposalsData.lotOverrides = proposalsData.lotOverrides.filter(x => x.code !== code);
+      proposalsData.lotOverrides.push({ code, name, lot });
+      if (p) {
+        p.lot = lot;
+        p.proposedQty = computeProposedQty(p);
+      }
+      renderProposalList();
+      showToast(`「${name}」のロットを${lot}に設定しました`, 'success');
+    } else {
+      showToast('保存エラー: ' + (res.error || '不明'), 'error');
+    }
+  } catch(e) {
+    showToast('通信エラー。ネットワークを確認してください。', 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+async function restoreLotOverride(code) {
+  showLoading('ロット設定を解除中...');
+  try {
+    const res = await gasPost({ action: 'saveLotOverride', mode: 'delete', code });
+    if (res.success) {
+      proposalsData.lotOverrides = proposalsData.lotOverrides.filter(x => x.code !== code);
+      renderLotOverrides();
+      showToast('ロット設定を解除しました。次回の分析から自動推定に戻ります', 'success');
     } else {
       showToast('解除エラー: ' + (res.error || '不明'), 'error');
     }

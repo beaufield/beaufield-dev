@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.7.0
+# Version: v1.8.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -34,8 +34,9 @@
 #   月平均1個以上・販売歴6ヶ月以上・提案除外設定に無い・Cランクの間欠需要でない商品のうち、
 #   「現在庫＋発注済み未入荷分」が推奨在庫を下回ったもの。
 #   発注済み未入荷分 = リードタイム内に発注アプリから発注した数量（二重発注防止）
-#   提案数量は推定ロット単位に切り上げ。
-#   推定ロット = 過去の発注明細の数量の最大公約数（発注3回以上かつ2以上のときのみ採用）
+#   提案数量はロット単位に切り上げ。
+#   ロット = 手動設定（アプリの提案タブから登録。v1.8.0で追加）があれば最優先、
+#           なければ過去の発注明細の数量の最大公約数から自動推定（発注3回以上かつ2以上のときのみ採用）
 #   提案金額 = 仕入単価（商品.CSV）× 提案数量。仕入単価未設定（0円）の商品は金額0円扱い
 #   （アプリ側で「—」表示。合計からは除外しない）
 #
@@ -271,7 +272,8 @@ def fetch_reorder_config(gas_url, api_key):
     logging.info(f"設定取得完了: 発注先{len(result.get('suppliers', []))}件 / "
                  f"除外{len(result.get('exclusions', []))}件 / "
                  f"終売{len(result.get('eolCodes', []))}件 / "
-                 f"ロット材料{len(result.get('lotStats', {}))}商品")
+                 f"ロット材料{len(result.get('lotStats', {}))}商品 / "
+                 f"手動ロット設定{len(result.get('lotOverrides', {}))}商品")
     return result
 
 
@@ -372,8 +374,11 @@ def classify_abc(items, value_key='monthly_value'):
             x['abc'] = 'C'
 
 
-def estimate_lot(lot_stats_entry):
-    """過去の発注数量からロット（発注単位）を推定。確信が持てない場合は1"""
+def estimate_lot(lot_stats_entry, lot_override=None):
+    """商品のロット（発注単位）を決める。手動設定（アプリの提案タブから登録）があれば
+    それを最優先し、なければ過去の発注数量からの自動推定（確信が持てない場合は1）を使う"""
+    if lot_override and int(lot_override) >= 1:
+        return int(lot_override)
     if not lot_stats_entry:
         return 1
     if lot_stats_entry.get('orderCount', 0) < LOT_MIN_ORDERS:
@@ -451,7 +456,7 @@ def main():
 
     log_file = setup_logger()
     logging.info('=' * 60)
-    logging.info('Beaufield 需要分析・発注提案スクリプト v1.7.0 開始'
+    logging.info('Beaufield 需要分析・発注提案スクリプト v1.8.0 開始'
                  + ('（dry-run）' if args.dry_run else ''))
 
     config = load_config()
@@ -463,6 +468,7 @@ def main():
     exclusions = set()
     eol_codes = set()
     lot_stats = {}
+    lot_overrides = {}
     recent_orders = {}
     try:
         cfg = fetch_reorder_config(config['gas_url'], config['api_key'])
@@ -474,6 +480,8 @@ def main():
         eol_codes = {normalize_code(c) for c in cfg.get('eolCodes', [])} - {None}
         lot_stats = {normalize_code(k): v for k, v in cfg.get('lotStats', {}).items()
                      if normalize_code(k)}
+        lot_overrides = {normalize_code(k): v for k, v in cfg.get('lotOverrides', {}).items()
+                         if normalize_code(k)}
         recent_orders = {normalize_code(k): v for k, v in cfg.get('recentOrders', {}).items()
                          if normalize_code(k)}
     except Exception as e:
@@ -571,7 +579,7 @@ def main():
         # ABCランク分類だけに使う経済価値の代理指標。仕入単価が未設定(0円)の商品は
         # 売上単価で代用する（提案金額の表示にはこのフォールバックを使わず unit_cost のまま）
         value_basis = unit_cost or float(prod['sale_price'])
-        lot = estimate_lot(lot_stats.get(code))
+        lot = estimate_lot(lot_stats.get(code), lot_overrides.get(code))
 
         # 発注済み・未入荷分: リードタイム内に発注したものはまだ在庫に反映されて
         # いない可能性が高いため、在庫に加算して二重発注を防ぐ
