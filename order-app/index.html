@@ -1181,7 +1181,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.40.0'; // 「ロット」を「最低発注数」表記に統一・タップ選択チップ追加・発注限時刻を30分刻みセレクトに変更
+const APP_VERSION    = 'v1.40.1'; // 最低発注数のタップ選択チップに3・10を追加
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -4526,7 +4526,7 @@ function renderLotOverrides() {
     </div>`;
 }
 
-const LOT_MODAL_CHIPS = [1, 6, 12, 24, 30, 48, 120];
+const LOT_MODAL_CHIPS = [1, 3, 6, 10, 12, 24, 30, 48, 120];
 
 function openLotModal(code, name) {
   const p = proposalsData.proposals.find(x => x.code === code);
