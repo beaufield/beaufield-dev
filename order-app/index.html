@@ -347,6 +347,18 @@
     }
     .order-summary-supplier { font-size: 17px; font-weight: 700; }
     .order-summary-meta { font-size: 12px; color: var(--text-light); margin-top: 2px; }
+    .order-summary-note {
+      font-size: 13px;
+      font-weight: 600;
+      color: #8a5a00;
+      background: #fff8e1;
+      border: 1px solid #ffe082;
+      border-radius: 6px;
+      padding: 6px 8px;
+      margin-top: 8px;
+      white-space: pre-wrap;
+      line-height: 1.4;
+    }
 
     /* 履歴 */
     .history-item {
@@ -629,6 +641,7 @@
     .prop-excl-btn    { margin-left: auto; padding: 4px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-light); cursor: pointer; white-space: nowrap; }
     .prop-group-summary { font-size: 13px; font-weight: 700; text-align: right; margin-top: 10px; color: var(--text); }
     .prop-sort-btn.active { background: var(--primary); color: #fff; }
+    .prop-web-btn.active  { background: var(--primary); color: #fff; }
     .excess-item      { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
     .excess-item-name { font-size: 13px; font-weight: 600; }
     .excess-item-sub  { font-size: 11px; color: var(--text-light); margin-top: 2px; }
@@ -696,6 +709,7 @@
     <div class="order-summary-card">
       <div class="order-summary-supplier" id="input-supplier"></div>
       <div class="order-summary-meta" id="input-meta"></div>
+      <div class="order-summary-note" id="input-note" style="display:none"></div>
     </div>
 
     <div class="tabs">
@@ -909,6 +923,11 @@
       <button class="btn btn-outline btn-sm prop-sort-btn" id="prop-sort-name" onclick="setProposalSort('name')" style="flex:1">あ順</button>
       <button class="btn btn-outline btn-sm prop-sort-btn" id="prop-sort-amount" onclick="setProposalSort('amount')" style="flex:1">💰 金額が多い順</button>
     </div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button class="btn btn-outline btn-sm prop-web-btn" id="prop-web-all" onclick="setProposalWebFilter('all')" style="flex:1">すべて</button>
+      <button class="btn btn-outline btn-sm prop-web-btn" id="prop-web-only" onclick="setProposalWebFilter('onlyWeb')" style="flex:1">🌐 Webのみ</button>
+      <button class="btn btn-outline btn-sm prop-web-btn" id="prop-web-exclude" onclick="setProposalWebFilter('excludeWeb')" style="flex:1">🌐 Web除外</button>
+    </div>
   </div>
   <div id="prop-list">
     <div class="empty-state">
@@ -1071,7 +1090,13 @@
         <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" class="sup-method-chk" value="PDF"> PDF</label>
         <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" class="sup-method-chk" value="テキスト"> テキスト</label>
         <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" class="sup-method-chk" value="メーカーPDF"> メーカーPDF</label>
+        <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" class="sup-method-chk" value="Web"> Web</label>
       </div>
+      <div style="font-size:11px;color:var(--text-light);margin-top:4px">「Web」は仕入先独自サイトで発注する仕入先用です。このアプリからは発注データを出力せず、在庫・発注量の確認用途になります</div>
+    </div>
+    <div class="form-group">
+      <label>備考（任意・発注締め時間や最低発注金額など）</label>
+      <textarea id="new-sup-note" rows="2" placeholder="例: 15時までに発注／5,000円以上で送料無料" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:14px;font-family:inherit;resize:vertical;background:var(--surface);color:var(--text)"></textarea>
     </div>
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="closeModal('modal-add-supplier')">キャンセル</button>
@@ -1116,7 +1141,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.33.0'; // 適正在庫Phase D: 経営KPIカード（在庫金額・回転日数・過剰在庫額）を表示
+const APP_VERSION    = 'v1.34.0'; // 発注先にWeb区分・備考欄を追加、提案タブにWebフィルターを追加
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1569,6 +1594,15 @@ function updateInputHeader() {
     `${currentOrder.date} / ${currentOrder.staff}` +
     (currentOrder.fax ? ` / FAX: ${currentOrder.fax}` : '');
   document.getElementById('header-sub').textContent = '商品入力中 | ' + currentOrder.supplierName;
+
+  const sup = masters.suppliers.find(s => s.code === currentOrder.supplierCode);
+  const noteEl = document.getElementById('input-note');
+  if (sup && sup.note) {
+    noteEl.textContent = '📌 ' + sup.note;
+    noteEl.style.display = 'block';
+  } else {
+    noteEl.style.display = 'none';
+  }
 }
 
 function goToSelect() {
@@ -2110,6 +2144,7 @@ function renderItemList() {
    確認ページ
 =================================================== */
 function renderConfirmPage() {
+  const confirmSup = masters.suppliers.find(s => s.code === currentOrder.supplierCode);
   document.getElementById('confirm-header').innerHTML = `
     <div class="confirm-header-box">
       <div class="confirm-supplier">${escHtml(currentOrder.supplierName)}</div>
@@ -2117,6 +2152,7 @@ function renderConfirmPage() {
         発注日: ${currentOrder.date} / 担当: ${currentOrder.staff}
         ${currentOrder.fax ? ' / FAX: ' + currentOrder.fax : ''}
       </div>
+      ${confirmSup && confirmSup.note ? `<div class="order-summary-note" style="margin-top:8px">📌 ${escHtml(confirmSup.note)}</div>` : ''}
     </div>`;
 
   const hasPrices   = cartItems.some(i => !i.isHandwritten && i.purchasePrice > 0);
@@ -3521,6 +3557,7 @@ function renderSettingsSuppliers() {
       <div style="flex:1;min-width:0">
         <div class="setting-row-info">${escHtml(s.name)}</div>
         <div class="setting-row-sub">CD: ${s.code} | FAX: ${s.fax || '未登録'} | 発注方法: ${escHtml(methods)}</div>
+        ${s.note ? `<div class="setting-row-sub">備考: ${escHtml(s.note)}</div>` : ''}
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0">
         <button class="btn btn-outline btn-sm" onclick="openEditSupplier('${escAttr(s.code)}')">修正</button>
@@ -3547,7 +3584,7 @@ function openAddSupplier() {
   document.getElementById('sup-modal-mode').value          = 'add';
   document.getElementById('sup-modal-save-btn').textContent = '追加';
   document.getElementById('new-sup-code').disabled = false;
-  ['new-sup-code','new-sup-name','new-sup-fax'].forEach(id => { document.getElementById(id).value = ''; });
+  ['new-sup-code','new-sup-name','new-sup-fax','new-sup-note'].forEach(id => { document.getElementById(id).value = ''; });
   document.querySelectorAll('.sup-method-chk').forEach(cb => { cb.checked = false; });
   openModal('modal-add-supplier');
 }
@@ -3562,6 +3599,7 @@ function openEditSupplier(code) {
   document.getElementById('new-sup-code').disabled = true; // コードは変更不可
   document.getElementById('new-sup-name').value    = s.name;
   document.getElementById('new-sup-fax').value     = s.fax || '';
+  document.getElementById('new-sup-note').value    = s.note || '';
   document.querySelectorAll('.sup-method-chk').forEach(cb => {
     cb.checked = (s.outputMethods || []).includes(cb.value);
   });
@@ -3573,13 +3611,14 @@ async function saveSupplierModal() {
   const code          = document.getElementById('new-sup-code').value.trim();
   const name          = document.getElementById('new-sup-name').value.trim();
   const fax           = document.getElementById('new-sup-fax').value.trim();
+  const note          = document.getElementById('new-sup-note').value.trim();
   const outputMethods = [...document.querySelectorAll('.sup-method-chk:checked')]
                           .map(cb => cb.value).join(',');
   if (!code) { showToast('コードを入力してください', 'error'); return; }
   if (!name) { showToast('発注先名を入力してください', 'error'); return; }
   showLoading('保存中...');
   try {
-    const res = await gasPost({ action: 'saveSupplier', code, name, fax, outputMethods, mode });
+    const res = await gasPost({ action: 'saveSupplier', code, name, fax, note, outputMethods, mode });
     if (res.success) {
       closeModal('modal-add-supplier');
       await loadMasters();
@@ -3909,11 +3948,23 @@ let proposalsData    = { proposals: [], analyzedAt: '', exclusions: [], excess: 
 let proposalsLoaded  = false;
 let proposalsLoading = false;
 let proposalsSort    = 'name'; // 'name'（あ順・既定）| 'amount'（金額が多い順）
+let propWebFilter    = 'all'; // 'all'（既定）| 'onlyWeb'（Webのみ）| 'excludeWeb'（Web除外）
 let excessShowCount  = 20; // 「持ちすぎ在庫」の初期表示件数（もっと見るで増える）
 
 function setProposalSort(mode) {
   proposalsSort = mode;
   renderProposalList();
+}
+
+function setProposalWebFilter(mode) {
+  propWebFilter = mode;
+  renderProposalList();
+}
+
+// 発注先マスターの発注方法に「Web」が含まれるか（このアプリからは出力しない仕入先）
+function isWebSupplier(supplierCode) {
+  const sup = masters.suppliers.find(s => s.code === supplierCode);
+  return !!(sup && (sup.outputMethods || []).includes('Web'));
 }
 
 const PROP_PATTERN_CLASS = {
@@ -4030,10 +4081,15 @@ function renderProposalFilter() {
 function renderProposalList() {
   const wrap = document.getElementById('prop-list');
   const filter = document.getElementById('prop-filter-supplier').value;
-  const props = proposalsData.proposals.filter(p => !filter || p.supplierCode === filter);
+  let props = proposalsData.proposals.filter(p => !filter || p.supplierCode === filter);
+  if (propWebFilter === 'onlyWeb')    props = props.filter(p => isWebSupplier(p.supplierCode));
+  if (propWebFilter === 'excludeWeb') props = props.filter(p => !isWebSupplier(p.supplierCode));
 
   document.getElementById('prop-sort-name').classList.toggle('active', proposalsSort === 'name');
   document.getElementById('prop-sort-amount').classList.toggle('active', proposalsSort === 'amount');
+  document.getElementById('prop-web-all').classList.toggle('active', propWebFilter === 'all');
+  document.getElementById('prop-web-only').classList.toggle('active', propWebFilter === 'onlyWeb');
+  document.getElementById('prop-web-exclude').classList.toggle('active', propWebFilter === 'excludeWeb');
 
   if (props.length === 0) {
     wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">🎉</div><div>現在、発注提案はありません</div></div>';
@@ -4079,11 +4135,12 @@ function renderProposalList() {
         const totalQty = g.items.reduce((s, p) => s + (p.proposedQty || 0), 0);
         const totalAmount = g.totalAmount;
         const isOpen = propOpenGroups.has(code);
+        const webBadge = isWebSupplier(code) ? '<span class="prop-badge sporadic" style="margin-left:4px">🌐 Web</span>' : '';
         return `
         <div class="card prop-group${isOpen ? ' open' : ''}" id="prop-group-${escHtml(code)}">
           <div class="prop-group-head" onclick="toggleProposalGroup('${escAttr(code)}')">
             <span class="prop-group-chev">▶</span>
-            <span class="prop-group-name">${escHtml(g.name)}</span>
+            <span class="prop-group-name">${escHtml(g.name)}${webBadge}</span>
             <span class="prop-group-count">${g.items.length}件 / 計${totalQty}個 / ${formatYen(totalAmount)}</span>
           </div>
           <div class="prop-group-body">
