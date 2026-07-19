@@ -877,8 +877,7 @@
   <div class="card" style="padding:12px 14px">
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
       <select id="inv-filter-supplier" onchange="renderInventoryList()" style="flex:1;min-width:120px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text)">
-        <option value="">全発注先</option>
-        <option value="except_67" selected>ナプラ以外</option>
+        <option value="" selected>全発注先</option>
       </select>
       <select id="inv-filter-stock" onchange="renderInventoryList()" style="width:90px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text)">
         <option value="0">0以下</option>
@@ -1144,7 +1143,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.35.0'; // 直近12ヶ月トレンド判定・終売フラグ機能を追加
+const APP_VERSION    = 'v1.36.0'; // 提案タブに直近発注表示・持ちすぎ在庫の月数を強調表示・在庫フィルター「ナプラ以外」廃止
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -3707,8 +3706,8 @@ function clearMasterCache() {
 // 発注先マスターに登録済みの仕入先のみ選択肢に表示
 function renderInventorySupplierFilter() {
   const sel = document.getElementById('inv-filter-supplier');
-  const cur = sel.value || 'except_67'; // 初回デフォルト: ナプラ以外
-  sel.innerHTML = '<option value="">全発注先</option><option value="except_67">ナプラ以外</option>';
+  const cur = sel.value || '';
+  sel.innerHTML = '<option value="">全発注先</option>';
   masters.suppliers.forEach(s => {
     const opt = document.createElement('option');
     opt.value = s.code; opt.textContent = s.name;
@@ -3785,9 +3784,7 @@ function renderInventoryList() {
     // 最終売上日が空（未売上）は除外（フィルター設定に関わらず常に除外）
     if (!p.lastSaleDate || !p.lastSaleDate.trim()) return false;
     // 発注先フィルター
-    if (supplierFilter === 'except_67') {
-      if (p.supplierCD === '67') return false;
-    } else if (supplierFilter && p.supplierCD !== supplierFilter) {
+    if (supplierFilter && p.supplierCD !== supplierFilter) {
       return false;
     }
     // 在庫数フィルター（要発注フィルターON時は在庫数フィルター無効）
@@ -4085,6 +4082,12 @@ function renderProposalFilter() {
 function renderProposalList() {
   const wrap = document.getElementById('prop-list');
   const filter = document.getElementById('prop-filter-supplier').value;
+  const fmtOrderDate = s => {
+    if (!s) return '—';
+    const clean = String(s).replace(/\//g,'').replace(/-/g,'').trim();
+    if (clean.length === 8) return `${clean.slice(4,6)}/${clean.slice(6,8)}`;
+    return s;
+  };
   let props = proposalsData.proposals.filter(p => !filter || p.supplierCode === filter);
   if (propWebFilter === 'onlyWeb')    props = props.filter(p => isWebSupplier(p.supplierCode));
   if (propWebFilter === 'excludeWeb') props = props.filter(p => !isWebSupplier(p.supplierCode));
@@ -4119,6 +4122,10 @@ function renderProposalList() {
           const unitCost = parseFloat(p.unitCost) || 0;
           const abcCls = ABC_BADGE_CLASS[p.abcRank] || '';
           const abcBadge = p.abcRank ? `<span class="abc-badge ${abcCls}">${escHtml(p.abcRank)}</span>` : '';
+          const hist = productHistory[p.code] || null;
+          const lastOrder = hist && hist.date
+            ? `<span style="color:var(--text-light)">🛒 直近発注 ${fmtOrderDate(hist.date)}×${hist.qty}${hist.unit||''}</span>`
+            : '';
           return `
           <div class="prop-item" data-code="${escHtml(p.code)}" data-unit-cost="${unitCost}">
             <div class="prop-item-top">
@@ -4136,6 +4143,7 @@ function renderProposalList() {
               <span>発注数 <input type="number" class="prop-qty" value="${p.proposedQty}" min="1" step="1">${p.lot > 1 ? `<span style="font-size:11px;color:var(--text-light)"> ロット${p.lot}</span>` : ''}</span>
               <span class="prop-item-amount">${formatItemAmount(unitCost, p.proposedQty)}</span>
             </div>
+            ${lastOrder ? `<div class="prop-item-stats" style="margin-top:2px;font-size:11px">${lastOrder}</div>` : ''}
             ${note ? `<div class="prop-note">${escHtml(note)}</div>` : ''}
           </div>`;
         }).join('');
@@ -4223,17 +4231,23 @@ function renderProposalExcess() {
   if (excess.length > 0) {
     const totalAmount = excess.reduce((s, x) => s + (parseFloat(x.excessAmount) || 0), 0);
     const shown = excess.slice(0, excessShowCount);
-    const rows = shown.map(x => `
+    const rows = shown.map(x => {
+      const monthsLabel = (x.monthsOfStock !== null && x.monthsOfStock !== undefined)
+        ? `約${x.monthsOfStock}ヶ月分`
+        : 'ヶ月分不明';
+      const monthsCls = (x.monthsOfStock || 0) > 3 ? 'color:var(--danger);font-weight:bold' : '';
+      return `
       <div class="excess-item">
         <div style="flex:1">
           <div class="excess-item-name">${escHtml(x.name || x.code)}</div>
-          <div class="excess-item-sub">在庫${x.stock}個（約${x.monthsOfStock}ヶ月分）・${escHtml(x.supplierName || '')}</div>
+          <div class="excess-item-sub">在庫${x.stock}個（<span style="${monthsCls}">${monthsLabel}</span>）・${escHtml(x.supplierName || '')}</div>
         </div>
         <div style="text-align:right">
           <div class="excess-item-amount">${formatYen(x.excessAmount)}</div>
           <button class="excess-ack-btn" style="margin-top:4px" onclick="ackExcess('${escAttr(x.code)}','${escAttr(x.name)}')">✓確認済み</button>
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
     const moreBtn = excess.length > shown.length
       ? `<button class="excess-more-btn" onclick="showMoreExcess()">もっと見る（残り${excess.length - shown.length}件）</button>`
       : '';
