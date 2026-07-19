@@ -842,11 +842,6 @@
     <button class="btn btn-outline" onclick="openAddSupplier()" style="margin-top:10px;width:100%">＋ 発注先を追加</button>
   </div>
   <div class="card">
-    <div class="card-label">担当者マスター</div>
-    <div id="settings-staff"></div>
-    <button class="btn btn-outline" onclick="openAddStaff()" style="margin-top:10px;width:100%">＋ 担当者を追加</button>
-  </div>
-  <div class="card">
     <div class="card-label">仕入先CD 対応確認</div>
     <p style="font-size:13px;color:var(--text-light);margin-bottom:8px">
       商品マスターCSVの仕入先CDと発注先マスターのコードを突合します
@@ -865,8 +860,7 @@
   </div>
   <div class="card">
     <div class="card-label">アカウント</div>
-    <p style="font-size:13px;color:var(--text-light);margin-bottom:10px" id="settings-user-name">ログイン中: —</p>
-    <button class="btn btn-secondary" onclick="doAuthLogout()">🔓 ログアウト</button>
+    <p style="font-size:13px;color:var(--text-light)" id="settings-user-name">ログイン中: —</p>
   </div>
 </div>
 
@@ -1107,21 +1101,6 @@
   </div>
 </div>
 
-<!-- モーダル: 担当者追加 -->
-<div class="modal-overlay" id="modal-add-staff">
-  <div class="modal">
-    <div class="modal-title">担当者を追加</div>
-    <div class="form-group">
-      <label>担当者名</label>
-      <input type="text" id="new-staff-name" placeholder="氏名">
-    </div>
-    <div class="btn-row">
-      <button class="btn btn-secondary" onclick="closeModal('modal-add-staff')">キャンセル</button>
-      <button class="btn btn-primary" onclick="saveNewStaff()">追加</button>
-    </div>
-  </div>
-</div>
-
 <!-- ローディング -->
 <div class="loading-overlay" id="loading-overlay">
   <div class="loading-box">
@@ -1143,7 +1122,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.36.0'; // 提案タブに直近発注表示・持ちすぎ在庫の月数を強調表示・在庫フィルター「ナプラ以外」廃止
+const APP_VERSION    = 'v1.37.0'; // 発注先選択からWeb仕入先を除外・担当者マスター廃止・ログアウト機能廃止
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1159,7 +1138,7 @@ const SESSION_DAYS   = 30;
    状態変数
 =================================================== */
 let currentUser   = null; // { user_id, name } ログイン済みユーザー
-let masters       = { suppliers: [], staff: [] };
+let masters       = { suppliers: [] };
 let productMaster = [];
 let cartItems     = [];
 let allHistoryOrders  = []; // 履歴全件（フィルタ前）
@@ -1298,9 +1277,7 @@ async function loadMasters() {
     const res = await gasGet({ action: 'getMasters' });
     if (res.success) {
       masters.suppliers = res.suppliers || [];
-      masters.staff     = res.staff || res.staffs || [];
       renderSupplierDropdown();
-      renderStaffDropdown();
       renderSettingsPage();
       updateHistoryFilterOptions(); // マスター読込後にフィルター選択肢を更新
       // 在庫画面が開いている場合は再描画（初期表示時にsuppliersが空だったケアを含む）
@@ -1321,17 +1298,16 @@ async function loadMasters() {
 function renderSupplierDropdown() {
   const sel = document.getElementById('sel-supplier');
   sel.innerHTML = '<option value="">-- 選択してください --</option>';
-  const sorted = [...masters.suppliers].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+  // 発注方法が「Web」の仕入先はこのアプリから発注データを出力しないため選択肢に出さない
+  const sorted = masters.suppliers
+    .filter(s => !(s.outputMethods || []).includes('Web'))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
   sorted.forEach(s => {
     const opt = document.createElement('option');
     opt.value = s.code; opt.textContent = s.name; opt.dataset.fax = s.fax || '';
     opt.dataset.outputMethods = JSON.stringify(s.outputMethods || []);
     sel.appendChild(opt);
   });
-}
-
-function renderStaffDropdown() {
-  // 担当者はログインユーザー固定のため何もしない
 }
 
 /* ===================================================
@@ -3544,7 +3520,7 @@ async function deleteOrderHistory(orderNo) {
 /* ===================================================
    設定画面
 =================================================== */
-function renderSettingsPage() { renderSettingsSuppliers(); renderSettingsStaff(); }
+function renderSettingsPage() { renderSettingsSuppliers(); }
 
 function renderSettingsSuppliers() {
   const container = document.getElementById('settings-suppliers');
@@ -3567,18 +3543,6 @@ function renderSettingsSuppliers() {
       </div>
     </div>`;
   }).join('');
-}
-
-function renderSettingsStaff() {
-  const container = document.getElementById('settings-staff');
-  if (masters.staff.length === 0) {
-    container.innerHTML = '<div style="color:var(--text-light);font-size:14px;padding:8px 0">登録なし</div>'; return;
-  }
-  container.innerHTML = masters.staff.map(s => `
-    <div class="setting-row">
-      <div class="setting-row-info">${escHtml(s.name)}</div>
-      <button class="btn btn-danger btn-sm" onclick="deleteStaff('${escAttr(s.name)}')">削除</button>
-    </div>`).join('');
 }
 
 function openAddSupplier() {
@@ -3633,27 +3597,6 @@ async function deleteSupplier(code, name) {
   showLoading('削除中...');
   try {
     const res = await gasPost({ action: 'saveSupplier', code, name, fax: '', mode: 'delete' });
-    if (res.success) { await loadMasters(); showToast('削除しました', 'success'); }
-    else { showToast('エラー: ' + (res.error || '不明'), 'error'); }
-  } catch(e) { showToast('通信エラー', 'error'); } finally { hideLoading(); }
-}
-
-function openAddStaff() { document.getElementById('new-staff-name').value = ''; openModal('modal-add-staff'); }
-async function saveNewStaff() {
-  const name = document.getElementById('new-staff-name').value.trim();
-  if (!name) { showToast('担当者名を入力してください', 'error'); return; }
-  showLoading('保存中...');
-  try {
-    const res = await gasPost({ action: 'saveStaff', name, mode: 'add' });
-    if (res.success) { closeModal('modal-add-staff'); await loadMasters(); showToast('担当者を追加しました', 'success'); }
-    else { showToast('エラー: ' + (res.error || '不明'), 'error'); }
-  } catch(e) { showToast('通信エラー', 'error'); } finally { hideLoading(); }
-}
-async function deleteStaff(name) {
-  if (!confirm(`「${name}」を削除しますか？`)) return;
-  showLoading('削除中...');
-  try {
-    const res = await gasPost({ action: 'saveStaff', name, mode: 'delete' });
     if (res.success) { await loadMasters(); showToast('削除しました', 'success'); }
     else { showToast('エラー: ' + (res.error || '不明'), 'error'); }
   } catch(e) { showToast('通信エラー', 'error'); } finally { hideLoading(); }
@@ -4607,12 +4550,6 @@ function getAuthSession() {
     if (Date.now() > s.expires) { localStorage.removeItem(SESSION_KEY); return null; }
     return s;
   } catch { return null; }
-}
-
-function doAuthLogout() {
-  if (!confirm('ログアウトしますか？')) return;
-  localStorage.removeItem(SESSION_KEY);
-  location.reload();
 }
 
 </script>

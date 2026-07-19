@@ -1,6 +1,6 @@
 // ============================================================
 // Beaufield 発注アプリ - Google Apps Script バックエンド
-// Version: v1.8.0
+// Version: v1.18.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.17.0';
+const VERSION         = 'v1.18.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -36,7 +36,6 @@ const PRODUCT_FILE_ID_KEY = 'PRODUCT_FILE_ID'; // ScriptPropertiesのキー名
 const SHEET_HISTORY   = '発注履歴';
 const SHEET_ITEMS     = '発注明細';
 const SHEET_SUPPLIERS = '発注先マスター';
-const SHEET_STAFF     = '担当者マスター';
 const SHEET_PRODUCTS  = '商品マスター';
 const SHEET_REORDER   = '発注点マスター';
 const SHEET_PROPOSALS = '発注提案';       // analyze_demand.py が週次で書き込む発注提案リスト
@@ -214,7 +213,6 @@ function doPost(e) {
       case 'saveOrder':    return jsonResponse(saveOrder(p, auth.user_id));
       case 'deleteOrder':  return jsonResponse(deleteOrder(p, auth.user_id));
       case 'saveSupplier': return jsonResponse(saveSupplier(p, auth.user_id));
-      case 'saveStaff':    return jsonResponse(saveStaff(p, auth.user_id));
       case 'saveProposalExclusion': return jsonResponse(saveProposalExclusion(p, auth.user_id));
       case 'saveExcessAck': return jsonResponse(saveExcessAck(p, auth.user_id));
       case 'saveEolFlag': return jsonResponse(saveEolFlag(p, auth.user_id));
@@ -270,11 +268,10 @@ function cellToStr(val, fmt) {
 
 // ============================================================
 // GET: マスターデータ一括取得
-// レスポンス: { success: true, suppliers: [...], staff: [...] }
+// レスポンス: { success: true, suppliers: [...] }
 // ============================================================
 function getMasters() {
   const suppSheet  = getSheet(SHEET_SUPPLIERS);
-  const staffSheet = getSheet(SHEET_STAFF);
 
   const suppData  = suppSheet.getDataRange().getValues();
   const suppliers = suppData.slice(1)
@@ -293,12 +290,7 @@ function getMasters() {
       note:          String(r[7] || '').trim()
     }));
 
-  const staffData = staffSheet.getDataRange().getValues();
-  const staff = staffData.slice(1)
-    .filter(r => r[0] !== '' && r[0] !== null)
-    .map(r => ({ name: String(r[0]).trim() }));
-
-  return { success: true, suppliers, staff };
+  return { success: true, suppliers };
 }
 
 // ============================================================
@@ -837,38 +829,6 @@ function saveSupplier(p, user_id) {
       }
     }
     return { success: false, error: 'コード「' + code + '」が見つかりません' };
-  } else {
-    return { success: false, error: '不明なmode: ' + mode };
-  }
-}
-
-// ============================================================
-// POST: 担当者マスター操作
-// ============================================================
-function saveStaff(p, user_id) {
-  if (!getIsAdmin(user_id)) return { success: false, error: 'FORBIDDEN', message: '管理者権限が必要です' };
-  const mode = p.mode || '';
-  const name = String(p.name || '').trim();
-
-  if (!name) return { success: false, error: '担当者名が未入力です' };
-
-  const sh   = getSheet(SHEET_STAFF);
-  const data = sh.getDataRange().getValues();
-  const now  = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
-
-  if (mode === 'add') {
-    const exists = data.slice(1).some(r => String(r[0]).trim() === name);
-    if (exists) return { success: false, error: '「' + name + '」はすでに登録されています' };
-    sh.appendRow([name, now]);
-    return { success: true };
-  } else if (mode === 'delete') {
-    for (let i = 1; i < data.length; i++) {
-      if (String(data[i][0]).trim() === name) {
-        sh.deleteRow(i + 1);
-        return { success: true };
-      }
-    }
-    return { success: false, error: '「' + name + '」が見つかりません' };
   } else {
     return { success: false, error: '不明なmode: ' + mode };
   }
@@ -1460,13 +1420,6 @@ function initializeSheets() {
       ['58', 'パシフィックプロダクツ', '03-5299-0435', now],
     ]);
     Logger.log('発注先マスターに初期データを登録しました');
-  }
-
-  const staffSh = ensureSheet(SHEET_STAFF, ['名前','更新日時']);
-  if (staffSh.getLastRow() <= 1) {
-    const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
-    staffSh.appendRow(['前島', now]);
-    Logger.log('担当者マスターに初期データを登録しました');
   }
 
   Logger.log('✅ 初期設定完了 (Version: ' + VERSION + ')');
