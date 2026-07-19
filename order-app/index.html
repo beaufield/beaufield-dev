@@ -624,6 +624,7 @@
     .prop-note        { font-size: 11px; color: var(--text-light); margin-top: 4px; line-height: 1.5; }
     .prop-excl-btn    { margin-left: auto; padding: 4px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-light); cursor: pointer; white-space: nowrap; }
     .prop-group-summary { font-size: 13px; font-weight: 700; text-align: right; margin-top: 10px; color: var(--text); }
+    .prop-sort-btn.active { background: var(--primary); color: #fff; }
   </style>
 </head>
 <body>
@@ -882,6 +883,10 @@
     <select id="prop-filter-supplier" onchange="renderProposalList()" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text)">
       <option value="">-- メーカー: 全て --</option>
     </select>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <button class="btn btn-outline btn-sm prop-sort-btn" id="prop-sort-name" onclick="setProposalSort('name')" style="flex:1">あ順</button>
+      <button class="btn btn-outline btn-sm prop-sort-btn" id="prop-sort-amount" onclick="setProposalSort('amount')" style="flex:1">💰 金額が多い順</button>
+    </div>
   </div>
   <div id="prop-list">
     <div class="empty-state">
@@ -1088,7 +1093,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.30.0'; // 適正在庫Phase A: 提案タブに仕入金額表示（行・メーカー小計・選択サマリー）
+const APP_VERSION    = 'v1.30.1'; // 提案タブにメーカー並び替え（あ順／金額が多い順）ボタンを追加
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -3880,6 +3885,12 @@ function closeModal(id) { document.getElementById(id).classList.remove('open'); 
 let proposalsData    = { proposals: [], analyzedAt: '', exclusions: [] };
 let proposalsLoaded  = false;
 let proposalsLoading = false;
+let proposalsSort    = 'name'; // 'name'（あ順・既定）| 'amount'（金額が多い順）
+
+function setProposalSort(mode) {
+  proposalsSort = mode;
+  renderProposalList();
+}
 
 const PROP_PATTERN_CLASS = {
   'まとめ買い型': 'lumpy', '安定型': 'smooth', '変動型': 'erratic', '散発型': 'sporadic'
@@ -3939,6 +3950,9 @@ function renderProposalList() {
   const filter = document.getElementById('prop-filter-supplier').value;
   const props = proposalsData.proposals.filter(p => !filter || p.supplierCode === filter);
 
+  document.getElementById('prop-sort-name').classList.toggle('active', proposalsSort === 'name');
+  document.getElementById('prop-sort-amount').classList.toggle('active', proposalsSort === 'amount');
+
   if (props.length === 0) {
     wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">🎉</div><div>現在、発注提案はありません</div></div>';
   } else {
@@ -3947,8 +3961,13 @@ function renderProposalList() {
     props.forEach(p => {
       (groups[p.supplierCode] = groups[p.supplierCode] || { name: p.supplierName, items: [] }).items.push(p);
     });
-    wrap.innerHTML = Object.keys(groups)
-      .sort((a, b) => groups[a].name.localeCompare(groups[b].name, 'ja'))
+    Object.values(groups).forEach(g => {
+      g.totalAmount = g.items.reduce((s, p) => s + (parseFloat(p.unitCost) || 0) * (p.proposedQty || 0), 0);
+    });
+    const sortedCodes = proposalsSort === 'amount'
+      ? Object.keys(groups).sort((a, b) => groups[b].totalAmount - groups[a].totalAmount)
+      : Object.keys(groups).sort((a, b) => groups[a].name.localeCompare(groups[b].name, 'ja'));
+    wrap.innerHTML = sortedCodes
       .map(code => {
         const g = groups[code];
         const items = g.items.map(p => {
@@ -3974,7 +3993,7 @@ function renderProposalList() {
           </div>`;
         }).join('');
         const totalQty = g.items.reduce((s, p) => s + (p.proposedQty || 0), 0);
-        const totalAmount = g.items.reduce((s, p) => s + (parseFloat(p.unitCost) || 0) * (p.proposedQty || 0), 0);
+        const totalAmount = g.totalAmount;
         const isOpen = propOpenGroups.has(code);
         return `
         <div class="card prop-group${isOpen ? ' open' : ''}" id="prop-group-${escHtml(code)}">
