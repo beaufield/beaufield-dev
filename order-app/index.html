@@ -629,6 +629,12 @@
     .prop-excl-btn    { margin-left: auto; padding: 4px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-light); cursor: pointer; white-space: nowrap; }
     .prop-group-summary { font-size: 13px; font-weight: 700; text-align: right; margin-top: 10px; color: var(--text); }
     .prop-sort-btn.active { background: var(--primary); color: #fff; }
+    .excess-item      { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
+    .excess-item-name { font-size: 13px; font-weight: 600; }
+    .excess-item-sub  { font-size: 11px; color: var(--text-light); margin-top: 2px; }
+    .excess-item-amount { font-weight: 700; color: #c62828; white-space: nowrap; }
+    .excess-ack-btn   { padding: 4px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-light); cursor: pointer; white-space: nowrap; }
+    .excess-more-btn  { width: 100%; margin-top: 8px; padding: 8px; font-size: 12px; border: 1px dashed var(--border); border-radius: 6px; background: transparent; color: var(--text-light); cursor: pointer; }
   </style>
 </head>
 <body>
@@ -898,6 +904,7 @@
       <div style="margin-top:8px">読み込み中...</div>
     </div>
   </div>
+  <div id="prop-excess"></div>
   <div id="prop-exclusions"></div>
 </div>
 
@@ -1097,7 +1104,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.31.0'; // 適正在庫Phase B: 提案行にABCランクバッジを表示
+const APP_VERSION    = 'v1.32.0'; // 適正在庫Phase C: 持ちすぎ在庫の見える化・確認済み消し込み
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -3886,10 +3893,11 @@ function closeModal(id) { document.getElementById(id).classList.remove('open'); 
    analyze_demand.py（週次）が「発注提案」シートに書いた提案を表示し、
    チェックした商品をカートに積んで発注フローへ流し込む
 =================================================== */
-let proposalsData    = { proposals: [], analyzedAt: '', exclusions: [] };
+let proposalsData    = { proposals: [], analyzedAt: '', exclusions: [], excess: [], excessAcks: [] };
 let proposalsLoaded  = false;
 let proposalsLoading = false;
 let proposalsSort    = 'name'; // 'name'（あ順・既定）| 'amount'（金額が多い順）
+let excessShowCount  = 20; // 「持ちすぎ在庫」の初期表示件数（もっと見るで増える）
 
 function setProposalSort(mode) {
   proposalsSort = mode;
@@ -3913,9 +3921,12 @@ async function loadProposals(force = false) {
       proposalsData = {
         proposals:  res.proposals  || [],
         analyzedAt: res.analyzedAt || '',
-        exclusions: res.exclusions || []
+        exclusions: res.exclusions || [],
+        excess:     res.excess     || [],
+        excessAcks: res.excessAcks || []
       };
       proposalsLoaded = true;
+      excessShowCount = 20;
       document.getElementById('prop-analyzed-at').textContent =
         proposalsData.analyzedAt ? '分析日時: ' + proposalsData.analyzedAt : '分析結果がまだありません';
       renderProposalFilter();
@@ -4017,6 +4028,7 @@ function renderProposalList() {
         </div>`;
       }).join('');
   }
+  renderProposalExcess();
   renderProposalExclusions();
 }
 
@@ -4068,6 +4080,102 @@ function toggleProposalGroup(code) {
   } else {
     propOpenGroups.add(code);
     el.classList.add('open');
+  }
+}
+
+function renderProposalExcess() {
+  const wrap = document.getElementById('prop-excess');
+  const excess = (proposalsData.excess || []).slice().sort((a, b) => (b.excessAmount || 0) - (a.excessAmount || 0));
+  const acks = proposalsData.excessAcks || [];
+
+  let html = '';
+  if (excess.length > 0) {
+    const totalAmount = excess.reduce((s, x) => s + (parseFloat(x.excessAmount) || 0), 0);
+    const shown = excess.slice(0, excessShowCount);
+    const rows = shown.map(x => `
+      <div class="excess-item">
+        <div style="flex:1">
+          <div class="excess-item-name">${escHtml(x.name || x.code)}</div>
+          <div class="excess-item-sub">在庫${x.stock}個（約${x.monthsOfStock}ヶ月分）・${escHtml(x.supplierName || '')}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="excess-item-amount">${formatYen(x.excessAmount)}</div>
+          <button class="excess-ack-btn" style="margin-top:4px" onclick="ackExcess('${escAttr(x.code)}','${escAttr(x.name)}')">✓確認済み</button>
+        </div>
+      </div>`).join('');
+    const moreBtn = excess.length > shown.length
+      ? `<button class="excess-more-btn" onclick="showMoreExcess()">もっと見る（残り${excess.length - shown.length}件）</button>`
+      : '';
+    html += `
+      <div class="card">
+        <details open>
+          <summary style="font-size:13px;font-weight:600;cursor:pointer">⚠️ 持ちすぎ在庫（${excess.length}件・過剰${formatYen(totalAmount)}）</summary>
+          <div style="margin-top:6px">${rows}${moreBtn}</div>
+        </details>
+      </div>`;
+  }
+
+  if (acks.length > 0) {
+    const ackRows = acks.map(x => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:13px">
+        <div style="flex:1">
+          <div>${escHtml(x.name || x.code)}</div>
+          <div style="font-size:11px;color:var(--text-light)">${escHtml(x.code)}${x.reason ? '・' + escHtml(x.reason) : ''}</div>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="restoreExcessAck('${escAttr(x.code)}')">解除</button>
+      </div>`).join('');
+    html += `
+      <div class="card">
+        <details>
+          <summary style="font-size:13px;font-weight:600;cursor:pointer">✓ 過剰在庫の確認済み（${acks.length}件）</summary>
+          <div style="margin-top:6px">${ackRows}</div>
+        </details>
+      </div>`;
+  }
+
+  wrap.innerHTML = html;
+}
+
+function showMoreExcess() {
+  excessShowCount += 20;
+  renderProposalExcess();
+}
+
+async function ackExcess(code, name) {
+  const reason = prompt(`「${name}」の在庫過多を確認済みにします（意図的なまとめ仕入等）。\n理由（任意・空欄可）:`);
+  if (reason === null) return; // キャンセル
+  showLoading('確認済みを登録中...');
+  try {
+    const res = await gasPost({ action: 'saveExcessAck', mode: 'add', code, name, reason: reason.trim() });
+    if (res.success) {
+      proposalsData.excess = proposalsData.excess.filter(x => x.code !== code);
+      proposalsData.excessAcks.push({ code, name, reason: reason.trim() });
+      renderProposalExcess();
+      showToast(`「${name}」を確認済みにしました`, 'success');
+    } else {
+      showToast('登録エラー: ' + (res.error || '不明'), 'error');
+    }
+  } catch(e) {
+    showToast('通信エラー。ネットワークを確認してください。', 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+async function restoreExcessAck(code) {
+  showLoading('確認済みを解除中...');
+  try {
+    const res = await gasPost({ action: 'saveExcessAck', mode: 'delete', code });
+    if (res.success) {
+      showToast('確認済みを解除しました。再読込します...', 'success');
+      await loadProposals(true);
+    } else {
+      showToast('解除エラー: ' + (res.error || '不明'), 'error');
+    }
+  } catch(e) {
+    showToast('通信エラー。ネットワークを確認してください。', 'error');
+  } finally {
+    hideLoading();
   }
 }
 
