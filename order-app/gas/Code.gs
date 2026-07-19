@@ -1,6 +1,6 @@
 // ============================================================
 // Beaufield 発注アプリ - Google Apps Script バックエンド
-// Version: v1.18.0
+// Version: v1.19.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.18.0';
+const VERSION         = 'v1.19.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -44,6 +44,7 @@ const SHEET_EXCESS     = '過剰在庫';       // analyze_demand.py が週次で
 const SHEET_EXCESS_ACK = '過剰在庫確認済み'; // 持ちすぎを承知の上で確認済みにした商品（意図的なまとめ仕入等）
 const SHEET_KPI_HISTORY = '在庫KPI履歴';    // analyze_demand.py が実行日ごとに1行追記（同日再実行は上書き）
 const SHEET_EOL         = '終売商品設定';   // 在庫はあるが再発注できない商品（キャンペーン終了等）。提案除外設定とは別枠
+const SHEET_LOT_OVERRIDE = 'ロット設定';    // 過去発注実績からの自動推定より優先する手動ロット（最低注文数）設定
 
 // 発注先マスターの拡張列（F=リードタイム(日), G=発注サイクル(日)）
 // 未入力の場合のフォールバック値。analyze_demand.py の計算に使う
@@ -216,6 +217,7 @@ function doPost(e) {
       case 'saveProposalExclusion': return jsonResponse(saveProposalExclusion(p, auth.user_id));
       case 'saveExcessAck': return jsonResponse(saveExcessAck(p, auth.user_id));
       case 'saveEolFlag': return jsonResponse(saveEolFlag(p, auth.user_id));
+      case 'saveLotOverride': return jsonResponse(saveLotOverride(p, auth.user_id));
       default:             return jsonResponse({ success: false, error: '不明なアクション: ' + action });
     }
   } catch(err) {
@@ -286,8 +288,10 @@ function getMasters() {
                        .split(',')
                        .map(s => s.trim())
                        .filter(Boolean),
-      // 備考: 発注締め時間・最低発注金額等。発注入力画面の上部に常時表示する
-      note:          String(r[7] || '').trim()
+      // 備考: 最低発注金額等。発注入力画面の上部に常時表示する
+      note:          String(r[7] || '').trim(),
+      // 発注限時刻: 'HH:mm'形式。全発注先で必須に近い項目のため備考と別枠で管理
+      deadline:      String(r[8] || '').trim()
     }));
 
   return { success: true, suppliers };
@@ -797,7 +801,8 @@ function saveSupplier(p, user_id) {
   const name          = String(p.name          || '').trim();
   const fax           = String(p.fax           || '').trim();
   const outputMethods = String(p.outputMethods || '').trim(); // カンマ区切り文字列で受け取る
-  const note          = String(p.note          || '').trim(); // 締め時間・最低発注金額等
+  const deadline      = String(p.deadline      || '').trim(); // 発注限時刻('HH:mm')
+  const note          = String(p.note          || '').trim(); // 最低発注金額等
 
   if (!code) return { success: false, error: 'コードが未入力です' };
 
@@ -805,18 +810,18 @@ function saveSupplier(p, user_id) {
   const data = sh.getDataRange().getValues();
   const now  = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
 
-  // 列: A=コード B=発注先名 C=FAX D=登録日時 E=発注方法 F=リードタイム(日) G=発注サイクル(日) H=備考
+  // 列: A=コード B=発注先名 C=FAX D=登録日時 E=発注方法 F=リードタイム(日) G=発注サイクル(日) H=備考 I=発注限時刻
   // F・G はシート直接入力のみ（このフォームからは触らない）
   if (mode === 'add') {
     const exists = data.slice(1).some(r => String(r[0]).trim() === code);
     if (exists) return { success: false, error: 'コード「' + code + '」はすでに登録されています' };
-    sh.appendRow([code, name, fax, now, outputMethods, '', '', note]);
+    sh.appendRow([code, name, fax, now, outputMethods, '', '', note, deadline]);
     return { success: true };
   } else if (mode === 'update') {
     for (let i = 1; i < data.length; i++) {
       if (String(data[i][0]).trim() === code) {
         sh.getRange(i + 1, 1, 1, 5).setValues([[code, name, fax, now, outputMethods]]);
-        sh.getRange(i + 1, 8, 1, 1).setValue(note);
+        sh.getRange(i + 1, 8, 1, 2).setValues([[note, deadline]]);
         return { success: true };
       }
     }
@@ -847,7 +852,8 @@ function saveSupplier(p, user_id) {
 //   5. 持ちすぎを承知の上の商品は saveExcessAck で確認済み登録（次回分析後もリストから消える）
 //   6. 在庫はあるが再発注できない商品（キャンペーン終了等）は saveEolFlag で終売登録
 //      （除外設定とは別枠。以後提案されない）
-//   7. Claude Code が updateProposalExplanations でAI説明を追記（任意）
+//   7. ロット（最低注文数）が明確な商品は saveLotOverride で手動設定（自動推定より優先）
+//   8. Claude Code が updateProposalExplanations でAI説明を追記（任意）
 // ============================================================
 
 // 発注提案シートの列定義（updateOrderProposals / getOrderProposals で共有）
@@ -894,6 +900,17 @@ function getReorderConfig() {
       .map(r => String(r[0]).trim()).filter(Boolean);
   }
 
+  // 手動ロット設定（シート未作成なら空。過去発注実績からの自動推定より優先して使う）
+  let lotOverrides = {};
+  const lotSh = getSS().getSheetByName(SHEET_LOT_OVERRIDE);
+  if (lotSh && lotSh.getLastRow() > 1) {
+    lotSh.getDataRange().getValues().slice(1).forEach(r => {
+      const code = String(r[0] || '').trim();
+      const lot  = parseInt(r[2], 10);
+      if (code && lot > 0) lotOverrides[code] = lot;
+    });
+  }
+
   // 過去の発注明細から商品別のロット推定材料を集計
   // gcdQty: 全発注数量の最大公約数（ケース単位の推定に使う）
   // あわせて直近60日の発注（発注済み・未入荷の可能性がある分）も商品別に返す
@@ -928,6 +945,7 @@ function getReorderConfig() {
     exclusions,
     eolCodes,
     lotStats,
+    lotOverrides,
     recentOrders,
     defaults: { leadTimeDays: DEFAULT_LEAD_TIME_DAYS, orderCycleDays: DEFAULT_ORDER_CYCLE_DAYS }
   };
@@ -1228,7 +1246,22 @@ function getOrderProposals() {
     kpi = { current: kpiRows[kpiRows.length - 1], previous: kpiRows.length > 1 ? kpiRows[0] : null };
   }
 
-  return { success: true, proposals, analyzedAt, exclusions, eol, excess, excessAcks, kpi };
+  // 手動ロット設定リスト（ロット管理UIでの表示・解除用）
+  let lotOverrides = [];
+  const lotSh2 = ss.getSheetByName(SHEET_LOT_OVERRIDE);
+  if (lotSh2 && lotSh2.getLastRow() > 1) {
+    lotOverrides = lotSh2.getDataRange().getValues().slice(1)
+      .filter(r => String(r[0]).trim() !== '')
+      .map(r => ({
+        code:    String(r[0]).trim(),
+        name:    String(r[1] || ''),
+        lot:     parseInt(r[2], 10) || 0,
+        addedBy: String(r[3] || ''),
+        addedAt: cellToStr(r[4], 'yyyy-MM-dd HH:mm')
+      }));
+  }
+
+  return { success: true, proposals, analyzedAt, exclusions, eol, excess, excessAcks, kpi, lotOverrides };
 }
 
 // POST(セッション): 過剰在庫の確認済み登録/解除
@@ -1341,6 +1374,48 @@ function saveEolFlag(p, user_id) {
         if (String(prData[i][0]).trim() === code) prSh.deleteRow(i + 1);
       }
     }
+    return { success: true };
+  } else if (mode === 'delete') {
+    const data = sh.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() === code) {
+        sh.deleteRow(i + 1);
+        return { success: true };
+      }
+    }
+    return { success: false, error: '商品コード「' + code + '」が見つかりません' };
+  }
+  return { success: false, error: '不明なmode: ' + mode };
+}
+
+// POST(セッション): 手動ロット（最低注文数）の登録/解除
+// 過去発注実績からの自動推定（GCD）より優先して使う。既存設定があれば上書き（upsert）
+// リクエスト: { action:'saveLotOverride', mode:'add'|'delete', code, name, lot }
+function saveLotOverride(p, user_id) {
+  const mode = p.mode || '';
+  const code = String(p.code || '').trim();
+  const name = String(p.name || '').trim();
+  if (!code) return { success: false, error: '商品コードが未指定です' };
+
+  const ss = getSS();
+  let sh = ss.getSheetByName(SHEET_LOT_OVERRIDE);
+  if (!sh) {
+    sh = ss.insertSheet(SHEET_LOT_OVERRIDE);
+    sh.appendRow(['商品コード','商品名','ロット数','登録者','登録日時']);
+  }
+  const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+
+  if (mode === 'add') {
+    const lot = parseInt(p.lot, 10);
+    if (!(lot > 0)) return { success: false, error: 'ロット数は1以上の整数で指定してください' };
+    const data = sh.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() === code) {
+        sh.getRange(i + 1, 1, 1, 5).setValues([[code, name, lot, user_id, now]]);
+        return { success: true };
+      }
+    }
+    sh.appendRow([code, name, lot, user_id, now]);
     return { success: true };
   } else if (mode === 'delete') {
     const data = sh.getDataRange().getValues();
