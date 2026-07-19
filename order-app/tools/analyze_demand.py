@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.8.0
+# Version: v1.8.1
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -415,7 +415,7 @@ def build_note(stat, protect_days, lot, on_order=0, abc='A', is_declining=False,
         parts.append(f"月平均{stat['mean_monthly']:.0f}個の安定需要")
     parts.append(f"{protect_days:.0f}日分＋安全在庫で算出")
     if lot > 1:
-        parts.append(f"推定ロット{lot}個単位に切り上げ")
+        parts.append(f"最低発注数{lot}個単位に切り上げ")
     allowance = SERVICE_ALLOWANCE_PCT.get(abc)
     if allowance is not None:
         parts.append(f"{abc}ランク: 欠品許容{allowance}%基準で算出")
@@ -456,7 +456,7 @@ def main():
 
     log_file = setup_logger()
     logging.info('=' * 60)
-    logging.info('Beaufield 需要分析・発注提案スクリプト v1.8.0 開始'
+    logging.info('Beaufield 需要分析・発注提案スクリプト v1.8.1 開始'
                  + ('（dry-run）' if args.dry_run else ''))
 
     config = load_config()

@@ -1126,7 +1126,7 @@
     </div>
     <div class="form-group">
       <label>発注限時刻（任意）</label>
-      <input type="time" id="new-sup-deadline" step="1800" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:14px;font-family:inherit;background:var(--surface);color:var(--text)">
+      <select id="new-sup-deadline"></select>
     </div>
     <div class="form-group">
       <label>備考（任意・最低発注金額など。締め時間は上の欄へ）</label>
@@ -1139,15 +1139,16 @@
   </div>
 </div>
 
-<!-- モーダル: ロット（最低注文数）設定 -->
+<!-- モーダル: 最低発注数の設定 -->
 <div class="modal-overlay" id="modal-lot">
   <div class="modal">
-    <div class="modal-title">ロット（最低注文数）を設定</div>
+    <div class="modal-title">最低発注数を設定</div>
     <div id="lot-modal-name" style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:14px;padding:9px 12px;background:var(--bg);border-radius:8px;line-height:1.4;"></div>
     <input type="hidden" id="lot-modal-code">
     <div class="form-group">
-      <label>ロット数（最低注文数）</label>
-      <input type="number" id="lot-modal-value" inputmode="numeric" min="1" step="1" placeholder="例: 6">
+      <label>最低発注数</label>
+      <input type="number" id="lot-modal-value" inputmode="numeric" min="1" step="1" placeholder="例: 24">
+      <div id="lot-modal-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
     </div>
     <p style="font-size:12px;color:var(--text-light);margin-bottom:4px;line-height:1.5">
       次回以降の週次分析でも、この数値を過去の発注実績からの自動推定より優先して使います。
@@ -1180,7 +1181,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.39.1'; // ロット設定を専用モーダルに変更・発注限時刻を30分単位に
+const APP_VERSION    = 'v1.40.0'; // 「ロット」を「最低発注数」表記に統一・タップ選択チップ追加・発注限時刻を30分刻みセレクトに変更
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1263,6 +1264,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('csv-file').addEventListener('change', onCSVSelected);
   setupScanInput();
+  populateDeadlineOptions();
 
   document.querySelectorAll('.modal-overlay').forEach(el => {
     el.addEventListener('click', function(e) {
@@ -3612,6 +3614,22 @@ function renderSettingsSuppliers() {
   }).join('');
 }
 
+// 発注限時刻セレクトの選択肢を30分刻みで生成（時刻ピッカーだと機種により分単位になるため）
+function populateDeadlineOptions() {
+  const sel = document.getElementById('new-sup-deadline');
+  if (!sel || sel.dataset.populated) return;
+  let html = '<option value="">未設定</option>';
+  for (let h = 0; h < 24; h++) {
+    for (const m of [0, 30]) {
+      const hh = String(h).padStart(2, '0');
+      const mm = String(m).padStart(2, '0');
+      html += `<option value="${hh}:${mm}">${hh}:${mm}</option>`;
+    }
+  }
+  sel.innerHTML = html;
+  sel.dataset.populated = '1';
+}
+
 function openAddSupplier() {
   document.getElementById('sup-modal-title').textContent   = '発注先を追加';
   document.getElementById('sup-modal-mode').value          = 'add';
@@ -4155,7 +4173,7 @@ function renderProposalList() {
               <span>在庫 <b>${p.stock}</b> ${onOrder}→ 推奨 <b>${p.recommended}</b></span>
               <span>発注数 <input type="number" class="prop-qty" value="${p.proposedQty}" min="1" step="1"></span>
               <span class="prop-qty-chips">${PROP_QTY_CHIPS.map(v => `<button type="button" class="prop-qty-chip${p.proposedQty === v ? ' active' : ''}" onclick="setPropQty(this,${v})">${v}</button>`).join('')}</span>
-              <button type="button" class="prop-lot-btn" onclick="openLotModal('${escAttr(p.code)}','${escAttr(p.name)}')">ロット ${p.lot} ✏️</button>
+              <button type="button" class="prop-lot-btn" onclick="openLotModal('${escAttr(p.code)}','${escAttr(p.name)}')">最低発注数 ${p.lot} ✏️</button>
               <span class="prop-item-amount">${formatItemAmount(unitCost, p.proposedQty)}</span>
             </div>
             ${lastOrder ? `<div class="prop-item-stats" style="margin-top:2px;font-size:11px">${lastOrder}</div>` : ''}
@@ -4478,7 +4496,7 @@ async function restoreEol(code) {
   }
 }
 
-// ロット（最低注文数）: 不足数をロット単位に切り上げて発注数を求める
+// 最低発注数: 不足数を最低発注数の単位に切り上げて発注数を求める
 function computeProposedQty(p) {
   const shortage = (p.recommended || 0) - ((p.stock || 0) + (p.onOrder || 0));
   if (shortage <= 0) return 0;
@@ -4486,7 +4504,7 @@ function computeProposedQty(p) {
   return Math.ceil(shortage / lot) * lot;
 }
 
-// 手動ロット設定（過去発注実績からの自動推定より優先して使う。次回の週次分析にも反映される）
+// 手動の最低発注数設定（過去発注実績からの自動推定より優先して使う。次回の週次分析にも反映される）
 function renderLotOverrides() {
   const wrap = document.getElementById('prop-lot');
   const lots = proposalsData.lotOverrides;
@@ -4495,26 +4513,39 @@ function renderLotOverrides() {
     <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:13px">
       <div style="flex:1">
         <div>${escHtml(x.name || x.code)}</div>
-        <div style="font-size:11px;color:var(--text-light)">${escHtml(x.code)}・ロット${x.lot}</div>
+        <div style="font-size:11px;color:var(--text-light)">${escHtml(x.code)}・最低発注数${x.lot}</div>
       </div>
       <button class="btn btn-outline btn-sm" onclick="restoreLotOverride('${escAttr(x.code)}')">解除</button>
     </div>`).join('');
   wrap.innerHTML = `
     <div class="card">
       <details>
-        <summary style="font-size:13px;font-weight:600;cursor:pointer">📦 手動ロット設定中の商品（${lots.length}件）</summary>
+        <summary style="font-size:13px;font-weight:600;cursor:pointer">📦 最低発注数を手動設定中の商品（${lots.length}件）</summary>
         <div style="margin-top:6px">${rows}</div>
       </details>
     </div>`;
 }
 
+const LOT_MODAL_CHIPS = [1, 6, 12, 24, 30, 48, 120];
+
 function openLotModal(code, name) {
   const p = proposalsData.proposals.find(x => x.code === code);
+  const current = (p && p.lot > 1) ? p.lot : '';
   document.getElementById('lot-modal-code').value = code;
   document.getElementById('lot-modal-name').textContent = name;
-  document.getElementById('lot-modal-value').value = (p && p.lot > 1) ? p.lot : '';
+  document.getElementById('lot-modal-value').value = current;
+  document.getElementById('lot-modal-chips').innerHTML = LOT_MODAL_CHIPS
+    .map(v => `<button type="button" class="prop-qty-chip${current === v ? ' active' : ''}" onclick="setLotModalValue(this,${v})">${v}</button>`)
+    .join('');
   openModal('modal-lot');
   setTimeout(() => document.getElementById('lot-modal-value').focus(), 150);
+}
+
+function setLotModalValue(btn, value) {
+  document.getElementById('lot-modal-value').value = value;
+  document.querySelectorAll('#lot-modal-chips .prop-qty-chip').forEach(c => {
+    c.classList.toggle('active', parseInt(c.textContent, 10) === value);
+  });
 }
 
 async function saveLotModal() {
@@ -4522,7 +4553,7 @@ async function saveLotModal() {
   const name = document.getElementById('lot-modal-name').textContent;
   const lot  = parseInt(document.getElementById('lot-modal-value').value, 10);
   if (!(lot > 0)) { showToast('1以上の整数を入力してください', 'error'); return; }
-  showLoading('ロット設定を保存中...');
+  showLoading('最低発注数を保存中...');
   try {
     const res = await gasPost({ action: 'saveLotOverride', mode: 'add', code, name, lot });
     if (res.success) {
@@ -4535,7 +4566,7 @@ async function saveLotModal() {
       }
       closeModal('modal-lot');
       renderProposalList();
-      showToast(`「${name}」のロットを${lot}に設定しました`, 'success');
+      showToast(`「${name}」の最低発注数を${lot}に設定しました`, 'success');
     } else {
       showToast('保存エラー: ' + (res.error || '不明'), 'error');
     }
@@ -4547,13 +4578,13 @@ async function saveLotModal() {
 }
 
 async function restoreLotOverride(code) {
-  showLoading('ロット設定を解除中...');
+  showLoading('最低発注数の設定を解除中...');
   try {
     const res = await gasPost({ action: 'saveLotOverride', mode: 'delete', code });
     if (res.success) {
       proposalsData.lotOverrides = proposalsData.lotOverrides.filter(x => x.code !== code);
       renderLotOverrides();
-      showToast('ロット設定を解除しました。次回の分析から自動推定に戻ります', 'success');
+      showToast('最低発注数の設定を解除しました。次回の分析から自動推定に戻ります', 'success');
     } else {
       showToast('解除エラー: ' + (res.error || '不明'), 'error');
     }
