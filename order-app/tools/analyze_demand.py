@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.4.0
+# Version: v1.5.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -41,6 +41,11 @@
 #   現在庫が「推奨在庫のEXCESS_RATIO倍」を超え、かつ超過数量がEXCESS_MIN_QTY以上の商品を
 #   「過剰在庫」シートへ書き込む（提案とは別枠）。アプリの提案タブで金額降順に表示し、
 #   意図的なまとめ仕入等で問題ない場合は「確認済み」登録すると次回分析後もリストから消える
+#
+# 経営KPI（v1.5.0で追加）:
+#   在庫金額・月次売上原価・回転日数・過剰在庫額・提案額・年間保有コスト概算を
+#   「在庫KPI履歴」シートに実行日単位で記録（同日の再実行は上書き）。
+#   アプリの提案タブ上部に直近2回分（今週・先週）の差分付きで表示する
 #
 # 実行方法:
 #   py -3.12 analyze_demand.py             # 分析＋GASへ書き込み＋通知
@@ -91,6 +96,9 @@ CAP_MONTHS_GLOBAL = 6.0   # 全ランク共通の推奨在庫上限（月平均�
 # ---- 過剰在庫検出パラメータ（v1.4.0） ----
 EXCESS_RATIO   = 2.0   # 過剰判定: 現在庫が推奨在庫の何倍を超えたら対象にするか
 EXCESS_MIN_QTY = 3     # 過剰判定: 超過数量がこれ未満なら対象外（少額商品のノイズ除外）
+
+# ---- 経営KPIパラメータ（v1.5.0） ----
+HOLDING_COST_RATE = 0.20   # 年間保有コスト率（資金・場所・廃番リスク、通説15-25%の中央）
 
 # ---- CSVパスの候補（デバイスによりドライブ構成が異なる） ----
 _ONEDRIVE_DATA_DIRS = [
@@ -375,15 +383,16 @@ def build_note(stat, protect_days, lot, on_order=0, abc='A'):
     return '。'.join(parts)
 
 
-def post_proposals(gas_url, api_key, proposals, excess, analyzed_at):
+def post_proposals(gas_url, api_key, proposals, excess, kpi, analyzed_at):
     payload = {
         'action': 'updateOrderProposals',
         'api_key': api_key,
         'analyzedAt': analyzed_at,
         'proposals': proposals,
         'excess': excess,
+        'kpi': kpi,
     }
-    logging.info(f'GASへ発注提案・過剰在庫を送信中... (提案{len(proposals)}件 / 過剰在庫{len(excess)}件)')
+    logging.info(f'GASへ発注提案・過剰在庫・KPIを送信中... (提案{len(proposals)}件 / 過剰在庫{len(excess)}件)')
     for attempt in range(1, 4):
         try:
             resp = requests.post(gas_url, json=payload, timeout=300)
@@ -408,7 +417,7 @@ def main():
 
     log_file = setup_logger()
     logging.info('=' * 60)
-    logging.info('Beaufield 需要分析・発注提案スクリプト v1.4.0 開始'
+    logging.info('Beaufield 需要分析・発注提案スクリプト v1.5.0 開始'
                  + ('（dry-run）' if args.dry_run else ''))
 
     config = load_config()
@@ -688,6 +697,25 @@ def main():
     logging.info(f'出力: {excess_csv_out}')
     logging.info(f'出力: {json_out}')
 
+    # ---- 経営KPI ----
+    stock_value = float((df_out['stock'].clip(lower=0) * df_out['unit_cost']).sum())
+    monthly_cogs = float((df_out['mean_monthly'] * df_out['unit_cost']).sum())
+    turnover_days = round(stock_value / monthly_cogs * DAYS_PER_MONTH, 1) if monthly_cogs > 0 else 0
+    holding_cost_annual = round(stock_value * HOLDING_COST_RATE)
+    kpi = {
+        'date': date.today().strftime('%Y-%m-%d'),
+        'stockValue': round(stock_value),
+        'monthlyCogs': round(monthly_cogs),
+        'turnoverDays': turnover_days,
+        'excessAmount': excess_total,
+        'excessCount': len(excess_rows),
+        'proposalAmount': total_amount,
+        'proposalCount': len(proposals),
+        'holdingCostAnnual': holding_cost_annual,
+    }
+    logging.info(f'在庫金額: {stock_value:,.0f}円 / 月次売上原価: {monthly_cogs:,.0f}円 / '
+                 f'回転日数: {turnover_days:.1f}日 / 年間保有コスト概算: {holding_cost_annual:,.0f}円')
+
     # ---- 新旧比較レポート（--dry-run時のみ・本適用前のレビュー用） ----
     if args.dry_run and comparison_rows:
         old_count = sum(1 for r in comparison_rows if r['proposed_old'] > 0)
@@ -725,7 +753,7 @@ def main():
     if args.dry_run:
         logging.info('dry-run のため GAS への送信をスキップしました')
     else:
-        if not post_proposals(config['gas_url'], config['api_key'], proposals, excess_rows, analyzed_at):
+        if not post_proposals(config['gas_url'], config['api_key'], proposals, excess_rows, kpi, analyzed_at):
             logging.error('GASへの発注提案送信が3回すべて失敗しました。ログ: %s', log_file)
             sys.exit(1)
 

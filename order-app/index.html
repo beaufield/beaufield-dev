@@ -635,6 +635,17 @@
     .excess-item-amount { font-weight: 700; color: #c62828; white-space: nowrap; }
     .excess-ack-btn   { padding: 4px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-light); cursor: pointer; white-space: nowrap; }
     .excess-more-btn  { width: 100%; margin-top: 8px; padding: 8px; font-size: 12px; border: 1px dashed var(--border); border-radius: 6px; background: transparent; color: var(--text-light); cursor: pointer; }
+    .kpi-row          { display: flex; gap: 8px; }
+    .kpi-card         { flex: 1; padding: 10px 8px; text-align: center; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    .kpi-label        { font-size: 11px; color: var(--text-light); }
+    .kpi-value        { font-size: 16px; font-weight: 700; margin-top: 2px; color: var(--text); }
+    .kpi-delta        { font-size: 11px; margin-top: 2px; }
+    .kpi-delta.up      { color: #c62828; }
+    .kpi-delta.down    { color: #2e7d32; }
+    .kpi-delta.flat    { color: var(--text-light); }
+    .kpi-detail       { display: none; padding: 0 8px 10px; font-size: 12px; color: var(--text-light); border-top: 1px solid var(--border); margin-top: 4px; padding-top: 8px; }
+    .kpi-detail.open  { display: block; }
+    .kpi-detail-row   { display: flex; justify-content: space-between; padding: 2px 0; }
   </style>
 </head>
 <body>
@@ -885,6 +896,7 @@
      発注提案画面
 ============================== -->
 <div class="screen" id="screen-proposal">
+  <div id="prop-kpi"></div>
   <div class="card" style="padding:12px 14px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <span id="prop-analyzed-at" style="font-size:12px;color:var(--text-light)">—</span>
@@ -1104,7 +1116,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.32.0'; // 適正在庫Phase C: 持ちすぎ在庫の見える化・確認済み消し込み
+const APP_VERSION    = 'v1.33.0'; // 適正在庫Phase D: 経営KPIカード（在庫金額・回転日数・過剰在庫額）を表示
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -3893,7 +3905,7 @@ function closeModal(id) { document.getElementById(id).classList.remove('open'); 
    analyze_demand.py（週次）が「発注提案」シートに書いた提案を表示し、
    チェックした商品をカートに積んで発注フローへ流し込む
 =================================================== */
-let proposalsData    = { proposals: [], analyzedAt: '', exclusions: [], excess: [], excessAcks: [] };
+let proposalsData    = { proposals: [], analyzedAt: '', exclusions: [], excess: [], excessAcks: [], kpi: null };
 let proposalsLoaded  = false;
 let proposalsLoading = false;
 let proposalsSort    = 'name'; // 'name'（あ順・既定）| 'amount'（金額が多い順）
@@ -3923,12 +3935,14 @@ async function loadProposals(force = false) {
         analyzedAt: res.analyzedAt || '',
         exclusions: res.exclusions || [],
         excess:     res.excess     || [],
-        excessAcks: res.excessAcks || []
+        excessAcks: res.excessAcks || [],
+        kpi:        res.kpi        || null
       };
       proposalsLoaded = true;
       excessShowCount = 20;
       document.getElementById('prop-analyzed-at').textContent =
         proposalsData.analyzedAt ? '分析日時: ' + proposalsData.analyzedAt : '分析結果がまだありません';
+      renderProposalKpi();
       renderProposalFilter();
       renderProposalList();
       updateProposalBadge();
@@ -3947,6 +3961,58 @@ function updateProposalBadge() {
   const n = proposalsData.proposals.length;
   badge.style.display = n > 0 ? '' : 'none';
   badge.textContent = n > 99 ? '99+' : String(n);
+}
+
+// 経営KPIカード（在庫金額・回転日数・過剰在庫額。タップで詳細開閉）
+let kpiDetailOpen = false;
+function renderProposalKpi() {
+  const wrap = document.getElementById('prop-kpi');
+  const kpi = proposalsData.kpi;
+  if (!kpi || !kpi.current) { wrap.innerHTML = ''; return; }
+  const cur = kpi.current, prev = kpi.previous;
+
+  const stockDelta    = prev ? kpiDeltaHtml(cur.stockValue,   prev.stockValue,   formatYen) : '';
+  const turnoverDelta = prev ? kpiDeltaHtml(cur.turnoverDays, prev.turnoverDays, d => d.toFixed(1) + '日') : '';
+  const excessDelta   = prev ? kpiDeltaHtml(cur.excessAmount, prev.excessAmount, formatYen) : '';
+
+  wrap.innerHTML = `
+    <div class="card" style="padding:8px" onclick="toggleKpiDetail()">
+      <div class="kpi-row">
+        <div class="kpi-card">
+          <div class="kpi-label">在庫金額</div>
+          <div class="kpi-value">${formatYen(cur.stockValue)}</div>
+          ${stockDelta}
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">回転日数</div>
+          <div class="kpi-value">${cur.turnoverDays.toFixed(1)}日</div>
+          ${turnoverDelta}
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">過剰在庫額</div>
+          <div class="kpi-value">${formatYen(cur.excessAmount)}</div>
+          ${excessDelta}
+        </div>
+      </div>
+      <div class="kpi-detail${kpiDetailOpen ? ' open' : ''}" id="kpi-detail">
+        <div class="kpi-detail-row"><span>月次売上原価</span><span>${formatYen(cur.monthlyCogs)}</span></div>
+        <div class="kpi-detail-row"><span>年間保有コスト概算</span><span>${formatYen(cur.holdingCostAnnual)}</span></div>
+        <div class="kpi-detail-row"><span>今回の発注提案額</span><span>${formatYen(cur.proposalAmount)}（${cur.proposalCount}件）</span></div>
+        <div class="kpi-detail-row"><span>基準日</span><span>${escHtml(cur.date)}${prev ? '（前回: ' + escHtml(prev.date) + '）' : ''}</span></div>
+      </div>
+    </div>`;
+}
+function toggleKpiDetail() {
+  kpiDetailOpen = !kpiDetailOpen;
+  const el = document.getElementById('kpi-detail');
+  if (el) el.classList.toggle('open', kpiDetailOpen);
+}
+function kpiDeltaHtml(curr, prev, formatFn) {
+  const diff = curr - prev;
+  if (Math.abs(diff) < 0.05) return '<div class="kpi-delta flat">→ 前回と同じ</div>';
+  const cls = diff > 0 ? 'up' : 'down';
+  const arrow = diff > 0 ? '▲' : '▼';
+  return `<div class="kpi-delta ${cls}">${arrow}${formatFn(Math.abs(diff))}</div>`;
 }
 
 function renderProposalFilter() {
