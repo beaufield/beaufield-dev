@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.14.0';
+const VERSION         = 'v1.15.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -43,6 +43,7 @@ const SHEET_PROPOSALS = '発注提案';       // analyze_demand.py が週次で�
 const SHEET_PROPOSAL_EXCL = '提案除外設定'; // 発注提案の対象外にする商品（カタログ等のノイズ除外用）
 const SHEET_EXCESS     = '過剰在庫';       // analyze_demand.py が週次で書き込む過剰在庫リスト
 const SHEET_EXCESS_ACK = '過剰在庫確認済み'; // 持ちすぎを承知の上で確認済みにした商品（意図的なまとめ仕入等）
+const SHEET_KPI_HISTORY = '在庫KPI履歴';    // analyze_demand.py が実行日ごとに1行追記（同日再実行は上書き）
 
 // 発注先マスターの拡張列（F=リードタイム(日), G=発注サイクル(日)）
 // 未入力の場合のフォールバック値。analyze_demand.py の計算に使う
@@ -870,9 +871,9 @@ function saveStaff(p, user_id) {
 // フロー:
 //   1. analyze_demand.py が getReorderConfig で設定取得
 //      （発注先別リードタイム・除外商品・過去発注からのロット推定材料）
-//   2. 売上データを分析して updateOrderProposals で「発注提案」「過剰在庫」シートを更新
+//   2. 売上データを分析して updateOrderProposals で「発注提案」「過剰在庫」「在庫KPI履歴」シートを更新
 //      提案・過剰在庫があれば LINEWORKS_WEBHOOK（スクリプトプロパティ・任意）へ通知
-//   3. アプリは getOrderProposals で提案・過剰在庫を表示
+//   3. アプリは getOrderProposals で提案・過剰在庫・経営KPI（直近2回分）を表示
 //   4. 不要な商品は saveProposalExclusion で除外登録（以後提案されない）
 //   5. 持ちすぎを承知の上の商品は saveExcessAck で確認済み登録（次回分析後もリストから消える）
 //   6. Claude Code が updateProposalExplanations でAI説明を追記（任意）
@@ -886,6 +887,10 @@ const PROPOSAL_HEADERS = ['商品コード','商品名','仕入先コード','�
 // 過剰在庫シートの列定義（updateOrderProposals / getOrderProposals で共有）
 const EXCESS_HEADERS = ['商品コード','商品名','仕入先コード','仕入先名','現在庫','推奨在庫',
                         '過剰数量','仕入単価','過剰金額','在庫月数','ABCランク','パターン','分析日時'];
+
+// 在庫KPI履歴シートの列定義（updateOrderProposals / getOrderProposals で共有）
+const KPI_HEADERS = ['日付','在庫金額','月次売上原価','回転日数','過剰在庫額','過剰件数',
+                     '提案額','提案件数','年間保有コスト概算'];
 
 // POST(APIキー): 分析に必要な設定を返す
 // レスポンス: { success, suppliers: [{code,name,leadTimeDays,orderCycleDays}],
@@ -959,14 +964,17 @@ function formatManYen(yen) {
   return (yen / 10000).toFixed(1) + '万円';
 }
 
-// POST(APIキー): 発注提案・過剰在庫シートを全面書き換え
+// POST(APIキー): 発注提案・過剰在庫シートを全面書き換え、在庫KPI履歴に1行記録
 // リクエスト: { proposals: [{code,name,supplierCode,supplierName,pattern,stock,recommended,
 //              proposedQty,lot,meanMonthly,p95Order,maxOrder,note}],
 //              excess: [{code,name,supplierCode,supplierName,stock,recommended,excessQty,
-//              unitCost,excessAmount,monthsOfStock,abcRank,pattern}], analyzedAt }
+//              unitCost,excessAmount,monthsOfStock,abcRank,pattern}],
+//              kpi: {date,stockValue,monthlyCogs,turnoverDays,excessAmount,excessCount,
+//              proposalAmount,proposalCount,holdingCostAnnual}, analyzedAt }
 function updateOrderProposals(p) {
   const proposals  = p.proposals || [];
   const excess     = p.excess || [];
+  const kpi        = p.kpi || null;
   const analyzedAt = String(p.analyzedAt || '');
 
   const ss = getSS();
@@ -1025,6 +1033,9 @@ function updateOrderProposals(p) {
     exSh.getRange(2, 1, exRows.length, EXCESS_HEADERS.length).setValues(exRows);
   }
 
+  // 在庫KPI履歴（実行日単位でappend。同日の再実行はその行を上書き）
+  upsertKpiHistory(kpi);
+
   // LINE WORKS通知（LINEWORKS_WEBHOOK 未設定なら何もしない）
   if (proposals.length > 0) {
     const bySupplier = {};
@@ -1052,6 +1063,41 @@ function updateOrderProposals(p) {
 
   Logger.log('✅ 発注提案更新完了: ' + proposals.length + '件 / 過剰在庫 ' + excess.length + '件');
   return { success: true, count: proposals.length, excessCount: excess.length };
+}
+
+// 在庫KPI履歴シートへの記録（日付が一致する行があれば上書き、無ければ追記）
+// kpi: {date,stockValue,monthlyCogs,turnoverDays,excessAmount,excessCount,proposalAmount,proposalCount,holdingCostAnnual}
+function upsertKpiHistory(kpi) {
+  if (!kpi) return;
+  const ss = getSS();
+  let sh = ss.getSheetByName(SHEET_KPI_HISTORY);
+  if (!sh) {
+    sh = ss.insertSheet(SHEET_KPI_HISTORY);
+    sh.getRange(1, 1, 1, KPI_HEADERS.length).setValues([KPI_HEADERS]);
+  }
+  const dateStr = String(kpi.date || Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd'));
+  const row = [
+    dateStr,
+    parseFloat(kpi.stockValue)        || 0,
+    parseFloat(kpi.monthlyCogs)       || 0,
+    parseFloat(kpi.turnoverDays)      || 0,
+    parseFloat(kpi.excessAmount)      || 0,
+    parseFloat(kpi.excessCount)       || 0,
+    parseFloat(kpi.proposalAmount)    || 0,
+    parseFloat(kpi.proposalCount)     || 0,
+    parseFloat(kpi.holdingCostAnnual) || 0
+  ];
+
+  const lastRow = sh.getLastRow();
+  if (lastRow > 1) {
+    const dates = sh.getRange(2, 1, lastRow - 1, 1).getValues().map(r => cellToStr(r[0], 'yyyy-MM-dd'));
+    const idx = dates.indexOf(dateStr);
+    if (idx !== -1) {
+      sh.getRange(idx + 2, 1, 1, KPI_HEADERS.length).setValues([row]);
+      return;
+    }
+  }
+  sh.appendRow(row);
 }
 
 // POST(APIキー): AI説明の追記（Claude Code から実行）
@@ -1166,7 +1212,28 @@ function getOrderProposals() {
       .filter(x => !ackedCodes.has(x.code));
   }
 
-  return { success: true, proposals, analyzedAt, exclusions, excess, excessAcks };
+  // 経営KPI（直近2回分＝今週・先週）
+  let kpi = null;
+  const kpiSh = ss.getSheetByName(SHEET_KPI_HISTORY);
+  if (kpiSh && kpiSh.getLastRow() > 1) {
+    const kpiLastRow = kpiSh.getLastRow();
+    const n = Math.min(2, kpiLastRow - 1);
+    const kpiData = kpiSh.getRange(kpiLastRow - n + 1, 1, n, KPI_HEADERS.length).getValues();
+    const kpiRows = kpiData.map(r => ({
+      date:              cellToStr(r[0], 'yyyy-MM-dd'),
+      stockValue:        parseFloat(r[1]) || 0,
+      monthlyCogs:       parseFloat(r[2]) || 0,
+      turnoverDays:      parseFloat(r[3]) || 0,
+      excessAmount:      parseFloat(r[4]) || 0,
+      excessCount:       parseFloat(r[5]) || 0,
+      proposalAmount:    parseFloat(r[6]) || 0,
+      proposalCount:     parseFloat(r[7]) || 0,
+      holdingCostAnnual: parseFloat(r[8]) || 0
+    }));
+    kpi = { current: kpiRows[kpiRows.length - 1], previous: kpiRows.length > 1 ? kpiRows[0] : null };
+  }
+
+  return { success: true, proposals, analyzedAt, exclusions, excess, excessAcks, kpi };
 }
 
 // POST(セッション): 過剰在庫の確認済み登録/解除
