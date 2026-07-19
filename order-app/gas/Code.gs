@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.12.0';
+const VERSION         = 'v1.13.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -877,7 +877,7 @@ function saveStaff(p, user_id) {
 // 発注提案シートの列定義（updateOrderProposals / getOrderProposals で共有）
 const PROPOSAL_HEADERS = ['商品コード','商品名','仕入先コード','仕入先名','パターン',
                           '現在庫','発注済','推奨在庫','提案数量','推定ロット','月平均',
-                          '注文P95','最大注文','根拠メモ','AI説明','分析日時','仕入単価','提案金額'];
+                          '注文P95','最大注文','根拠メモ','AI説明','分析日時','仕入単価','提案金額','ABCランク'];
 
 // POST(APIキー): 分析に必要な設定を返す
 // レスポンス: { success, suppliers: [{code,name,leadTimeDays,orderCycleDays}],
@@ -984,7 +984,8 @@ function updateOrderProposals(p) {
       '',           // AI説明（updateProposalExplanations で追記）
       analyzedAt,
       parseFloat(x.unitCost) || 0,
-      parseFloat(x.amount)   || 0
+      parseFloat(x.amount)   || 0,
+      String(x.abcRank || '')
     ]);
     sh.getRange(2, 1, rows.length, PROPOSAL_HEADERS.length).setValues(rows);
   }
@@ -1065,7 +1066,8 @@ function getOrderProposals() {
         note:         String(r[13] || ''),
         aiNote:       String(r[14] || ''),
         unitCost:     parseFloat(r[16]) || 0,
-        amount:       parseFloat(r[17]) || 0
+        amount:       parseFloat(r[17]) || 0,
+        abcRank:      String(r[18] || '')
       }));
     analyzedAt = cellToStr(data[1][15], 'yyyy-MM-dd HH:mm');
   }
