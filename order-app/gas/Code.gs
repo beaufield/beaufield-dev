@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.16.0';
+const VERSION         = 'v1.17.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -44,6 +44,7 @@ const SHEET_PROPOSAL_EXCL = '提案除外設定'; // 発注提案の対象外に
 const SHEET_EXCESS     = '過剰在庫';       // analyze_demand.py が週次で書き込む過剰在庫リスト
 const SHEET_EXCESS_ACK = '過剰在庫確認済み'; // 持ちすぎを承知の上で確認済みにした商品（意図的なまとめ仕入等）
 const SHEET_KPI_HISTORY = '在庫KPI履歴';    // analyze_demand.py が実行日ごとに1行追記（同日再実行は上書き）
+const SHEET_EOL         = '終売商品設定';   // 在庫はあるが再発注できない商品（キャンペーン終了等）。提案除外設定とは別枠
 
 // 発注先マスターの拡張列（F=リードタイム(日), G=発注サイクル(日)）
 // 未入力の場合のフォールバック値。analyze_demand.py の計算に使う
@@ -216,6 +217,7 @@ function doPost(e) {
       case 'saveStaff':    return jsonResponse(saveStaff(p, auth.user_id));
       case 'saveProposalExclusion': return jsonResponse(saveProposalExclusion(p, auth.user_id));
       case 'saveExcessAck': return jsonResponse(saveExcessAck(p, auth.user_id));
+      case 'saveEolFlag': return jsonResponse(saveEolFlag(p, auth.user_id));
       default:             return jsonResponse({ success: false, error: '不明なアクション: ' + action });
     }
   } catch(err) {
@@ -877,13 +879,15 @@ function saveStaff(p, user_id) {
 // ============================================================
 // フロー:
 //   1. analyze_demand.py が getReorderConfig で設定取得
-//      （発注先別リードタイム・除外商品・過去発注からのロット推定材料）
+//      （発注先別リードタイム・除外商品・終売商品・過去発注からのロット推定材料）
 //   2. 売上データを分析して updateOrderProposals で「発注提案」「過剰在庫」「在庫KPI履歴」シートを更新
 //      提案・過剰在庫があれば LINEWORKS_WEBHOOK（スクリプトプロパティ・任意）へ通知
 //   3. アプリは getOrderProposals で提案・過剰在庫・経営KPI（直近2回分）を表示
-//   4. 不要な商品は saveProposalExclusion で除外登録（以後提案されない）
+//   4. ノイズ商品は saveProposalExclusion で除外登録（以後提案されない）
 //   5. 持ちすぎを承知の上の商品は saveExcessAck で確認済み登録（次回分析後もリストから消える）
-//   6. Claude Code が updateProposalExplanations でAI説明を追記（任意）
+//   6. 在庫はあるが再発注できない商品（キャンペーン終了等）は saveEolFlag で終売登録
+//      （除外設定とは別枠。以後提案されない）
+//   7. Claude Code が updateProposalExplanations でAI説明を追記（任意）
 // ============================================================
 
 // 発注提案シートの列定義（updateOrderProposals / getOrderProposals で共有）
@@ -922,6 +926,14 @@ function getReorderConfig() {
       .map(r => String(r[0]).trim()).filter(Boolean);
   }
 
+  // 終売商品設定（シート未作成なら空。提案除外設定とは別枠で管理）
+  let eolCodes = [];
+  const eolSh = getSS().getSheetByName(SHEET_EOL);
+  if (eolSh && eolSh.getLastRow() > 1) {
+    eolCodes = eolSh.getDataRange().getValues().slice(1)
+      .map(r => String(r[0]).trim()).filter(Boolean);
+  }
+
   // 過去の発注明細から商品別のロット推定材料を集計
   // gcdQty: 全発注数量の最大公約数（ケース単位の推定に使う）
   // あわせて直近60日の発注（発注済み・未入荷の可能性がある分）も商品別に返す
@@ -954,6 +966,7 @@ function getReorderConfig() {
     success: true,
     suppliers,
     exclusions,
+    eolCodes,
     lotStats,
     recentOrders,
     defaults: { leadTimeDays: DEFAULT_LEAD_TIME_DAYS, orderCycleDays: DEFAULT_ORDER_CYCLE_DAYS }
@@ -1180,6 +1193,21 @@ function getOrderProposals() {
       }));
   }
 
+  // 終売商品リスト（終売管理UIでの表示・解除用。除外リストとは別枠）
+  let eol = [];
+  const eolSh2 = ss.getSheetByName(SHEET_EOL);
+  if (eolSh2 && eolSh2.getLastRow() > 1) {
+    eol = eolSh2.getDataRange().getValues().slice(1)
+      .filter(r => String(r[0]).trim() !== '')
+      .map(r => ({
+        code:   String(r[0]).trim(),
+        name:   String(r[1] || ''),
+        reason: String(r[2] || ''),
+        addedBy: String(r[3] || ''),
+        addedAt: cellToStr(r[4], 'yyyy-MM-dd HH:mm')
+      }));
+  }
+
   // 過剰在庫の確認済みリスト（先に読み、確認済みの商品を過剰在庫リストから除外する）
   let excessAcks = [];
   const ackSh = ss.getSheetByName(SHEET_EXCESS_ACK);
@@ -1240,7 +1268,7 @@ function getOrderProposals() {
     kpi = { current: kpiRows[kpiRows.length - 1], previous: kpiRows.length > 1 ? kpiRows[0] : null };
   }
 
-  return { success: true, proposals, analyzedAt, exclusions, excess, excessAcks, kpi };
+  return { success: true, proposals, analyzedAt, exclusions, eol, excess, excessAcks, kpi };
 }
 
 // POST(セッション): 過剰在庫の確認済み登録/解除
@@ -1300,6 +1328,50 @@ function saveProposalExclusion(p, user_id) {
     const data = sh.getDataRange().getValues();
     const exists = data.slice(1).some(r => String(r[0]).trim() === code);
     if (exists) return { success: false, error: '商品コード「' + code + '」はすでに除外登録されています' };
+    sh.appendRow([code, name, reason, user_id, now]);
+    // 現在の提案シートからも即時削除（次回分析を待たずに消す）
+    const prSh = ss.getSheetByName(SHEET_PROPOSALS);
+    if (prSh && prSh.getLastRow() > 1) {
+      const prData = prSh.getDataRange().getValues();
+      for (let i = prData.length - 1; i >= 1; i--) {
+        if (String(prData[i][0]).trim() === code) prSh.deleteRow(i + 1);
+      }
+    }
+    return { success: true };
+  } else if (mode === 'delete') {
+    const data = sh.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() === code) {
+        sh.deleteRow(i + 1);
+        return { success: true };
+      }
+    }
+    return { success: false, error: '商品コード「' + code + '」が見つかりません' };
+  }
+  return { success: false, error: '不明なmode: ' + mode };
+}
+
+// POST(セッション): 終売フラグの登録/解除（在庫はあるが再発注できない商品用。除外設定とは別枠）
+// リクエスト: { action:'saveEolFlag', mode:'add'|'delete', code, name, reason }
+function saveEolFlag(p, user_id) {
+  const mode   = p.mode   || '';
+  const code   = String(p.code   || '').trim();
+  const name   = String(p.name   || '').trim();
+  const reason = String(p.reason || '').trim();
+  if (!code) return { success: false, error: '商品コードが未指定です' };
+
+  const ss = getSS();
+  let sh = ss.getSheetByName(SHEET_EOL);
+  if (!sh) {
+    sh = ss.insertSheet(SHEET_EOL);
+    sh.appendRow(['商品コード','商品名','理由','登録者','登録日時']);
+  }
+  const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+
+  if (mode === 'add') {
+    const data = sh.getDataRange().getValues();
+    const exists = data.slice(1).some(r => String(r[0]).trim() === code);
+    if (exists) return { success: false, error: '商品コード「' + code + '」はすでに終売登録されています' };
     sh.appendRow([code, name, reason, user_id, now]);
     // 現在の提案シートからも即時削除（次回分析を待たずに消す）
     const prSh = ss.getSheetByName(SHEET_PROPOSALS);

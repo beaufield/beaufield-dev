@@ -638,7 +638,9 @@
     .prop-qty         { width: 64px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; font-weight: 700; text-align: center; }
     .prop-item-amount { margin-left: auto; font-weight: 700; font-size: 13px; color: var(--text); }
     .prop-note        { font-size: 11px; color: var(--text-light); margin-top: 4px; line-height: 1.5; }
-    .prop-excl-btn    { margin-left: auto; padding: 4px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-light); cursor: pointer; white-space: nowrap; }
+    .prop-item-actions { margin-left: auto; display: flex; gap: 6px; flex-shrink: 0; }
+    .prop-excl-btn    { padding: 4px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-light); cursor: pointer; white-space: nowrap; }
+    .prop-eol-btn     { padding: 4px 8px; font-size: 11px; border: 1px solid #ffab91; border-radius: 6px; background: #fff3e0; color: #bf360c; cursor: pointer; white-space: nowrap; }
     .prop-group-summary { font-size: 13px; font-weight: 700; text-align: right; margin-top: 10px; color: var(--text); }
     .prop-sort-btn.active { background: var(--primary); color: #fff; }
     .prop-web-btn.active  { background: var(--primary); color: #fff; }
@@ -937,6 +939,7 @@
   </div>
   <div id="prop-excess"></div>
   <div id="prop-exclusions"></div>
+  <div id="prop-eol"></div>
 </div>
 
 <!-- ボトムナビ -->
@@ -1141,7 +1144,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.34.0'; // 発注先にWeb区分・備考欄を追加、提案タブにWebフィルターを追加
+const APP_VERSION    = 'v1.35.0'; // 直近12ヶ月トレンド判定・終売フラグ機能を追加
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -3944,7 +3947,7 @@ function closeModal(id) { document.getElementById(id).classList.remove('open'); 
    analyze_demand.py（週次）が「発注提案」シートに書いた提案を表示し、
    チェックした商品をカートに積んで発注フローへ流し込む
 =================================================== */
-let proposalsData    = { proposals: [], analyzedAt: '', exclusions: [], excess: [], excessAcks: [], kpi: null };
+let proposalsData    = { proposals: [], analyzedAt: '', exclusions: [], eol: [], excess: [], excessAcks: [], kpi: null };
 let proposalsLoaded  = false;
 let proposalsLoading = false;
 let proposalsSort    = 'name'; // 'name'（あ順・既定）| 'amount'（金額が多い順）
@@ -3985,6 +3988,7 @@ async function loadProposals(force = false) {
         proposals:  res.proposals  || [],
         analyzedAt: res.analyzedAt || '',
         exclusions: res.exclusions || [],
+        eol:        res.eol        || [],
         excess:     res.excess     || [],
         excessAcks: res.excessAcks || [],
         kpi:        res.kpi        || null
@@ -4122,7 +4126,10 @@ function renderProposalList() {
               <div class="prop-item-name">${escHtml(p.name)}
                 <div class="prop-item-code">${escHtml(p.code)}<span class="prop-badge ${badgeCls}">${escHtml(p.pattern)}</span>${abcBadge}</div>
               </div>
-              <button class="prop-excl-btn" onclick="excludeProposal('${escAttr(p.code)}','${escAttr(p.name)}')">🚫 除外</button>
+              <div class="prop-item-actions">
+                <button class="prop-excl-btn" onclick="excludeProposal('${escAttr(p.code)}','${escAttr(p.name)}')">🚫 除外</button>
+                <button class="prop-eol-btn" onclick="markEol('${escAttr(p.code)}','${escAttr(p.name)}')">🔚 終売</button>
+              </div>
             </div>
             <div class="prop-item-stats">
               <span>在庫 <b>${p.stock}</b> ${onOrder}→ 推奨 <b>${p.recommended}</b></span>
@@ -4153,6 +4160,7 @@ function renderProposalList() {
   }
   renderProposalExcess();
   renderProposalExclusions();
+  renderEolList();
 }
 
 // 金額表示（¥12,400 形式）。仕入単価0円（マスター未整備）の商品行は「—」表示にする
@@ -4354,6 +4362,69 @@ async function restoreProposalExclusion(code) {
       proposalsData.exclusions = proposalsData.exclusions.filter(x => x.code !== code);
       renderProposalExclusions();
       showToast('除外を解除しました。次回の分析から提案対象に戻ります', 'success');
+    } else {
+      showToast('解除エラー: ' + (res.error || '不明'), 'error');
+    }
+  } catch(e) {
+    showToast('通信エラー。ネットワークを確認してください。', 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// 終売フラグ（在庫はあるが再発注できない商品用。除外設定とは別枠で管理する）
+function renderEolList() {
+  const wrap = document.getElementById('prop-eol');
+  const eol = proposalsData.eol;
+  if (!eol || eol.length === 0) { wrap.innerHTML = ''; return; }
+  const rows = eol.map(x => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:13px">
+      <div style="flex:1">
+        <div>${escHtml(x.name || x.code)}</div>
+        <div style="font-size:11px;color:var(--text-light)">${escHtml(x.code)}${x.reason ? '・' + escHtml(x.reason) : ''}</div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="restoreEol('${escAttr(x.code)}')">解除</button>
+    </div>`).join('');
+  wrap.innerHTML = `
+    <div class="card">
+      <details>
+        <summary style="font-size:13px;font-weight:600;cursor:pointer">🔚 終売設定中の商品（${eol.length}件）</summary>
+        <div style="margin-top:6px">${rows}</div>
+      </details>
+    </div>`;
+}
+
+async function markEol(code, name) {
+  const reason = prompt(`「${name}」を終売（在庫はあるが再発注不可）として今後の発注提案から除外します。\n理由（任意・空欄可。例: キャンペーン終了）:`);
+  if (reason === null) return; // キャンセル
+  showLoading('終売登録中...');
+  try {
+    const res = await gasPost({ action: 'saveEolFlag', mode: 'add', code, name, reason: reason.trim() });
+    if (res.success) {
+      proposalsData.proposals = proposalsData.proposals.filter(p => p.code !== code);
+      proposalsData.eol.push({ code, name, reason: reason.trim() });
+      renderProposalFilter();
+      renderProposalList();
+      updateProposalBadge();
+      showToast(`「${name}」を終売登録しました`, 'success');
+    } else {
+      showToast('終売登録エラー: ' + (res.error || '不明'), 'error');
+    }
+  } catch(e) {
+    showToast('通信エラー。ネットワークを確認してください。', 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+async function restoreEol(code) {
+  showLoading('終売設定を解除中...');
+  try {
+    const res = await gasPost({ action: 'saveEolFlag', mode: 'delete', code });
+    if (res.success) {
+      proposalsData.eol = proposalsData.eol.filter(x => x.code !== code);
+      renderEolList();
+      showToast('終売設定を解除しました。次回の分析から提案対象に戻ります', 'success');
     } else {
       showToast('解除エラー: ' + (res.error || '不明'), 'error');
     }
