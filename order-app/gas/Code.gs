@@ -1,6 +1,6 @@
 // ============================================================
 // Beaufield 発注アプリ - Google Apps Script バックエンド
-// Version: v1.19.0
+// Version: v1.20.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.19.0';
+const VERSION         = 'v1.20.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -44,7 +44,7 @@ const SHEET_EXCESS     = '過剰在庫';       // analyze_demand.py が週次で
 const SHEET_EXCESS_ACK = '過剰在庫確認済み'; // 持ちすぎを承知の上で確認済みにした商品（意図的なまとめ仕入等）
 const SHEET_KPI_HISTORY = '在庫KPI履歴';    // analyze_demand.py が実行日ごとに1行追記（同日再実行は上書き）
 const SHEET_EOL         = '終売商品設定';   // 在庫はあるが再発注できない商品（キャンペーン終了等）。提案除外設定とは別枠
-const SHEET_LOT_OVERRIDE = 'ロット設定';    // 過去発注実績からの自動推定より優先する手動ロット（最低注文数）設定
+const SHEET_LOT_OVERRIDE = '最低発注数設定';  // 過去発注実績からの自動推定より優先する手動の最低発注数設定
 
 // 発注先マスターの拡張列（F=リードタイム(日), G=発注サイクル(日)）
 // 未入力の場合のフォールバック値。analyze_demand.py の計算に使う
@@ -291,7 +291,9 @@ function getMasters() {
       // 備考: 最低発注金額等。発注入力画面の上部に常時表示する
       note:          String(r[7] || '').trim(),
       // 発注限時刻: 'HH:mm'形式。全発注先で必須に近い項目のため備考と別枠で管理
-      deadline:      String(r[8] || '').trim()
+      // スプレッドシートが'11:00'等の文字列を時刻として自動認識しDateオブジェクト化することがあるため
+      // cellToStrで両方のケースに対応する（生文字列ならそのまま、Dateなら'HH:mm'に整形）
+      deadline:      cellToStr(r[8], 'HH:mm').trim()
     }));
 
   return { success: true, suppliers };
@@ -812,16 +814,22 @@ function saveSupplier(p, user_id) {
 
   // 列: A=コード B=発注先名 C=FAX D=登録日時 E=発注方法 F=リードタイム(日) G=発注サイクル(日) H=備考 I=発注限時刻
   // F・G はシート直接入力のみ（このフォームからは触らない）
+  // I列(発注限時刻)は'11:00'等の文字列を書き込むと、スプレッドシートが時刻として自動認識し
+  // Dateシリアル値に変換してしまう（読み戻すと'Sat Dec 30 1899...'のような値になる不具合の原因）。
+  // これを防ぐため、書き込み前にセルの表示形式を強制的にプレーンテキスト('@')にしておく
   if (mode === 'add') {
     const exists = data.slice(1).some(r => String(r[0]).trim() === code);
     if (exists) return { success: false, error: 'コード「' + code + '」はすでに登録されています' };
-    sh.appendRow([code, name, fax, now, outputMethods, '', '', note, deadline]);
+    sh.appendRow([code, name, fax, now, outputMethods, '', '', note, '']);
+    const newRow = sh.getLastRow();
+    sh.getRange(newRow, 9, 1, 1).setNumberFormat('@').setValue(deadline);
     return { success: true };
   } else if (mode === 'update') {
     for (let i = 1; i < data.length; i++) {
       if (String(data[i][0]).trim() === code) {
         sh.getRange(i + 1, 1, 1, 5).setValues([[code, name, fax, now, outputMethods]]);
-        sh.getRange(i + 1, 8, 1, 2).setValues([[note, deadline]]);
+        sh.getRange(i + 1, 8, 1, 1).setValue(note);
+        sh.getRange(i + 1, 9, 1, 1).setNumberFormat('@').setValue(deadline);
         return { success: true };
       }
     }
@@ -858,7 +866,7 @@ function saveSupplier(p, user_id) {
 
 // 発注提案シートの列定義（updateOrderProposals / getOrderProposals で共有）
 const PROPOSAL_HEADERS = ['商品コード','商品名','仕入先コード','仕入先名','パターン',
-                          '現在庫','発注済','推奨在庫','提案数量','推定ロット','月平均',
+                          '現在庫','発注済','推奨在庫','提案数量','最低発注数','月平均',
                           '注文P95','最大注文','根拠メモ','AI説明','分析日時','仕入単価','提案金額','ABCランク'];
 
 // 過剰在庫シートの列定義（updateOrderProposals / getOrderProposals で共有）
@@ -1388,8 +1396,10 @@ function saveEolFlag(p, user_id) {
   return { success: false, error: '不明なmode: ' + mode };
 }
 
-// POST(セッション): 手動ロット（最低注文数）の登録/解除
+// POST(セッション): 手動の最低発注数の登録/解除
 // 過去発注実績からの自動推定（GCD）より優先して使う。既存設定があれば上書き（upsert）
+// 登録時は「発注提案」シートの該当行があれば提案数量も即時再計算する
+// （次回のanalyze_demand.py実行を待たずに画面へ反映するため。実行後は分析結果で上書きされる）
 // リクエスト: { action:'saveLotOverride', mode:'add'|'delete', code, name, lot }
 function saveLotOverride(p, user_id) {
   const mode = p.mode || '';
@@ -1401,21 +1411,24 @@ function saveLotOverride(p, user_id) {
   let sh = ss.getSheetByName(SHEET_LOT_OVERRIDE);
   if (!sh) {
     sh = ss.insertSheet(SHEET_LOT_OVERRIDE);
-    sh.appendRow(['商品コード','商品名','ロット数','登録者','登録日時']);
+    sh.appendRow(['商品コード','商品名','最低発注数','登録者','登録日時']);
   }
   const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
 
   if (mode === 'add') {
     const lot = parseInt(p.lot, 10);
-    if (!(lot > 0)) return { success: false, error: 'ロット数は1以上の整数で指定してください' };
+    if (!(lot > 0)) return { success: false, error: '最低発注数は1以上の整数で指定してください' };
     const data = sh.getDataRange().getValues();
+    let found = false;
     for (let i = 1; i < data.length; i++) {
       if (String(data[i][0]).trim() === code) {
         sh.getRange(i + 1, 1, 1, 5).setValues([[code, name, lot, user_id, now]]);
-        return { success: true };
+        found = true;
+        break;
       }
     }
-    sh.appendRow([code, name, lot, user_id, now]);
+    if (!found) sh.appendRow([code, name, lot, user_id, now]);
+    applyLotToProposal_(ss, code, lot);
     return { success: true };
   } else if (mode === 'delete') {
     const data = sh.getDataRange().getValues();
@@ -1428,6 +1441,26 @@ function saveLotOverride(p, user_id) {
     return { success: false, error: '商品コード「' + code + '」が見つかりません' };
   }
   return { success: false, error: '不明なmode: ' + mode };
+}
+
+// ヘルパー: 「発注提案」シートに該当商品の行があれば、最低発注数と提案数量・提案金額を
+// その場で再計算して書き込む（次回のanalyze_demand.py実行を待たずに画面へ反映するため）
+function applyLotToProposal_(ss, code, lot) {
+  const prSh = ss.getSheetByName(SHEET_PROPOSALS);
+  if (!prSh || prSh.getLastRow() <= 1) return;
+  const data = prSh.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0]).trim() !== code) continue;
+    const stock       = parseFloat(data[i][5])  || 0;
+    const onOrder     = parseFloat(data[i][6])  || 0;
+    const recommended = parseFloat(data[i][7])  || 0;
+    const unitCost     = parseFloat(data[i][16]) || 0;
+    const shortage     = recommended - (stock + onOrder);
+    const proposedQty  = shortage > 0 ? Math.ceil(shortage / lot) * lot : 0;
+    prSh.getRange(i + 1, 9, 1, 2).setValues([[proposedQty, lot]]);   // I列=提案数量 J列=最低発注数
+    prSh.getRange(i + 1, 18, 1, 1).setValue(Math.round(unitCost * proposedQty)); // R列=提案金額
+    return;
+  }
 }
 
 // ヘルパー: LINE WORKS Incoming Webhook 通知（失敗しても本処理は継続）
