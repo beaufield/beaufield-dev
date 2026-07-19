@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.6.0
+# Version: v1.7.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -25,7 +25,9 @@
 #   共通: 「リードタイム＋発注サイクル」期間の平均需要 ＋ 安全在庫（ランク別Z値）
 #   まとめ買い型・散発型: 上記と「1回のまとまり注文サイズ(P95)」の大きい方
 #     （Aランクはフル適用・Bランクは月数キャップ付き・Cランクは適用なし）
+#     ただし減少トレンド商品（下記）はランクに関わらずP95フロアを適用しない
 #   全ランク共通で「月平均needs×CAP_MONTHS_GLOBALヶ月分」を上限キャップ
+#   （減少トレンド商品はCAP_MONTHS_GLOBALの代わりにCAP_MONTHS_DECLINEを使う）
 #   リードタイム・発注サイクルは発注先マスターのF/G列（未設定は各7日）
 #
 # 発注提案の対象:
@@ -47,10 +49,14 @@
 #   「在庫KPI履歴」シートに実行日単位で記録（同日の再実行は上書き）。
 #   アプリの提案タブ上部に直近2回分（今週・先週）の差分付きで表示する
 #
-# 直近トレンド判定（v1.6.0で追加）:
+# 直近トレンド判定（v1.6.0で追加、v1.7.0で精緻化）:
 #   直近12ヶ月平均が1年前の12ヶ月平均のDECLINE_RATIO_THRESHOLD倍以下の商品は
 #   「減少トレンド」とみなし、需要統計（月平均・パターン・P95等）を24ヶ月全体ではなく
 #   直近12ヶ月ベースに切り替える（古い高需要期の実績に推奨在庫が引っ張られるのを防ぐ）
+#   ただし直近12ヶ月ウィンドウの先頭付近に旧体制最後の大口注文が1件だけ残っている過渡期は、
+#   その1件がP95注文サイズ・std（ばらつき）の両方を歪め、推奨在庫を過大にしてしまう。
+#   そのため減少トレンド商品は「まとまり注文フロア(P95)」を適用せず、代わりに
+#   月平均×CAP_MONTHS_DECLINEヶ月分を上限キャップとして推奨在庫を頭打ちにする。
 #
 # 終売フラグ（v1.6.0で追加）:
 #   在庫はあるが再発注できない商品（キャンペーン終了等）は「終売商品設定」で
@@ -115,6 +121,7 @@ HOLDING_COST_RATE = 0.20   # 年間保有コスト率（資金・場所・廃番
 # 12ヶ月単位で比較するのは季節商品（特定の月しか出ない）を誤検出しないため
 DECLINE_TREND_MONTHS    = 12    # 比較に使う月数（1年）
 DECLINE_RATIO_THRESHOLD = 0.4   # 直近12ヶ月平均が1年前の12ヶ月平均のこの比率以下なら「減少トレンド」
+CAP_MONTHS_DECLINING    = 2.0   # 減少トレンド商品の推奨在庫上限（月平均の何ヶ月分まで許すか。P95フロアの代わり）
 
 # ---- CSVパスの候補（デバイスによりドライブ構成が異なる） ----
 _ONEDRIVE_DATA_DIRS = [
@@ -387,9 +394,16 @@ def build_note(stat, protect_days, lot, on_order=0, abc='A', is_declining=False,
     if pattern == 'まとめ買い型':
         if stat['adi']:
             parts.append(f"約{stat['adi']:.1f}ヶ月間隔で、1回あたり最大{stat['max_order_size']:.0f}個のまとまり注文あり")
-        parts.append(f"まとまり注文対応で{stat['p95_order_size']:.0f}個を確保基準に設定")
+        if is_declining:
+            parts.append(f"減少トレンドのためまとまり注文基準は適用せず、月平均×{CAP_MONTHS_DECLINING:.1f}ヶ月分を上限に算出")
+        else:
+            parts.append(f"まとまり注文対応で{stat['p95_order_size']:.0f}個を確保基準に設定")
     elif pattern == '散発型':
-        parts.append(f"注文は間欠的（{window_months}ヶ月中{stat['demand_month_count']}ヶ月）だが量は安定")
+        if is_declining:
+            parts.append(f"注文は間欠的（{window_months}ヶ月中{stat['demand_month_count']}ヶ月）。"
+                         f"減少トレンドのため月平均×{CAP_MONTHS_DECLINING:.1f}ヶ月分を上限に算出")
+        else:
+            parts.append(f"注文は間欠的（{window_months}ヶ月中{stat['demand_month_count']}ヶ月）だが量は安定")
     elif pattern == '変動型':
         parts.append(f"毎月出るが量のブレ大（月{stat['mean_monthly']:.0f}個±{stat['std_monthly']:.0f}）")
     else:
@@ -437,7 +451,7 @@ def main():
 
     log_file = setup_logger()
     logging.info('=' * 60)
-    logging.info('Beaufield 需要分析・発注提案スクリプト v1.6.0 開始'
+    logging.info('Beaufield 需要分析・発注提案スクリプト v1.7.0 開始'
                  + ('（dry-run）' if args.dry_run else ''))
 
     config = load_config()
@@ -596,15 +610,21 @@ def main():
         eol_flagged, is_declining = item['eol_flagged'], item['is_declining']
         older_mean = item['older_mean']
 
-        if abc == 'A':
-            recommended = compute_recommended(stat, protect_days, SERVICE_Z_BY_CLASS['A'],
+        z = SERVICE_Z_BY_CLASS[abc]
+        if is_declining:
+            # 減少トレンド商品はランクに関わらずP95フロアを適用しない（旧体制最後の
+            # 大口注文1件がP95・stdを歪めるため）。代わりに専用の月数キャップで頭打ちにする
+            recommended = compute_recommended(stat, protect_days, z,
+                                               p95_mode='none', global_cap_months=CAP_MONTHS_DECLINING)
+        elif abc == 'A':
+            recommended = compute_recommended(stat, protect_days, z,
                                                p95_mode='full', global_cap_months=CAP_MONTHS_GLOBAL)
         elif abc == 'B':
-            recommended = compute_recommended(stat, protect_days, SERVICE_Z_BY_CLASS['B'],
+            recommended = compute_recommended(stat, protect_days, z,
                                                p95_mode='capped', p95_cap_months=CAP_MONTHS_B,
                                                global_cap_months=CAP_MONTHS_GLOBAL)
         else:
-            recommended = compute_recommended(stat, protect_days, SERVICE_Z_BY_CLASS['C'],
+            recommended = compute_recommended(stat, protect_days, z,
                                                p95_mode='none', global_cap_months=CAP_MONTHS_GLOBAL)
 
         # Cランクの間欠需要（散発型・まとめ買い型）は提案を出さず受注発注推奨とする
@@ -650,7 +670,10 @@ def main():
             'max_order_size': stat['max_order_size'],
         }
         results.append(row)
-        stats_json[code] = {**row, 'monthly': dict(zip(months, stat['monthly']))}
+        # stat['monthly'] は減少トレンド商品なら直近12ヶ月分、そうでなければ24ヶ月分
+        # なので、対応する月ラベルもそれに合わせないとズレる（v1.7.0で修正）
+        stat_months = recent_months if is_declining else months
+        stats_json[code] = {**row, 'monthly': dict(zip(stat_months, stat['monthly']))}
 
         # 過剰在庫: 現在庫が推奨在庫のEXCESS_RATIO倍を超え、超過数量がEXCESS_MIN_QTY以上
         excess_qty = stock - recommended
@@ -735,6 +758,7 @@ def main():
                        'default_lead_time_days': DEFAULT_LEAD_TIME_DAYS,
                        'default_order_cycle_days': DEFAULT_ORDER_CYCLE_DAYS,
                        'cap_months_b': CAP_MONTHS_B, 'cap_months_global': CAP_MONTHS_GLOBAL,
+                       'cap_months_declining': CAP_MONTHS_DECLINING,
                        'abc_a_cum': ABC_A_CUM, 'abc_b_cum': ABC_B_CUM},
             'items': stats_json,
         }, f, ensure_ascii=False, indent=1)
