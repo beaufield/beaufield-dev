@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.5.0
+# Version: v1.6.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -46,6 +46,15 @@
 #   在庫金額・月次売上原価・回転日数・過剰在庫額・提案額・年間保有コスト概算を
 #   「在庫KPI履歴」シートに実行日単位で記録（同日の再実行は上書き）。
 #   アプリの提案タブ上部に直近2回分（今週・先週）の差分付きで表示する
+#
+# 直近トレンド判定（v1.6.0で追加）:
+#   直近12ヶ月平均が1年前の12ヶ月平均のDECLINE_RATIO_THRESHOLD倍以下の商品は
+#   「減少トレンド」とみなし、需要統計（月平均・パターン・P95等）を24ヶ月全体ではなく
+#   直近12ヶ月ベースに切り替える（古い高需要期の実績に推奨在庫が引っ張られるのを防ぐ）
+#
+# 終売フラグ（v1.6.0で追加）:
+#   在庫はあるが再発注できない商品（キャンペーン終了等）は「終売商品設定」で
+#   個別に指定でき、以後は提案対象から外れる（提案除外設定とは別枠で管理）
 #
 # 実行方法:
 #   py -3.12 analyze_demand.py             # 分析＋GASへ書き込み＋通知
@@ -99,6 +108,13 @@ EXCESS_MIN_QTY = 3     # 過剰判定: 超過数量がこれ未満なら対象�
 
 # ---- 経営KPIパラメータ（v1.5.0） ----
 HOLDING_COST_RATE = 0.20   # 年間保有コスト率（資金・場所・廃番リスク、通説15-25%の中央）
+
+# ---- 直近トレンド判定パラメータ（v1.6.0） ----
+# 24ヶ月一律平均だと「過去は出ていたが最近止まった」商品の推奨在庫が過大になるため、
+# 直近12ヶ月 と 1年前の12ヶ月 を比較して減少トレンドを検出する。
+# 12ヶ月単位で比較するのは季節商品（特定の月しか出ない）を誤検出しないため
+DECLINE_TREND_MONTHS    = 12    # 比較に使う月数（1年）
+DECLINE_RATIO_THRESHOLD = 0.4   # 直近12ヶ月平均が1年前の12ヶ月平均のこの比率以下なら「減少トレンド」
 
 # ---- CSVパスの候補（デバイスによりドライブ構成が異なる） ----
 _ONEDRIVE_DATA_DIRS = [
@@ -247,6 +263,7 @@ def fetch_reorder_config(gas_url, api_key):
         raise RuntimeError(f'getReorderConfig エラー応答: {result.get("error")}')
     logging.info(f"設定取得完了: 発注先{len(result.get('suppliers', []))}件 / "
                  f"除外{len(result.get('exclusions', []))}件 / "
+                 f"終売{len(result.get('eolCodes', []))}件 / "
                  f"ロット材料{len(result.get('lotStats', {}))}商品")
     return result
 
@@ -358,18 +375,21 @@ def estimate_lot(lot_stats_entry):
     return gcd_qty if gcd_qty >= 2 else 1
 
 
-def build_note(stat, protect_days, lot, on_order=0, abc='A'):
+def build_note(stat, protect_days, lot, on_order=0, abc='A', is_declining=False, older_mean=None):
     """提案根拠の短い説明文（ルールベース）"""
     parts = []
     pattern = stat['pattern']
+    window_months = DECLINE_TREND_MONTHS if is_declining else WINDOW_MONTHS
     if on_order > 0:
         parts.append(f"発注済み未入荷{on_order:.0f}個を在庫に加算済み")
+    if is_declining and older_mean is not None:
+        parts.append(f"直近{DECLINE_TREND_MONTHS}ヶ月の実績を優先（1年前は月平均{older_mean:.0f}個→直近は月平均{stat['mean_monthly']:.0f}個に減少）")
     if pattern == 'まとめ買い型':
         if stat['adi']:
             parts.append(f"約{stat['adi']:.1f}ヶ月間隔で、1回あたり最大{stat['max_order_size']:.0f}個のまとまり注文あり")
         parts.append(f"まとまり注文対応で{stat['p95_order_size']:.0f}個を確保基準に設定")
     elif pattern == '散発型':
-        parts.append(f"注文は間欠的（24ヶ月中{stat['demand_month_count']}ヶ月）だが量は安定")
+        parts.append(f"注文は間欠的（{window_months}ヶ月中{stat['demand_month_count']}ヶ月）だが量は安定")
     elif pattern == '変動型':
         parts.append(f"毎月出るが量のブレ大（月{stat['mean_monthly']:.0f}個±{stat['std_monthly']:.0f}）")
     else:
@@ -417,7 +437,7 @@ def main():
 
     log_file = setup_logger()
     logging.info('=' * 60)
-    logging.info('Beaufield 需要分析・発注提案スクリプト v1.5.0 開始'
+    logging.info('Beaufield 需要分析・発注提案スクリプト v1.6.0 開始'
                  + ('（dry-run）' if args.dry_run else ''))
 
     config = load_config()
@@ -427,6 +447,7 @@ def main():
     # ---- GASから設定取得（dry-runで失敗したら既定値で続行） ----
     suppliers_cfg = {}
     exclusions = set()
+    eol_codes = set()
     lot_stats = {}
     recent_orders = {}
     try:
@@ -436,6 +457,7 @@ def main():
             if key:
                 suppliers_cfg[key] = s
         exclusions = {normalize_code(c) for c in cfg.get('exclusions', [])} - {None}
+        eol_codes = {normalize_code(c) for c in cfg.get('eolCodes', [])} - {None}
         lot_stats = {normalize_code(k): v for k, v in cfg.get('lotStats', {}).items()
                      if normalize_code(k)}
         recent_orders = {normalize_code(k): v for k, v in cfg.get('recentOrders', {}).items()
@@ -471,6 +493,24 @@ def main():
     for (code, _slip), qty in slip_sum.items():
         sizes_by_code.setdefault(code, []).append(qty)
 
+    # 直近トレンド判定用: 直近12ヶ月だけの需要統計を別途用意する
+    recent_months = months[-DECLINE_TREND_MONTHS:]
+    recent_start_ym = recent_months[0]
+    recent_start_date = date(int(recent_start_ym[:4]), int(recent_start_ym[4:6]), 1)
+    window_days_recent = (end_date - recent_start_date).days + 1
+
+    sales_recent = sales[sales['ym'] >= recent_start_ym]
+    monthly_sum_recent = sales_recent.groupby(['code', 'ym'])['qty'].sum()
+    slip_sum_recent = sales_recent[sales_recent['slip'] != ''].groupby(['code', 'slip'])['qty'].sum()
+    slip_sum_recent = slip_sum_recent[slip_sum_recent > 0]
+
+    monthly_by_code_recent = {}
+    for (code, ym), qty in monthly_sum_recent.items():
+        monthly_by_code_recent.setdefault(code, {})[ym] = qty
+    sizes_by_code_recent = {}
+    for (code, _slip), qty in slip_sum_recent.items():
+        sizes_by_code_recent.setdefault(code, []).append(qty)
+
     min_mean = float(config.get('min_mean_monthly', MIN_MEAN_MONTHLY))
 
     # ---- 1周目: 需要統計・仕入単価などを集める（ABCランクはまだ決められない） ----
@@ -493,10 +533,21 @@ def main():
 
         g_month = monthly_by_code.get(code, {})
         sizes = sizes_by_code.get(code, [])
-        stat = compute_stats(g_month, sizes, months, window_days)
+        stat_full = compute_stats(g_month, sizes, months, window_days)
 
-        if stat['mean_monthly'] <= 0:
+        if stat_full['mean_monthly'] <= 0:
             continue
+
+        # 直近トレンド判定: 1年前の12ヶ月平均 vs 直近12ヶ月平均。大きく減っていたら
+        # 統計を直近12ヶ月ベースに切り替える（古い高需要期の実績に引っ張られないように）
+        older_months = months[:DECLINE_TREND_MONTHS]
+        older_mean_monthly = sum(g_month.get(ym, 0.0) for ym in older_months) / len(older_months)
+        g_month_recent = monthly_by_code_recent.get(code, {})
+        sizes_recent = sizes_by_code_recent.get(code, [])
+        stat_recent = compute_stats(g_month_recent, sizes_recent, recent_months, window_days_recent)
+        is_declining = (older_mean_monthly >= MIN_MEAN_MONTHLY and
+                        stat_recent['mean_monthly'] <= older_mean_monthly * DECLINE_RATIO_THRESHOLD)
+        stat = stat_recent if is_declining else stat_full
 
         months_of_history = len([ym for ym in months if ym >= first_ym.get(code, months[0])])
         insufficient = months_of_history < MIN_MONTHS_DATA
@@ -517,11 +568,14 @@ def main():
                 on_order += float(o.get('qty', 0))
 
         excluded = code in exclusions
+        eol_flagged = code in eol_codes
 
         analyzed.append({
             'code': code, 'prod': prod, 'supp_key': supp_key, 'protect_days': protect_days,
-            'stat': stat, 'insufficient': insufficient, 'stock': stock, 'unit_cost': unit_cost,
-            'lot': lot, 'on_order': on_order, 'excluded': excluded,
+            'stat': stat, 'is_declining': is_declining, 'stat_full_mean': stat_full['mean_monthly'],
+            'older_mean': round(older_mean_monthly, 1),
+            'insufficient': insufficient, 'stock': stock, 'unit_cost': unit_cost,
+            'lot': lot, 'on_order': on_order, 'excluded': excluded, 'eol_flagged': eol_flagged,
             'monthly_value': stat['mean_monthly'] * value_basis,
         })
 
@@ -539,6 +593,8 @@ def main():
         supp_key, protect_days = item['supp_key'], item['protect_days']
         insufficient, stock, unit_cost = item['insufficient'], item['stock'], item['unit_cost']
         lot, on_order, excluded = item['lot'], item['on_order'], item['excluded']
+        eol_flagged, is_declining = item['eol_flagged'], item['is_declining']
+        older_mean = item['older_mean']
 
         if abc == 'A':
             recommended = compute_recommended(stat, protect_days, SERVICE_Z_BY_CLASS['A'],
@@ -555,7 +611,7 @@ def main():
         mto_recommended = (abc == 'C') and (stat['pattern'] in ('まとめ買い型', '散発型'))
 
         shortage = recommended - (stock + on_order)
-        excluded_or_mto = excluded or mto_recommended
+        excluded_or_mto = excluded or mto_recommended or eol_flagged
         eligible = (not insufficient) and (not excluded_or_mto) and stat['mean_monthly'] >= min_mean
         proposed_qty = 0
         if eligible and shortage > 0:
@@ -571,6 +627,9 @@ def main():
             'abc': abc,
             'mto_recommended': mto_recommended,
             'excluded': excluded,
+            'eol_flagged': eol_flagged,
+            'is_declining': is_declining,
+            'older_12mo_mean': older_mean,
             'stock': stock,
             'on_order': on_order,
             'recommended': recommended,
@@ -596,6 +655,9 @@ def main():
         # 過剰在庫: 現在庫が推奨在庫のEXCESS_RATIO倍を超え、超過数量がEXCESS_MIN_QTY以上
         excess_qty = stock - recommended
         if stock > recommended * EXCESS_RATIO and excess_qty >= EXCESS_MIN_QTY:
+            # 直近12ヶ月の需要が完全にゼロ（減少トレンド判定でmean_monthly=0）の場合は
+            # 24ヶ月平均を使って在庫月数を算出する（0除算防止・少なくとも過去の実績ベースで表示）
+            monthly_rate = stat['mean_monthly'] if stat['mean_monthly'] > 0 else item['stat_full_mean']
             excess_rows.append({
                 'code': code,
                 'name': prod['name'],
@@ -606,7 +668,7 @@ def main():
                 'excessQty': excess_qty,
                 'unitCost': unit_cost,
                 'excessAmount': round(unit_cost * excess_qty),
-                'monthsOfStock': round(stock / stat['mean_monthly'], 1),
+                'monthsOfStock': round(stock / monthly_rate, 1) if monthly_rate > 0 else None,
                 'abcRank': abc,
                 'pattern': pattern_label,
             })
@@ -629,7 +691,7 @@ def main():
                 'meanMonthly': stat['mean_monthly'],
                 'p95Order': stat['p95_order_size'],
                 'maxOrder': stat['max_order_size'],
-                'note': build_note(stat, protect_days, lot, on_order, abc),
+                'note': build_note(stat, protect_days, lot, on_order, abc, is_declining, older_mean),
             })
 
         if args.dry_run:
@@ -687,9 +749,13 @@ def main():
     mto_count = int(df_out['mto_recommended'].sum())
     if mto_count:
         logging.info(f'  うちCランク×間欠需要につき受注発注推奨（提案対象外）: {mto_count:,}件')
+    declining_count = int(df_out['is_declining'].sum())
+    if declining_count:
+        logging.info(f'  うち直近{DECLINE_TREND_MONTHS}ヶ月ベースに切り替え（減少トレンド検出）: {declining_count:,}件')
+    eol_count = int(df_out['eol_flagged'].sum())
     total_amount = sum(p['amount'] for p in proposals)
     logging.info(f'発注提案: {len(proposals):,}件 / 合計 {total_amount:,.0f}円'
-                 f'（月平均{min_mean}個以上・除外設定{len(exclusions)}件を反映）')
+                 f'（月平均{min_mean}個以上・除外設定{len(exclusions)}件・終売設定{eol_count}件を反映）')
     excess_total = sum(r['excessAmount'] for r in excess_rows)
     logging.info(f'過剰在庫: {len(excess_rows):,}件 / 過剰額合計 {excess_total:,.0f}円'
                  f'（推奨の{EXCESS_RATIO}倍超・超過{EXCESS_MIN_QTY}個以上が対象）')
