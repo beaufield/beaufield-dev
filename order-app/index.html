@@ -1126,7 +1126,7 @@
     </div>
     <div class="form-group">
       <label>発注限時刻（任意）</label>
-      <input type="time" id="new-sup-deadline" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:14px;font-family:inherit;background:var(--surface);color:var(--text)">
+      <input type="time" id="new-sup-deadline" step="1800" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:14px;font-family:inherit;background:var(--surface);color:var(--text)">
     </div>
     <div class="form-group">
       <label>備考（任意・最低発注金額など。締め時間は上の欄へ）</label>
@@ -1135,6 +1135,26 @@
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="closeModal('modal-add-supplier')">キャンセル</button>
       <button class="btn btn-primary" id="sup-modal-save-btn" onclick="saveSupplierModal()">追加</button>
+    </div>
+  </div>
+</div>
+
+<!-- モーダル: ロット（最低注文数）設定 -->
+<div class="modal-overlay" id="modal-lot">
+  <div class="modal">
+    <div class="modal-title">ロット（最低注文数）を設定</div>
+    <div id="lot-modal-name" style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:14px;padding:9px 12px;background:var(--bg);border-radius:8px;line-height:1.4;"></div>
+    <input type="hidden" id="lot-modal-code">
+    <div class="form-group">
+      <label>ロット数（最低注文数）</label>
+      <input type="number" id="lot-modal-value" inputmode="numeric" min="1" step="1" placeholder="例: 6">
+    </div>
+    <p style="font-size:12px;color:var(--text-light);margin-bottom:4px;line-height:1.5">
+      次回以降の週次分析でも、この数値を過去の発注実績からの自動推定より優先して使います。
+    </p>
+    <div class="btn-row">
+      <button class="btn btn-secondary" onclick="closeModal('modal-lot')">キャンセル</button>
+      <button class="btn btn-primary" onclick="saveLotModal()">設定する</button>
     </div>
   </div>
 </div>
@@ -1160,7 +1180,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.39.0'; // 発注限時刻・直近発注の赤字強調・発注数タップ選択・手動ロット設定を追加
+const APP_VERSION    = 'v1.39.1'; // ロット設定を専用モーダルに変更・発注限時刻を30分単位に
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -4135,7 +4155,7 @@ function renderProposalList() {
               <span>在庫 <b>${p.stock}</b> ${onOrder}→ 推奨 <b>${p.recommended}</b></span>
               <span>発注数 <input type="number" class="prop-qty" value="${p.proposedQty}" min="1" step="1"></span>
               <span class="prop-qty-chips">${PROP_QTY_CHIPS.map(v => `<button type="button" class="prop-qty-chip${p.proposedQty === v ? ' active' : ''}" onclick="setPropQty(this,${v})">${v}</button>`).join('')}</span>
-              <button type="button" class="prop-lot-btn" onclick="setLotOverride('${escAttr(p.code)}','${escAttr(p.name)}')">ロット ${p.lot} ✏️</button>
+              <button type="button" class="prop-lot-btn" onclick="openLotModal('${escAttr(p.code)}','${escAttr(p.name)}')">ロット ${p.lot} ✏️</button>
               <span class="prop-item-amount">${formatItemAmount(unitCost, p.proposedQty)}</span>
             </div>
             ${lastOrder ? `<div class="prop-item-stats" style="margin-top:2px;font-size:11px">${lastOrder}</div>` : ''}
@@ -4488,12 +4508,19 @@ function renderLotOverrides() {
     </div>`;
 }
 
-async function setLotOverride(code, name) {
+function openLotModal(code, name) {
   const p = proposalsData.proposals.find(x => x.code === code);
-  const current = p && p.lot > 1 ? String(p.lot) : '';
-  const input = prompt(`「${name}」のロット（最低注文数）を入力してください。\n次回以降の週次分析でも、この数値を過去実績からの自動推定より優先して使います。`, current);
-  if (input === null) return; // キャンセル
-  const lot = parseInt(input, 10);
+  document.getElementById('lot-modal-code').value = code;
+  document.getElementById('lot-modal-name').textContent = name;
+  document.getElementById('lot-modal-value').value = (p && p.lot > 1) ? p.lot : '';
+  openModal('modal-lot');
+  setTimeout(() => document.getElementById('lot-modal-value').focus(), 150);
+}
+
+async function saveLotModal() {
+  const code = document.getElementById('lot-modal-code').value;
+  const name = document.getElementById('lot-modal-name').textContent;
+  const lot  = parseInt(document.getElementById('lot-modal-value').value, 10);
   if (!(lot > 0)) { showToast('1以上の整数を入力してください', 'error'); return; }
   showLoading('ロット設定を保存中...');
   try {
@@ -4501,10 +4528,12 @@ async function setLotOverride(code, name) {
     if (res.success) {
       proposalsData.lotOverrides = proposalsData.lotOverrides.filter(x => x.code !== code);
       proposalsData.lotOverrides.push({ code, name, lot });
+      const p = proposalsData.proposals.find(x => x.code === code);
       if (p) {
         p.lot = lot;
         p.proposedQty = computeProposedQty(p);
       }
+      closeModal('modal-lot');
       renderProposalList();
       showToast(`「${name}」のロットを${lot}に設定しました`, 'success');
     } else {
