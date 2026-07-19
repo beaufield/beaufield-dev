@@ -620,8 +620,10 @@
     .prop-badge.sporadic { background: #f5f5f5; color: #616161; }
     .prop-item-stats  { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-size: 13px; flex-wrap: wrap; }
     .prop-qty         { width: 64px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; font-weight: 700; text-align: center; }
+    .prop-item-amount { margin-left: auto; font-weight: 700; font-size: 13px; color: var(--text); }
     .prop-note        { font-size: 11px; color: var(--text-light); margin-top: 4px; line-height: 1.5; }
     .prop-excl-btn    { margin-left: auto; padding: 4px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-light); cursor: pointer; white-space: nowrap; }
+    .prop-group-summary { font-size: 13px; font-weight: 700; text-align: right; margin-top: 10px; color: var(--text); }
   </style>
 </head>
 <body>
@@ -1086,7 +1088,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.29.0'; // 提案タブ改善（メーカー別アコーディオン・発注済み未入荷の表示）
+const APP_VERSION    = 'v1.30.0'; // 適正在庫Phase A: 提案タブに仕入金額表示（行・メーカー小計・選択サマリー）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -3953,8 +3955,9 @@ function renderProposalList() {
           const badgeCls = PROP_PATTERN_CLASS[p.pattern] || 'sporadic';
           const note = p.aiNote || p.note || '';
           const onOrder = p.onOrder > 0 ? `<span style="color:var(--text-light)">＋発注済 <b>${p.onOrder}</b></span> ` : '';
+          const unitCost = parseFloat(p.unitCost) || 0;
           return `
-          <div class="prop-item" data-code="${escHtml(p.code)}">
+          <div class="prop-item" data-code="${escHtml(p.code)}" data-unit-cost="${unitCost}">
             <div class="prop-item-top">
               <input type="checkbox" class="prop-check" checked>
               <div class="prop-item-name">${escHtml(p.name)}
@@ -3965,27 +3968,67 @@ function renderProposalList() {
             <div class="prop-item-stats">
               <span>在庫 <b>${p.stock}</b> ${onOrder}→ 推奨 <b>${p.recommended}</b></span>
               <span>発注数 <input type="number" class="prop-qty" value="${p.proposedQty}" min="1" step="1">${p.lot > 1 ? `<span style="font-size:11px;color:var(--text-light)"> ロット${p.lot}</span>` : ''}</span>
+              <span class="prop-item-amount">${formatItemAmount(unitCost, p.proposedQty)}</span>
             </div>
             ${note ? `<div class="prop-note">${escHtml(note)}</div>` : ''}
           </div>`;
         }).join('');
         const totalQty = g.items.reduce((s, p) => s + (p.proposedQty || 0), 0);
+        const totalAmount = g.items.reduce((s, p) => s + (parseFloat(p.unitCost) || 0) * (p.proposedQty || 0), 0);
         const isOpen = propOpenGroups.has(code);
         return `
         <div class="card prop-group${isOpen ? ' open' : ''}" id="prop-group-${escHtml(code)}">
           <div class="prop-group-head" onclick="toggleProposalGroup('${escAttr(code)}')">
             <span class="prop-group-chev">▶</span>
             <span class="prop-group-name">${escHtml(g.name)}</span>
-            <span class="prop-group-count">${g.items.length}件 / 計${totalQty}個</span>
+            <span class="prop-group-count">${g.items.length}件 / 計${totalQty}個 / ${formatYen(totalAmount)}</span>
           </div>
           <div class="prop-group-body">
             ${items}
+            <div class="prop-group-summary" id="prop-summary-${escHtml(code)}">選択中: ${g.items.length}件 / ${formatYen(totalAmount)}</div>
             <button class="btn btn-primary" style="margin-top:10px" onclick="startOrderFromProposals('${escAttr(code)}')">🛒 チェックした商品で発注画面へ</button>
           </div>
         </div>`;
       }).join('');
   }
   renderProposalExclusions();
+}
+
+// 金額表示（¥12,400 形式）。仕入単価0円（マスター未整備）の商品行は「—」表示にする
+function formatYen(n) {
+  return '¥' + Math.round(n || 0).toLocaleString('ja-JP');
+}
+function formatItemAmount(unitCost, qty) {
+  if (!unitCost) return '—';
+  return formatYen(unitCost * (parseFloat(qty) || 0));
+}
+
+// チェック・数量変更のたびに該当行の金額とグループの選択サマリーを再計算する
+document.addEventListener('change', handlePropItemInputChange);
+document.addEventListener('input', handlePropItemInputChange);
+function handlePropItemInputChange(e) {
+  if (!e.target.matches('.prop-check, .prop-qty')) return;
+  const item = e.target.closest('.prop-item');
+  const group = e.target.closest('.prop-group');
+  if (!item || !group) return;
+  const unitCost = parseFloat(item.dataset.unitCost) || 0;
+  const qty = parseFloat(item.querySelector('.prop-qty').value) || 0;
+  const amountEl = item.querySelector('.prop-item-amount');
+  if (amountEl) amountEl.textContent = formatItemAmount(unitCost, qty);
+  updatePropGroupSummary(group);
+}
+function updatePropGroupSummary(group) {
+  const summaryEl = group.querySelector('.prop-group-summary');
+  if (!summaryEl) return;
+  let count = 0, amount = 0;
+  group.querySelectorAll('.prop-item').forEach(item => {
+    if (!item.querySelector('.prop-check').checked) return;
+    count++;
+    const unitCost = parseFloat(item.dataset.unitCost) || 0;
+    const qty = parseFloat(item.querySelector('.prop-qty').value) || 0;
+    amount += unitCost * qty;
+  });
+  summaryEl.textContent = `選択中: ${count}件 / ${formatYen(amount)}`;
 }
 
 // グループ開閉（開閉状態は再描画後も維持する）
