@@ -1,6 +1,6 @@
 // ============================================================
 // Beaufield 発注アプリ - Google Apps Script バックエンド
-// Version: v1.21.0
+// Version: v1.22.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.21.0';
+const VERSION         = 'v1.22.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -328,7 +328,9 @@ function getProductMaster() {
     discontinued:    findColIdxGAS(headers, '廃番'),
     stockManagement: findColIdxGAS(headers, '在庫有無'),
     lastSaleDate:    findColIdxGAS(headers, '最終売上日'),
-    stock:           findColIdxGAS(headers, '在庫数')
+    stock:           findColIdxGAS(headers, '在庫数'),
+    shelfMain:       findColIdxGAS(headers, '棚番１(本)'),
+    shelfSub:        findColIdxGAS(headers, '棚番１(枝)')
   };
 
   const products = [];
@@ -336,6 +338,11 @@ function getProductMaster() {
     const r    = data[i];
     const name = colMap.name !== -1 ? String(r[colMap.name] || '').trim() : '';
     if (!name) continue;
+    // 棚番: 「本」（英字の棚区画）＋「枝」（棚内の位置番号）を連結。
+    // 「本」が未入力（空欄）の商品は棚番未設定として扱う（「枝」だけ入っていても既定値000のため無視）
+    const shelfMainRaw = colMap.shelfMain !== -1 ? String(r[colMap.shelfMain] || '').trim() : '';
+    const shelfSubRaw  = colMap.shelfSub  !== -1 ? String(r[colMap.shelfSub]  || '').trim() : '';
+    const shelfNo       = shelfMainRaw ? (shelfMainRaw + shelfSubRaw) : '';
     products.push({
       code:            colMap.code !== -1            ? String(r[colMap.code]            || '').trim()                                        : '',
       name:            name,
@@ -350,6 +357,7 @@ function getProductMaster() {
       stockManagement: colMap.stockManagement !== -1 ? String(r[colMap.stockManagement] || '').trim()                                        : '',
       lastSaleDate:    colMap.lastSaleDate !== -1    ? String(r[colMap.lastSaleDate]    || '').trim()                                        : '',
       stock:           colMap.stock !== -1           ? String(r[colMap.stock]           || '').trim()                                        : '',
+      shelfNo:         shelfNo,
       reorderPoint:    null,
       reorderUpdatedAt: ''
     });

@@ -1181,7 +1181,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.41.0'; // 適正在庫の基準を発注提案（需要分析）に統一
+const APP_VERSION    = 'v1.42.0'; // 提案タブの商品表示順を棚番→JANコード順に
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -4137,8 +4137,19 @@ function renderProposalList() {
     props.forEach(p => {
       (groups[p.supplierCode] = groups[p.supplierCode] || { name: p.supplierName, items: [] }).items.push(p);
     });
+    // 商品マスターから棚番を引けるようマップ化（提案データ自体には棚番が無いため）
+    const shelfMap = new Map(productMaster.map(p => [p.code, { shelf: p.shelfNo || '', jan: p.jan || '' }]));
     Object.values(groups).forEach(g => {
       g.totalAmount = g.items.reduce((s, p) => s + (parseFloat(p.unitCost) || 0) * (p.proposedQty || 0), 0);
+      // 商品の並び順: 棚番→JANコード順（棚番未設定の商品は末尾にまとめる）
+      g.items.sort((a, b) => {
+        const sa = shelfMap.get(a.code) || { shelf: '', jan: '' };
+        const sb = shelfMap.get(b.code) || { shelf: '', jan: '' };
+        const aHas = sa.shelf !== '', bHas = sb.shelf !== '';
+        if (aHas !== bHas) return aHas ? -1 : 1;
+        if (sa.shelf !== sb.shelf) return sa.shelf.localeCompare(sb.shelf, 'ja');
+        return sa.jan.localeCompare(sb.jan, undefined, { numeric: true });
+      });
     });
     const sortedCodes = proposalsSort === 'amount'
       ? Object.keys(groups).sort((a, b) => groups[b].totalAmount - groups[a].totalAmount)
