@@ -443,7 +443,7 @@
     }
     .qty-info-row.show { display: flex; }
 
-    /* 在庫・発注点・推奨発注数 横1行コンテナ */
+    /* 在庫・適正在庫・推奨発注数 横1行コンテナ */
     .qty-badges {
       display: flex;
       flex-direction: row;
@@ -467,7 +467,7 @@
     }
     .qty-stock.show { display: block; }
 
-    /* 発注点バッジ（数量モーダル内） */
+    /* 適正在庫バッジ（数量モーダル内） */
     .qty-reorder {
       display: none;
       flex: 1 1 0;
@@ -999,7 +999,7 @@
     <div class="modal-title" id="qty-title">数量を選択</div>
     <div class="modal-sub" id="qty-sub"></div>
 
-    <!-- 在庫数・発注点・推奨発注数（横1行）＋直近注文（別行） -->
+    <!-- 在庫数・適正在庫・推奨発注数（横1行）＋直近注文（別行） -->
     <div class="qty-info-row" id="qty-info-row">
       <div class="qty-badges" id="qty-badges">
         <div class="qty-stock" id="qty-stock"></div>
@@ -1181,7 +1181,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.40.1'; // 最低発注数のタップ選択チップに3・10を追加
+const APP_VERSION    = 'v1.41.0'; // 適正在庫の基準を発注提案（需要分析）に統一
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1926,19 +1926,19 @@ function openQtyModal(product, isHandwritten) {
     stockEl.classList.remove('show');
   }
 
-  // 発注点バッジ
+  // 適正在庫バッジ
   const reorderEl = document.getElementById('qty-reorder');
   const hasReorder = !isHandwritten && product.reorderPoint !== null && product.reorderPoint !== undefined;
   if (hasReorder) {
     const stockNum = parseFloat(product.stock) || 0;
     const isBelow  = stockNum < product.reorderPoint;
-    reorderEl.textContent = `${isBelow ? '⚠️ ' : ''}月平均: ${product.reorderPoint}`;
+    reorderEl.textContent = `${isBelow ? '⚠️ ' : ''}適正在庫: ${product.reorderPoint}`;
     reorderEl.className   = `qty-reorder show ${isBelow ? 'warning' : 'normal'}`;
   } else {
     reorderEl.className = 'qty-reorder';
   }
 
-  // 推奨発注数バッジ: 発注点 - 在庫数 > 0 のときのみ表示
+  // 推奨発注数バッジ: 適正在庫 - 在庫数 > 0 のときのみ表示
   const recEl = document.getElementById('qty-recommended');
   recEl.classList.remove('show');
   delete recEl.dataset.recommended;
@@ -3820,7 +3820,7 @@ function renderInventoryList() {
     // 在庫数フィルター（要発注フィルターON時は在庫数フィルター無効）
     const stock = parseFloat(p.stock) || 0;
     if (!invReorderFilterActive && stock > stockThreshold) return false;
-    // 要発注フィルター（在庫 < 発注点）
+    // 要発注フィルター（在庫 < 適正在庫）
     if (invReorderFilterActive) {
       if (p.reorderPoint === null || p.reorderPoint === undefined) return false;
       if (stock >= p.reorderPoint) return false;
@@ -3849,10 +3849,10 @@ function renderInventoryList() {
     filtered.sort((a, b) => (parseFloat(a.stock)||0) - (parseFloat(b.stock)||0));
   }
 
-  // 発注点更新日時を取得（データがある最初の商品から）
+  // 適正在庫更新日時を取得（データがある最初の商品から）
   const reorderDateSample = productMaster.find(p => p.reorderUpdatedAt)?.reorderUpdatedAt || '';
   const reorderDateLabel  = reorderDateSample
-    ? `<span style="color:var(--text-light);font-size:11px;margin-left:8px">発注点 ${reorderDateSample}更新</span>`
+    ? `<span style="color:var(--text-light);font-size:11px;margin-left:8px">適正在庫 ${reorderDateSample}更新</span>`
     : '';
 
   const header = document.getElementById('inv-list-header');
@@ -3879,7 +3879,7 @@ function renderInventoryList() {
     const stockCls    = stock <= 0 ? 'color:var(--danger);font-weight:bold' : (isBelow ? 'color:#CC6600;font-weight:bold' : '');
     const rowBorder   = isBelow ? 'border-left:3px solid var(--danger);padding-left:8px;' : '';
     const reorderBadge = hasReorder
-      ? `<div style="font-size:11px;${isBelow ? 'color:var(--danger);font-weight:bold' : 'color:var(--text-light)'}">発注点:${p.reorderPoint}</div>`
+      ? `<div style="font-size:11px;${isBelow ? 'color:var(--danger);font-weight:bold' : 'color:var(--text-light)'}">適正在庫:${p.reorderPoint}</div>`
       : '';
     const hist        = productHistory[p.code] || productHistory[p.jan] || null;
     const lastOrder   = hist && hist.date
