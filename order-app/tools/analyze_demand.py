@@ -1,12 +1,19 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.8.1
+# Version: v1.9.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
 #   需要パターンを分類して推奨在庫・発注提案を算出する。
 #   結果は GAS の「発注提案」シートへ書き込み（→アプリの発注提案タブに表示、
 #   LINE WORKS 通知はGAS側が担当）、ローカルにも CSV / JSON を出力する。
+#
+#   v1.9.0〜: 分析対象の全商品（提案対象かどうかに関わらず）の推奨在庫（recommended）を
+#   「発注点マスター」にも書き込む（updateReorderPoints流用）。これにより通常の発注画面・
+#   在庫一覧の「適正在庫」バッジ／「推奨発注数」バッジ／「要発注」フィルターが、提案タブと
+#   同じ需要分析ベースの基準に統一される。旧・calc_reorder_point.py（6ヶ月月平均のみの
+#   簡易ロジック）はこの統一により役目を終えたため使用停止（タスクスケジューラに登録している
+#   場合は無効化すること。登録したまま残すと月次実行のたびに古い基準で上書きしてしまう）。
 #
 # 需要パターン分類（Syntetos-Boylan 分類を月次に適用）:
 #   安定型      : ほぼ毎月出て、量のばらつきが小さい
@@ -422,6 +429,33 @@ def build_note(stat, protect_days, lot, on_order=0, abc='A', is_declining=False,
     return '。'.join(parts)
 
 
+def post_reorder_points(gas_url, api_key, results, analyzed_at):
+    # 発注画面・在庫一覧の「適正在庫」バッジ用に、分析対象の全商品分の推奨在庫を送信する
+    # （提案タブに出る・出ないに関わらず。0件は除外＝データ不足や需要ゼロの商品は対象外のまま）
+    products = [
+        {'code': r['code'], 'reorderPoint': r['recommended'], 'updatedAt': analyzed_at}
+        for r in results if r['recommended'] > 0
+    ]
+    payload = {
+        'action': 'updateReorderPoints',
+        'api_key': api_key,
+        'products': products,
+    }
+    logging.info(f'GASへ適正在庫（発注点マスター）を送信中... ({len(products)}件)')
+    for attempt in range(1, 4):
+        try:
+            resp = requests.post(gas_url, json=payload, timeout=300)
+            resp.raise_for_status()
+            result = resp.json()
+            if result.get('success'):
+                logging.info(f'✅ 適正在庫の書き込み成功: {result.get("count")}件 (試行{attempt}回目)')
+                return True
+            logging.warning(f'GASエラー応答 (試行{attempt}): {result.get("error")}')
+        except Exception as e:
+            logging.warning(f'通信エラー (試行{attempt}): {e}')
+    return False
+
+
 def post_proposals(gas_url, api_key, proposals, excess, kpi, analyzed_at):
     payload = {
         'action': 'updateOrderProposals',
@@ -456,7 +490,7 @@ def main():
 
     log_file = setup_logger()
     logging.info('=' * 60)
-    logging.info('Beaufield 需要分析・発注提案スクリプト v1.8.1 開始'
+    logging.info('Beaufield 需要分析・発注提案スクリプト v1.9.0 開始'
                  + ('（dry-run）' if args.dry_run else ''))
 
     config = load_config()
@@ -853,6 +887,9 @@ def main():
     else:
         if not post_proposals(config['gas_url'], config['api_key'], proposals, excess_rows, kpi, analyzed_at):
             logging.error('GASへの発注提案送信が3回すべて失敗しました。ログ: %s', log_file)
+            sys.exit(1)
+        if not post_reorder_points(config['gas_url'], config['api_key'], results, analyzed_at):
+            logging.error('GASへの適正在庫送信が3回すべて失敗しました。ログ: %s', log_file)
             sys.exit(1)
 
     logging.info('処理完了')

@@ -1,6 +1,6 @@
 // ============================================================
 // Beaufield 発注アプリ - Google Apps Script バックエンド
-// Version: v1.20.0
+// Version: v1.21.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.20.0';
+const VERSION         = 'v1.21.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -360,7 +360,7 @@ function getProductMaster() {
     const rsh = ss.getSheetByName(SHEET_REORDER);
     if (rsh && rsh.getLastRow() > 1) {
       const rdata = rsh.getDataRange().getValues();
-      // ヘッダー: [0]=商品コード [1]=月平均出荷数 [2]=更新日時
+      // ヘッダー: [0]=商品コード [1]=適正在庫（需要分析ベース） [2]=更新日時
       const reorderMap = {};
       for (let i = 1; i < rdata.length; i++) {
         const code = String(rdata[i][0] || '').trim();
@@ -387,7 +387,9 @@ function getProductMaster() {
 }
 
 // ============================================================
-// POST: 発注点マスター更新（Pythonスクリプトからの自動実行用）
+// POST: 発注点マスター（適正在庫）更新（Pythonスクリプトからの自動実行用）
+// v1.21.0〜: analyze_demand.py（需要分析）が全分析対象商品の適正在庫を送信する。
+//           旧calc_reorder_point.py（6ヶ月月平均のみ）は基準統一のため使用停止。
 // APIキー認証のみ（セッション不要）
 // リクエスト: { action: 'updateReorderPoints', api_key: '...', products: [{code, reorderPoint, updatedAt}] }
 // レスポンス: { success: true, count: N }
@@ -398,7 +400,7 @@ function updateReorderPoints(products) {
   if (!sh) sh = ss.insertSheet(SHEET_REORDER);
 
   sh.clearContents();
-  sh.getRange(1, 1, 1, 3).setValues([['商品コード', '月平均出荷数', '更新日時']]);
+  sh.getRange(1, 1, 1, 3).setValues([['商品コード', '適正在庫', '更新日時']]);
 
   if (!products || products.length === 0) {
     return { success: true, count: 0 };
@@ -1511,7 +1513,7 @@ function initializeSheets() {
 
   ensureSheet(SHEET_HISTORY,  ['発注No','発注日','発注先コード','発注先名','FAX番号','担当者','品目数','出力方法','登録日時','user_id']);
   ensureSheet(SHEET_ITEMS,    ['発注No','JANコード','Beaufieldコード','商品名','数量','単位','備考','手書きフラグ','登録日時']);
-  ensureSheet(SHEET_REORDER,  ['商品コード','月平均出荷数','更新日時']);
+  ensureSheet(SHEET_REORDER,  ['商品コード','適正在庫','更新日時']);
 
   const suppSh = ensureSheet(SHEET_SUPPLIERS, ['コード','名称','FAX','更新日時','発注方法']);
   if (suppSh.getLastRow() <= 1) {
