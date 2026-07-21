@@ -12,7 +12,7 @@
  *   SYNC_TOKEN    … 同期スクリプト用の共有シークレット（ランダム長文字列）
  */
 
-const VERSION = '1.6.0';
+const VERSION = '1.7.0';
 const APP_NAME = 'project-dashboard';
 const CACHE_TTL_SESSION = 900; // セッション検証キャッシュ 15分（他アプリと同一パターン）
 
@@ -50,6 +50,26 @@ const ASSET_COLS = [
   'memo', 'disposition'
 ];
 const MANUAL_ASSET_COLS = ['memo', 'disposition'];
+
+// jobs シートの列定義（v1.7.0）。「自動ジョブ監視」＝タスクスケジューラ/GitHub Actionsで
+// 動くはずの自動ジョブについて、動いたかどうか（L1/L2）ではなく成果物の中身が想定通りか
+// （L3=結果検証）を dashboard_sync.py 側（job_scan.py）が各ジョブのログ/実行履歴を直接読んで
+// 判定した結果を保持する。projects/assets とも別シート・別モデル。
+// last_status … ログ内容から機械的に判定した 'ok'/'error'/'unknown'。
+//   タスクスケジューラの「成功」表示は一切参照しない（過去に信用できないと判明したため）
+// checks … JSON配列 [{key,label,value,status,note}]。status は 'ok'/'warn'/'fail'。
+//   実行時点の値をしきい値と比較して job_scan.py 側で確定させた結果（時刻に依存しないため）
+// expected_interval_hours/grace_hours … 「遅延・停止」判定用のしきい値。この2つを使った
+//   現在時刻依存の判定（動いてからどれだけ経ったか）は index.html 側で描画時に計算する
+const JOB_COLS = [
+  'id', 'name', 'category', 'schedule_label',
+  'expected_interval_hours', 'grace_hours',
+  'last_run_at', 'last_status', 'last_message', 'checks',
+  'synced_at', 'active',
+  // ↓手動管理列（同期で上書きしない）
+  'memo', 'disposition'
+];
+const MANUAL_JOB_COLS = ['memo', 'disposition'];
 
 // ============================================================
 // 初期化（GASエディタから一度だけ手動実行する）
@@ -233,6 +253,12 @@ function doPost(e) {
         }
         return jsonResponse(syncAssets_(p));
       }
+      case 'syncJobs': {
+        if (String(p.token || '') !== prop_('SYNC_TOKEN')) {
+          return jsonResponse({ success: false, error: 'SYNC_TOKEN_INVALID' });
+        }
+        return jsonResponse(syncJobs_(p));
+      }
       case 'updateMeta': {
         const guard = authGuard_(p.session_token || '');
         if (guard) return guard;
@@ -414,6 +440,87 @@ function assetsSheet_() {
 }
 
 // ============================================================
+// 同期: 自動ジョブ監視結果を upsert（手動管理列は保持）— v1.7.0
+// syncAssets_() と同じ作法。jobs シートが無ければ自動で作る（下記 jobsSheet_ 参照）
+// ============================================================
+function syncJobs_(p) {
+  const jobs = p.jobs || [];
+  if (!jobs.length) return { success: false, error: 'ジョブが空です' };
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const sh = jobsSheet_();
+    const data = sh.getDataRange().getValues();
+    const header = data[0];
+    const colIdx = {};
+    header.forEach((h, i) => colIdx[h] = i);
+
+    const existing = {};
+    for (let i = 1; i < data.length; i++) {
+      const id = String(data[i][colIdx['id']]);
+      const manual = {};
+      MANUAL_JOB_COLS.forEach(c => manual[c] = data[i][colIdx[c]]);
+      existing[id] = { row: i + 1, manual: manual };
+    }
+
+    const syncedAt = new Date();
+    const syncedIds = {};
+    const newRows = [];
+
+    jobs.forEach(j => {
+      syncedIds[j.id] = true;
+      const rowValues = JOB_COLS.map(c => {
+        if (MANUAL_JOB_COLS.indexOf(c) >= 0) {
+          // 手動列: Takashiの編集を同期で踏み潰さない（projects/assets側と同じ規約）
+          const existingVal = existing[j.id] ? existing[j.id].manual[c] : '';
+          if (existingVal !== '' && existingVal != null) return existingVal;
+          return j[c] != null ? j[c] : '';
+        }
+        switch (c) {
+          case 'checks':    return JSON.stringify(j.checks || []);
+          case 'synced_at': return syncedAt;
+          case 'active':    return true;
+          default:          return j[c] != null ? j[c] : '';
+        }
+      });
+      if (existing[j.id]) {
+        sh.getRange(existing[j.id].row, 1, 1, JOB_COLS.length).setValues([rowValues]);
+      } else {
+        newRows.push(rowValues);
+      }
+    });
+
+    if (newRows.length) {
+      sh.getRange(sh.getLastRow() + 1, 1, newRows.length, JOB_COLS.length).setValues(newRows);
+    }
+
+    // 今回の同期に含まれなかった既存ジョブは active=FALSE（監視対象から外れた・行は消さない）
+    Object.keys(existing).forEach(id => {
+      if (!syncedIds[id]) {
+        sh.getRange(existing[id].row, colIdx['active'] + 1).setValue(false);
+      }
+    });
+
+    return { success: true, upserted: jobs.length, new_count: newRows.length };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// jobs シートを取得する。無ければ見出し付きで作る（assetsSheet_ と同じパターン）。
+function jobsSheet_() {
+  const ss = SpreadsheetApp.openById(prop_('DB_SHEET_ID'));
+  let sh = ss.getSheetByName('jobs');
+  if (!sh) {
+    sh = ss.insertSheet('jobs');
+    sh.getRange(1, 1, 1, JOB_COLS.length).setValues([JOB_COLS]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+// ============================================================
 // メタ更新: 手動管理列のみ変更可（読み取り専用ビュー方針の担保）
 // projects は priority / manual_ball / memo / effort、assets は memo / disposition
 // ============================================================
@@ -423,6 +530,8 @@ function updateMeta_(p) {
 
   // 資産（id が "skill:xxx" 等）は assets シート側を更新する
   if (p.target === 'asset') return updateAssetMeta_(p, id);
+  // 自動ジョブは jobs シート側を更新する
+  if (p.target === 'job') return updateJobMeta_(p, id);
 
   const ss = SpreadsheetApp.openById(prop_('DB_SHEET_ID'));
   const sh = ss.getSheetByName('projects');
@@ -458,6 +567,24 @@ function updateAssetMeta_(p, id) {
     }
   }
   return { success: false, error: '資産が見つかりません: ' + id };
+}
+
+function updateJobMeta_(p, id) {
+  const sh = jobsSheet_();
+  const data = sh.getDataRange().getValues();
+  const header = data[0];
+  const colIdx = {};
+  header.forEach((h, i) => colIdx[h] = i);
+
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][colIdx['id']]) === id) {
+      MANUAL_JOB_COLS.forEach(c => {
+        if (p[c] !== undefined) sh.getRange(i + 1, colIdx[c] + 1).setValue(p[c]);
+      });
+      return { success: true };
+    }
+  }
+  return { success: false, error: 'ジョブが見つかりません: ' + id };
 }
 
 // ============================================================
@@ -517,9 +644,9 @@ function getData_() {
     if (obj.active === true) projects.push(obj);
     if (obj.synced_at && (!lastSync || obj.synced_at > lastSync)) lastSync = obj.synced_at;
   }
-  // 資産は同じレスポンスに載せる（往復とセッション検証を増やさないため）
+  // 資産・自動ジョブは同じレスポンスに載せる（往復とセッション検証を増やさないため）
   return { success: true, version: VERSION, synced_at: lastSync,
-           projects: projects, assets: getAssets_(ss) };
+           projects: projects, assets: getAssets_(ss), jobs: getJobs_(ss) };
 }
 
 // active な全資産。初回同期前は assets シートが存在しないので、その場合は空配列を返す
@@ -548,6 +675,31 @@ function getAssets_(ss) {
     if (obj.active === true) assets.push(obj);
   }
   return assets;
+}
+
+// active な全自動ジョブ。初回同期前は jobs シートが存在しないので、その場合は空配列を返す
+// （GET でシートを作らない。getAssets_ と同じパターン）
+function getJobs_(ss) {
+  const sh = ss.getSheetByName('jobs');
+  if (!sh) return [];
+  const data = sh.getDataRange().getValues();
+  if (data.length < 2) return [];
+  const header = data[0];
+
+  const jobs = [];
+  for (let i = 1; i < data.length; i++) {
+    const obj = {};
+    header.forEach((h, j) => {
+      let v = data[i][j];
+      if (h === 'checks') {
+        try { v = JSON.parse(v || '[]'); } catch (e) { v = []; }
+      }
+      if (v instanceof Date) v = v.toISOString();
+      obj[h] = v;
+    });
+    if (obj.active === true) jobs.push(obj);
+  }
+  return jobs;
 }
 
 // ============================================================

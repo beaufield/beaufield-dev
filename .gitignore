@@ -150,6 +150,8 @@ project-dashboard/assets_meta.json
 project-dashboard/assets_usage.json
 project-dashboard/relations.json
 project-dashboard/manual_ops.json
+project-dashboard/job_scan.py
+project-dashboard/jobs_meta.json
 project-dashboard/config.json
 project-dashboard/config.example.json
 project-dashboard/同期実行.bat
