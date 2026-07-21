@@ -316,6 +316,7 @@
   <button class="tab-btn" data-tab="active" onclick="switchTab('active')">🟢 稼働中<span class="tab-count" id="cnt-active">0</span></button>
   <button class="tab-btn" data-tab="all" onclick="switchTab('all')">すべて<span class="tab-count" id="cnt-all">0</span></button>
   <button class="tab-btn" data-tab="assets" onclick="switchTab('assets')">🧰 資産<span class="tab-count" id="cnt-assets">0</span></button>
+  <button class="tab-btn" data-tab="jobs" onclick="switchTab('jobs')">⏰ 自動ジョブ<span class="tab-count" id="cnt-jobs">0</span></button>
   <select class="sort-select" id="sort-select" onchange="setSort(this.value)">
     <option value="priority">優先度順</option>
     <option value="new">新しい順</option>
@@ -343,6 +344,14 @@
   <button class="chip" data-kind="script" onclick="setKind('script')">スクリプト</button>
 </div>
 
+<!-- 自動ジョブタブ専用の絞り込み（ステータス）。カテゴリチップと入れ替えで表示する -->
+<div class="chip-row" id="status-row" style="display:none">
+  <button class="chip active" data-status="" onclick="setJobStatus('')">すべて</button>
+  <button class="chip" data-status="bad" onclick="setJobStatus('bad')">🔴 異常</button>
+  <button class="chip" data-status="warn" onclick="setJobStatus('warn')">🟡 要確認</button>
+  <button class="chip" data-status="ok" onclick="setJobStatus('ok')">🟢 正常</button>
+</div>
+
 <main>
   <div id="status-msg">読み込み中...</div>
   <div class="card-list" id="card-list"></div>
@@ -358,7 +367,7 @@
   // ============================================================
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzkuWEqpJLhERoYlosHIeazlVjl3ipIq8u3x0rp4tCU7BaqPuYt4kP78Ha5Vu4ayNWDCg/exec';
   const PORTAL_URL   = 'https://beaufield.github.io/beaufield-dev/';
-  const APP_VERSION  = '1.9.0';
+  const APP_VERSION  = '1.10.0';
   const USE_MOCK     = false; // ← 開発中は true にして data/dashboard_data.json を見る
 
   document.getElementById('header-version').textContent = 'v' + APP_VERSION;
@@ -367,9 +376,11 @@
   let session         = null;
   let allProjects      = [];
   let allAssets        = [];   // 発火待ち資産（スキル・エージェント・.bat・手動スクリプト）
+  let allJobs          = [];   // 自動ジョブ監視（L3=結果検証。タスクスケジューラ/GitHub Actionsの成果物を直接読んだ結果）
   let currentTab       = 'takashi';
   let currentCat       = '';
   let currentKind      = '';   // 資産タブの種別絞り込み
+  let currentJobStatus = '';  // 自動ジョブタブのステータス絞り込み（''/bad/warn/ok）
   let currentSort      = 'priority';  // 'priority'（既定・並び替え可）/ 'new'（更新が新しい順）/ 'effort'（工数が多い順）
   let metaEditId       = null;        // ⚙アイコンで開く編集パネル（単一開閉）
   let textExpandedIds  = new Set();   // カード本体クリックで全文表示中のID（複数可）
@@ -414,7 +425,8 @@
           success: true,
           synced_at: mock.generated_at,
           projects: mock.projects,
-          assets: mock.assets
+          assets: mock.assets,
+          jobs: mock.jobs
         }))
       : fetch(GAS_URL + '?action=data&session_token=' + encodeURIComponent(session.token))
           .then(r => r.json());
@@ -430,6 +442,7 @@
         }
         allProjects = data.projects || [];
         allAssets   = data.assets || [];   // GAS未デプロイ時は空配列（既存タブには影響しない）
+        allJobs     = data.jobs || [];     // 同上
         document.getElementById('synced-at').textContent =
           data.synced_at ? ('最終同期: ' + fmtDateTime(data.synced_at)) : '';
         render();
@@ -446,12 +459,14 @@
   function switchTab(tab) {
     currentTab = tab;
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-    // 資産はプロジェクトと別モデル（カテゴリ絞り込みも並び替えも意味が違う）ので、
-    // 資産タブでは種別チップに入れ替え、ソートセレクトは隠して忘却度順に固定する
+    // 資産・自動ジョブはプロジェクトと別モデル（カテゴリ絞り込みも並び替えも意味が違う）ので、
+    // それぞれ専用のチップ行に入れ替え、ソートセレクトは隠して固定順にする
     const isAssets = tab === 'assets';
-    document.getElementById('chip-row').style.display = isAssets ? 'none' : '';
+    const isJobs   = tab === 'jobs';
+    document.getElementById('chip-row').style.display = (isAssets || isJobs) ? 'none' : '';
     document.getElementById('kind-row').style.display = isAssets ? '' : 'none';
-    document.getElementById('sort-select').style.display = isAssets ? 'none' : '';
+    document.getElementById('status-row').style.display = isJobs ? '' : 'none';
+    document.getElementById('sort-select').style.display = (isAssets || isJobs) ? 'none' : '';
     render();
   }
 
@@ -464,6 +479,12 @@
   function setKind(kind) {
     currentKind = kind;
     document.querySelectorAll('#kind-row .chip').forEach(c => c.classList.toggle('active', c.dataset.kind === kind));
+    render();
+  }
+
+  function setJobStatus(status) {
+    currentJobStatus = status;
+    document.querySelectorAll('#status-row .chip').forEach(c => c.classList.toggle('active', c.dataset.status === status));
     render();
   }
 
@@ -517,8 +538,11 @@
     document.getElementById('cnt-all').textContent = allProjects.length;
     // 資産タブは「未使用が何件あるか」が本題なので、総数ではなく未使用件数をバッジに出す
     document.getElementById('cnt-assets').textContent = allAssets.filter(isUnused).length;
+    // 自動ジョブタブも同様に、総数ではなく異常/要確認件数をバッジに出す
+    document.getElementById('cnt-jobs').textContent = allJobs.filter(j => jobHealth(j).cls !== 'stale-ok').length;
 
     if (currentTab === 'assets') { renderAssets(); return; }
+    if (currentTab === 'jobs')   { renderJobs(); return; }
 
     let list = allProjects.filter(p => matchesTab(p, currentTab));
     if (currentCat) list = list.filter(p => p.category === currentCat);
@@ -697,6 +721,124 @@
       '<div class="exp-meta">最終使用: ' + esc(a.last_used || '記録なし') +
         '（判定元: ' + esc(a.evidence) + '）</div>' +
       '<div class="exp-meta">原本: ' + esc(a.path || '') + '</div>' +
+    '</div>';
+  }
+
+  // ============================================================
+  // 自動ジョブ監視（⏰ 自動ジョブタブ）— L3: 結果検証
+  // タスクスケジューラ/GitHub Actionsの「成功」表示ではなく、各ジョブの成果物（ログ・実行履歴）
+  // を job_scan.py が直接読んで判定した結果を表示する。「動いたか」だけでなく
+  // 「最終実行から想定間隔+猶予を超えていないか」（遅延・停止）はここ（描画時）で計算する。
+  // ============================================================
+  function jobHealth(j) {
+    const limit = (Number(j.expected_interval_hours) || 24) + (Number(j.grace_hours) || 6);
+    const hrs = j.last_run_at ? (Date.now() - new Date(j.last_run_at)) / 3600000 : NaN;
+
+    if (!j.last_run_at || isNaN(hrs)) {
+      return { cls: 'stale-bad', txt: '🔴 停止', rank: 0, detail: '実行の記録がありません' };
+    }
+    if (hrs > limit) {
+      return { cls: 'stale-bad', txt: '🔴 停止', rank: 0,
+               detail: '最終実行から' + Math.floor(hrs) + '時間経過（想定は' + limit + '時間以内）' };
+    }
+    if (j.last_status === 'error') {
+      return { cls: 'stale-bad', txt: '🔴 異常終了', rank: 0, detail: j.last_message || '' };
+    }
+    const checks = Array.isArray(j.checks) ? j.checks : [];
+    if (checks.some(c => c.status === 'fail')) {
+      return { cls: 'stale-bad', txt: '🔴 異常値', rank: 0, detail: j.last_message || '' };
+    }
+    if (j.last_status === 'unknown') {
+      return { cls: 'stale-warn', txt: '⚪ 要確認', rank: 1, detail: j.last_message || '記録を確認できませんでした' };
+    }
+    if (checks.some(c => c.status === 'warn')) {
+      return { cls: 'stale-warn', txt: '🟡 要確認', rank: 1, detail: j.last_message || '' };
+    }
+    return { cls: 'stale-ok', txt: '🟢 正常', rank: 2, detail: Math.floor(hrs) + '時間前に実行' };
+  }
+
+  function renderJobs() {
+    let list = allJobs.slice();
+    if (currentJobStatus) {
+      list = list.filter(j => jobHealth(j).cls.replace('stale-', '') === currentJobStatus);
+    }
+
+    const listEl = document.getElementById('card-list');
+    listEl.innerHTML = '';
+    if (!list.length) { showStatus('該当する自動ジョブはありません', false); return; }
+    hideStatus();
+
+    // 異常度が高い順（停止/異常 → 要確認 → 正常）→ 名前順
+    list.sort((a, b) => {
+      const ra = jobHealth(a).rank, rb = jobHealth(b).rank;
+      if (ra !== rb) return ra - rb;
+      return String(a.name).localeCompare(String(b.name));
+    });
+
+    listEl.classList.toggle('dense', list.length <= 8);
+    list.forEach(j => listEl.appendChild(buildJobCard(j)));
+  }
+
+  function buildJobCard(j) {
+    const div = document.createElement('div');
+    const textExpanded = textExpandedIds.has(j.id);
+    div.className = 'pcard' + (j.id === metaEditId ? ' expanded' : '') + (textExpanded ? ' text-expanded' : '');
+    div.id = 'pcard-' + j.id;
+    div.dataset.id = j.id;
+    div.onclick = function (e) {
+      if (e.target.closest('.rel-chip, .exp-field, .exp-btns, .drag-handle, .edit-toggle-btn')) return;
+      toggleTextExpand(j.id);
+    };
+
+    const health = jobHealth(j);
+    const checks = Array.isArray(j.checks) ? j.checks : [];
+    const checksHtml = checks.length
+      ? '<div class="pcard-next-action">' +
+          checks.map(c => {
+            const icon = c.status === 'ok' ? '✓' : c.status === 'warn' ? '⚠' : '✗';
+            return icon + ' ' + esc(c.label) + ': ' + esc(String(c.value)) +
+              (c.note ? '（' + esc(c.note) + '）' : '');
+          }).join('<br>') +
+        '</div>'
+      : '';
+    const runTxt = j.last_run_at ? fmtDateTime(j.last_run_at) : '記録なし';
+    const dispHtml = j.disposition
+      ? '<span class="manualops-badge">' + esc(j.disposition) + '</span>' : '';
+
+    div.innerHTML =
+      '<div class="pcard-row1">' +
+        '<span class="pcard-name">' + esc(j.name) + '</span>' +
+        '<span class="stale-badge ' + health.cls + '">' + health.txt + '</span>' +
+        '<button class="edit-toggle-btn" title="扱い・メモを編集" onclick="event.stopPropagation(); toggleMetaEdit(\'' + j.id + '\')">⚙</button>' +
+      '</div>' +
+      '<div class="pcard-row2">' +
+        '<span class="cat-tag">' + esc(j.category || '') + '</span>' +
+        '<span class="cat-tag">' + esc(j.schedule_label || '') + '</span>' +
+        '<span class="cat-tag">最終実行: ' + esc(runTxt) + '</span>' +
+        dispHtml +
+      '</div>' +
+      checksHtml +
+      buildJobExpandPanel(j, health);
+
+    return div;
+  }
+
+  function buildJobExpandPanel(j, health) {
+    const dispOptions = DISPOSITIONS.map(v =>
+      '<option value="' + v + '"' + ((j.disposition || '') === v ? ' selected' : '') + '>' +
+      (v === '' ? '（未設定）' : v) + '</option>').join('');
+
+    return '<div class="pcard-expand">' +
+      '<div class="exp-field"><label>扱い</label>' +
+      '<select id="disp-' + j.id + '">' + dispOptions + '</select></div>' +
+      '<div class="exp-field"><label>メモ</label>' +
+      '<textarea id="memo-' + j.id + '">' + esc(j.memo || '') + '</textarea></div>' +
+      '<div class="exp-btns">' +
+        '<button class="btn-save" id="save-' + j.id + '" onclick="event.stopPropagation(); saveJobMeta(\'' + j.id + '\')">保存</button>' +
+        '<button class="btn-cancel" onclick="event.stopPropagation(); toggleMetaEdit(\'' + j.id + '\')">閉じる</button>' +
+      '</div>' +
+      '<div class="exp-meta">' + esc(health.detail || '') + '</div>' +
+      '<div class="exp-meta">最終メッセージ: ' + esc(j.last_message || '（なし）') + '</div>' +
     '</div>';
   }
 
@@ -1058,6 +1200,57 @@
       body: JSON.stringify({
         action: 'updateMeta',
         target: 'asset',        // これが無いと projects シート側を探しに行く
+        session_token: session.token,
+        id: id,
+        disposition: disposition,
+        memo: memo
+      })
+    })
+    .then(r => r.json())
+    .then(res => {
+      if (!res.success) throw new Error(res.message || res.error || '保存失敗');
+      applyLocal();
+      showToast('保存しました');
+      render();
+    })
+    .catch(err => {
+      btn.disabled = false;
+      btn.textContent = '保存';
+      showToast('保存に失敗しました: ' + err.message, true);
+    });
+  }
+
+  // ============================================================
+  // 自動ジョブのメタ更新（disposition / memo のみ）
+  // ============================================================
+  function saveJobMeta(id) {
+    const btn = document.getElementById('save-' + id);
+    const disposition = document.getElementById('disp-' + id).value;
+    const memo        = document.getElementById('memo-' + id).value;
+
+    btn.disabled = true;
+    btn.textContent = '保存中...';
+
+    const applyLocal = () => {
+      const j = allJobs.find(x => x.id === id);
+      if (j) { j.disposition = disposition; j.memo = memo; }
+    };
+
+    if (USE_MOCK) {
+      applyLocal();
+      btn.disabled = false;
+      btn.textContent = '保存';
+      showToast('保存しました（モック）');
+      render();
+      return;
+    }
+
+    fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'updateMeta',
+        target: 'job',        // これが無いと projects シート側を探しに行く
         session_token: session.token,
         id: id,
         disposition: disposition,
