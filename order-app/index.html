@@ -914,7 +914,6 @@
         <option value="999">全て</option>
       </select>
       <button id="inv-filter-reorder-btn" onclick="toggleReorderFilter()" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);white-space:nowrap">⚠️ 要発注</button>
-      <button id="inv-sort-jan-btn" onclick="toggleJanSort()" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);white-space:nowrap">🔢 JAN順</button>
     </div>
     <div style="display:flex;gap:4px">
       <button class="inv-sale-btn inv-sale-active" data-val="yesterday" onclick="setInvSaleFilter('yesterday')">前日</button>
@@ -1181,7 +1180,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.43.0'; // 提案タブ: 一覧再描画でチェックを外した商品が再チェックされる不具合を修正
+const APP_VERSION    = 'v1.44.0'; // 在庫タブを仕入先別アコーディオン表示・棚番順に変更
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -3756,21 +3755,18 @@ function setInvSaleFilter(val) {
   renderInventoryList();
 }
 
-let invSortByJan = false;
-
-function toggleJanSort() {
-  invSortByJan = !invSortByJan;
-  const btn = document.getElementById('inv-sort-jan-btn');
-  if (invSortByJan) {
-    btn.style.background  = 'var(--primary)';
-    btn.style.color       = '#fff';
-    btn.style.borderColor = 'var(--primary)';
+// 仕入先グループの開閉状態（提案タブと同じ操作感。開閉状態は再描画後も維持する）
+const invOpenGroups = new Set();
+function toggleInventoryGroup(code) {
+  const el = document.getElementById('inv-group-' + code);
+  if (!el) return;
+  if (invOpenGroups.has(code)) {
+    invOpenGroups.delete(code);
+    el.classList.remove('open');
   } else {
-    btn.style.background  = 'var(--surface)';
-    btn.style.color       = 'var(--text)';
-    btn.style.borderColor = 'var(--border)';
+    invOpenGroups.add(code);
+    el.classList.add('open');
   }
-  renderInventoryList();
 }
 
 let invReorderFilterActive = false;
@@ -3841,13 +3837,21 @@ function renderInventoryList() {
     return true;
   });
 
-  if (invSortByJan) {
-    // JANコード昇順
-    filtered.sort((a, b) => (a.jan||'').localeCompare(b.jan||'', undefined, {numeric:true}));
-  } else {
-    // 在庫数の昇順（マイナスが上）
-    filtered.sort((a, b) => (parseFloat(a.stock)||0) - (parseFloat(b.stock)||0));
-  }
+  // 仕入先ごとにアコーディオン表示（提案タブと同じ操作感・タップで開閉）
+  const groups = {};
+  filtered.forEach(p => {
+    (groups[p.supplierCD] = groups[p.supplierCD] || { name: p.supplierName || p.supplierCD, items: [] }).items.push(p);
+  });
+  Object.values(groups).forEach(g => {
+    // 商品の並び順: 棚番→JANコード順（棚番未設定の商品は末尾にまとめる。提案タブと同じルール）
+    g.items.sort((a, b) => {
+      const aHas = !!a.shelfNo, bHas = !!b.shelfNo;
+      if (aHas !== bHas) return aHas ? -1 : 1;
+      if (a.shelfNo !== b.shelfNo) return a.shelfNo.localeCompare(b.shelfNo, 'ja');
+      return (a.jan||'').localeCompare(b.jan||'', undefined, {numeric:true});
+    });
+  });
+  const sortedCodes = Object.keys(groups).sort((a, b) => groups[a].name.localeCompare(groups[b].name, 'ja'));
 
   // 適正在庫更新日時を取得（データがある最初の商品から）
   const reorderDateSample = productMaster.find(p => p.reorderUpdatedAt)?.reorderUpdatedAt || '';
@@ -3872,47 +3876,70 @@ function renderInventoryList() {
     return s;
   };
 
-  const rows = filtered.map((p, idx) => {
-    const stock       = parseFloat(p.stock) || 0;
-    const hasReorder  = p.reorderPoint !== null && p.reorderPoint !== undefined;
-    const isBelow     = hasReorder && stock < p.reorderPoint;
-    const stockCls    = stock <= 0 ? 'color:var(--danger);font-weight:bold' : (isBelow ? 'color:#CC6600;font-weight:bold' : '');
-    const rowBorder   = isBelow ? 'border-left:3px solid var(--danger);padding-left:8px;' : '';
-    const reorderBadge = hasReorder
-      ? `<div style="font-size:11px;${isBelow ? 'color:var(--danger);font-weight:bold' : 'color:var(--text-light)'}">適正在庫:${p.reorderPoint}</div>`
-      : '';
-    const hist        = productHistory[p.code] || productHistory[p.jan] || null;
-    const lastOrder   = hist && hist.date
-      ? `<div style="font-size:11px;color:var(--primary);margin-top:1px">🛒 ${fmtDate(hist.date)} × ${hist.qty}${hist.unit||''}</div>`
-      : '';
-    const cartQty = cartItems.reduce((sum, i) => {
-      if (i.isHandwritten) return sum;
-      if ((i.janCode && p.jan  && i.janCode === p.jan) ||
-          (i.code    && p.code && i.code    === p.code)) return sum + i.qty;
-      return sum;
+  // グループ順に並べたフラット配列（openInventoryQtyModalのidxはこの並び順が基準）
+  const orderedFiltered = [];
+  let runningIdx = 0;
+  const groupsHtml = sortedCodes.map(code => {
+    const g = groups[code];
+    const belowCount = g.items.reduce((n, p) => {
+      const stock = parseFloat(p.stock) || 0;
+      const hasReorder = p.reorderPoint !== null && p.reorderPoint !== undefined;
+      return n + ((hasReorder && stock < p.reorderPoint) ? 1 : 0);
     }, 0);
-    const cartBadge = cartQty > 0
-      ? `<div style="font-size:11px;color:#fff;background:var(--primary);border-radius:10px;padding:1px 8px;display:inline-block;margin-top:2px;font-weight:bold">🛒 カート ${cartQty}</div>`
-      : '';
-    const cartRowBg = cartQty > 0 ? 'background:rgba(91,200,232,0.08);' : '';
-    return `<div class="history-item" style="display:flex;align-items:center;${rowBorder}${cartRowBg}" onclick="openInventoryQtyModal(${idx})">
-      <div style="flex:1;min-width:0">
-        <div style="font-size:14px;font-weight:500;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.4">${isBelow ? '⚠️ ' : ''}${p.name}</div>
-        <div style="font-size:11px;color:var(--text-light);margin-top:2px">${p.supplierName || p.supplierCD}</div>
+    const isOpen = invOpenGroups.has(code) || sortedCodes.length === 1;
+    const rows = g.items.map(p => {
+      const idx = runningIdx++;
+      orderedFiltered.push(p);
+      const stock       = parseFloat(p.stock) || 0;
+      const hasReorder  = p.reorderPoint !== null && p.reorderPoint !== undefined;
+      const isBelow     = hasReorder && stock < p.reorderPoint;
+      const stockCls    = stock <= 0 ? 'color:var(--danger);font-weight:bold' : (isBelow ? 'color:#CC6600;font-weight:bold' : '');
+      const rowBorder   = isBelow ? 'border-left:3px solid var(--danger);padding-left:8px;' : '';
+      const reorderBadge = hasReorder
+        ? `<div style="font-size:11px;${isBelow ? 'color:var(--danger);font-weight:bold' : 'color:var(--text-light)'}">適正在庫:${p.reorderPoint}</div>`
+        : '';
+      const hist        = productHistory[p.code] || productHistory[p.jan] || null;
+      const lastOrder   = hist && hist.date
+        ? `<div style="font-size:11px;color:var(--primary);margin-top:1px">🛒 ${fmtDate(hist.date)} × ${hist.qty}${hist.unit||''}</div>`
+        : '';
+      const cartQty = cartItems.reduce((sum, i) => {
+        if (i.isHandwritten) return sum;
+        if ((i.janCode && p.jan  && i.janCode === p.jan) ||
+            (i.code    && p.code && i.code    === p.code)) return sum + i.qty;
+        return sum;
+      }, 0);
+      const cartBadge = cartQty > 0
+        ? `<div style="font-size:11px;color:#fff;background:var(--primary);border-radius:10px;padding:1px 8px;display:inline-block;margin-top:2px;font-weight:bold">🛒 カート ${cartQty}</div>`
+        : '';
+      const cartRowBg = cartQty > 0 ? 'background:rgba(91,200,232,0.08);' : '';
+      return `<div class="history-item" style="display:flex;align-items:center;${rowBorder}${cartRowBg}" onclick="openInventoryQtyModal(${idx})">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:14px;font-weight:500;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.4">${isBelow ? '⚠️ ' : ''}${p.name}</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px">${p.shelfNo ? '棚' + escHtml(p.shelfNo) : escHtml(p.code)}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;margin-left:8px">
+          <div style="font-size:15px;${stockCls}">${stock}</div>
+          ${reorderBadge}
+          <div style="font-size:11px;color:var(--text-light)">${fmtDate(p.lastSaleDate)}</div>
+          ${lastOrder}
+          ${cartBadge}
+        </div>
+      </div>`;
+    }).join('');
+    return `
+    <div class="card prop-group${isOpen ? ' open' : ''}" id="inv-group-${escHtml(code)}">
+      <div class="prop-group-head" onclick="toggleInventoryGroup('${escAttr(code)}')">
+        <span class="prop-group-chev">▶</span>
+        <span class="prop-group-name">${escHtml(g.name)}</span>
+        <span class="prop-group-count">${g.items.length}件${belowCount > 0 ? ` / <span style="color:var(--danger);font-weight:bold">⚠️${belowCount}件要発注</span>` : ''}</span>
       </div>
-      <div style="text-align:right;flex-shrink:0;margin-left:8px">
-        <div style="font-size:15px;${stockCls}">${stock}</div>
-        ${reorderBadge}
-        <div style="font-size:11px;color:var(--text-light)">${fmtDate(p.lastSaleDate)}</div>
-        ${lastOrder}
-        ${cartBadge}
-      </div>
+      <div class="prop-group-body">${rows}</div>
     </div>`;
   }).join('');
-  list.innerHTML = `<div class="card" style="padding:0 14px">${rows}</div>`;
+  list.innerHTML = groupsHtml;
 
-  // クリックイベントをデータで渡す代わりに filtered を保持
-  window._invFiltered = filtered;
+  // クリックイベントをデータで渡す代わりに orderedFiltered を保持
+  window._invFiltered = orderedFiltered;
   updateInventoryCartBtn();
 }
 
