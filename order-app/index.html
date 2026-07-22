@@ -1181,7 +1181,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.42.0'; // 提案タブの商品表示順を棚番→JANコード順に
+const APP_VERSION    = 'v1.43.0'; // 提案タブ: 一覧再描画でチェックを外した商品が再チェックされる不具合を修正
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -3980,6 +3980,7 @@ let proposalsLoading = false;
 let proposalsSort    = 'name'; // 'name'（あ順・既定）| 'amount'（金額が多い順）
 let propWebFilter    = 'all'; // 'all'（既定）| 'onlyWeb'（Webのみ）| 'excludeWeb'（Web除外）
 let excessShowCount  = 20; // 「持ちすぎ在庫」の初期表示件数（もっと見るで増える）
+let propUncheckedItems = new Set(); // ユーザーが手動でチェックを外した商品（"仕入先コード|商品コード"）。再描画してもチェック状態を維持するため
 
 function setProposalSort(mode) {
   proposalsSort = mode;
@@ -4011,6 +4012,7 @@ async function loadProposals(force = false) {
   try {
     const res = await gasGet({ action: 'getOrderProposals' });
     if (res.success) {
+      propUncheckedItems = new Set(); // サーバーから再取得した時だけチェック状態をリセット
       proposalsData = {
         proposals:  res.proposals  || [],
         analyzedAt: res.analyzedAt || '',
@@ -4168,10 +4170,11 @@ function renderProposalList() {
           const lastOrder = hist && hist.date
             ? `<span style="color:var(--danger);font-weight:bold">🛒 直近発注 ${fmtOrderDate(hist.date)}×${hist.qty}${hist.unit||''}</span>`
             : '';
+          const itemKey = code + '|' + p.code;
           return `
           <div class="prop-item" data-code="${escHtml(p.code)}" data-unit-cost="${unitCost}">
             <div class="prop-item-top">
-              <input type="checkbox" class="prop-check" checked>
+              <input type="checkbox" class="prop-check" data-key="${escAttr(itemKey)}" ${propUncheckedItems.has(itemKey) ? '' : 'checked'}>
               <div class="prop-item-name">${escHtml(p.name)}
                 <div class="prop-item-code">${escHtml(p.code)}<span class="prop-badge ${badgeCls}">${escHtml(p.pattern)}</span>${abcBadge}</div>
               </div>
@@ -4243,6 +4246,13 @@ function handlePropItemInputChange(e) {
   const item = e.target.closest('.prop-item');
   const group = e.target.closest('.prop-group');
   if (!item || !group) return;
+  if (e.target.matches('.prop-check')) {
+    const key = e.target.dataset.key;
+    if (key) {
+      if (e.target.checked) propUncheckedItems.delete(key);
+      else propUncheckedItems.add(key);
+    }
+  }
   const unitCost = parseFloat(item.dataset.unitCost) || 0;
   const qty = parseFloat(item.querySelector('.prop-qty').value) || 0;
   const amountEl = item.querySelector('.prop-item-amount');
