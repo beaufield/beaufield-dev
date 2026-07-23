@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.9.0
+# Version: v1.10.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -56,6 +56,14 @@
 #   在庫金額・月次売上原価・回転日数・過剰在庫額・提案額・年間保有コスト概算を
 #   「在庫KPI履歴」シートに実行日単位で記録（同日の再実行は上書き）。
 #   アプリの提案タブ上部に直近2回分（今週・先週）の差分付きで表示する
+#
+# 死蔵在庫（v1.10.0で追加）:
+#   現行の需要分析ループは売上明細に出てくる商品コードを起点に回るため、分析期間(24ヶ月)に
+#   1件も売上がない商品は一度もループに入らず、提案にも過剰在庫にも出てこない不可視の在庫になる。
+#   これを商品マスター起点の別パスで検出し「死蔵在庫」シートへ書き込む（提案・過剰在庫とは別枠）。
+#   tier1=完全死蔵: 在庫管理する・非廃番・在庫あり・24ヶ月販売ゼロ
+#   tier2=休眠    : 分析対象商品のうち直近12ヶ月販売ゼロ・在庫あり（tier1と排他）
+#   商品マスターに一度も売上記録がない商品は「未販売」として区別する（新規導入直後の可能性）
 #
 # 直近トレンド判定（v1.6.0で追加、v1.7.0で精緻化）:
 #   直近12ヶ月平均が1年前の12ヶ月平均のDECLINE_RATIO_THRESHOLD倍以下の商品は
@@ -212,6 +220,10 @@ def load_sales(csv_path, start_str, end_str):
     """売上明細CSVを読み込み、期間フィルタ・型変換して返す
     列: 0=売上日, 1=売上№(取引単位のキー), 24=商品コード, 26=数量
     ※33列目の「伝票No」はほぼ空欄のため使わない
+
+    戻り値: (期間フィルタ後のDataFrame, 商品コード別の全期間・最終売上日dict)
+    最終売上日は死蔵在庫検出（v1.10.0）用に、分析期間(24ヶ月)に絞る前の全履歴から取る。
+    CSVは1回しか読まない（同じ954,122行を2回読むと+5秒かかるため、期間フィルタ前に集計する）
     """
     logging.info(f'売上CSV読み込み開始: {csv_path}')
     t0 = datetime.now()
@@ -227,8 +239,6 @@ def load_sales(csv_path, start_str, end_str):
     logging.info(f'読み込み完了: {len(df):,}行 ({(datetime.now()-t0).total_seconds():.1f}秒)')
 
     df['date'] = df['date'].fillna('').str.strip()
-    df = df[(df['date'] >= start_str) & (df['date'] <= end_str)]
-
     df['code'] = df['code'].map(normalize_code)
     df = df[df['code'].notna()]
 
@@ -236,10 +246,16 @@ def load_sales(csv_path, start_str, end_str):
         df['qty'].fillna('0').str.replace(',', '', regex=False), errors='coerce')
     df = df[df['qty'].notna()]
 
+    # 死蔵在庫検出用: 全履歴（分析期間に限らない）でのプラス数量の最終売上日を商品コード別に取得
+    # （返品のみの行を最終売上日にしないよう qty>0 に絞る）
+    last_sale_by_code = df[df['qty'] > 0].groupby('code')['date'].max().to_dict()
+
+    df = df[(df['date'] >= start_str) & (df['date'] <= end_str)]
+
     df['slip'] = df['slip'].fillna('').str.strip()
     df['ym'] = df['date'].str[:6]
     logging.info(f'期間内の有効行数: {len(df):,}行  商品数: {df["code"].nunique():,}件')
-    return df
+    return df, last_sale_by_code
 
 
 def load_products(csv_path):
@@ -456,16 +472,18 @@ def post_reorder_points(gas_url, api_key, results, analyzed_at):
     return False
 
 
-def post_proposals(gas_url, api_key, proposals, excess, kpi, analyzed_at):
+def post_proposals(gas_url, api_key, proposals, excess, dead, kpi, analyzed_at):
     payload = {
         'action': 'updateOrderProposals',
         'api_key': api_key,
         'analyzedAt': analyzed_at,
         'proposals': proposals,
         'excess': excess,
+        'dead': dead,
         'kpi': kpi,
     }
-    logging.info(f'GASへ発注提案・過剰在庫・KPIを送信中... (提案{len(proposals)}件 / 過剰在庫{len(excess)}件)')
+    logging.info(f'GASへ発注提案・過剰在庫・死蔵在庫・KPIを送信中... '
+                 f'(提案{len(proposals)}件 / 過剰在庫{len(excess)}件 / 死蔵在庫{len(dead)}件)')
     for attempt in range(1, 4):
         try:
             resp = requests.post(gas_url, json=payload, timeout=300)
@@ -473,7 +491,8 @@ def post_proposals(gas_url, api_key, proposals, excess, kpi, analyzed_at):
             result = resp.json()
             if result.get('success'):
                 logging.info(f'✅ 書き込み成功: 提案{result.get("count")}件 / '
-                             f'過剰在庫{result.get("excessCount")}件 (試行{attempt}回目)')
+                             f'過剰在庫{result.get("excessCount")}件 / '
+                             f'死蔵在庫{result.get("deadCount")}件 (試行{attempt}回目)')
                 return True
             logging.warning(f'GASエラー応答 (試行{attempt}): {result.get("error")}')
         except Exception as e:
@@ -490,7 +509,7 @@ def main():
 
     log_file = setup_logger()
     logging.info('=' * 60)
-    logging.info('Beaufield 需要分析・発注提案スクリプト v1.9.0 開始'
+    logging.info('Beaufield 需要分析・発注提案スクリプト v1.10.0 開始'
                  + ('（dry-run）' if args.dry_run else ''))
 
     config = load_config()
@@ -532,7 +551,7 @@ def main():
     months = month_range(start_date, end_date)
     logging.info(f'分析期間: {start_date} 〜 {end_date}（{len(months)}ヶ月 / {window_days}日）')
 
-    sales = load_sales(sales_path, start_str, end_str)
+    sales, last_sale_by_code = load_sales(sales_path, start_str, end_str)
     products = load_products(products_path)
 
     monthly_sum = sales.groupby(['code', 'ym'])['qty'].sum()
@@ -779,6 +798,75 @@ def main():
     # 過剰在庫は金額の多い順（資金インパクトが大きい商品から見せる）
     excess_rows.sort(key=lambda x: -x['excessAmount'])
 
+    # ---- 死蔵在庫検出（Phase E, v1.10.0） ----
+    # tier1=完全死蔵: 在庫管理する・非廃番・在庫あり・分析期間(24ヶ月)の売上明細に1件も出現しない商品
+    #   （上の1周目ループは sales['code'].unique() を起点に回るため、この層は一度もループに
+    #    入らず提案にも過剰在庫にも出てこない不可視の在庫。ここで商品マスター起点に取り直す）
+    # tier2=休眠    : 分析対象商品(results)のうち、直近12ヶ月の販売数量合計が0 かつ在庫あり
+    #   （tier1と母集団が排他なので重複しない）
+    sold_codes_period = set(sales['code'].unique())
+    dead_rows = []
+
+    def _last_sale_info(code):
+        last_sale = last_sale_by_code.get(code)
+        if not last_sale:
+            return '', None, '未販売'
+        last_sale_fmt = f'{last_sale[:4]}-{last_sale[4:6]}-{last_sale[6:8]}'
+        months_since = round(
+            (date.today() - date(int(last_sale[:4]), int(last_sale[4:6]), int(last_sale[6:8]))).days
+            / DAYS_PER_MONTH, 1)
+        return last_sale_fmt, months_since, None
+
+    for code in products.index.unique():
+        prod = products.loc[code]
+        if isinstance(prod, pd.DataFrame):
+            prod = prod.iloc[0]
+        if prod['stock_mgmt'] != 'する' or prod['discontinued'] == '廃番':
+            continue
+        stock = float(prod['stock'])
+        if stock <= 0 or code in sold_codes_period:
+            continue
+        unit_cost = float(prod['cost'])
+        supp_key = normalize_supplier_code(prod['supplier_cd'])
+        last_sale_fmt, months_since, unsold_reason = _last_sale_info(code)
+        dead_rows.append({
+            'code': code,
+            'name': prod['name'],
+            'supplierCode': supp_key or prod['supplier_cd'],
+            'supplierName': prod['supplier'],
+            'stock': stock,
+            'unitCost': unit_cost,
+            'deadAmount': round(stock * unit_cost),
+            'lastSaleDate': last_sale_fmt,
+            'monthsSinceLastSale': months_since,
+            'tier': '完全死蔵',
+            'reason': unsold_reason or f'{WINDOW_MONTHS}ヶ月販売ゼロ',
+        })
+
+    for row in results:
+        code = row['code']
+        if row['stock'] <= 0:
+            continue
+        recent_sum = sum(monthly_by_code_recent.get(code, {}).values())
+        if recent_sum > 0:
+            continue
+        last_sale_fmt, months_since, unsold_reason = _last_sale_info(code)
+        dead_rows.append({
+            'code': code,
+            'name': row['name'],
+            'supplierCode': row['supplier_cd'],
+            'supplierName': row['supplier'],
+            'stock': row['stock'],
+            'unitCost': row['unit_cost'],
+            'deadAmount': round(row['stock'] * row['unit_cost']),
+            'lastSaleDate': last_sale_fmt,
+            'monthsSinceLastSale': months_since,
+            'tier': '休眠',
+            'reason': unsold_reason or f'直近{DECLINE_TREND_MONTHS}ヶ月販売ゼロ',
+        })
+
+    dead_rows.sort(key=lambda x: -x['deadAmount'])
+
     # ---- ローカル出力 ----
     OUTPUT_DIR.mkdir(exist_ok=True)
     stamp = date.today().strftime('%Y%m%d')
@@ -790,6 +878,9 @@ def main():
 
     excess_csv_out = OUTPUT_DIR / f'excess_stock_{stamp}.csv'
     pd.DataFrame(excess_rows).to_csv(excess_csv_out, index=False, encoding='utf-8-sig')
+
+    dead_csv_out = OUTPUT_DIR / f'dead_stock_{stamp}.csv'
+    pd.DataFrame(dead_rows).to_csv(dead_csv_out, index=False, encoding='utf-8-sig')
 
     json_out = OUTPUT_DIR / 'demand_stats.json'
     with open(json_out, 'w', encoding='utf-8') as f:
@@ -825,8 +916,15 @@ def main():
     excess_total = sum(r['excessAmount'] for r in excess_rows)
     logging.info(f'過剰在庫: {len(excess_rows):,}件 / 過剰額合計 {excess_total:,.0f}円'
                  f'（推奨の{EXCESS_RATIO}倍超・超過{EXCESS_MIN_QTY}個以上が対象）')
+    dead_total = sum(d['deadAmount'] for d in dead_rows)
+    tier1_rows = [d for d in dead_rows if d['tier'] == '完全死蔵']
+    tier2_rows = [d for d in dead_rows if d['tier'] == '休眠']
+    logging.info(f'死蔵在庫: {len(dead_rows):,}件 / 在庫額合計 {dead_total:,.0f}円'
+                 f'（完全死蔵 {len(tier1_rows):,}件 {sum(d["deadAmount"] for d in tier1_rows):,.0f}円 / '
+                 f'休眠 {len(tier2_rows):,}件 {sum(d["deadAmount"] for d in tier2_rows):,.0f}円）')
     logging.info(f'出力: {csv_out}')
     logging.info(f'出力: {excess_csv_out}')
+    logging.info(f'出力: {dead_csv_out}')
     logging.info(f'出力: {json_out}')
 
     # ---- 経営KPI ----
@@ -844,6 +942,8 @@ def main():
         'proposalAmount': total_amount,
         'proposalCount': len(proposals),
         'holdingCostAnnual': holding_cost_annual,
+        'deadAmount': dead_total,
+        'deadCount': len(dead_rows),
     }
     logging.info(f'在庫金額: {stock_value:,.0f}円 / 月次売上原価: {monthly_cogs:,.0f}円 / '
                  f'回転日数: {turnover_days:.1f}日 / 年間保有コスト概算: {holding_cost_annual:,.0f}円')
@@ -885,7 +985,7 @@ def main():
     if args.dry_run:
         logging.info('dry-run のため GAS への送信をスキップしました')
     else:
-        if not post_proposals(config['gas_url'], config['api_key'], proposals, excess_rows, kpi, analyzed_at):
+        if not post_proposals(config['gas_url'], config['api_key'], proposals, excess_rows, dead_rows, kpi, analyzed_at):
             logging.error('GASへの発注提案送信が3回すべて失敗しました。ログ: %s', log_file)
             sys.exit(1)
         if not post_reorder_points(config['gas_url'], config['api_key'], results, analyzed_at):

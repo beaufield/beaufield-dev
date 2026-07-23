@@ -664,6 +664,17 @@
     .excess-item-amount { font-weight: 700; color: #c62828; white-space: nowrap; }
     .excess-ack-btn   { padding: 4px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-light); cursor: pointer; white-space: nowrap; }
     .excess-more-btn  { width: 100%; margin-top: 8px; padding: 8px; font-size: 12px; border: 1px dashed var(--border); border-radius: 6px; background: transparent; color: var(--text-light); cursor: pointer; }
+    .dead-item        { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
+    .dead-item-name   { font-size: 13px; font-weight: 600; }
+    .dead-item-sub    { font-size: 11px; color: var(--text-light); margin-top: 2px; }
+    .dead-item-amount { font-weight: 700; color: #6d4c41; white-space: nowrap; }
+    .dead-ack-btn     { padding: 4px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-light); cursor: pointer; white-space: nowrap; }
+    .dead-more-btn    { width: 100%; margin-top: 8px; padding: 8px; font-size: 12px; border: 1px dashed var(--border); border-radius: 6px; background: transparent; color: var(--text-light); cursor: pointer; }
+    .dead-tier-badge  { display: inline-block; font-size: 10px; font-weight: 700; border-radius: 8px; padding: 1px 6px; margin-left: 4px; }
+    .dead-tier-badge.tier1  { background: #424242; color: #fff; }
+    .dead-tier-badge.tier2  { background: #eeeeee; color: #757575; }
+    .dead-tier-badge.unsold { background: #e3f2fd; color: #1565c0; }
+    .dead-sort-btn.active, .dead-filter-btn.active { background: var(--primary); color: #fff; }
     .kpi-row          { display: flex; gap: 8px; }
     .kpi-card         { flex: 1; padding: 10px 8px; text-align: center; cursor: pointer; -webkit-tap-highlight-color: transparent; }
     .kpi-label        { font-size: 11px; color: var(--text-light); }
@@ -968,6 +979,31 @@
   <div id="prop-lot"></div>
 </div>
 
+<!-- ==============================
+     整理タブ（死蔵在庫。Phase E, v1.45.0〜）
+============================== -->
+<div class="screen" id="screen-dead">
+  <div class="card" style="padding:12px 14px">
+    <div id="dead-summary" style="font-size:13px;font-weight:600;margin-bottom:8px">—</div>
+    <div style="display:flex;gap:6px">
+      <button class="btn btn-outline btn-sm dead-filter-btn" id="dead-filter-all" onclick="setDeadFilter('all')" style="flex:1">すべて</button>
+      <button class="btn btn-outline btn-sm dead-filter-btn" id="dead-filter-tier1" onclick="setDeadFilter('tier1')" style="flex:1">完全死蔵</button>
+      <button class="btn btn-outline btn-sm dead-filter-btn" id="dead-filter-tier2" onclick="setDeadFilter('tier2')" style="flex:1">休眠</button>
+      <button class="btn btn-outline btn-sm dead-filter-btn" id="dead-filter-unsold" onclick="setDeadFilter('unsold')" style="flex:1">未販売</button>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button class="btn btn-outline btn-sm dead-sort-btn" id="dead-sort-amount" onclick="setDeadSort('amount')" style="flex:1">💰 金額が多い順</button>
+      <button class="btn btn-outline btn-sm dead-sort-btn" id="dead-sort-months" onclick="setDeadSort('months')" style="flex:1">⏳ 放置期間が長い順</button>
+    </div>
+  </div>
+  <div id="dead-list">
+    <div class="empty-state">
+      <div class="spinner"></div>
+      <div style="margin-top:8px">読み込み中...</div>
+    </div>
+  </div>
+</div>
+
 <!-- ボトムナビ -->
 <nav class="bottom-nav">
   <div class="nav-item active" id="nav-order" onclick="switchScreen('order')">
@@ -983,6 +1019,10 @@
   <div class="nav-item" id="nav-inventory" onclick="switchScreen('inventory')" style="position:relative">
     <span class="nav-icon">📦</span><span>在庫</span>
     <span id="inv-alert-badge" style="display:none;position:absolute;top:6px;right:6px;background:var(--danger);color:#fff;font-size:10px;font-weight:bold;border-radius:10px;padding:1px 5px;min-width:16px;text-align:center;line-height:1.4"></span>
+  </div>
+  <div class="nav-item" id="nav-dead" onclick="switchScreen('dead')" style="position:relative">
+    <span class="nav-icon">🧹</span><span>整理</span>
+    <span id="dead-badge-count" style="display:none;position:absolute;top:6px;right:6px;background:var(--danger);color:#fff;font-size:10px;font-weight:bold;border-radius:10px;padding:1px 5px;min-width:16px;text-align:center;line-height:1.4"></span>
   </div>
   <div class="nav-item" id="nav-settings" onclick="switchScreen('settings')">
     <span class="nav-icon">⚙️</span><span>設定</span>
@@ -1180,7 +1220,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.44.0'; // 在庫タブを仕入先別アコーディオン表示・棚番順に変更
+const APP_VERSION    = 'v1.45.0'; // 死蔵在庫を見える化する「🧹 整理」タブを追加（Phase E）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1585,6 +1625,9 @@ function switchScreen(name) {
   } else if (name === 'proposal') {
     loadProposals(false);
     document.getElementById('header-sub').textContent = '発注提案';
+  } else if (name === 'dead') {
+    if (proposalsLoaded) { renderDeadScreen(); } else { loadProposals(false); }
+    document.getElementById('header-sub').textContent = '整理（死蔵在庫）';
   }
 }
 function showStep(id) {
@@ -4001,13 +4044,16 @@ function closeModal(id) { document.getElementById(id).classList.remove('open'); 
    analyze_demand.py（週次）が「発注提案」シートに書いた提案を表示し、
    チェックした商品をカートに積んで発注フローへ流し込む
 =================================================== */
-let proposalsData    = { proposals: [], analyzedAt: '', exclusions: [], eol: [], excess: [], excessAcks: [], kpi: null, lotOverrides: [] };
+let proposalsData    = { proposals: [], analyzedAt: '', exclusions: [], eol: [], excess: [], excessAcks: [], dead: [], deadAcks: [], kpi: null, lotOverrides: [] };
 let proposalsLoaded  = false;
 let proposalsLoading = false;
 let proposalsSort    = 'name'; // 'name'（あ順・既定）| 'amount'（金額が多い順）
 let propWebFilter    = 'all'; // 'all'（既定）| 'onlyWeb'（Webのみ）| 'excludeWeb'（Web除外）
 let excessShowCount  = 20; // 「持ちすぎ在庫」の初期表示件数（もっと見るで増える）
 let propUncheckedItems = new Set(); // ユーザーが手動でチェックを外した商品（"仕入先コード|商品コード"）。再描画してもチェック状態を維持するため
+let deadShowCount    = 20; // 「整理」タブの初期表示件数（もっと見るで増える）
+let deadFilter       = 'all'; // 'all' | 'tier1'（完全死蔵）| 'tier2'（休眠）| 'unsold'（未販売）
+let deadSort         = 'amount'; // 'amount'（金額が多い順）| 'months'（放置期間が長い順）
 
 function setProposalSort(mode) {
   proposalsSort = mode;
@@ -4047,17 +4093,22 @@ async function loadProposals(force = false) {
         eol:        res.eol        || [],
         excess:     res.excess     || [],
         excessAcks: res.excessAcks || [],
+        dead:       res.dead       || [],
+        deadAcks:   res.deadAcks   || [],
         kpi:        res.kpi        || null,
         lotOverrides: res.lotOverrides || []
       };
       proposalsLoaded = true;
       excessShowCount = 20;
+      deadShowCount = 20;
       document.getElementById('prop-analyzed-at').textContent =
         proposalsData.analyzedAt ? '分析日時: ' + proposalsData.analyzedAt : '分析結果がまだありません';
       renderProposalKpi();
       renderProposalFilter();
       renderProposalList();
       updateProposalBadge();
+      updateDeadBadge();
+      renderDeadScreen();
     } else {
       wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div>取得エラー: ${escHtml(res.error || '不明')}</div></div>`;
     }
@@ -4071,6 +4122,13 @@ async function loadProposals(force = false) {
 function updateProposalBadge() {
   const badge = document.getElementById('prop-badge-count');
   const n = proposalsData.proposals.length;
+  badge.style.display = n > 0 ? '' : 'none';
+  badge.textContent = n > 99 ? '99+' : String(n);
+}
+
+function updateDeadBadge() {
+  const badge = document.getElementById('dead-badge-count');
+  const n = (proposalsData.dead || []).length;
   badge.style.display = n > 0 ? '' : 'none';
   badge.textContent = n > 99 ? '99+' : String(n);
 }
@@ -4406,6 +4464,160 @@ async function restoreExcessAck(code) {
   showLoading('確認済みを解除中...');
   try {
     const res = await gasPost({ action: 'saveExcessAck', mode: 'delete', code });
+    if (res.success) {
+      showToast('確認済みを解除しました。再読込します...', 'success');
+      await loadProposals(true);
+    } else {
+      showToast('解除エラー: ' + (res.error || '不明'), 'error');
+    }
+  } catch(e) {
+    showToast('通信エラー。ネットワークを確認してください。', 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+/* ===================================================
+   整理タブ（死蔵在庫。Phase E, v1.45.0〜）
+   24ヶ月販売ゼロ（完全死蔵）・直近12ヶ月販売ゼロ（休眠）の在庫を
+   金額または放置期間の降順で表示する。データソースは提案タブと共通（loadProposals）
+=================================================== */
+function deadTierBadge(x) {
+  if (x.reason === '未販売') return { label: '未販売', cls: 'unsold' };
+  if (x.tier === '完全死蔵') return { label: '完全死蔵', cls: 'tier1' };
+  return { label: '休眠', cls: 'tier2' };
+}
+
+function deadMatchesFilter(x) {
+  if (deadFilter === 'tier1')   return x.tier === '完全死蔵';
+  if (deadFilter === 'tier2')   return x.tier === '休眠';
+  if (deadFilter === 'unsold')  return x.reason === '未販売';
+  return true; // 'all'
+}
+
+function setDeadFilter(mode) {
+  deadFilter = mode;
+  deadShowCount = 20;
+  renderDeadScreen();
+}
+
+function setDeadSort(mode) {
+  deadSort = mode;
+  renderDeadScreen();
+}
+
+function showMoreDead() {
+  deadShowCount += 20;
+  renderDeadScreen();
+}
+
+function renderDeadScreen() {
+  document.querySelectorAll('.dead-filter-btn').forEach(b => b.classList.remove('active'));
+  const filterBtn = document.getElementById('dead-filter-' + deadFilter);
+  if (filterBtn) filterBtn.classList.add('active');
+  document.querySelectorAll('.dead-sort-btn').forEach(b => b.classList.remove('active'));
+  const sortBtn = document.getElementById('dead-sort-' + deadSort);
+  if (sortBtn) sortBtn.classList.add('active');
+
+  const all = proposalsData.dead || [];
+  const filtered = all.filter(deadMatchesFilter);
+  const sorted = filtered.slice().sort((a, b) => {
+    if (deadSort === 'months') {
+      const am = (a.monthsSinceLastSale === null || a.monthsSinceLastSale === undefined) ? Infinity : a.monthsSinceLastSale;
+      const bm = (b.monthsSinceLastSale === null || b.monthsSinceLastSale === undefined) ? Infinity : b.monthsSinceLastSale;
+      return bm - am;
+    }
+    return (b.deadAmount || 0) - (a.deadAmount || 0);
+  });
+
+  const totalAmount  = all.reduce((s, x) => s + (parseFloat(x.deadAmount) || 0), 0);
+  const tier1        = all.filter(x => x.tier === '完全死蔵');
+  const tier1Amount  = tier1.reduce((s, x) => s + (parseFloat(x.deadAmount) || 0), 0);
+  const summaryEl = document.getElementById('dead-summary');
+  if (summaryEl) {
+    summaryEl.textContent = all.length > 0
+      ? `死蔵在庫 ${all.length}件 / ${formatYen(totalAmount)}（うち完全死蔵 ${tier1.length}件 ${formatYen(tier1Amount)}）`
+      : '死蔵在庫はありません';
+  }
+
+  const wrap = document.getElementById('dead-list');
+  if (!wrap) return;
+  let html = '';
+  if (sorted.length > 0) {
+    const shown = sorted.slice(0, deadShowCount);
+    const rows = shown.map(x => {
+      const badge = deadTierBadge(x);
+      const lastSaleLabel = x.lastSaleDate
+        ? `最終売上 ${escHtml(x.lastSaleDate)}（${x.monthsSinceLastSale}ヶ月前）`
+        : '販売履歴なし';
+      return `
+      <div class="dead-item">
+        <div style="flex:1">
+          <div class="dead-item-name">${escHtml(x.name || x.code)}<span class="dead-tier-badge ${badge.cls}">${badge.label}</span></div>
+          <div class="dead-item-sub">在庫${x.stock}個・${lastSaleLabel}・${escHtml(x.supplierName || '')}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="dead-item-amount">${formatYen(x.deadAmount)}</div>
+          <button class="dead-ack-btn" style="margin-top:4px" onclick="ackDead('${escAttr(x.code)}','${escAttr(x.name)}')">✓確認済み</button>
+        </div>
+      </div>`;
+    }).join('');
+    const moreBtn = sorted.length > shown.length
+      ? `<button class="dead-more-btn" onclick="showMoreDead()">もっと見る（残り${sorted.length - shown.length}件）</button>`
+      : '';
+    html += `<div class="card">${rows}${moreBtn}</div>`;
+  } else {
+    html += `<div class="empty-state"><div class="empty-icon">🧹</div><div>該当する死蔵在庫はありません</div></div>`;
+  }
+
+  const acks = proposalsData.deadAcks || [];
+  if (acks.length > 0) {
+    const ackRows = acks.map(x => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:13px">
+        <div style="flex:1">
+          <div>${escHtml(x.name || x.code)}</div>
+          <div style="font-size:11px;color:var(--text-light)">${escHtml(x.code)}${x.reason ? '・' + escHtml(x.reason) : ''}</div>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="restoreDeadAck('${escAttr(x.code)}')">解除</button>
+      </div>`).join('');
+    html += `
+      <div class="card">
+        <details>
+          <summary style="font-size:13px;font-weight:600;cursor:pointer">✓ 死蔵在庫の確認済み（${acks.length}件）</summary>
+          <div style="margin-top:6px">${ackRows}</div>
+        </details>
+      </div>`;
+  }
+
+  wrap.innerHTML = html;
+}
+
+async function ackDead(code, name) {
+  const reason = prompt(`「${name}」を死蔵在庫の確認済みにします（季節品・サンプル用等）。\n理由（任意・空欄可）:`);
+  if (reason === null) return; // キャンセル
+  showLoading('確認済みを登録中...');
+  try {
+    const res = await gasPost({ action: 'saveDeadAck', mode: 'add', code, name, reason: reason.trim() });
+    if (res.success) {
+      proposalsData.dead = proposalsData.dead.filter(x => x.code !== code);
+      proposalsData.deadAcks.push({ code, name, reason: reason.trim() });
+      renderDeadScreen();
+      updateDeadBadge();
+      showToast(`「${name}」を確認済みにしました`, 'success');
+    } else {
+      showToast('登録エラー: ' + (res.error || '不明'), 'error');
+    }
+  } catch(e) {
+    showToast('通信エラー。ネットワークを確認してください。', 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+async function restoreDeadAck(code) {
+  showLoading('確認済みを解除中...');
+  try {
+    const res = await gasPost({ action: 'saveDeadAck', mode: 'delete', code });
     if (res.success) {
       showToast('確認済みを解除しました。再読込します...', 'success');
       await loadProposals(true);
