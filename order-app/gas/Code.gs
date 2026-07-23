@@ -1,6 +1,6 @@
 // ============================================================
 // Beaufield 発注アプリ - Google Apps Script バックエンド
-// Version: v1.23.0
+// Version: v1.23.1
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.23.0';
+const VERSION         = 'v1.23.1';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -1336,7 +1336,7 @@ function getOrderProposals() {
         stock:                parseFloat(r[4]) || 0,
         unitCost:             parseFloat(r[5]) || 0,
         deadAmount:           parseFloat(r[6]) || 0,
-        lastSaleDate:         String(r[7] || ''),
+        lastSaleDate:         cellToStr(r[7], 'yyyy-MM-dd'),
         monthsSinceLastSale:  r[8] === '' ? null : (parseFloat(r[8]) || 0),
         tier:                 String(r[9] || ''),
         reason:               String(r[10] || '')
