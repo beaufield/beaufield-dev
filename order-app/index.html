@@ -675,6 +675,13 @@
     .dead-tier-badge.tier2  { background: #eeeeee; color: #757575; }
     .dead-tier-badge.unsold { background: #e3f2fd; color: #1565c0; }
     .dead-sort-btn.active, .dead-filter-btn.active { background: var(--primary); color: #fff; }
+    .pending-item        { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
+    .pending-item-name   { font-size: 13px; font-weight: 600; }
+    .pending-item-sub    { font-size: 11px; color: var(--text-light); margin-top: 2px; }
+    .pending-item-amount { font-weight: 700; color: var(--text); white-space: nowrap; }
+    .pending-ack-btn     { padding: 4px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-light); cursor: pointer; white-space: nowrap; }
+    .pending-delay-badge { display: inline-block; font-size: 10px; font-weight: 700; border-radius: 8px; padding: 1px 6px; margin-left: 6px; background: #ffebee; color: #c62828; }
+    .prop-pending-warn   { font-size: 11px; color: #c62828; font-weight: 600; margin-top: 4px; line-height: 1.5; }
     .kpi-row          { display: flex; gap: 8px; }
     .kpi-card         { flex: 1; padding: 10px 8px; text-align: center; cursor: pointer; -webkit-tap-highlight-color: transparent; }
     .kpi-label        { font-size: 11px; color: var(--text-light); }
@@ -973,6 +980,7 @@
       <div style="margin-top:8px">読み込み中...</div>
     </div>
   </div>
+  <div id="prop-pending"></div>
   <div id="prop-excess"></div>
   <div id="prop-exclusions"></div>
   <div id="prop-eol"></div>
@@ -1220,7 +1228,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.45.1'; // 整理タブ: 完全死蔵フィルターに未販売品が混ざる不具合を修正
+const APP_VERSION    = 'v1.46.0'; // 提案タブに「🚚 入荷待ち」を追加、遅延中の発注は提案行に警告表示（Phase F）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -4044,7 +4052,7 @@ function closeModal(id) { document.getElementById(id).classList.remove('open'); 
    analyze_demand.py（週次）が「発注提案」シートに書いた提案を表示し、
    チェックした商品をカートに積んで発注フローへ流し込む
 =================================================== */
-let proposalsData    = { proposals: [], analyzedAt: '', exclusions: [], eol: [], excess: [], excessAcks: [], dead: [], deadAcks: [], kpi: null, lotOverrides: [] };
+let proposalsData    = { proposals: [], analyzedAt: '', exclusions: [], eol: [], excess: [], excessAcks: [], dead: [], deadAcks: [], pendingOrders: [], kpi: null, lotOverrides: [] };
 let proposalsLoaded  = false;
 let proposalsLoading = false;
 let proposalsSort    = 'name'; // 'name'（あ順・既定）| 'amount'（金額が多い順）
@@ -4095,6 +4103,7 @@ async function loadProposals(force = false) {
         excessAcks: res.excessAcks || [],
         dead:       res.dead       || [],
         deadAcks:   res.deadAcks   || [],
+        pendingOrders: res.pendingOrders || [],
         kpi:        res.kpi        || null,
         lotOverrides: res.lotOverrides || []
       };
@@ -4210,6 +4219,12 @@ function renderProposalList() {
   if (propWebFilter === 'onlyWeb')    props = props.filter(p => isWebSupplier(p.supplierCode));
   if (propWebFilter === 'excludeWeb') props = props.filter(p => !isWebSupplier(p.supplierCode));
 
+  // 遅延中の入荷待ちがある商品コード → 提案行に警告バッジを出すためのマップ（商品コード1件につき最古の遅延分を表示）
+  const delayedByCode = {};
+  (proposalsData.pendingOrders || []).forEach(x => {
+    if (x.isDelayed && !delayedByCode[x.code]) delayedByCode[x.code] = x;
+  });
+
   document.getElementById('prop-sort-name').classList.toggle('active', proposalsSort === 'name');
   document.getElementById('prop-sort-amount').classList.toggle('active', proposalsSort === 'amount');
   document.getElementById('prop-web-all').classList.toggle('active', propWebFilter === 'all');
@@ -4255,6 +4270,10 @@ function renderProposalList() {
           const lastOrder = hist && hist.date
             ? `<span style="color:var(--danger);font-weight:bold">🛒 直近発注 ${fmtOrderDate(hist.date)}×${hist.qty}${hist.unit||''}</span>`
             : '';
+          const delayed = delayedByCode[p.code];
+          const delayWarn = delayed
+            ? `<div class="prop-pending-warn">⚠️ ${delayed.orderDate.slice(5)}に${delayed.qty}個発注済み（予定日を${delayed.overdueDays}日超過・未入荷の可能性）</div>`
+            : '';
           const itemKey = code + '|' + p.code;
           return `
           <div class="prop-item" data-code="${escHtml(p.code)}" data-unit-cost="${unitCost}">
@@ -4277,6 +4296,7 @@ function renderProposalList() {
             </div>
             ${lastOrder ? `<div class="prop-item-stats" style="margin-top:2px;font-size:11px">${lastOrder}</div>` : ''}
             ${note ? `<div class="prop-note">${escHtml(note)}</div>` : ''}
+            ${delayWarn}
           </div>`;
         }).join('');
         const totalQty = g.items.reduce((s, p) => s + (p.proposedQty || 0), 0);
@@ -4298,6 +4318,7 @@ function renderProposalList() {
         </div>`;
       }).join('');
   }
+  renderPendingOrders();
   renderProposalExcess();
   renderProposalExclusions();
   renderEolList();
@@ -4372,6 +4393,68 @@ function toggleProposalGroup(code) {
   } else {
     propOpenGroups.add(code);
     el.classList.add('open');
+  }
+}
+
+/* ===================================================
+   入荷待ち（Phase F, v1.46.0〜）
+   提案タブから発注した商品のうち、まだ入荷していない可能性がある分を表示する。
+   提案の抑制（在庫への加算）はリードタイムまでで変わらないが、こちらは
+   リードタイム+PENDING_GRACE_DAYS(14日)まで残り、超過分は「遅延」として警告する。
+   データソースはgetOrderProposalsに同梱されるpendingOrders（GAS側でリアルタイム集計）
+=================================================== */
+function renderPendingOrders() {
+  const wrap = document.getElementById('prop-pending');
+  const pending = proposalsData.pendingOrders || [];
+  if (pending.length === 0) { wrap.innerHTML = ''; return; }
+
+  const totalAmount  = pending.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0);
+  const delayedCount = pending.filter(x => x.isDelayed).length;
+
+  const rows = pending.map(x => {
+    const delayBadge = x.isDelayed
+      ? `<span class="pending-delay-badge">⚠️ 予定日超過 +${x.overdueDays}日</span>`
+      : '';
+    return `
+    <div class="pending-item">
+      <div style="flex:1">
+        <div class="pending-item-name">${escHtml(x.name || x.code)}${delayBadge}</div>
+        <div class="pending-item-sub">${escHtml(x.supplierName || '')}・発注 ${x.orderDate}（${x.elapsedDays}日経過）・予定 ${x.expectedDate}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="pending-item-amount">${x.qty}個 ${formatYen(x.amount)}</div>
+        <button class="pending-ack-btn" style="margin-top:4px" onclick="ackReceived('${escAttr(x.orderNo)}','${escAttr(x.code)}','${escAttr(x.name)}',${x.qty})">✓入荷済み</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  wrap.innerHTML = `
+    <div class="card">
+      <details ${delayedCount > 0 ? 'open' : ''}>
+        <summary style="font-size:13px;font-weight:600;cursor:pointer">🚚 入荷待ち（${pending.length}件・${formatYen(totalAmount)}）</summary>
+        <div style="margin-top:6px">${rows}</div>
+        <div style="font-size:11px;color:var(--text-light);margin-top:8px">※ このアプリから発注したものだけが対象です（電話・FAX・メーカー担当への直接発注は含まれません）</div>
+      </details>
+    </div>`;
+}
+
+async function ackReceived(orderNo, code, name, qty) {
+  if (!confirm(`「${name}」を入荷済みにしますか？\n入荷待ちリストと提案の警告表示から消えます。`)) return;
+  showLoading('入荷済みを登録中...');
+  try {
+    const res = await gasPost({ action: 'saveReceived', mode: 'add', orderNo, code, name, qty });
+    if (res.success) {
+      proposalsData.pendingOrders = (proposalsData.pendingOrders || [])
+        .filter(x => !(x.orderNo === orderNo && x.code === code));
+      renderProposalList(); // 末尾でrenderPendingOrders()も呼ぶため、入荷待ち・提案行の警告バッジ両方が更新される
+      showToast(`「${name}」を入荷済みにしました`, 'success');
+    } else {
+      showToast('登録エラー: ' + (res.error || '不明'), 'error');
+    }
+  } catch(e) {
+    showToast('通信エラー。ネットワークを確認してください。', 'error');
+  } finally {
+    hideLoading();
   }
 }
 

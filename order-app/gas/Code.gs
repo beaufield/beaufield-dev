@@ -1,6 +1,6 @@
 // ============================================================
 // Beaufield 発注アプリ - Google Apps Script バックエンド
-// Version: v1.23.1
+// Version: v1.24.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.23.1';
+const VERSION         = 'v1.24.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -47,6 +47,12 @@ const SHEET_EOL         = '終売商品設定';   // 在庫はあるが再発注
 const SHEET_LOT_OVERRIDE = '最低発注数設定';  // 過去発注実績からの自動推定より優先する手動の最低発注数設定
 const SHEET_DEAD        = '死蔵在庫';       // analyze_demand.py が毎回全面書き換えする死蔵在庫リスト（Phase E, v1.10.0〜）
 const SHEET_DEAD_ACK    = '死蔵在庫確認済み'; // 死蔵と承知の上で確認済みにした商品（季節品・サンプル等）
+const SHEET_RECEIVED    = '入荷済み記録';    // 入荷待ちを手動で「✓入荷済み」にした発注（Phase F, v1.24.0〜）
+
+// 入荷待ち判定パラメータ（Phase F, v1.24.0〜）
+// 提案の抑制（on_order加算）はリードタイムまでで変更しない。入荷待ちリストへの表示だけ
+// 予定日超過後もPENDING_GRACE_DAYS日は残し、「遅延」として警告する（§3.4参照）
+const PENDING_GRACE_DAYS = 14;
 
 // 発注先マスターの拡張列（F=リードタイム(日), G=発注サイクル(日)）
 // 未入力の場合のフォールバック値。analyze_demand.py の計算に使う
@@ -219,6 +225,7 @@ function doPost(e) {
       case 'saveProposalExclusion': return jsonResponse(saveProposalExclusion(p, auth.user_id));
       case 'saveExcessAck': return jsonResponse(saveExcessAck(p, auth.user_id));
       case 'saveDeadAck': return jsonResponse(saveDeadAck(p, auth.user_id));
+      case 'saveReceived': return jsonResponse(saveReceived(p, auth.user_id));
       case 'saveEolFlag': return jsonResponse(saveEolFlag(p, auth.user_id));
       case 'saveLotOverride': return jsonResponse(saveLotOverride(p, auth.user_id));
       default:             return jsonResponse({ success: false, error: '不明なアクション: ' + action });
@@ -877,6 +884,8 @@ function saveSupplier(p, user_id) {
 //   7. ロット（最低注文数）が明確な商品は saveLotOverride で手動設定（自動推定より優先）
 //   8. Claude Code が updateProposalExplanations でAI説明を追記（任意）
 //   9. 死蔵と承知の上の商品は saveDeadAck で確認済み登録（次回分析後もリストから消える）
+//  10. 入荷待ち（buildPendingOrders）はGAS内でリアルタイム集計。入荷確認できた発注は
+//      saveReceived で登録すると recentOrders・入荷待ちリストの両方から即座に外れる
 // ============================================================
 
 // 発注提案シートの列定義（updateOrderProposals / getOrderProposals で共有）
@@ -895,6 +904,9 @@ const KPI_HEADERS = ['日付','在庫金額','月次売上原価','回転日数'
 // 死蔵在庫シートの列定義（updateOrderProposals / getOrderProposals で共有。Phase E, v1.10.0〜）
 const DEAD_HEADERS = ['商品コード','商品名','仕入先コード','仕入先名','現在庫','仕入単価',
                       '在庫金額','最終売上日','経過月数','区分','理由','分析日時'];
+
+// 入荷済み記録シートの列定義（saveReceived / buildPendingOrders で共有。Phase F, v1.24.0〜）
+const RECEIVED_HEADERS = ['発注No','商品コード','商品名','数量','確認者','確認日時'];
 
 // POST(APIキー): 分析に必要な設定を返す
 // レスポンス: { success, suppliers: [{code,name,leadTimeDays,orderCycleDays}],
@@ -940,16 +952,21 @@ function getReorderConfig() {
 
   // 過去の発注明細から商品別のロット推定材料を集計
   // gcdQty: 全発注数量の最大公約数（ケース単位の推定に使う）
-  // あわせて直近60日の発注（発注済み・未入荷の可能性がある分）も商品別に返す
+  // あわせて直近90日の発注（発注済み・未入荷の可能性がある分）も商品別に返す
+  // （Phase F, v1.24.0〜: 60日→90日に延長。長めのリードタイムの仕入先でも取りこぼさないため）
   // 発注日は発注No（YYYYMMDD-NNN）の先頭8桁から取得
+  // 手動で「✓入荷済み」登録済みの発注（発注No+商品コード）は在庫に反映済みとみなし、
+  // ここで除外する（在庫と二重加算しないため。§3.4・buildPendingOrders() と同じ除外を掛ける）
   const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 60);
+  cutoff.setDate(cutoff.getDate() - 90);
   const cutoffStr = Utilities.formatDate(cutoff, 'Asia/Tokyo', 'yyyyMMdd');
+  const receivedKeys = getReceivedKeys();
 
   const itemsData = getSheet(SHEET_ITEMS).getDataRange().getValues();
   const lotStats = {};
   const recentOrders = {};
   itemsData.slice(1).forEach(r => {
+    const orderNo = String(r[0] || '').trim();
     const code = String(r[2] || '').trim();
     const qty  = Math.round(parseFloat(r[4]) || 0);
     if (!code || qty <= 0) return;
@@ -959,10 +976,10 @@ function getReorderConfig() {
     if (qty < s.minQty) s.minQty = qty;
     s.gcdQty = gcdInt(s.gcdQty, qty);
 
-    const orderDate = String(r[0] || '').split('-')[0];  // 発注No先頭のYYYYMMDD
-    if (orderDate.length === 8 && orderDate >= cutoffStr) {
+    const orderDateKey = orderNo.split('-')[0];  // 発注No先頭のYYYYMMDD
+    if (orderDateKey.length === 8 && orderDateKey >= cutoffStr && !receivedKeys.has(orderNo + '|' + code)) {
       if (!recentOrders[code]) recentOrders[code] = [];
-      recentOrders[code].push({ date: orderDate, qty });
+      recentOrders[code].push({ date: orderDateKey, qty });
     }
   });
 
@@ -982,6 +999,138 @@ function gcdInt(a, b) {
   a = Math.abs(a); b = Math.abs(b);
   while (b) { const t = b; b = a % b; a = t; }
   return a;
+}
+
+// 「✓入荷済み」登録済みの発注を (発注No + '|' + 商品コード) のSetで返す
+// getReorderConfig（recentOrders除外）と buildPendingOrders（入荷待ちリスト除外）の両方で使う
+function getReceivedKeys() {
+  const keys = new Set();
+  const sh = getSS().getSheetByName(SHEET_RECEIVED);
+  if (sh && sh.getLastRow() > 1) {
+    sh.getDataRange().getValues().slice(1).forEach(r => {
+      const orderNo = String(r[0] || '').trim();
+      const code    = String(r[1] || '').trim();
+      if (orderNo && code) keys.add(orderNo + '|' + code);
+    });
+  }
+  return keys;
+}
+
+// カレンダー日付(y,m,d)をUTC起点の通し日数(epoch day)に変換する。
+// タイムゾーン・DST（日本には無いが念のため）の影響を受けずに日数差分を計算するため、
+// Dateオブジェクトの時刻部分ではなく整数の「日数」だけで加減算する
+function ymdToEpochDay(y, m, d) {
+  return Math.floor(Date.UTC(y, m - 1, d) / 86400000);
+}
+function epochDayToDateStr(epochDay) {
+  return Utilities.formatDate(new Date(epochDay * 86400000), 'Asia/Tokyo', 'yyyy-MM-dd');
+}
+
+// 入荷待ちリストを組み立てる（Phase F, v1.24.0〜）。GAS内でリアルタイム集計するため、
+// アプリから発注した直後にgetOrderProposalsを呼べば即座に反映される。
+// 対象: 発注明細（アプリ経由の発注のみ・電話/FAX等は対象外）のうち、
+//   発注日 + リードタイム + PENDING_GRACE_DAYS がまだ今日を過ぎていない かつ
+//   「✓入荷済み」登録済みでない行。
+// ⚠️ 提案の抑制（on_order加算・getReorderConfigのrecentOrders）とは別のウィンドウ。
+//   ここでの「遅延」はあくまで警告表示用で、提案そのものは止めない（§3.4参照）
+function buildPendingOrders() {
+  const ss = getSS();
+  const itemsSh = ss.getSheetByName(SHEET_ITEMS);
+  if (!itemsSh || itemsSh.getLastRow() < 2) return [];
+  const itemsData = itemsSh.getDataRange().getValues();
+
+  // 発注No → 仕入先情報（発注履歴シートから。発注明細には仕入先が入っていないため）
+  const histSh = ss.getSheetByName(SHEET_HISTORY);
+  const supplierByOrderNo = {};
+  if (histSh && histSh.getLastRow() > 1) {
+    histSh.getDataRange().getValues().slice(1).forEach(r => {
+      const orderNo = String(r[0] || '').trim();
+      if (orderNo) supplierByOrderNo[orderNo] = { code: String(r[2] || '').trim(), name: String(r[3] || '') };
+    });
+  }
+
+  // 発注先コード → リードタイム（発注先マスターF列。未入力は既定値）
+  const suppData = getSheet(SHEET_SUPPLIERS).getDataRange().getValues();
+  const leadTimeByCode = {};
+  suppData.slice(1).forEach(r => {
+    const code = String(r[0] || '').trim();
+    if (code) leadTimeByCode[code] = parseFloat(r[5]) > 0 ? parseFloat(r[5]) : DEFAULT_LEAD_TIME_DAYS;
+  });
+
+  const receivedKeys = getReceivedKeys();
+
+  const todayStr = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+  const todayParts = todayStr.split('-').map(Number);
+  const todayEpochDay = ymdToEpochDay(todayParts[0], todayParts[1], todayParts[2]);
+
+  const candidates = [];
+  itemsData.slice(1).forEach(r => {
+    const orderNo = String(r[0] || '').trim();
+    const code    = String(r[2] || '').trim();
+    const name    = String(r[3] || '');
+    const qty     = Math.round(parseFloat(r[4]) || 0);
+    if (!orderNo || !code || qty <= 0) return;
+    if (receivedKeys.has(orderNo + '|' + code)) return;
+
+    const dateKey = orderNo.split('-')[0]; // 発注No先頭のYYYYMMDD
+    if (dateKey.length !== 8) return;
+    const y = parseInt(dateKey.slice(0, 4), 10), m = parseInt(dateKey.slice(4, 6), 10), d = parseInt(dateKey.slice(6, 8), 10);
+    const orderEpochDay = ymdToEpochDay(y, m, d);
+
+    const supp = supplierByOrderNo[orderNo] || { code: '', name: '' };
+    const leadTimeDays = leadTimeByCode[supp.code] || DEFAULT_LEAD_TIME_DAYS;
+    const expectedEpochDay = orderEpochDay + Math.round(leadTimeDays);
+    const graceDeadlineEpochDay = expectedEpochDay + PENDING_GRACE_DAYS;
+    if (graceDeadlineEpochDay < todayEpochDay) return; // 猶予期間も過ぎたら自動的に対象外
+
+    const overdueDays = todayEpochDay - expectedEpochDay;
+    candidates.push({
+      code, name,
+      supplierName: supp.name,
+      orderNo,
+      orderDate: dateKey.slice(0, 4) + '-' + dateKey.slice(4, 6) + '-' + dateKey.slice(6, 8),
+      qty,
+      leadTimeDays,
+      expectedDate: epochDayToDateStr(expectedEpochDay),
+      elapsedDays: todayEpochDay - orderEpochDay,
+      overdueDays,
+      isDelayed: overdueDays > 0
+    });
+  });
+
+  if (candidates.length === 0) return [];
+
+  // 仕入単価を商品マスターから引く（対象コードのみに絞って走査）
+  const codeSet = new Set(candidates.map(c => c.code));
+  const unitCostByCode = {};
+  const prodSh = ss.getSheetByName(SHEET_PRODUCTS);
+  if (prodSh && prodSh.getLastRow() > 1) {
+    const prodData = prodSh.getDataRange().getValues();
+    const headers  = prodData[0].map(h => String(h).trim());
+    const colCode  = findColIdxGAS(headers, 'コード');
+    const colCost  = findColIdxGAS(headers, '仕入単価');
+    if (colCode !== -1 && colCost !== -1) {
+      for (let i = 1; i < prodData.length; i++) {
+        const code = String(prodData[i][colCode] || '').trim();
+        if (codeSet.has(code) && !(code in unitCostByCode)) {
+          unitCostByCode[code] = parseFloat(String(prodData[i][colCost] || '0').replace(/,/g, '')) || 0;
+        }
+      }
+    }
+  }
+
+  candidates.forEach(c => {
+    c.unitCost = unitCostByCode[c.code] || 0;
+    c.amount = Math.round(c.unitCost * c.qty);
+  });
+
+  // 遅延を最上位、その中で発注日の古い順
+  candidates.sort((a, b) => {
+    if (a.isDelayed !== b.isDelayed) return a.isDelayed ? -1 : 1;
+    return a.orderDate < b.orderDate ? -1 : (a.orderDate > b.orderDate ? 1 : 0);
+  });
+
+  return candidates;
 }
 
 // 金額を「◯◯.◯万円」表記にする（LINE WORKS通知用）
@@ -1359,7 +1508,10 @@ function getOrderProposals() {
       }));
   }
 
-  return { success: true, proposals, analyzedAt, exclusions, eol, excess, excessAcks, dead, deadAcks, kpi, lotOverrides };
+  // 入荷待ちリスト（Phase F, v1.24.0〜）。GAS内でリアルタイム集計するため常に最新
+  const pendingOrders = buildPendingOrders();
+
+  return { success: true, proposals, analyzedAt, exclusions, eol, excess, excessAcks, dead, deadAcks, pendingOrders, kpi, lotOverrides };
 }
 
 // POST(セッション): 過剰在庫の確認済み登録/解除
@@ -1430,6 +1582,45 @@ function saveDeadAck(p, user_id) {
       }
     }
     return { success: false, error: '商品コード「' + code + '」が見つかりません' };
+  }
+  return { success: false, error: '不明なmode: ' + mode };
+}
+
+// POST(セッション): 入荷済みの手動登録/解除（Phase F, v1.24.0〜）
+// キーは 発注No + 商品コード（同じ商品を複数回発注していることがあるため商品コード単体では特定できない）
+// 登録すると getReorderConfig の recentOrders / buildPendingOrders の両方から除外される
+// リクエスト: { action:'saveReceived', mode:'add'|'delete', orderNo, code, name, qty }
+function saveReceived(p, user_id) {
+  const mode    = p.mode    || '';
+  const orderNo = String(p.orderNo || '').trim();
+  const code    = String(p.code    || '').trim();
+  const name    = String(p.name    || '').trim();
+  const qty     = parseFloat(p.qty) || 0;
+  if (!orderNo || !code) return { success: false, error: '発注No・商品コードが未指定です' };
+
+  const ss = getSS();
+  let sh = ss.getSheetByName(SHEET_RECEIVED);
+  if (!sh) {
+    sh = ss.insertSheet(SHEET_RECEIVED);
+    sh.appendRow(RECEIVED_HEADERS);
+  }
+  const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+
+  if (mode === 'add') {
+    const data = sh.getDataRange().getValues();
+    const exists = data.slice(1).some(r => String(r[0]).trim() === orderNo && String(r[1]).trim() === code);
+    if (exists) return { success: false, error: 'すでに入荷済みとして登録されています' };
+    sh.appendRow([orderNo, code, name, qty, user_id, now]);
+    return { success: true };
+  } else if (mode === 'delete') {
+    const data = sh.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() === orderNo && String(data[i][1]).trim() === code) {
+        sh.deleteRow(i + 1);
+        return { success: true };
+      }
+    }
+    return { success: false, error: '該当する発注が見つかりません' };
   }
   return { success: false, error: '不明なmode: ' + mode };
 }
