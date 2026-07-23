@@ -1,6 +1,6 @@
 // ============================================================
 // Beaufield 発注アプリ - Google Apps Script バックエンド
-// Version: v1.22.0
+// Version: v1.23.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.22.0';
+const VERSION         = 'v1.23.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -45,6 +45,8 @@ const SHEET_EXCESS_ACK = '過剰在庫確認済み'; // 持ちすぎを承知の
 const SHEET_KPI_HISTORY = '在庫KPI履歴';    // analyze_demand.py が実行日ごとに1行追記（同日再実行は上書き）
 const SHEET_EOL         = '終売商品設定';   // 在庫はあるが再発注できない商品（キャンペーン終了等）。提案除外設定とは別枠
 const SHEET_LOT_OVERRIDE = '最低発注数設定';  // 過去発注実績からの自動推定より優先する手動の最低発注数設定
+const SHEET_DEAD        = '死蔵在庫';       // analyze_demand.py が毎回全面書き換えする死蔵在庫リスト（Phase E, v1.10.0〜）
+const SHEET_DEAD_ACK    = '死蔵在庫確認済み'; // 死蔵と承知の上で確認済みにした商品（季節品・サンプル等）
 
 // 発注先マスターの拡張列（F=リードタイム(日), G=発注サイクル(日)）
 // 未入力の場合のフォールバック値。analyze_demand.py の計算に使う
@@ -216,6 +218,7 @@ function doPost(e) {
       case 'saveSupplier': return jsonResponse(saveSupplier(p, auth.user_id));
       case 'saveProposalExclusion': return jsonResponse(saveProposalExclusion(p, auth.user_id));
       case 'saveExcessAck': return jsonResponse(saveExcessAck(p, auth.user_id));
+      case 'saveDeadAck': return jsonResponse(saveDeadAck(p, auth.user_id));
       case 'saveEolFlag': return jsonResponse(saveEolFlag(p, auth.user_id));
       case 'saveLotOverride': return jsonResponse(saveLotOverride(p, auth.user_id));
       default:             return jsonResponse({ success: false, error: '不明なアクション: ' + action });
@@ -863,15 +866,17 @@ function saveSupplier(p, user_id) {
 // フロー:
 //   1. analyze_demand.py が getReorderConfig で設定取得
 //      （発注先別リードタイム・除外商品・終売商品・過去発注からのロット推定材料）
-//   2. 売上データを分析して updateOrderProposals で「発注提案」「過剰在庫」「在庫KPI履歴」シートを更新
-//      提案・過剰在庫があれば LINEWORKS_WEBHOOK（スクリプトプロパティ・任意）へ通知
-//   3. アプリは getOrderProposals で提案・過剰在庫・経営KPI（直近2回分）を表示
+//   2. 売上データを分析して updateOrderProposals で「発注提案」「過剰在庫」「死蔵在庫」
+//      「在庫KPI履歴」シートを更新。提案・過剰在庫・死蔵在庫があれば
+//      LINEWORKS_WEBHOOK（スクリプトプロパティ・任意）へ通知
+//   3. アプリは getOrderProposals で提案・過剰在庫・死蔵在庫・経営KPI（直近2回分）を表示
 //   4. ノイズ商品は saveProposalExclusion で除外登録（以後提案されない）
 //   5. 持ちすぎを承知の上の商品は saveExcessAck で確認済み登録（次回分析後もリストから消える）
 //   6. 在庫はあるが再発注できない商品（キャンペーン終了等）は saveEolFlag で終売登録
 //      （除外設定とは別枠。以後提案されない）
 //   7. ロット（最低注文数）が明確な商品は saveLotOverride で手動設定（自動推定より優先）
 //   8. Claude Code が updateProposalExplanations でAI説明を追記（任意）
+//   9. 死蔵と承知の上の商品は saveDeadAck で確認済み登録（次回分析後もリストから消える）
 // ============================================================
 
 // 発注提案シートの列定義（updateOrderProposals / getOrderProposals で共有）
@@ -885,7 +890,11 @@ const EXCESS_HEADERS = ['商品コード','商品名','仕入先コード','仕�
 
 // 在庫KPI履歴シートの列定義（updateOrderProposals / getOrderProposals で共有）
 const KPI_HEADERS = ['日付','在庫金額','月次売上原価','回転日数','過剰在庫額','過剰件数',
-                     '提案額','提案件数','年間保有コスト概算'];
+                     '提案額','提案件数','年間保有コスト概算','死蔵在庫額','死蔵件数'];
+
+// 死蔵在庫シートの列定義（updateOrderProposals / getOrderProposals で共有。Phase E, v1.10.0〜）
+const DEAD_HEADERS = ['商品コード','商品名','仕入先コード','仕入先名','現在庫','仕入単価',
+                      '在庫金額','最終売上日','経過月数','区分','理由','分析日時'];
 
 // POST(APIキー): 分析に必要な設定を返す
 // レスポンス: { success, suppliers: [{code,name,leadTimeDays,orderCycleDays}],
@@ -980,16 +989,19 @@ function formatManYen(yen) {
   return (yen / 10000).toFixed(1) + '万円';
 }
 
-// POST(APIキー): 発注提案・過剰在庫シートを全面書き換え、在庫KPI履歴に1行記録
+// POST(APIキー): 発注提案・過剰在庫・死蔵在庫シートを全面書き換え、在庫KPI履歴に1行記録
 // リクエスト: { proposals: [{code,name,supplierCode,supplierName,pattern,stock,recommended,
 //              proposedQty,lot,meanMonthly,p95Order,maxOrder,note}],
 //              excess: [{code,name,supplierCode,supplierName,stock,recommended,excessQty,
 //              unitCost,excessAmount,monthsOfStock,abcRank,pattern}],
+//              dead: [{code,name,supplierCode,supplierName,stock,unitCost,deadAmount,
+//              lastSaleDate,monthsSinceLastSale,tier,reason}],
 //              kpi: {date,stockValue,monthlyCogs,turnoverDays,excessAmount,excessCount,
-//              proposalAmount,proposalCount,holdingCostAnnual}, analyzedAt }
+//              proposalAmount,proposalCount,holdingCostAnnual,deadAmount,deadCount}, analyzedAt }
 function updateOrderProposals(p) {
   const proposals  = p.proposals || [];
   const excess     = p.excess || [];
+  const dead       = p.dead || [];
   const kpi        = p.kpi || null;
   const analyzedAt = String(p.analyzedAt || '');
 
@@ -1049,6 +1061,29 @@ function updateOrderProposals(p) {
     exSh.getRange(2, 1, exRows.length, EXCESS_HEADERS.length).setValues(exRows);
   }
 
+  // 死蔵在庫シート（全面書き換え。Phase E, v1.10.0〜）
+  let deadSh = ss.getSheetByName(SHEET_DEAD);
+  if (!deadSh) deadSh = ss.insertSheet(SHEET_DEAD);
+  deadSh.clearContents();
+  deadSh.getRange(1, 1, 1, DEAD_HEADERS.length).setValues([DEAD_HEADERS]);
+  if (dead.length > 0) {
+    const deadRows = dead.map(x => [
+      String(x.code         || '').trim(),
+      String(x.name         || ''),
+      String(x.supplierCode || ''),
+      String(x.supplierName || ''),
+      parseFloat(x.stock)     || 0,
+      parseFloat(x.unitCost)  || 0,
+      parseFloat(x.deadAmount) || 0,
+      String(x.lastSaleDate || ''),
+      x.monthsSinceLastSale === null || x.monthsSinceLastSale === undefined ? '' : parseFloat(x.monthsSinceLastSale),
+      String(x.tier   || ''),
+      String(x.reason || ''),
+      analyzedAt
+    ]);
+    deadSh.getRange(2, 1, deadRows.length, DEAD_HEADERS.length).setValues(deadRows);
+  }
+
   // 在庫KPI履歴（実行日単位でappend。同日の再実行はその行を上書き）
   upsertKpiHistory(kpi);
 
@@ -1069,28 +1104,31 @@ function updateOrderProposals(p) {
     const excessLine = excess.length > 0
       ? ('\n⚠️ 持ちすぎ在庫: ' + excess.length + '件・過剰' + formatManYen(excessAmount))
       : '';
+    const deadAmount = dead.reduce((s, x) => s + (parseFloat(x.deadAmount) || 0), 0);
+    const deadLine = dead.length > 0
+      ? ('\n🧹 死蔵在庫: ' + dead.length + '件・' + formatManYen(deadAmount))
+      : '';
     notifyLineWorks(
       '📋 発注提案の分析が完了しました（' + analyzedAt + '）\n' +
       '提案: ' + proposals.length + '件・合計' + formatManYen(totalAmount) + '\n' + lines.join('\n') + more +
-      excessLine + '\n' +
+      excessLine + deadLine + '\n' +
       '発注アプリの「発注提案」タブで確認してください。'
     );
   }
 
-  Logger.log('✅ 発注提案更新完了: ' + proposals.length + '件 / 過剰在庫 ' + excess.length + '件');
-  return { success: true, count: proposals.length, excessCount: excess.length };
+  Logger.log('✅ 発注提案更新完了: ' + proposals.length + '件 / 過剰在庫 ' + excess.length + '件 / 死蔵在庫 ' + dead.length + '件');
+  return { success: true, count: proposals.length, excessCount: excess.length, deadCount: dead.length };
 }
 
 // 在庫KPI履歴シートへの記録（日付が一致する行があれば上書き、無ければ追記）
-// kpi: {date,stockValue,monthlyCogs,turnoverDays,excessAmount,excessCount,proposalAmount,proposalCount,holdingCostAnnual}
+// kpi: {date,stockValue,monthlyCogs,turnoverDays,excessAmount,excessCount,proposalAmount,proposalCount,holdingCostAnnual,deadAmount,deadCount}
 function upsertKpiHistory(kpi) {
   if (!kpi) return;
   const ss = getSS();
   let sh = ss.getSheetByName(SHEET_KPI_HISTORY);
-  if (!sh) {
-    sh = ss.insertSheet(SHEET_KPI_HISTORY);
-    sh.getRange(1, 1, 1, KPI_HEADERS.length).setValues([KPI_HEADERS]);
-  }
+  if (!sh) sh = ss.insertSheet(SHEET_KPI_HISTORY);
+  // ヘッダーは毎回上書き（v1.10.0で列追加した際、既存シートのヘッダーが古いまま残るのを防ぐ）
+  sh.getRange(1, 1, 1, KPI_HEADERS.length).setValues([KPI_HEADERS]);
   const dateStr = String(kpi.date || Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd'));
   const row = [
     dateStr,
@@ -1101,7 +1139,9 @@ function upsertKpiHistory(kpi) {
     parseFloat(kpi.excessCount)       || 0,
     parseFloat(kpi.proposalAmount)    || 0,
     parseFloat(kpi.proposalCount)     || 0,
-    parseFloat(kpi.holdingCostAnnual) || 0
+    parseFloat(kpi.holdingCostAnnual) || 0,
+    parseFloat(kpi.deadAmount)        || 0,
+    parseFloat(kpi.deadCount)         || 0
   ];
 
   const lastRow = sh.getLastRow();
@@ -1259,9 +1299,49 @@ function getOrderProposals() {
       excessCount:       parseFloat(r[5]) || 0,
       proposalAmount:    parseFloat(r[6]) || 0,
       proposalCount:     parseFloat(r[7]) || 0,
-      holdingCostAnnual: parseFloat(r[8]) || 0
+      holdingCostAnnual: parseFloat(r[8]) || 0,
+      deadAmount:        parseFloat(r[9]) || 0,
+      deadCount:         parseFloat(r[10]) || 0
     }));
     kpi = { current: kpiRows[kpiRows.length - 1], previous: kpiRows.length > 1 ? kpiRows[0] : null };
+  }
+
+  // 死蔵在庫の確認済みリスト（先に読み、確認済みの商品を死蔵在庫リストから除外する）
+  let deadAcks = [];
+  const deadAckSh = ss.getSheetByName(SHEET_DEAD_ACK);
+  if (deadAckSh && deadAckSh.getLastRow() > 1) {
+    deadAcks = deadAckSh.getDataRange().getValues().slice(1)
+      .filter(r => String(r[0]).trim() !== '')
+      .map(r => ({
+        code:    String(r[0]).trim(),
+        name:    String(r[1] || ''),
+        reason:  String(r[2] || ''),
+        ackedBy: String(r[3] || ''),
+        ackedAt: cellToStr(r[4], 'yyyy-MM-dd HH:mm')
+      }));
+  }
+  const deadAckedCodes = new Set(deadAcks.map(x => x.code));
+
+  // 死蔵在庫リスト（確認済みは除く。Phase E, v1.10.0〜）
+  let dead = [];
+  const deadSh2 = ss.getSheetByName(SHEET_DEAD);
+  if (deadSh2 && deadSh2.getLastRow() > 1) {
+    dead = deadSh2.getDataRange().getValues().slice(1)
+      .filter(r => String(r[0]).trim() !== '')
+      .map(r => ({
+        code:                 String(r[0]).trim(),
+        name:                 String(r[1] || ''),
+        supplierCode:         String(r[2] || '').trim(),
+        supplierName:         String(r[3] || ''),
+        stock:                parseFloat(r[4]) || 0,
+        unitCost:             parseFloat(r[5]) || 0,
+        deadAmount:           parseFloat(r[6]) || 0,
+        lastSaleDate:         String(r[7] || ''),
+        monthsSinceLastSale:  r[8] === '' ? null : (parseFloat(r[8]) || 0),
+        tier:                 String(r[9] || ''),
+        reason:               String(r[10] || '')
+      }))
+      .filter(x => !deadAckedCodes.has(x.code));
   }
 
   // 手動ロット設定リスト（ロット管理UIでの表示・解除用）
@@ -1279,7 +1359,7 @@ function getOrderProposals() {
       }));
   }
 
-  return { success: true, proposals, analyzedAt, exclusions, eol, excess, excessAcks, kpi, lotOverrides };
+  return { success: true, proposals, analyzedAt, exclusions, eol, excess, excessAcks, dead, deadAcks, kpi, lotOverrides };
 }
 
 // POST(セッション): 過剰在庫の確認済み登録/解除
@@ -1295,6 +1375,42 @@ function saveExcessAck(p, user_id) {
   let sh = ss.getSheetByName(SHEET_EXCESS_ACK);
   if (!sh) {
     sh = ss.insertSheet(SHEET_EXCESS_ACK);
+    sh.appendRow(['商品コード','商品名','理由','確認者','確認日時']);
+  }
+  const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+
+  if (mode === 'add') {
+    const data = sh.getDataRange().getValues();
+    const exists = data.slice(1).some(r => String(r[0]).trim() === code);
+    if (exists) return { success: false, error: '商品コード「' + code + '」はすでに確認済みです' };
+    sh.appendRow([code, name, reason, user_id, now]);
+    return { success: true };
+  } else if (mode === 'delete') {
+    const data = sh.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() === code) {
+        sh.deleteRow(i + 1);
+        return { success: true };
+      }
+    }
+    return { success: false, error: '商品コード「' + code + '」が見つかりません' };
+  }
+  return { success: false, error: '不明なmode: ' + mode };
+}
+
+// POST(セッション): 死蔵在庫の確認済み登録/解除（Phase E, v1.10.0〜）
+// リクエスト: { action:'saveDeadAck', mode:'add'|'delete', code, name, reason }
+function saveDeadAck(p, user_id) {
+  const mode   = p.mode || '';
+  const code   = String(p.code   || '').trim();
+  const name   = String(p.name   || '').trim();
+  const reason = String(p.reason || '').trim();
+  if (!code) return { success: false, error: '商品コードが未指定です' };
+
+  const ss = getSS();
+  let sh = ss.getSheetByName(SHEET_DEAD_ACK);
+  if (!sh) {
+    sh = ss.insertSheet(SHEET_DEAD_ACK);
     sh.appendRow(['商品コード','商品名','理由','確認者','確認日時']);
   }
   const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
