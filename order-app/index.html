@@ -1228,7 +1228,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.46.0'; // 提案タブに「🚚 入荷待ち」を追加、遅延中の発注は提案行に警告表示（Phase F）
+const APP_VERSION    = 'v1.47.0'; // 提案タブ: 在庫マイナスの商品に⚠️警告表示を追加
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -4262,6 +4262,7 @@ function renderProposalList() {
         const items = g.items.map(p => {
           const badgeCls = PROP_PATTERN_CLASS[p.pattern] || 'sporadic';
           const note = p.aiNote || p.note || '';
+          const stockNeg = (parseFloat(p.stock) || 0) < 0;
           const onOrder = p.onOrder > 0 ? `<span style="color:var(--text-light)">＋発注済 <b>${p.onOrder}</b></span> ` : '';
           const unitCost = parseFloat(p.unitCost) || 0;
           const abcCls = ABC_BADGE_CLASS[p.abcRank] || '';
@@ -4287,8 +4288,9 @@ function renderProposalList() {
                 <button class="prop-eol-btn" onclick="markEol('${escAttr(p.code)}','${escAttr(p.name)}')">🔚 終売</button>
               </div>
             </div>
+            ${stockNeg ? `<div class="prop-pending-warn">⚠️ 在庫マイナス（${p.stock}）：欠品・バックオーダー中の可能性</div>` : ''}
             <div class="prop-item-stats">
-              <span>在庫 <b>${p.stock}</b> ${onOrder}→ 推奨 <b>${p.recommended}</b></span>
+              <span>在庫 <b style="${stockNeg ? 'color:var(--danger)' : ''}">${p.stock}</b> ${onOrder}→ 推奨 <b>${p.recommended}</b></span>
               <span>発注数 <input type="number" class="prop-qty" value="${p.proposedQty}" min="1" step="1"></span>
               <span class="prop-qty-chips">${PROP_QTY_CHIPS.map(v => `<button type="button" class="prop-qty-chip${p.proposedQty === v ? ' active' : ''}" onclick="setPropQty(this,${v})">${v}</button>`).join('')}</span>
               <button type="button" class="prop-lot-btn" onclick="openLotModal('${escAttr(p.code)}','${escAttr(p.name)}')">最低発注数 ${p.lot} ✏️</button>

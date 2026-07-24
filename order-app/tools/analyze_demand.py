@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.10.0
+# Version: v1.11.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -40,6 +40,8 @@
 # 発注提案の対象:
 #   月平均1個以上・販売歴6ヶ月以上・提案除外設定に無い・Cランクの間欠需要でない商品のうち、
 #   「現在庫＋発注済み未入荷分」が推奨在庫を下回ったもの。
+#   ただし現在庫がマイナスの商品は上記の条件（月平均・販売歴・Cランク間欠需要）を無視して
+#   強制的に対象にする（v1.11.0。手動の除外・終売設定のみ引き続き優先される）。
 #   発注済み未入荷分 = リードタイム内に発注アプリから発注した数量（二重発注防止）
 #   提案数量はロット単位に切り上げ。
 #   ロット = 手動設定（アプリの提案タブから登録。v1.8.0で追加）があれば最優先、
@@ -77,6 +79,14 @@
 # 終売フラグ（v1.6.0で追加）:
 #   在庫はあるが再発注できない商品（キャンペーン終了等）は「終売商品設定」で
 #   個別に指定でき、以後は提案対象から外れる（提案除外設定とは別枠で管理）
+#
+# 在庫マイナス商品の強制表示（v1.11.0で追加）:
+#   現在庫がマイナス（欠品・バックオーダー中）の商品は、Cランク間欠需要（受注発注推奨）や
+#   データ不足・月平均閾値未満によって通常は提案対象外でも、提案タブに強制的に表示する。
+#   「発注済み未入荷分」は考慮した上で算出するため、実際に発注済みで解消見込みの分は
+#   従来通り on_order で相殺される（この項目はあくまで純粋な在庫マイナスのみを救済する）。
+#   ただし手動の「🚫除外」「🔚終売」設定は従来通り最優先で常に非表示のまま
+#   （在庫マイナスでも意図的に提案不要と判断された商品を強制的に出さないため）。
 #
 # 実行方法:
 #   py -3.12 analyze_demand.py             # 分析＋GASへ書き込み＋通知
@@ -410,11 +420,14 @@ def estimate_lot(lot_stats_entry, lot_override=None):
     return gcd_qty if gcd_qty >= 2 else 1
 
 
-def build_note(stat, protect_days, lot, on_order=0, abc='A', is_declining=False, older_mean=None):
+def build_note(stat, protect_days, lot, on_order=0, abc='A', is_declining=False, older_mean=None,
+                forced_by_negative_stock=False):
     """提案根拠の短い説明文（ルールベース）"""
     parts = []
     pattern = stat['pattern']
     window_months = DECLINE_TREND_MONTHS if is_declining else WINDOW_MONTHS
+    if forced_by_negative_stock:
+        parts.append("⚠️在庫マイナスのため通常の対象外条件を無視して表示")
     if on_order > 0:
         parts.append(f"発注済み未入荷{on_order:.0f}個を在庫に加算済み")
     if is_declining and older_mean is not None:
@@ -692,8 +705,12 @@ def main():
         mto_recommended = (abc == 'C') and (stat['pattern'] in ('まとめ買い型', '散発型'))
 
         shortage = recommended - (stock + on_order)
-        excluded_or_mto = excluded or mto_recommended or eol_flagged
-        eligible = (not insufficient) and (not excluded_or_mto) and stat['mean_monthly'] >= min_mean
+        stock_negative = stock < 0
+        # 通常の対象条件（データ十分・Cランク間欠需要でない・月平均が閾値以上）
+        normally_eligible = (not insufficient) and (not mto_recommended) and stat['mean_monthly'] >= min_mean
+        # 在庫マイナスの商品は上記の自動除外条件を無視して救済表示する（手動の除外・終売のみ優先）
+        eligible = (not excluded) and (not eol_flagged) and (stock_negative or normally_eligible)
+        forced_by_negative_stock = stock_negative and not normally_eligible
         proposed_qty = 0
         if eligible and shortage > 0:
             proposed_qty = int(math.ceil(shortage / lot) * lot)
@@ -775,7 +792,8 @@ def main():
                 'meanMonthly': stat['mean_monthly'],
                 'p95Order': stat['p95_order_size'],
                 'maxOrder': stat['max_order_size'],
-                'note': build_note(stat, protect_days, lot, on_order, abc, is_declining, older_mean),
+                'note': build_note(stat, protect_days, lot, on_order, abc, is_declining, older_mean,
+                                   forced_by_negative_stock),
             })
 
         if args.dry_run:
