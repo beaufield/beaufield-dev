@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.12.0
+# Version: v1.13.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -48,6 +48,16 @@
 #           なければ過去の発注明細の数量の最大公約数から自動推定（発注3回以上かつ2以上のときのみ採用）
 #   提案金額 = 仕入単価（商品.CSV）× 提案数量。仕入単価未設定（0円）の商品は金額0円扱い
 #   （アプリ側で「—」表示。合計からは除外しない）
+#
+# 参考表示（v1.13.0で追加）:
+#   上記の自動条件（Cランクの間欠需要・販売歴6ヶ月未満・月平均1個未満）で提案対象外になった商品でも、
+#   「現在庫＋発注済み未入荷分」が推奨在庫を下回っていれば refOnly=True を立てて提案シートに載せる。
+#   アプリ側ではチェックOFF・グレー表示になり、発注金額の合計にも件数にも入らない（拾いたい時だけ
+#   チェックを入れれば通常どおり発注へ送れる）。
+#   狙いは「発注画面では推奨発注数バッジが出ているのに提案タブには影も形も無い」というズレを無くし、
+#   在庫が切れかけていること自体には必ず気づけるようにすること。提案するかどうかの判断は据え置き。
+#   ⚠️ KPI（提案額・提案件数）・LINE WORKS通知・提案件数の急変ガードレールは参考表示を数えない
+#   （経営指標の連続性を壊さないため）。手動の「🚫除外」「🔚終売」は従来どおり最優先で常に非表示。
 #
 # 過剰在庫（v1.4.0で追加）:
 #   現在庫が「推奨在庫のEXCESS_RATIO倍」を超え、かつ超過数量がEXCESS_MIN_QTY以上の商品を
@@ -483,7 +493,11 @@ def warn_if_proposal_count_swings(new_count, threshold=0.5):
         return
     try:
         prev = pd.read_csv(prev_files[-2], encoding='utf-8-sig')
-        prev_count = int((pd.to_numeric(prev['proposed_qty'], errors='coerce').fillna(0) > 0).sum())
+        mask = pd.to_numeric(prev['proposed_qty'], errors='coerce').fillna(0) > 0
+        if 'ref_only' in prev.columns:
+            # v1.13.0〜: 参考表示の行は提案件数に数えない（列が無い旧CSVはそのまま比較する）
+            mask &= ~prev['ref_only'].astype(str).str.strip().str.lower().isin(['true', '1'])
+        prev_count = int(mask.sum())
     except Exception as e:
         logging.debug(f'前回実行との比較をスキップ: {e}')
         return
@@ -625,11 +639,13 @@ def estimate_lot(lot_stats_entry, lot_override=None):
 
 
 def build_note(stat, protect_days, lot, on_order=0, abc='A', is_declining=False, older_mean=None,
-                forced_by_negative_stock=False):
+                forced_by_negative_stock=False, ref_reason=''):
     """提案根拠の短い説明文（ルールベース）"""
     parts = []
     pattern = stat['pattern']
     window_months = DECLINE_TREND_MONTHS if is_declining else WINDOW_MONTHS
+    if ref_reason:
+        parts.append(f"📎参考表示（{ref_reason}のため自動提案の対象外。在庫が推奨を下回ったのでお知らせのみ）")
     if forced_by_negative_stock:
         parts.append("⚠️在庫マイナスのため通常の対象外条件を無視して表示")
     if on_order > 0:
@@ -699,8 +715,10 @@ def post_proposals(gas_url, api_key, proposals, excess, dead, kpi, analyzed_at):
         'dead': dead,
         'kpi': kpi,
     }
+    ref_count = sum(1 for x in proposals if x.get('refOnly'))
     logging.info(f'GASへ発注提案・過剰在庫・死蔵在庫・KPIを送信中... '
-                 f'(提案{len(proposals)}件 / 過剰在庫{len(excess)}件 / 死蔵在庫{len(dead)}件)')
+                 f'(提案{len(proposals) - ref_count}件＋参考{ref_count}件 / '
+                 f'過剰在庫{len(excess)}件 / 死蔵在庫{len(dead)}件)')
     for attempt in range(1, 4):
         try:
             resp = requests.post(gas_url, json=payload, timeout=300)
@@ -786,7 +804,7 @@ def main():
 
     log_file = setup_logger()
     logging.info('=' * 60)
-    logging.info('Beaufield 需要分析・発注提案スクリプト v1.12.0 開始'
+    logging.info('Beaufield 需要分析・発注提案スクリプト v1.13.0 開始'
                  + ('（dry-run）' if args.dry_run else ''))
 
     config = load_config()
@@ -994,12 +1012,30 @@ def main():
         stock_negative = stock < 0
         # 通常の対象条件（データ十分・Cランク間欠需要でない・月平均が閾値以上）
         normally_eligible = (not insufficient) and (not mto_recommended) and stat['mean_monthly'] >= min_mean
+        # 手動の「🚫除外」「🔚終売」は最優先。提案にも参考表示にも一切出さない
+        manually_hidden = excluded or eol_flagged
         # 在庫マイナスの商品は上記の自動除外条件を無視して救済表示する（手動の除外・終売のみ優先）
-        eligible = (not excluded) and (not eol_flagged) and (stock_negative or normally_eligible)
+        eligible = (not manually_hidden) and (stock_negative or normally_eligible)
         forced_by_negative_stock = stock_negative and not normally_eligible
+        # 参考表示（v1.13.0）: 自動条件で提案対象外だが在庫が推奨を下回っている商品。
+        # 提案と同じ行として送るが refOnly を立て、アプリ側でチェックOFF・グレー表示にして
+        # 発注金額の合計にも件数にも含めない（切れかけに気づけないのを防ぐ可視化のみが目的）
+        ref_only = (not manually_hidden) and (not eligible) and shortage > 0
         proposed_qty = 0
-        if eligible and shortage > 0:
+        if (eligible or ref_only) and shortage > 0:
             proposed_qty = int(math.ceil(shortage / lot) * lot)
+
+        # 参考表示になった理由（アプリの根拠メモに出す。複数該当しうるので全部並べる）
+        ref_reason = ''
+        if ref_only:
+            _reasons = []
+            if insufficient:
+                _reasons.append(f'販売歴{MIN_MONTHS_DATA}ヶ月未満')
+            if mto_recommended:
+                _reasons.append('Cランクの間欠需要で受注発注推奨')
+            if stat['mean_monthly'] < min_mean:
+                _reasons.append(f'月平均{min_mean:g}個未満')
+            ref_reason = '・'.join(_reasons)
 
         pattern_label = 'データ不足' if insufficient else stat['pattern']
         row = {
@@ -1010,6 +1046,7 @@ def main():
             'pattern': pattern_label,
             'abc': abc,
             'mto_recommended': mto_recommended,
+            'ref_only': ref_only,
             'excluded': excluded,
             'eol_flagged': eol_flagged,
             'is_declining': is_declining,
@@ -1078,8 +1115,9 @@ def main():
                 'meanMonthly': stat['mean_monthly'],
                 'p95Order': stat['p95_order_size'],
                 'maxOrder': stat['max_order_size'],
+                'refOnly': ref_only,
                 'note': build_note(stat, protect_days, lot, on_order, abc, is_declining, older_mean,
-                                   forced_by_negative_stock),
+                                   forced_by_negative_stock, ref_reason),
             })
 
         if args.dry_run:
@@ -1097,8 +1135,13 @@ def main():
                 'amount_old': round(unit_cost * proposed_qty_old), 'amount_new': round(unit_cost * proposed_qty),
             })
 
-    # 仕入先→提案数量の多い順で並べる（アプリでの見やすさ優先）
-    proposals.sort(key=lambda x: (x['supplierName'], -x['proposedQty']))
+    # 仕入先→提案が先・参考は後→提案数量の多い順で並べる（シートを直接見た時の分かりやすさ優先。
+    # アプリ側は棚番順に並べ替えるのでここの並びは表示順には影響しない）
+    proposals.sort(key=lambda x: (x['supplierName'], x['refOnly'], -x['proposedQty']))
+    # 参考表示（refOnly）は「気づくため」の行であって発注提案そのものではないので、
+    # KPI・通知・件数ガードレールは提案行だけを母集団にする
+    real_proposals = [x for x in proposals if not x['refOnly']]
+    ref_proposals  = [x for x in proposals if x['refOnly']]
     # 過剰在庫は金額の多い順（資金インパクトが大きい商品から見せる）
     excess_rows.sort(key=lambda x: -x['excessAmount'])
 
@@ -1214,10 +1257,14 @@ def main():
     if declining_count:
         logging.info(f'  うち直近{DECLINE_TREND_MONTHS}ヶ月ベースに切り替え（減少トレンド検出）: {declining_count:,}件')
     eol_count = int(df_out['eol_flagged'].sum())
-    total_amount = sum(p['amount'] for p in proposals)
-    logging.info(f'発注提案: {len(proposals):,}件 / 合計 {total_amount:,.0f}円'
+    total_amount = sum(p['amount'] for p in real_proposals)
+    logging.info(f'発注提案: {len(real_proposals):,}件 / 合計 {total_amount:,.0f}円'
                  f'（月平均{min_mean}個以上・除外設定{len(exclusions)}件・終売設定{eol_count}件を反映）')
-    warn_if_proposal_count_swings(len(proposals))
+    if ref_proposals:
+        ref_amount = sum(p['amount'] for p in ref_proposals)
+        logging.info(f'  参考表示（自動提案の対象外だが在庫が推奨を下回る）: {len(ref_proposals):,}件 / '
+                     f'参考額 {ref_amount:,.0f}円 ※KPI・通知には含めない')
+    warn_if_proposal_count_swings(len(real_proposals))
     excess_total = sum(r['excessAmount'] for r in excess_rows)
     logging.info(f'過剰在庫: {len(excess_rows):,}件 / 過剰額合計 {excess_total:,.0f}円'
                  f'（推奨の{EXCESS_RATIO}倍超・超過{EXCESS_MIN_QTY}個以上が対象）')
@@ -1245,7 +1292,7 @@ def main():
         'excessAmount': excess_total,
         'excessCount': len(excess_rows),
         'proposalAmount': total_amount,
-        'proposalCount': len(proposals),
+        'proposalCount': len(real_proposals),
         'holdingCostAnnual': holding_cost_annual,
         'deadAmount': dead_total,
         'deadCount': len(dead_rows),
@@ -1260,11 +1307,11 @@ def main():
         diff_pct = f'（{(total_amount - old_amount) / old_amount * 100:+.1f}%）' if old_amount else ''
         logging.info('=' * 60)
         logging.info('【新旧比較レポート】ABCランク差別化ロジック（Phase B）適用時の変化')
-        logging.info(f'  提案件数: 旧{old_count:,}件 → 新{len(proposals):,}件')
+        logging.info(f'  提案件数: 旧{old_count:,}件 → 新{len(real_proposals):,}件')
         logging.info(f'  提案金額: 旧{old_amount:,.0f}円 → 新{total_amount:,.0f}円{diff_pct}')
         logging.info('  新ロジックでのランク別内訳:')
         by_rank = {}
-        for p in proposals:
+        for p in real_proposals:
             d = by_rank.setdefault(p['abcRank'], {'count': 0, 'amount': 0})
             d['count'] += 1
             d['amount'] += p['amount']

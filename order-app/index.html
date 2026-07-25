@@ -641,6 +641,9 @@
     .prop-group-body  { display: none; margin-top: 4px; }
     .prop-group.open .prop-group-body { display: block; }
     .prop-item        { border-top: 1px solid var(--border); padding: 10px 0; }
+    /* 参考表示（提案対象外だが在庫が推奨を下回った商品。既定でチェックOFF・金額合計に入らない） */
+    .prop-item.prop-ref { opacity: .62; border-left: 3px solid var(--border); padding-left: 8px; }
+    .prop-badge.ref     { background: #ede7f6; color: #5e35b1; }
     .prop-item-top    { display: flex; gap: 8px; align-items: flex-start; }
     .prop-check       { width: 18px; height: 18px; margin-top: 2px; }
     .prop-item-name   { font-size: 14px; font-weight: 600; flex: 1; }
@@ -1240,7 +1243,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.49.0'; // Web発注先の発注記録に対応・仕入先名をアプリのマスター登録名に統一（Phase H）
+const APP_VERSION    = 'v1.50.0'; // 提案対象外でも在庫が推奨を下回った商品を「参考」としてグレー表示（Phase I）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -4143,6 +4146,12 @@ async function loadProposals(force = false) {
     const res = await gasGet({ action: 'getOrderProposals' });
     if (res.success) {
       propUncheckedItems = new Set(); // サーバーから再取得した時だけチェック状態をリセット
+      // 参考表示（提案対象外だが在庫が推奨を下回った商品）は既定でチェックOFFにする。
+      // ここで propUncheckedItems に入れておけば、以後のチェック操作・再描画は
+      // 通常の商品とまったく同じ仕組み（propUncheckedItems）で状態が保たれる
+      (res.proposals || []).forEach(p => {
+        if (p.refOnly) propUncheckedItems.add(p.supplierCode + '|' + p.code);
+      });
       proposalsData = {
         proposals:  res.proposals  || [],
         analyzedAt: res.analyzedAt || '',
@@ -4179,7 +4188,8 @@ async function loadProposals(force = false) {
 
 function updateProposalBadge() {
   const badge = document.getElementById('prop-badge-count');
-  const n = proposalsData.proposals.length;
+  // タブのバッジは「発注すべき件数」なので参考表示は数えない
+  const n = proposalsData.proposals.filter(p => !p.refOnly).length;
   badge.style.display = n > 0 ? '' : 'none';
   badge.textContent = n > 99 ? '99+' : String(n);
 }
@@ -4250,7 +4260,13 @@ function renderProposalFilter() {
   proposalsData.proposals.forEach(p => { seen[p.supplierCode] = resolveSupplierName(p.supplierCode, p.supplierName); });
   const opts = Object.keys(seen)
     .sort((a, b) => seen[a].localeCompare(seen[b], 'ja'))
-    .map(code => `<option value="${escHtml(code)}">${escHtml(seen[code])} (${proposalsData.proposals.filter(p => p.supplierCode === code).length}件)</option>`);
+    .map(code => {
+      // 件数は提案のみ。参考しか無いメーカーは「参考N件」と出して選べる状態は保つ
+      const items = proposalsData.proposals.filter(p => p.supplierCode === code);
+      const main  = items.filter(p => !p.refOnly).length;
+      const label = main > 0 ? `${main}件` : `参考${items.length}件`;
+      return `<option value="${escHtml(code)}">${escHtml(seen[code])} (${label})</option>`;
+    });
   sel.innerHTML = '<option value="">-- メーカー: 全て --</option>' + opts.join('');
   if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
 }
@@ -4291,7 +4307,10 @@ function renderProposalList() {
     // 商品マスターから棚番を引けるようマップ化（提案データ自体には棚番が無いため）
     const shelfMap = new Map(productMaster.map(p => [p.code, { shelf: p.shelfNo || '', jan: p.jan || '' }]));
     Object.values(groups).forEach(g => {
-      g.totalAmount = g.items.reduce((s, p) => s + (parseFloat(p.unitCost) || 0) * (p.proposedQty || 0), 0);
+      // 参考表示は「気づくため」の行なので、グループ見出しの件数・数量・金額には含めない
+      g.mainItems = g.items.filter(p => !p.refOnly);
+      g.refCount  = g.items.length - g.mainItems.length;
+      g.totalAmount = g.mainItems.reduce((s, p) => s + (parseFloat(p.unitCost) || 0) * (p.proposedQty || 0), 0);
       // 商品の並び順: 棚番→JANコード順（棚番未設定の商品は末尾にまとめる）
       g.items.sort((a, b) => {
         const sa = shelfMap.get(a.code) || { shelf: '', jan: '' };
@@ -4326,12 +4345,15 @@ function renderProposalList() {
             ? `<div class="prop-pending-warn">⚠️ ${delayed.orderDate.slice(5)}に${delayed.qty}個発注済み（仕入計上の見込み日を${delayed.overdueDays}日超過・未入荷の可能性）</div>`
             : '';
           const itemKey = code + '|' + p.code;
+          // 参考行＝提案対象外だが在庫が推奨を下回った商品。チェックOFF・グレー表示で
+          // 金額合計には入らないが、拾いたい時はチェックすれば通常どおり発注へ送れる
+          const refBadge = p.refOnly ? '<span class="prop-badge ref">📎 参考</span>' : '';
           return `
-          <div class="prop-item" data-code="${escHtml(p.code)}" data-unit-cost="${unitCost}">
+          <div class="prop-item${p.refOnly ? ' prop-ref' : ''}" data-code="${escHtml(p.code)}" data-unit-cost="${unitCost}">
             <div class="prop-item-top">
               <input type="checkbox" class="prop-check" data-key="${escAttr(itemKey)}" ${propUncheckedItems.has(itemKey) ? '' : 'checked'}>
               <div class="prop-item-name">${escHtml(p.name)}
-                <div class="prop-item-code">${escHtml(p.code)}<span class="prop-badge ${badgeCls}">${escHtml(p.pattern)}</span>${abcBadge}</div>
+                <div class="prop-item-code">${escHtml(p.code)}<span class="prop-badge ${badgeCls}">${escHtml(p.pattern)}</span>${abcBadge}${refBadge}</div>
               </div>
               <div class="prop-item-actions">
                 <button class="prop-excl-btn" onclick="excludeProposal('${escAttr(p.code)}','${escAttr(p.name)}')">🚫 除外</button>
@@ -4351,8 +4373,13 @@ function renderProposalList() {
             ${delayWarn}
           </div>`;
         }).join('');
-        const totalQty = g.items.reduce((s, p) => s + (p.proposedQty || 0), 0);
+        const totalQty = g.mainItems.reduce((s, p) => s + (p.proposedQty || 0), 0);
         const totalAmount = g.totalAmount;
+        const refNote = g.refCount ? `<span style="color:var(--text-light)"> ＋参考${g.refCount}件</span>` : '';
+        // 「選択中」の初期値は実際のチェック状態から出す（参考行は既定OFF、ユーザーが外した行もOFF）。
+        // 固定値にすると再描画のたびに実際のチェックと食い違うため
+        const checkedItems  = g.items.filter(p => !propUncheckedItems.has(code + '|' + p.code));
+        const checkedAmount = checkedItems.reduce((s, p) => s + (parseFloat(p.unitCost) || 0) * (p.proposedQty || 0), 0);
         const isOpen = propOpenGroups.has(code);
         const isWeb = isWebSupplier(code);
         const webBadge = isWeb ? '<span class="prop-badge sporadic" style="margin-left:4px">🌐 Web</span>' : '';
@@ -4362,11 +4389,11 @@ function renderProposalList() {
           <div class="prop-group-head" onclick="toggleProposalGroup('${escAttr(code)}')">
             <span class="prop-group-chev">▶</span>
             <span class="prop-group-name">${escHtml(g.name)}${webBadge}</span>
-            <span class="prop-group-count">${g.items.length}件 / 計${totalQty}個 / ${formatYen(totalAmount)}</span>
+            <span class="prop-group-count">${g.mainItems.length}件${refNote} / 計${totalQty}個 / ${formatYen(totalAmount)}</span>
           </div>
           <div class="prop-group-body">
             ${items}
-            <div class="prop-group-summary" id="prop-summary-${escHtml(code)}">選択中: ${g.items.length}件 / ${formatYen(totalAmount)}</div>
+            <div class="prop-group-summary" id="prop-summary-${escHtml(code)}">選択中: ${checkedItems.length}件 / ${formatYen(checkedAmount)}</div>
             <button class="btn btn-primary" style="margin-top:10px" onclick="startOrderFromProposals('${escAttr(code)}')">${startBtnLabel}</button>
           </div>
         </div>`;

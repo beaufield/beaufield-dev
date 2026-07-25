@@ -1,6 +1,6 @@
 // ============================================================
 // Beaufield 発注アプリ - Google Apps Script バックエンド
-// Version: v1.25.0
+// Version: v1.26.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.25.0';
+const VERSION         = 'v1.26.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -896,9 +896,12 @@ function saveSupplier(p, user_id) {
 // ============================================================
 
 // 発注提案シートの列定義（updateOrderProposals / getOrderProposals で共有）
+// 区分列（末尾）は v1.26.0 で追加。'提案'=通常の発注提案 / '参考'=自動条件では提案対象外だが
+// 在庫が推奨在庫を下回っている商品（アプリではチェックOFF・グレー表示で金額合計に入れない）
 const PROPOSAL_HEADERS = ['商品コード','商品名','仕入先コード','仕入先名','パターン',
                           '現在庫','発注済','推奨在庫','提案数量','最低発注数','月平均',
-                          '注文P95','最大注文','根拠メモ','AI説明','分析日時','仕入単価','提案金額','ABCランク'];
+                          '注文P95','最大注文','根拠メモ','AI説明','分析日時','仕入単価','提案金額','ABCランク',
+                          '区分'];
 
 // 過剰在庫シートの列定義（updateOrderProposals / getOrderProposals で共有）
 const EXCESS_HEADERS = ['商品コード','商品名','仕入先コード','仕入先名','現在庫','推奨在庫',
@@ -1222,7 +1225,9 @@ function formatManYen(yen) {
 
 // POST(APIキー): 発注提案・過剰在庫・死蔵在庫シートを全面書き換え、在庫KPI履歴に1行記録
 // リクエスト: { proposals: [{code,name,supplierCode,supplierName,pattern,stock,recommended,
-//              proposedQty,lot,meanMonthly,p95Order,maxOrder,note}],
+//              proposedQty,lot,meanMonthly,p95Order,maxOrder,note,refOnly}],
+//              ※ refOnly=true は「自動条件では提案対象外だが在庫が推奨在庫を下回った」参考行。
+//                 シートの区分列に'参考'と書き、KPI・LINE WORKS通知の件数/金額からは除外する
 //              excess: [{code,name,supplierCode,supplierName,stock,recommended,excessQty,
 //              unitCost,excessAmount,monthsOfStock,abcRank,pattern}],
 //              dead: [{code,name,supplierCode,supplierName,stock,unitCost,deadAmount,
@@ -1263,7 +1268,8 @@ function updateOrderProposals(p) {
       analyzedAt,
       parseFloat(x.unitCost) || 0,
       parseFloat(x.amount)   || 0,
-      String(x.abcRank || '')
+      String(x.abcRank || ''),
+      x.refOnly ? '参考' : '提案'
     ]);
     sh.getRange(2, 1, rows.length, PROPOSAL_HEADERS.length).setValues(rows);
   }
@@ -1319,9 +1325,12 @@ function updateOrderProposals(p) {
   upsertKpiHistory(kpi);
 
   // LINE WORKS通知（LINEWORKS_WEBHOOK 未設定なら何もしない）
-  if (proposals.length > 0) {
+  // 参考表示（refOnly）は発注提案そのものではないため、件数・金額とも通知には含めない（v1.26.0）
+  const realProposals = proposals.filter(x => !x.refOnly);
+  const refCount = proposals.length - realProposals.length;
+  if (realProposals.length > 0) {
     const bySupplier = {};
-    proposals.forEach(x => {
+    realProposals.forEach(x => {
       const key = String(x.supplierName || '不明');
       bySupplier[key] = (bySupplier[key] || 0) + 1;
     });
@@ -1330,7 +1339,7 @@ function updateOrderProposals(p) {
       .slice(0, 8)
       .map(name => '・' + name + ': ' + bySupplier[name] + '件');
     const more = Object.keys(bySupplier).length > 8 ? '\n…ほか' + (Object.keys(bySupplier).length - 8) + '社' : '';
-    const totalAmount = proposals.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0);
+    const totalAmount = realProposals.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0);
     const excessAmount = excess.reduce((s, x) => s + (parseFloat(x.excessAmount) || 0), 0);
     const excessLine = excess.length > 0
       ? ('\n⚠️ 持ちすぎ在庫: ' + excess.length + '件・過剰' + formatManYen(excessAmount))
@@ -1339,16 +1348,21 @@ function updateOrderProposals(p) {
     const deadLine = dead.length > 0
       ? ('\n🧹 死蔵在庫: ' + dead.length + '件・' + formatManYen(deadAmount))
       : '';
+    const refLine = refCount > 0
+      ? ('\n📎 参考: 提案対象外だが在庫が推奨を下回った商品 ' + refCount + '件（提案タブにグレー表示）')
+      : '';
     notifyLineWorks(
       '📋 発注提案の分析が完了しました（' + analyzedAt + '）\n' +
-      '提案: ' + proposals.length + '件・合計' + formatManYen(totalAmount) + '\n' + lines.join('\n') + more +
-      excessLine + deadLine + '\n' +
+      '提案: ' + realProposals.length + '件・合計' + formatManYen(totalAmount) + '\n' + lines.join('\n') + more +
+      excessLine + deadLine + refLine + '\n' +
       '発注アプリの「発注提案」タブで確認してください。'
     );
   }
 
-  Logger.log('✅ 発注提案更新完了: ' + proposals.length + '件 / 過剰在庫 ' + excess.length + '件 / 死蔵在庫 ' + dead.length + '件');
-  return { success: true, count: proposals.length, excessCount: excess.length, deadCount: dead.length };
+  Logger.log('✅ 発注提案更新完了: ' + realProposals.length + '件（参考 ' + refCount + '件）/ 過剰在庫 '
+             + excess.length + '件 / 死蔵在庫 ' + dead.length + '件');
+  return { success: true, count: realProposals.length, refCount: refCount,
+           excessCount: excess.length, deadCount: dead.length };
 }
 
 // POST(APIキー): 発注×仕入の突合結果を書き込む（Phase G, v1.25.0〜）
@@ -1495,7 +1509,9 @@ function getOrderProposals() {
         aiNote:       String(r[14] || ''),
         unitCost:     parseFloat(r[16]) || 0,
         amount:       parseFloat(r[17]) || 0,
-        abcRank:      String(r[18] || '')
+        abcRank:      String(r[18] || ''),
+        // 区分列（v1.26.0〜）。列が無い旧データは空文字→false＝通常の提案として扱う
+        refOnly:      String(r[19] || '').trim() === '参考'
       }));
     analyzedAt = cellToStr(data[1][15], 'yyyy-MM-dd HH:mm');
   }
