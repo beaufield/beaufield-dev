@@ -37,6 +37,7 @@ expense-approval/poc_lw_auth.gs
 order-app/適正在庫_設計プラン.md
 order-app/死蔵在庫・入荷待ち_設計プラン.md
 order-app/発注仕入突合_設計プラン.md
+order-app/発注提案の仕組み_説明資料.html
 
 # ============================================
 # ルートチェッカー 内部ドキュメント
@@ -159,3 +160,4 @@ project-dashboard/config.example.json
 project-dashboard/同期実行.bat
 project-dashboard/同期実行_自動.bat
 project-dashboard/logs/
+order-app/Web発注記録_設計プラン.md
