@@ -1228,7 +1228,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.47.0'; // 提案タブ: 在庫マイナスの商品に⚠️警告表示を追加
+const APP_VERSION    = 'v1.48.0'; // 発注×仕入データの自動突き合わせに対応（Phase G）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -4263,7 +4263,8 @@ function renderProposalList() {
           const badgeCls = PROP_PATTERN_CLASS[p.pattern] || 'sporadic';
           const note = p.aiNote || p.note || '';
           const stockNeg = (parseFloat(p.stock) || 0) < 0;
-          const onOrder = p.onOrder > 0 ? `<span style="color:var(--text-light)">＋発注済 <b>${p.onOrder}</b></span> ` : '';
+          // 発注済み（仕入未計上）＝実物は届いている可能性が高いが在庫にはまだ反映されていない分
+          const onOrder = p.onOrder > 0 ? `<span style="color:var(--text-light)">＋発注済(未計上) <b>${p.onOrder}</b></span> ` : '';
           const unitCost = parseFloat(p.unitCost) || 0;
           const abcCls = ABC_BADGE_CLASS[p.abcRank] || '';
           const abcBadge = p.abcRank ? `<span class="abc-badge ${abcCls}">${escHtml(p.abcRank)}</span>` : '';
@@ -4273,7 +4274,7 @@ function renderProposalList() {
             : '';
           const delayed = delayedByCode[p.code];
           const delayWarn = delayed
-            ? `<div class="prop-pending-warn">⚠️ ${delayed.orderDate.slice(5)}に${delayed.qty}個発注済み（予定日を${delayed.overdueDays}日超過・未入荷の可能性）</div>`
+            ? `<div class="prop-pending-warn">⚠️ ${delayed.orderDate.slice(5)}に${delayed.qty}個発注済み（仕入計上の見込み日を${delayed.overdueDays}日超過・未入荷の可能性）</div>`
             : '';
           const itemKey = code + '|' + p.code;
           return `
@@ -4414,14 +4415,17 @@ function renderPendingOrders() {
   const delayedCount = pending.filter(x => x.isDelayed).length;
 
   const rows = pending.map(x => {
+    // 遅延＝「入荷予定日＋仕入計上ラグ」を過ぎても仕入計上されていない状態（Phase G）。
+    // 納品書の到着待ちで仕入入力が数日遅れるのは正常なので、それは遅延として扱わない
     const delayBadge = x.isDelayed
-      ? `<span class="pending-delay-badge">⚠️ 予定日超過 +${x.overdueDays}日</span>`
+      ? `<span class="pending-delay-badge">⚠️ 仕入未計上 +${x.overdueDays}日</span>`
       : '';
+    const lagNote = x.postingLagDays > 0 ? `＋計上ラグ${x.postingLagDays}日` : '';
     return `
     <div class="pending-item">
       <div style="flex:1">
         <div class="pending-item-name">${escHtml(x.name || x.code)}${delayBadge}</div>
-        <div class="pending-item-sub">${escHtml(x.supplierName || '')}・発注 ${x.orderDate}（${x.elapsedDays}日経過）・予定 ${x.expectedDate}</div>
+        <div class="pending-item-sub">${escHtml(x.supplierName || '')}・発注 ${x.orderDate}（${x.elapsedDays}日経過）・入荷予定 ${x.expectedDate}${lagNote}</div>
       </div>
       <div style="text-align:right">
         <div class="pending-item-amount">${x.qty}個 ${formatYen(x.amount)}</div>
@@ -4435,7 +4439,8 @@ function renderPendingOrders() {
       <details ${delayedCount > 0 ? 'open' : ''}>
         <summary style="font-size:13px;font-weight:600;cursor:pointer">🚚 入荷待ち（${pending.length}件・${formatYen(totalAmount)}）</summary>
         <div style="margin-top:6px">${rows}</div>
-        <div style="font-size:11px;color:var(--text-light);margin-top:8px">※ このアプリから発注したものだけが対象です（電話・FAX・メーカー担当への直接発注は含まれません）</div>
+        <div style="font-size:11px;color:var(--text-light);margin-top:8px">※ 仕入データと自動で突き合わせており、仕入計上を確認できた発注は自動でこのリストから消えます（手動の✓は補助用）</div>
+        <div style="font-size:11px;color:var(--text-light);margin-top:2px">※ このアプリから発注したものだけが対象です（電話・FAX・メーカー担当への直接発注は含まれません）</div>
       </details>
     </div>`;
 }

@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.11.0
+# Version: v1.12.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -42,7 +42,7 @@
 #   「現在庫＋発注済み未入荷分」が推奨在庫を下回ったもの。
 #   ただし現在庫がマイナスの商品は上記の条件（月平均・販売歴・Cランク間欠需要）を無視して
 #   強制的に対象にする（v1.11.0。手動の除外・終売設定のみ引き続き優先される）。
-#   発注済み未入荷分 = リードタイム内に発注アプリから発注した数量（二重発注防止）
+#   発注済み未入荷分 = 発注したが仕入計上されていない数量（v1.12.0〜。下記「発注×仕入突合」参照）
 #   提案数量はロット単位に切り上げ。
 #   ロット = 手動設定（アプリの提案タブから登録。v1.8.0で追加）があれば最優先、
 #           なければ過去の発注明細の数量の最大公約数から自動推定（発注3回以上かつ2以上のときのみ採用）
@@ -79,6 +79,25 @@
 # 終売フラグ（v1.6.0で追加）:
 #   在庫はあるが再発注できない商品（キャンペーン終了等）は「終売商品設定」で
 #   個別に指定でき、以後は提案対象から外れる（提案除外設定とは別枠で管理）
+#
+# 発注×仕入の自動突き合わせ（Phase G・v1.12.0で追加。設計原本: 発注仕入突合_設計プラン.md）:
+#   発注済み未入荷（on_order）の判定を、時間窓による推測から仕入実績による事実へ変更した。
+#   旧: 「リードタイム以内に発注したもの」＝ on_order とみなす
+#   新: 「発注したが仕入データ明細表.CSVに計上されていないもの」＝ on_order
+#
+#   旧方式の問題: リードタイムが短い仕入先（例 千代田化学=1日）では発注の翌日に
+#   on_orderから外れる。一方、実物が届いていても納品書の到着待ちで仕入入力が
+#   済んでいないためシステム在庫にも計上されない。結果として在庫にもon_orderにも
+#   計上されない空白期間が生まれ、その間ずっと満額で再提案されていた
+#   （実測: 千代田化学 16件/12.7万円 → 突合後は 5件/7.3万円）。
+#
+#   突合は商品コード単位のFIFO（古い発注から順に仕入数量を食わせる）。発注明細と
+#   仕入明細の1:1対応は保証されない（分納・欠品・アプリ外発注が混在する）ため。
+#   ORDER_OPEN_CUTOFF_DAYS(30日)を超えて計上されない発注は欠品・キャンセルとみなして
+#   on_orderから外す（永久に提案が止まって欠品するのを防ぐ安全弁）。
+#   あわせて仕入先ごとの「計上ラグ」（仕入日→仕入入力日）を実績中央値から自動推定し、
+#   入荷待ちリストの遅延判定に使う（実測でデミ2日/千代田7日/ナプラ10日と差が大きく、
+#   一律の日数では遅延判定が機能しないため）。
 #
 # 在庫マイナス商品の強制表示（v1.11.0で追加）:
 #   現在庫がマイナス（欠品・バックオーダー中）の商品は、Cランク間欠需要（受注発注推奨）や
@@ -149,6 +168,18 @@ DECLINE_TREND_MONTHS    = 12    # 比較に使う月数（1年）
 DECLINE_RATIO_THRESHOLD = 0.4   # 直近12ヶ月平均が1年前の12ヶ月平均のこの比率以下なら「減少トレンド」
 CAP_MONTHS_DECLINING    = 2.0   # 減少トレンド商品の推奨在庫上限（月平均の何ヶ月分まで許すか。P95フロアの代わり）
 
+# ---- 発注×仕入 突き合わせパラメータ（Phase G, v1.12.0） ----
+# 発注済み未入荷（on_order）の判定を「リードタイム以内の発注」という時間窓の推測から
+# 「仕入計上されていない発注」という事実ベースに切り替えるためのパラメータ。
+# 詳細は 発注仕入突合_設計プラン.md（§3.2〜§3.5）参照
+RECEIPT_LOOKBACK_DAYS   = 120   # 仕入CSVの読み込み範囲（発注実績90日 + 余裕30日）
+ORDER_OPEN_CUTOFF_DAYS  = 30    # これを超えて仕入計上されない発注は欠品・キャンセルとみなし
+                                # on_orderから外す（＝再び提案対象に戻す）安全弁。§5-Q4で一律30日に確定
+POSTING_LAG_MIN_SAMPLES = 20    # 仕入先別の計上ラグを実績から推定するのに必要な最低件数
+POSTING_LAG_MONTHS      = 6     # 計上ラグ推定に使う実績の期間（ヶ月）
+POSTING_LAG_MAX_DAYS    = 90    # 外れ値除外（これを超えるラグは推定に使わない）
+DEFAULT_POSTING_LAG_DAYS = 6    # 実績が足りない仕入先に使う既定値（全体中央値の実測値）
+
 # ---- CSVパスの候補（デバイスによりドライブ構成が異なる） ----
 _ONEDRIVE_DATA_DIRS = [
     Path(r'D:\OneDrive - Beaufield\PowerBI\Data'),
@@ -156,6 +187,7 @@ _ONEDRIVE_DATA_DIRS = [
 ]
 SALES_CSV_CANDIDATES   = [str(d / '売上データ明細表.CSV') for d in _ONEDRIVE_DATA_DIRS]
 PRODUCT_CSV_CANDIDATES = [str(d / '商品.CSV') for d in _ONEDRIVE_DATA_DIRS]
+RECEIPT_CSV_CANDIDATES = [str(d / '仕入データ明細表.CSV') for d in _ONEDRIVE_DATA_DIRS]
 
 
 def setup_logger():
@@ -291,6 +323,178 @@ def load_products(csv_path):
     df['sale_price'] = pd.to_numeric(
         df['sale_price'].fillna('0').str.replace(',', '', regex=False), errors='coerce').fillna(0)
     return df.set_index('code')
+
+
+def load_receipts(csv_path, cutoff_str):
+    """仕入明細CSVを読み込み、発注との突き合わせに使う形へ整形する（Phase G, v1.12.0）
+
+    列: 0=仕入日, 5=仕入先コード, 20=商品コード, 22=数量, 28=更新日（仕入入力が行われた日）
+
+    ⚠️ 重要: このCSVに行が存在する ＝ 既に仕入入力済み ＝ 商品.CSVの在庫数にも反映済み。
+    したがって突合の判定に更新日は使わず「行があるか」だけを見る。更新日は仕入先別の
+    計上ラグ推定（estimate_posting_lags）にのみ使う。
+
+    戻り値: (商品コード別の仕入リスト {code: [(仕入日, 数量)]}, ラグ推定用のDataFrame)
+    """
+    logging.info(f'仕入CSV読み込み: {csv_path}')
+    t0 = datetime.now()
+    df = pd.read_csv(
+        csv_path,
+        encoding='cp932',
+        header=0,
+        usecols=[0, 5, 20, 22, 28],
+        names=['date', 'supplier_cd', 'code', 'qty', 'posted'],
+        dtype=str,
+        on_bad_lines='skip',
+    )
+    logging.info(f'読み込み完了: {len(df):,}行 ({(datetime.now()-t0).total_seconds():.1f}秒)')
+
+    df['date'] = df['date'].fillna('').str.strip()
+    df = df[df['date'] >= cutoff_str]
+    df['code'] = df['code'].map(normalize_code)
+    df = df[df['code'].notna()]
+    df['qty'] = pd.to_numeric(
+        df['qty'].fillna('0').str.replace(',', '', regex=False), errors='coerce')
+    # 返品・訂正のマイナス行は突合対象にしない（入荷の事実ではないため）
+    df = df[df['qty'].notna() & (df['qty'] > 0)]
+    df['supplier_cd'] = df['supplier_cd'].map(normalize_supplier_code)
+    df['posted'] = df['posted'].fillna('').str.strip()
+
+    receipts = {}
+    for code, d, qty in zip(df['code'], df['date'], df['qty']):
+        receipts.setdefault(code, []).append((d, float(qty)))
+    for lst in receipts.values():
+        lst.sort()
+
+    logging.info(f'仕入実績（直近{RECEIPT_LOOKBACK_DAYS}日）: {len(df):,}行 / {len(receipts):,}商品')
+    return receipts, df
+
+
+def estimate_posting_lags(receipt_df):
+    """仕入先ごとの「計上ラグ」（仕入日→仕入入力日の日数）を実績の中央値から推定する
+
+    納品書の到着待ちで仕入入力が遅れる日数は仕入先ごとに大きく異なる
+    （実測: デミ2日 / 千代田化学7日 / ナプラ10日 / 水谷理美容鋏48日）。
+    一律の日数では遅延判定が機能しないため実績から自動推定する（手動設定を増やさない）。
+
+    戻り値: {仕入先コード: ラグ日数(float)}
+    """
+    def to_ord(s):
+        try:
+            return date(int(s[:4]), int(s[4:6]), int(s[6:8])).toordinal()
+        except (ValueError, TypeError):
+            return None
+
+    cutoff = (date.today() - timedelta(days=int(POSTING_LAG_MONTHS * DAYS_PER_MONTH))).strftime('%Y%m%d')
+    df = receipt_df[(receipt_df['date'] >= cutoff) & (receipt_df['posted'].str.len() == 8)]
+
+    lags_by_supplier = {}
+    for supp, d, posted in zip(df['supplier_cd'], df['date'], df['posted']):
+        if not supp:
+            continue
+        o1, o2 = to_ord(d), to_ord(posted)
+        if o1 is None or o2 is None:
+            continue
+        lag = o2 - o1
+        if 0 <= lag <= POSTING_LAG_MAX_DAYS:
+            lags_by_supplier.setdefault(supp, []).append(lag)
+
+    lags = {}
+    for supp, vals in lags_by_supplier.items():
+        if len(vals) >= POSTING_LAG_MIN_SAMPLES:
+            vals.sort()
+            n = len(vals)
+            lags[supp] = float(vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2)
+
+    if lags:
+        top = sorted(lags.items(), key=lambda x: -len(lags_by_supplier[x[0]]))[:5]
+        logging.info('仕入先別の計上ラグ（実績中央値）: '
+                     + ' / '.join(f'{s}={v:.0f}日' for s, v in top)
+                     + f' … 計{len(lags)}社（他は既定{DEFAULT_POSTING_LAG_DAYS}日）')
+    else:
+        logging.warning('計上ラグを推定できる仕入先がありません。全社で既定値を使います')
+    return lags
+
+
+def match_orders_to_receipts(recent_orders, receipts, today=None):
+    """発注実績と仕入実績を商品コード単位のFIFOで消し込み、未入荷分を求める（Phase G）
+
+    発注明細と仕入明細の1:1対応は保証されない（分納・欠品・アプリ外発注が混在するため）。
+    そこで古い発注から順に仕入数量を食わせ、食い切れずに残った分を「未入荷」とする。
+
+    戻り値: {商品コード: {'open_qty': 未入荷数量, 'lines': [発注明細行ごとの判定]}}
+      lines の各要素: {'orderNo', 'date', 'qty', 'open_qty', 'received', 'stale'}
+        received=True  … 仕入計上を確認できた（在庫に反映済み）
+        stale=True     … ORDER_OPEN_CUTOFF_DAYS を超えて未計上（欠品・キャンセル扱い）
+    """
+    today = today or date.today()
+    stale_cutoff = (today - timedelta(days=ORDER_OPEN_CUTOFF_DAYS)).strftime('%Y%m%d')
+
+    result = {}
+    for code, orders in recent_orders.items():
+        order_list = sorted(orders, key=lambda o: str(o.get('date', '')))
+        # 仕入側は消費しながら使うので可変リストにコピーする
+        remaining = list(receipts.get(code, []))
+
+        lines = []
+        open_qty = 0.0
+        for o in order_list:
+            odate = str(o.get('date', ''))
+            oqty = float(o.get('qty', 0) or 0)
+            if oqty <= 0:
+                continue
+            need = oqty
+            for i, (rdate, rqty) in enumerate(remaining):
+                if rqty <= 0 or rdate < odate:
+                    continue  # 発注より前の仕入では消し込まない
+                take = min(need, rqty)
+                remaining[i] = (rdate, rqty - take)
+                need -= take
+                if need <= 0:
+                    break
+            stale = need > 0 and odate < stale_cutoff
+            lines.append({
+                'orderNo': str(o.get('orderNo', '') or ''),
+                'date': odate,
+                'qty': oqty,
+                'open_qty': need,
+                'received': need <= 0,
+                'stale': stale,
+            })
+            # 打ち切りを過ぎた未計上分はon_orderに含めない（欠品・キャンセルで永久に
+            # 提案が止まるのを防ぐ安全弁。§3.5・§5-Q4で一律30日に確定）
+            if need > 0 and not stale:
+                open_qty += need
+
+        if lines:
+            result[code] = {'open_qty': open_qty, 'lines': lines}
+    return result
+
+
+def warn_if_proposal_count_swings(new_count, threshold=0.5):
+    """提案件数が前回実行から大きく振れていたら警告する（Phase G のガードレール・§6）
+
+    仕入CSVが欠損・古いまま突合すると「全部入荷済み」と誤判定して提案が激減しうる。
+    逆にアプリ外発注が大量に混入すると激増しうる。どちらも静かに壊れるため気づけるようにする。
+    """
+    prev_files = sorted(OUTPUT_DIR.glob('demand_analysis_*.csv'))
+    # 末尾は今回の出力なので、その1つ前を前回分とする
+    if len(prev_files) < 2:
+        return
+    try:
+        prev = pd.read_csv(prev_files[-2], encoding='utf-8-sig')
+        prev_count = int((pd.to_numeric(prev['proposed_qty'], errors='coerce').fillna(0) > 0).sum())
+    except Exception as e:
+        logging.debug(f'前回実行との比較をスキップ: {e}')
+        return
+    if prev_count <= 0:
+        return
+    ratio = (new_count - prev_count) / prev_count
+    if abs(ratio) >= threshold:
+        logging.warning(
+            f'⚠️ 提案件数が前回実行から大きく変動しています: {prev_count:,}件 → {new_count:,}件'
+            f'（{ratio:+.0%}・前回={prev_files[-2].name}）。'
+            f'仕入CSVの欠損や更新漏れ、アプリ外発注の大量混入が無いか確認してください')
 
 
 def fetch_reorder_config(gas_url, api_key):
@@ -429,7 +633,7 @@ def build_note(stat, protect_days, lot, on_order=0, abc='A', is_declining=False,
     if forced_by_negative_stock:
         parts.append("⚠️在庫マイナスのため通常の対象外条件を無視して表示")
     if on_order > 0:
-        parts.append(f"発注済み未入荷{on_order:.0f}個を在庫に加算済み")
+        parts.append(f"発注済み（仕入未計上）{on_order:.0f}個を在庫に加算済み")
     if is_declining and older_mean is not None:
         parts.append(f"直近{DECLINE_TREND_MONTHS}ヶ月の実績を優先（1年前は月平均{older_mean:.0f}個→直近は月平均{stat['mean_monthly']:.0f}個に減少）")
     if pattern == 'まとめ買い型':
@@ -513,21 +717,88 @@ def post_proposals(gas_url, api_key, proposals, excess, dead, kpi, analyzed_at):
     return False
 
 
+def post_receipt_matches(gas_url, api_key, order_matches, posting_lags, analyzed_at):
+    """発注×仕入の突合結果をGASへ書き戻す（Phase G, v1.12.0）
+
+    「入荷待ちリストから除外すべき発注明細行」だけを送る。
+    - 入荷済み: 仕入計上を確認できた（在庫に反映済み）
+    - 打ち切り: 発注から ORDER_OPEN_CUTOFF_DAYS を超えても未計上（欠品・キャンセル扱い）
+    未入荷（＝まだ待っている）行は送らない。GAS側でそのまま入荷待ちリストに残る
+    """
+    matches = []
+    missing_order_no = 0
+    for code, m in order_matches.items():
+        for ln in m['lines']:
+            if not ln['orderNo']:
+                # 発注No が無い＝GASが旧バージョン（v1.24.0以前）。除外キーを作れない
+                missing_order_no += 1
+                continue
+            if ln['received']:
+                status = '入荷済み'
+            elif ln['stale']:
+                status = '打ち切り'
+            else:
+                continue
+            matches.append({
+                'orderNo': ln['orderNo'],
+                'code': code,
+                'status': status,
+                'orderDate': ln['date'],
+                'qty': ln['qty'],
+            })
+
+    if missing_order_no:
+        logging.warning(
+            f'⚠️ 発注実績{missing_order_no}行に発注Noが含まれていません。'
+            f'GASが旧バージョン（v1.24.0以前）の可能性があります。'
+            f'Code.gs v1.25.0以降を再デプロイしてください（入荷待ちの自動消し込みが効きません）')
+
+    payload = {
+        'action': 'updateReceiptMatches',
+        'api_key': api_key,
+        'analyzedAt': analyzed_at,
+        'matches': matches,
+        'postingLags': posting_lags,
+    }
+    logging.info(f'GASへ入荷突合結果を送信中... (除外対象{len(matches)}行 / 計上ラグ{len(posting_lags)}社)')
+    for attempt in range(1, 4):
+        try:
+            resp = requests.post(gas_url, json=payload, timeout=300)
+            resp.raise_for_status()
+            result = resp.json()
+            if result.get('success'):
+                logging.info(f'✅ 入荷突合結果の書き込み成功: {result.get("count")}行 / '
+                             f'計上ラグ{result.get("lagCount")}社 (試行{attempt}回目)')
+                return True
+            logging.warning(f'GASエラー応答 (試行{attempt}): {result.get("error")}')
+        except Exception as e:
+            logging.warning(f'通信エラー (試行{attempt}): {e}')
+    return False
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--csv', help='売上データ明細表.CSV のパス')
     parser.add_argument('--products', help='商品.CSV のパス')
+    parser.add_argument('--receipts', help='仕入データ明細表.CSV のパス')
     parser.add_argument('--dry-run', action='store_true', help='GASへ送信せずローカル出力のみ')
     args = parser.parse_args()
 
     log_file = setup_logger()
     logging.info('=' * 60)
-    logging.info('Beaufield 需要分析・発注提案スクリプト v1.10.0 開始'
+    logging.info('Beaufield 需要分析・発注提案スクリプト v1.12.0 開始'
                  + ('（dry-run）' if args.dry_run else ''))
 
     config = load_config()
     sales_path = find_csv(args.csv or config.get('csv_path'), SALES_CSV_CANDIDATES, '売上データ明細表.CSV')
     products_path = find_csv(args.products, PRODUCT_CSV_CANDIDATES, '商品.CSV')
+    receipts_path = find_csv(args.receipts, RECEIPT_CSV_CANDIDATES, '仕入データ明細表.CSV')
+
+    # 在庫（商品.CSV）と仕入（仕入データ明細表.CSV）は同じ夜間バッチの出力である前提。
+    # 片方だけ古いと突合がズレるため、両ファイルの更新日時をログに残す（§6 ガードレール）
+    for label, p in (('商品.CSV', products_path), ('仕入データ明細表.CSV', receipts_path)):
+        mtime = datetime.fromtimestamp(Path(p).stat().st_mtime)
+        logging.info(f'  データ更新日時 {label}: {mtime:%Y-%m-%d %H:%M}')
 
     # ---- GASから設定取得（dry-runで失敗したら既定値で続行） ----
     suppliers_cfg = {}
@@ -566,6 +837,21 @@ def main():
 
     sales, last_sale_by_code = load_sales(sales_path, start_str, end_str)
     products = load_products(products_path)
+
+    # ---- 発注×仕入の突き合わせ（Phase G, v1.12.0） ----
+    receipt_cutoff = (date.today() - timedelta(days=RECEIPT_LOOKBACK_DAYS)).strftime('%Y%m%d')
+    receipts, receipt_df = load_receipts(receipts_path, receipt_cutoff)
+    posting_lags = estimate_posting_lags(receipt_df)
+    order_matches = match_orders_to_receipts(recent_orders, receipts)
+
+    _open_codes = sum(1 for m in order_matches.values() if m['open_qty'] > 0)
+    _lines_all = sum(len(m['lines']) for m in order_matches.values())
+    _lines_open = sum(1 for m in order_matches.values() for ln in m['lines']
+                      if not ln['received'] and not ln['stale'])
+    _lines_stale = sum(1 for m in order_matches.values() for ln in m['lines'] if ln['stale'])
+    logging.info(f'発注×仕入 突合: 発注明細{_lines_all:,}行 → 入荷済み{_lines_all - _lines_open - _lines_stale:,}行 / '
+                 f'未入荷{_lines_open:,}行（{_open_codes:,}商品）/ '
+                 f'{ORDER_OPEN_CUTOFF_DAYS}日超で打ち切り{_lines_stale:,}行')
 
     monthly_sum = sales.groupby(['code', 'ym'])['qty'].sum()
     slip_sum = sales[sales['slip'] != ''].groupby(['code', 'slip'])['qty'].sum()
@@ -647,13 +933,13 @@ def main():
         value_basis = unit_cost or float(prod['sale_price'])
         lot = estimate_lot(lot_stats.get(code), lot_overrides.get(code))
 
-        # 発注済み・未入荷分: リードタイム内に発注したものはまだ在庫に反映されて
-        # いない可能性が高いため、在庫に加算して二重発注を防ぐ
-        on_order = 0.0
-        lt_cutoff = (date.today() - timedelta(days=int(lead_time))).strftime('%Y%m%d')
-        for o in recent_orders.get(code, []):
-            if str(o.get('date', '')) >= lt_cutoff:
-                on_order += float(o.get('qty', 0))
+        # 発注済み・未入荷分（Phase G, v1.12.0）: 仕入データとの突き合わせで
+        # 「発注したが仕入計上されていない」数量を求め、在庫に加算して二重発注を防ぐ。
+        # ⚠️ v1.11.0以前は「リードタイム以内に発注したもの」という時間窓の推測だったが、
+        #   リードタイムが短い仕入先（千代田化学=1日）では、実物が届いていても納品書待ちで
+        #   仕入入力されていない期間に在庫にもon_orderにも計上されない空白ができていた。
+        #   詳細は 発注仕入突合_設計プラン.md §1.2・§3.2
+        on_order = order_matches.get(code, {}).get('open_qty', 0.0)
 
         excluded = code in exclusions
         eol_flagged = code in eol_codes
@@ -931,6 +1217,7 @@ def main():
     total_amount = sum(p['amount'] for p in proposals)
     logging.info(f'発注提案: {len(proposals):,}件 / 合計 {total_amount:,.0f}円'
                  f'（月平均{min_mean}個以上・除外設定{len(exclusions)}件・終売設定{eol_count}件を反映）')
+    warn_if_proposal_count_swings(len(proposals))
     excess_total = sum(r['excessAmount'] for r in excess_rows)
     logging.info(f'過剰在庫: {len(excess_rows):,}件 / 過剰額合計 {excess_total:,.0f}円'
                  f'（推奨の{EXCESS_RATIO}倍超・超過{EXCESS_MIN_QTY}個以上が対象）')
@@ -1009,6 +1296,14 @@ def main():
         if not post_reorder_points(config['gas_url'], config['api_key'], results, analyzed_at):
             logging.error('GASへの適正在庫送信が3回すべて失敗しました。ログ: %s', log_file)
             sys.exit(1)
+        # 入荷突合結果の書き戻しは非致命的にする。提案・適正在庫の書き込みは既に成功しており、
+        # GASが未デプロイ（updateReceiptMatches が無い）だとここだけ失敗するため。
+        # 失敗しても提案の数値は正しい（on_orderはPython側で算出済み）。
+        # 影響は「入荷待ちリストの自動消し込みが効かない」だけなので処理は続行する
+        if not post_receipt_matches(config['gas_url'], config['api_key'],
+                                    order_matches, posting_lags, analyzed_at):
+            logging.error('⚠️ 入荷突合結果の送信に失敗しました（提案の更新自体は成功しています）。'
+                          'Code.gs v1.25.0以降が再デプロイされているか確認してください。ログ: %s', log_file)
 
     logging.info('処理完了')
 
