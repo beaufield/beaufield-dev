@@ -369,6 +369,17 @@
       padding: 6px 8px;
       margin-top: 8px;
     }
+    .order-summary-web {
+      font-size: 12px;
+      font-weight: 600;
+      color: #0d47a1;
+      background: #e3f2fd;
+      border: 1px solid #90caf9;
+      border-radius: 6px;
+      padding: 6px 8px;
+      margin-top: 8px;
+      line-height: 1.4;
+    }
 
     /* 履歴 */
     .history-item {
@@ -574,11 +585,10 @@
     .empty-icon  { font-size: 44px; margin-bottom: 8px; }
 
     .version-label {
-      position: absolute;
-      bottom: 2px;
-      right: 4px;
       font-size: 9px;
+      line-height: 1;
       color: rgba(255,255,255,0.35);
+      margin-bottom: 3px;
       pointer-events: none;
     }
 
@@ -698,6 +708,7 @@
 <body>
 
 <header class="app-header">
+  <div class="version-label" id="version-label">v1.25.0</div>
   <h1>📦 ビューフィールド 発注アプリ</h1>
   <div class="header-sub" id="header-sub">発注先を選んでください</div>
 </header>
@@ -745,6 +756,7 @@
       <div class="order-summary-meta" id="input-meta"></div>
       <div class="order-summary-deadline" id="input-deadline" style="display:none"></div>
       <div class="order-summary-note" id="input-note" style="display:none"></div>
+      <div class="order-summary-web" id="input-web-banner" style="display:none">🌐 Web発注先です。このアプリからは送信しません。発注サイトで注文した（する）内容を記録します</div>
     </div>
 
     <div class="tabs">
@@ -832,6 +844,7 @@
       <button id="btn-alpenrose-pdf"  class="btn btn-secondary" onclick="outputAlpenrosePDF()"  style="margin-bottom:8px;display:none">📋 アルペンローゼ発注書 出力</button>
       <button id="btn-melos-pdf"      class="btn btn-secondary" onclick="outputMelosPDF()"      style="margin-bottom:8px;display:none">📋 メロス発注書 出力</button>
       <button id="btn-aderans-pdf"    class="btn btn-secondary" onclick="outputAderansPDF()"    style="margin-bottom:8px;display:none">📋 アデランス発注書 出力</button>
+      <button id="btn-web-record"     class="btn btn-primary"   onclick="outputWebRecord()"     style="margin-bottom:8px;display:none">📝 発注記録として保存</button>
     </div>
     <div id="new-order-wrap" style="display:none">
       <button class="btn btn-outline" onclick="resumeOrderForRevision()" style="margin-bottom:8px">✏️ 修正発注（内容を変えて再発注）</button>
@@ -1035,7 +1048,6 @@
   <div class="nav-item" id="nav-settings" onclick="switchScreen('settings')">
     <span class="nav-icon">⚙️</span><span>設定</span>
   </div>
-  <div class="version-label" id="version-label">v1.25.0</div>
 </nav>
 
 <!-- ==============================
@@ -1228,7 +1240,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.48.0'; // 発注×仕入データの自動突き合わせに対応（Phase G）
+const APP_VERSION    = 'v1.49.0'; // Web発注先の発注記録に対応・仕入先名をアプリのマスター登録名に統一（Phase H）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1268,6 +1280,15 @@ let scanProcessed = false;
 let toastTimer    = null;
 let currentScreen = 'order';
 let productMasterLoading = false;
+
+// 仕入先名は「発注先マスター」（このアプリの登録名）を優先する。
+// 商品マスター（商品.CSV＝販売管理システム由来）や発注提案・過剰在庫・死蔵在庫（analyze_demand.pyが
+// 商品マスターから転記した名称）の仕入先名は販売管理システム側の名称のため、
+// アプリのマスターに登録があればそちらで上書きする（未登録の仕入先のみフォールバックを使う）
+function resolveSupplierName(code, fallback) {
+  const s = masters.suppliers.find(s => s.code === code);
+  return (s && s.name) ? s.name : (fallback || code || '');
+}
 
 /* ===================================================
    初期化
@@ -1405,13 +1426,15 @@ async function loadMasters() {
 function renderSupplierDropdown() {
   const sel = document.getElementById('sel-supplier');
   sel.innerHTML = '<option value="">-- 選択してください --</option>';
-  // 発注方法が「Web」の仕入先はこのアプリから発注データを出力しないため選択肢に出さない
+  // 発注方法が「Web」の仕入先も選択肢に出す（Phase H）。出力ボタンは無く、
+  // 「📝 発注記録として保存」のみ表示され、送信はしない（applyOutputButtons参照）
   const sorted = masters.suppliers
-    .filter(s => !(s.outputMethods || []).includes('Web'))
+    .slice()
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
   sorted.forEach(s => {
+    const isWeb = (s.outputMethods || []).includes('Web');
     const opt = document.createElement('option');
-    opt.value = s.code; opt.textContent = s.name; opt.dataset.fax = s.fax || '';
+    opt.value = s.code; opt.textContent = (isWeb ? '🌐 ' : '') + s.name; opt.dataset.fax = s.fax || '';
     opt.dataset.outputMethods = JSON.stringify(s.outputMethods || []);
     sel.appendChild(opt);
   });
@@ -1664,8 +1687,11 @@ async function startOrder() {
   }
 
   const opt = supSel.options[supSel.selectedIndex];
+  // opt.textContent には Web仕入先の🌐マーク（表示用）が付くため、保存用の名称は
+  // 発注先マスターから素の名称を引き直す（見つからない場合のみ表示テキストを使う）
+  const sup = masters.suppliers.find(s => s.code === supSel.value);
   currentOrder = {
-    supplierCode: supSel.value, supplierName: opt.textContent,
+    supplierCode: supSel.value, supplierName: sup ? sup.name : opt.textContent,
     fax: opt.dataset.fax || '', staff: currentUser.name,
     date: dateIn.value, outputType: ''
   };
@@ -1698,6 +1724,8 @@ function updateInputHeader() {
   } else {
     noteEl.style.display = 'none';
   }
+  const webBanner = document.getElementById('input-web-banner');
+  webBanner.style.display = isWebSupplier(currentOrder.supplierCode) ? 'block' : 'none';
 }
 
 function goToSelect() {
@@ -2249,6 +2277,7 @@ function renderConfirmPage() {
       </div>
       ${confirmSup && confirmSup.deadline ? `<div class="order-summary-deadline" style="margin-top:8px">⏰ 発注限 ${escHtml(confirmSup.deadline)}</div>` : ''}
       ${confirmSup && confirmSup.note ? `<div class="order-summary-note" style="margin-top:8px">📌 ${escHtml(confirmSup.note)}</div>` : ''}
+      ${isWebSupplier(currentOrder.supplierCode) ? `<div class="order-summary-web" style="margin-top:8px">🌐 このアプリからは送信されません。発注サイトで注文した（する）内容を記録します</div>` : ''}
     </div>`;
 
   const hasPrices   = cartItems.some(i => !i.isHandwritten && i.purchasePrice > 0);
@@ -2339,6 +2368,9 @@ function applyOutputButtons() {
   // アデランス：メーカーPDF対象の発注先の場合に表示
   show('btn-aderans-pdf', methods.includes('メーカーPDF') &&
                           currentOrder.supplierCode === ADERANS_SUPPLIER_CODE);
+
+  // Web発注先：アプリからは送信せず、記録のみ保存する（Phase H）
+  show('btn-web-record', methods.includes('Web'));
 }
 
 /* ===================================================
@@ -2413,6 +2445,23 @@ async function outputText() {
     downloadBlob(blob, `${currentOrder.supplierName}_${dateStr}.txt`);
     showCompleteState();
     showToast(copied ? 'テキストをコピー＆ダウンロードしました' : 'テキストを出力しました', 'success');
+  } catch(e) {
+    showToast('エラー: ' + e.message, 'error');
+  } finally { hideLoading(); }
+}
+
+// Web発注先の発注記録として保存（アプリからは送信しない。Phase H）
+// 発注サイトで注文した（する）内容を記録するだけのため、出力・ダウンロードは行わない
+async function outputWebRecord() {
+  if (!confirm(
+    '発注サイトで注文した（する）内容で間違いありませんか？\n' +
+    '記録すると、この数量は「発注済み」として提案から差し引かれます。'
+  )) return;
+  showLoading('記録を保存中...');
+  try {
+    await saveOrderToGAS('Web記録');
+    showCompleteState();
+    showToast('発注記録として保存しました', 'success');
   } catch(e) {
     showToast('エラー: ' + e.message, 'error');
   } finally { hideLoading(); }
@@ -3891,7 +3940,7 @@ function renderInventoryList() {
   // 仕入先ごとにアコーディオン表示（提案タブと同じ操作感・タップで開閉）
   const groups = {};
   filtered.forEach(p => {
-    (groups[p.supplierCD] = groups[p.supplierCD] || { name: p.supplierName || p.supplierCD, items: [] }).items.push(p);
+    (groups[p.supplierCD] = groups[p.supplierCD] || { name: resolveSupplierName(p.supplierCD, p.supplierName), items: [] }).items.push(p);
   });
   Object.values(groups).forEach(g => {
     // 商品の並び順: 棚番→JANコード順（棚番未設定の商品は末尾にまとめる。提案タブと同じルール）
@@ -4198,7 +4247,7 @@ function renderProposalFilter() {
   const sel = document.getElementById('prop-filter-supplier');
   const prev = sel.value;
   const seen = {};
-  proposalsData.proposals.forEach(p => { seen[p.supplierCode] = p.supplierName; });
+  proposalsData.proposals.forEach(p => { seen[p.supplierCode] = resolveSupplierName(p.supplierCode, p.supplierName); });
   const opts = Object.keys(seen)
     .sort((a, b) => seen[a].localeCompare(seen[b], 'ja'))
     .map(code => `<option value="${escHtml(code)}">${escHtml(seen[code])} (${proposalsData.proposals.filter(p => p.supplierCode === code).length}件)</option>`);
@@ -4237,7 +4286,7 @@ function renderProposalList() {
     // 仕入先ごとにアコーディオン表示（タップで開閉・デフォルト閉）
     const groups = {};
     props.forEach(p => {
-      (groups[p.supplierCode] = groups[p.supplierCode] || { name: p.supplierName, items: [] }).items.push(p);
+      (groups[p.supplierCode] = groups[p.supplierCode] || { name: resolveSupplierName(p.supplierCode, p.supplierName), items: [] }).items.push(p);
     });
     // 商品マスターから棚番を引けるようマップ化（提案データ自体には棚番が無いため）
     const shelfMap = new Map(productMaster.map(p => [p.code, { shelf: p.shelfNo || '', jan: p.jan || '' }]));
@@ -4305,7 +4354,9 @@ function renderProposalList() {
         const totalQty = g.items.reduce((s, p) => s + (p.proposedQty || 0), 0);
         const totalAmount = g.totalAmount;
         const isOpen = propOpenGroups.has(code);
-        const webBadge = isWebSupplier(code) ? '<span class="prop-badge sporadic" style="margin-left:4px">🌐 Web</span>' : '';
+        const isWeb = isWebSupplier(code);
+        const webBadge = isWeb ? '<span class="prop-badge sporadic" style="margin-left:4px">🌐 Web</span>' : '';
+        const startBtnLabel = isWeb ? '📝 チェックした商品を発注記録へ' : '🛒 チェックした商品で発注画面へ';
         return `
         <div class="card prop-group${isOpen ? ' open' : ''}" id="prop-group-${escHtml(code)}">
           <div class="prop-group-head" onclick="toggleProposalGroup('${escAttr(code)}')">
@@ -4316,7 +4367,7 @@ function renderProposalList() {
           <div class="prop-group-body">
             ${items}
             <div class="prop-group-summary" id="prop-summary-${escHtml(code)}">選択中: ${g.items.length}件 / ${formatYen(totalAmount)}</div>
-            <button class="btn btn-primary" style="margin-top:10px" onclick="startOrderFromProposals('${escAttr(code)}')">🛒 チェックした商品で発注画面へ</button>
+            <button class="btn btn-primary" style="margin-top:10px" onclick="startOrderFromProposals('${escAttr(code)}')">${startBtnLabel}</button>
           </div>
         </div>`;
       }).join('');
@@ -4483,7 +4534,7 @@ function renderProposalExcess() {
       <div class="excess-item">
         <div style="flex:1">
           <div class="excess-item-name">${escHtml(x.name || x.code)}</div>
-          <div class="excess-item-sub">在庫${x.stock}個（<span style="${monthsCls}">${monthsLabel}</span>）・${escHtml(x.supplierName || '')}</div>
+          <div class="excess-item-sub">在庫${x.stock}個（<span style="${monthsCls}">${monthsLabel}</span>）・${escHtml(resolveSupplierName(x.supplierCode, x.supplierName))}</div>
         </div>
         <div style="text-align:right">
           <div class="excess-item-amount">${formatYen(x.excessAmount)}</div>
@@ -4645,7 +4696,7 @@ function renderDeadScreen() {
       <div class="dead-item">
         <div style="flex:1">
           <div class="dead-item-name">${escHtml(x.name || x.code)}<span class="dead-tier-badge ${badge.cls}">${badge.label}</span></div>
-          <div class="dead-item-sub">在庫${x.stock}個・${lastSaleLabel}・${escHtml(x.supplierName || '')}</div>
+          <div class="dead-item-sub">在庫${x.stock}個・${lastSaleLabel}・${escHtml(resolveSupplierName(x.supplierCode, x.supplierName))}</div>
         </div>
         <div style="text-align:right">
           <div class="dead-item-amount">${formatYen(x.deadAmount)}</div>
