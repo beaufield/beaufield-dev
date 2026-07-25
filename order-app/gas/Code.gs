@@ -1,6 +1,6 @@
 // ============================================================
 // Beaufield 発注アプリ - Google Apps Script バックエンド
-// Version: v1.24.0
+// Version: v1.25.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.24.0';
+const VERSION         = 'v1.25.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -48,6 +48,8 @@ const SHEET_LOT_OVERRIDE = '最低発注数設定';  // 過去発注実績から
 const SHEET_DEAD        = '死蔵在庫';       // analyze_demand.py が毎回全面書き換えする死蔵在庫リスト（Phase E, v1.10.0〜）
 const SHEET_DEAD_ACK    = '死蔵在庫確認済み'; // 死蔵と承知の上で確認済みにした商品（季節品・サンプル等）
 const SHEET_RECEIVED    = '入荷済み記録';    // 入荷待ちを手動で「✓入荷済み」にした発注（Phase F, v1.24.0〜）
+const SHEET_RECEIPT_AUTO = '入荷実績（自動）'; // analyze_demand.pyが仕入データと突合して入荷確認できた発注（Phase G, v1.25.0〜）
+const SHEET_POSTING_LAG  = '計上ラグ（自動）'; // 仕入先ごとの「仕入日→仕入入力日」の実績中央値（Phase G, v1.25.0〜）
 
 // 入荷待ち判定パラメータ（Phase F, v1.24.0〜）
 // 提案の抑制（on_order加算）はリードタイムまでで変更しない。入荷待ちリストへの表示だけ
@@ -190,7 +192,7 @@ function doPost(e) {
   }
 
   // APIキー認証アクション（Pythonスクリプト用・セッション不要）
-  const API_KEY_ACTIONS = ['updateReorderPoints', 'getReorderConfig', 'updateOrderProposals', 'updateProposalExplanations', 'testNotify'];
+  const API_KEY_ACTIONS = ['updateReorderPoints', 'getReorderConfig', 'updateOrderProposals', 'updateProposalExplanations', 'updateReceiptMatches', 'testNotify'];
   if (API_KEY_ACTIONS.indexOf(action) !== -1) {
     const apiKey = p.api_key || '';
     if (!apiKey || apiKey !== _PROPS.getProperty('REORDER_API_KEY')) {
@@ -202,6 +204,7 @@ function doPost(e) {
         case 'getReorderConfig':           return jsonResponse(getReorderConfig());
         case 'updateOrderProposals':       return jsonResponse(updateOrderProposals(p));
         case 'updateProposalExplanations': return jsonResponse(updateProposalExplanations(p));
+        case 'updateReceiptMatches':       return jsonResponse(updateReceiptMatches(p));
         case 'testNotify':                 return jsonResponse(testNotify());
       }
     } catch(err) {
@@ -886,6 +889,10 @@ function saveSupplier(p, user_id) {
 //   9. 死蔵と承知の上の商品は saveDeadAck で確認済み登録（次回分析後もリストから消える）
 //  10. 入荷待ち（buildPendingOrders）はGAS内でリアルタイム集計。入荷確認できた発注は
 //      saveReceived で登録すると recentOrders・入荷待ちリストの両方から即座に外れる
+//  11. analyze_demand.py が仕入データ明細表.CSV と発注明細を突き合わせ、入荷確認できた発注を
+//      updateReceiptMatches で「入荷実績（自動）」へ書き戻す（Phase G, v1.25.0〜）。
+//      これにより手動✓なしで入荷待ちが自動消し込みされる（実測 3,039行→112行）。
+//      あわせて仕入先別の「計上ラグ」も書き戻し、入荷待ちの遅延判定に使う
 // ============================================================
 
 // 発注提案シートの列定義（updateOrderProposals / getOrderProposals で共有）
@@ -907,6 +914,21 @@ const DEAD_HEADERS = ['商品コード','商品名','仕入先コード','仕入
 
 // 入荷済み記録シートの列定義（saveReceived / buildPendingOrders で共有。Phase F, v1.24.0〜）
 const RECEIVED_HEADERS = ['発注No','商品コード','商品名','数量','確認者','確認日時'];
+
+// 入荷実績（自動）シートの列定義（updateReceiptMatches / getReceivedKeys で共有。Phase G, v1.25.0〜）
+// analyze_demand.py が仕入データ明細表.CSV と発注明細を突き合わせた結果を毎日全面書き換えする。
+// 判定='入荷済み' … 仕入計上を確認できた（＝商品マスターの在庫数にも反映済み）
+// 判定='打ち切り' … 発注から30日超えても仕入計上されない（欠品・キャンセル扱い。再提案される）
+// どちらも入荷待ちリストからは除外する
+const RECEIPT_AUTO_HEADERS = ['発注No','商品コード','判定','発注日','発注数量','分析日時'];
+
+// 計上ラグ（自動）シートの列定義（Phase G, v1.25.0〜）
+// 仕入日→仕入入力日の実績中央値。納品書の到着待ちで仕入入力が遅れる日数は仕入先ごとに
+// 大きく異なる（実測: デミ2日 / 千代田化学7日 / ナプラ10日）ため、入荷待ちの遅延判定に使う
+const POSTING_LAG_HEADERS = ['仕入先コード','計上ラグ日数','分析日時'];
+
+// 計上ラグの実績が無い仕入先に使う既定値（analyze_demand.py の DEFAULT_POSTING_LAG_DAYS と揃える）
+const DEFAULT_POSTING_LAG_DAYS = 6;
 
 // POST(APIキー): 分析に必要な設定を返す
 // レスポンス: { success, suppliers: [{code,name,leadTimeDays,orderCycleDays}],
@@ -956,11 +978,15 @@ function getReorderConfig() {
   // （Phase F, v1.24.0〜: 60日→90日に延長。長めのリードタイムの仕入先でも取りこぼさないため）
   // 発注日は発注No（YYYYMMDD-NNN）の先頭8桁から取得
   // 手動で「✓入荷済み」登録済みの発注（発注No+商品コード）は在庫に反映済みとみなし、
-  // ここで除外する（在庫と二重加算しないため。§3.4・buildPendingOrders() と同じ除外を掛ける）
+  // ここで除外する（在庫と二重加算しないため）。
+  // ⚠️ 自動判定分（入荷実績（自動））は**ここでは除外しない**（getReceivedKeys の第1引数=false）。
+  //   recentOrders は analyze_demand.py が突合の入力として使うため、自動判定済みの発注を
+  //   ここで落とすと翌日の突合対象から消え、「入荷実績（自動）」を再生成できなくなる
+  //   （毎回全面書き換えのため、消えた発注が翌日また未入荷に戻って発振する）
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - 90);
   const cutoffStr = Utilities.formatDate(cutoff, 'Asia/Tokyo', 'yyyyMMdd');
-  const receivedKeys = getReceivedKeys();
+  const receivedKeys = getReceivedKeys(false);
 
   const itemsData = getSheet(SHEET_ITEMS).getDataRange().getValues();
   const lotStats = {};
@@ -979,7 +1005,9 @@ function getReorderConfig() {
     const orderDateKey = orderNo.split('-')[0];  // 発注No先頭のYYYYMMDD
     if (orderDateKey.length === 8 && orderDateKey >= cutoffStr && !receivedKeys.has(orderNo + '|' + code)) {
       if (!recentOrders[code]) recentOrders[code] = [];
-      recentOrders[code].push({ date: orderDateKey, qty });
+      // orderNo は Phase G(v1.25.0)で追加。analyze_demand.py が発注明細行ごとの
+      // 入荷判定結果を「入荷実績（自動）」へ書き戻すためのキーとして使う
+      recentOrders[code].push({ orderNo, date: orderDateKey, qty });
     }
   });
 
@@ -1001,11 +1029,22 @@ function gcdInt(a, b) {
   return a;
 }
 
-// 「✓入荷済み」登録済みの発注を (発注No + '|' + 商品コード) のSetで返す
+// 入荷確認済みの発注を (発注No + '|' + 商品コード) のSetで返す
 // getReorderConfig（recentOrders除外）と buildPendingOrders（入荷待ちリスト除外）の両方で使う
-function getReceivedKeys() {
+//
+// v1.25.0(Phase G)〜: 手動の「✓入荷済み」に加えて、analyze_demand.py が仕入データと
+// 突き合わせて自動判定した「入荷実績（自動）」も合わせて除外対象にする。
+// 自動判定が大半を処理し、手動✓は自動で拾えないケースのオーバーライドとして残る。
+//
+// ⚠️ getReorderConfig から呼ぶ場合は includeAuto=false にすること。
+//   recentOrders は analyze_demand.py が突合の入力として使うため、ここで自動判定分を
+//   先に除外してしまうと、突合対象から消えて「入荷実績（自動）」を再生成できなくなる
+//   （＝一度入荷済みになった発注が翌日以降リストから永久に落ちる）。
+function getReceivedKeys(includeAuto) {
   const keys = new Set();
-  const sh = getSS().getSheetByName(SHEET_RECEIVED);
+  const ss = getSS();
+
+  const sh = ss.getSheetByName(SHEET_RECEIVED);
   if (sh && sh.getLastRow() > 1) {
     sh.getDataRange().getValues().slice(1).forEach(r => {
       const orderNo = String(r[0] || '').trim();
@@ -1013,7 +1052,32 @@ function getReceivedKeys() {
       if (orderNo && code) keys.add(orderNo + '|' + code);
     });
   }
+
+  if (includeAuto) {
+    const autoSh = ss.getSheetByName(SHEET_RECEIPT_AUTO);
+    if (autoSh && autoSh.getLastRow() > 1) {
+      autoSh.getDataRange().getValues().slice(1).forEach(r => {
+        const orderNo = String(r[0] || '').trim();
+        const code    = String(r[1] || '').trim();
+        if (orderNo && code) keys.add(orderNo + '|' + code);
+      });
+    }
+  }
   return keys;
+}
+
+// 仕入先コード → 計上ラグ日数（「計上ラグ（自動）」シート。未登録は既定値）
+function getPostingLagByCode() {
+  const map = {};
+  const sh = getSS().getSheetByName(SHEET_POSTING_LAG);
+  if (sh && sh.getLastRow() > 1) {
+    sh.getDataRange().getValues().slice(1).forEach(r => {
+      const code = String(r[0] || '').trim();
+      const lag  = parseFloat(r[1]);
+      if (code && lag >= 0) map[code] = lag;
+    });
+  }
+  return map;
 }
 
 // カレンダー日付(y,m,d)をUTC起点の通し日数(epoch day)に変換する。
@@ -1026,13 +1090,22 @@ function epochDayToDateStr(epochDay) {
   return Utilities.formatDate(new Date(epochDay * 86400000), 'Asia/Tokyo', 'yyyy-MM-dd');
 }
 
-// 入荷待ちリストを組み立てる（Phase F, v1.24.0〜）。GAS内でリアルタイム集計するため、
-// アプリから発注した直後にgetOrderProposalsを呼べば即座に反映される。
+// 入荷待ちリストを組み立てる（Phase F, v1.24.0〜 / Phase G, v1.25.0で判定根拠を変更）。
+// GAS内でリアルタイム集計するため、アプリから発注した直後にgetOrderProposalsを呼べば即座に反映される。
+//
 // 対象: 発注明細（アプリ経由の発注のみ・電話/FAX等は対象外）のうち、
-//   発注日 + リードタイム + PENDING_GRACE_DAYS がまだ今日を過ぎていない かつ
-//   「✓入荷済み」登録済みでない行。
-// ⚠️ 提案の抑制（on_order加算・getReorderConfigのrecentOrders）とは別のウィンドウ。
-//   ここでの「遅延」はあくまで警告表示用で、提案そのものは止めない（§3.4参照）
+//   「✓入荷済み」（手動）にも「入荷実績（自動）」にも入っていない行。
+//
+// v1.25.0(Phase G)の変更点:
+//   1. 除外判定に analyze_demand.py の突合結果（入荷実績（自動））を加えた。
+//      これにより仕入計上を確認できた発注は手動✓なしで自動的にリストから消える
+//      （実測: 3,039行 → 112行）
+//   2. 遅延判定を「発注日+リードタイム」から「発注日+リードタイム+計上ラグ」に変更した。
+//      納品書の到着待ちで仕入入力が数日遅れるのは正常な状態であり、これを遅延として
+//      表示すると実質すべてが「予定日超過」になってリストとして機能しないため
+//      （実測: 千代田化学は計上ラグ7日・リードタイム1日）
+//
+// ⚠️ ここでの「遅延」はあくまで警告表示用で、提案そのものは止めない（Phase Fからの原則）
 function buildPendingOrders() {
   const ss = getSS();
   const itemsSh = ss.getSheetByName(SHEET_ITEMS);
@@ -1057,7 +1130,9 @@ function buildPendingOrders() {
     if (code) leadTimeByCode[code] = parseFloat(r[5]) > 0 ? parseFloat(r[5]) : DEFAULT_LEAD_TIME_DAYS;
   });
 
-  const receivedKeys = getReceivedKeys();
+  // 手動✓と自動突合の両方を除外対象にする（Phase G）
+  const receivedKeys = getReceivedKeys(true);
+  const postingLagByCode = getPostingLagByCode();
 
   const todayStr = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
   const todayParts = todayStr.split('-').map(Number);
@@ -1079,11 +1154,16 @@ function buildPendingOrders() {
 
     const supp = supplierByOrderNo[orderNo] || { code: '', name: '' };
     const leadTimeDays = leadTimeByCode[supp.code] || DEFAULT_LEAD_TIME_DAYS;
+    // 物理的な到着予定日（従来どおり）
     const expectedEpochDay = orderEpochDay + Math.round(leadTimeDays);
-    const graceDeadlineEpochDay = expectedEpochDay + PENDING_GRACE_DAYS;
+    // 仕入計上まで見込んだ日（納品書の到着待ち分を上乗せ）。遅延判定はこちらを基準にする
+    const postingLagDays = postingLagByCode[supp.code] !== undefined
+      ? postingLagByCode[supp.code] : DEFAULT_POSTING_LAG_DAYS;
+    const postingDueEpochDay = expectedEpochDay + Math.round(postingLagDays);
+    const graceDeadlineEpochDay = postingDueEpochDay + PENDING_GRACE_DAYS;
     if (graceDeadlineEpochDay < todayEpochDay) return; // 猶予期間も過ぎたら自動的に対象外
 
-    const overdueDays = todayEpochDay - expectedEpochDay;
+    const overdueDays = todayEpochDay - postingDueEpochDay;
     candidates.push({
       code, name,
       supplierName: supp.name,
@@ -1091,7 +1171,9 @@ function buildPendingOrders() {
       orderDate: dateKey.slice(0, 4) + '-' + dateKey.slice(4, 6) + '-' + dateKey.slice(6, 8),
       qty,
       leadTimeDays,
+      postingLagDays,
       expectedDate: epochDayToDateStr(expectedEpochDay),
+      postingDueDate: epochDayToDateStr(postingDueEpochDay),
       elapsedDays: todayEpochDay - orderEpochDay,
       overdueDays,
       isDelayed: overdueDays > 0
@@ -1267,6 +1349,61 @@ function updateOrderProposals(p) {
 
   Logger.log('✅ 発注提案更新完了: ' + proposals.length + '件 / 過剰在庫 ' + excess.length + '件 / 死蔵在庫 ' + dead.length + '件');
   return { success: true, count: proposals.length, excessCount: excess.length, deadCount: dead.length };
+}
+
+// POST(APIキー): 発注×仕入の突合結果を書き込む（Phase G, v1.25.0〜）
+// analyze_demand.py が毎日、仕入データ明細表.CSV と発注明細を突き合わせた結果を送る。
+// 「入荷実績（自動）」「計上ラグ（自動）」の2シートを全面書き換えする。
+//
+// リクエスト: {
+//   matches: [{orderNo, code, status:'入荷済み'|'打ち切り', orderDate, qty}],
+//   postingLags: {仕入先コード: ラグ日数},
+//   analyzedAt
+// }
+//
+// ⚠️ matches は「入荷待ちから除外すべき発注明細行」のみを送ること（未入荷の行は送らない）。
+//   このシートは getReceivedKeys(true) の除外リストとしてそのまま使われる
+function updateReceiptMatches(p) {
+  const matches     = p.matches || [];
+  const postingLags = p.postingLags || {};
+  const analyzedAt  = String(p.analyzedAt || '');
+
+  const ss = getSS();
+
+  // ---- 入荷実績（自動）: 全面書き換え ----
+  let sh = ss.getSheetByName(SHEET_RECEIPT_AUTO);
+  if (!sh) sh = ss.insertSheet(SHEET_RECEIPT_AUTO);
+  sh.clearContents();
+  sh.getRange(1, 1, 1, RECEIPT_AUTO_HEADERS.length).setValues([RECEIPT_AUTO_HEADERS]);
+  if (matches.length > 0) {
+    const rows = matches.map(x => [
+      String(x.orderNo   || '').trim(),
+      String(x.code      || '').trim(),
+      String(x.status    || ''),
+      String(x.orderDate || ''),
+      parseFloat(x.qty) || 0,
+      analyzedAt
+    ]);
+    sh.getRange(2, 1, rows.length, RECEIPT_AUTO_HEADERS.length).setValues(rows);
+  }
+
+  // ---- 計上ラグ（自動）: 全面書き換え ----
+  let lagSh = ss.getSheetByName(SHEET_POSTING_LAG);
+  if (!lagSh) lagSh = ss.insertSheet(SHEET_POSTING_LAG);
+  lagSh.clearContents();
+  lagSh.getRange(1, 1, 1, POSTING_LAG_HEADERS.length).setValues([POSTING_LAG_HEADERS]);
+  const lagCodes = Object.keys(postingLags);
+  if (lagCodes.length > 0) {
+    const lagRows = lagCodes.map(code => [
+      String(code),
+      parseFloat(postingLags[code]) || 0,
+      analyzedAt
+    ]);
+    lagSh.getRange(2, 1, lagRows.length, POSTING_LAG_HEADERS.length).setValues(lagRows);
+  }
+
+  Logger.log('✅ 入荷突合結果を更新: 除外対象' + matches.length + '行 / 計上ラグ' + lagCodes.length + '社');
+  return { success: true, count: matches.length, lagCount: lagCodes.length };
 }
 
 // 在庫KPI履歴シートへの記録（日付が一致する行があれば上書き、無ければ追記）
@@ -1829,6 +1966,8 @@ function initializeSheets() {
   ensureSheet(SHEET_HISTORY,  ['発注No','発注日','発注先コード','発注先名','FAX番号','担当者','品目数','出力方法','登録日時','user_id']);
   ensureSheet(SHEET_ITEMS,    ['発注No','JANコード','Beaufieldコード','商品名','数量','単位','備考','手書きフラグ','登録日時']);
   ensureSheet(SHEET_REORDER,  ['商品コード','適正在庫','更新日時']);
+  ensureSheet(SHEET_RECEIPT_AUTO, RECEIPT_AUTO_HEADERS);
+  ensureSheet(SHEET_POSTING_LAG,  POSTING_LAG_HEADERS);
 
   const suppSh = ensureSheet(SHEET_SUPPLIERS, ['コード','名称','FAX','更新日時','発注方法']);
   if (suppSh.getLastRow() <= 1) {
