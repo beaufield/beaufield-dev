@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.14.0
+# Version: v1.15.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -781,7 +781,23 @@ def build_group_note(group, m, due, shortage, threshold):
         parts.append(f"月需要{m['mm']:.1f}本（{group['minMean']:g}本未満）のため自動配分の対象外。"
                      f"{unit}本入れると約{unit / m['daily']:.0f}日分になるので発注は個別判断で")
     else:
-        parts.append(f"在庫{m['pos']:.0f}本＝約{m['pos'] / m['daily']:.0f}日分あるため今回は配分なし")
+        # 配分ゼロの商品。とくに「在庫が推奨を下回っているのに配分されなかった」ものは
+        # 理由と、いつ自動で拾われるのかまで書く（画面から消えたように見えると不安になるため）
+        cover = m['pos'] / m['daily']
+        if m['pos'] < m['rec']:
+            parts.append(f"⚠️在庫{m['pos']:.0f}本が推奨{m['rec']:.0f}本を下回っています（在庫あと約{cover:.0f}日分）")
+            if (m['pos'] + unit) / m['daily'] > group['capDays']:
+                # 1ブロックが上限日数を超えてしまう遅い商品。必須枠②に入るまで待つのが正しい
+                days_to_must = max(0, cover - group['mustDays'])
+                parts.append(f"{unit}本入れると約{unit / m['daily']:.0f}日分になり積み上げ上限"
+                             f"{group['capDays']:.0f}日を超えるため今回の配分には入れていません")
+                parts.append(f"あと約{days_to_must:.0f}日で「切迫」枠に入り、上限を無視して{unit}本を"
+                             f"確保します（早めに入れたい場合はこの行で＋{unit}してください）")
+            else:
+                parts.append(f"他の商品のほうが在庫日数が少ないため今回の{group['groupUnit']}本には"
+                             f"入りませんでした（次回以降の配分で拾われます）")
+        else:
+            parts.append(f"在庫{m['pos']:.0f}本＝約{cover:.0f}日分あるため今回は配分なし")
     if m['onOrder'] > 0:
         parts.append(f"発注済み（仕入未計上）{m['onOrder']:.0f}本を在庫に加算済み")
     return '。'.join(parts)
@@ -1206,7 +1222,7 @@ def main():
 
     log_file = setup_logger()
     logging.info('=' * 60)
-    logging.info('Beaufield 需要分析・発注提案スクリプト v1.14.0 開始'
+    logging.info('Beaufield 需要分析・発注提案スクリプト v1.15.0 開始'
                  + ('（dry-run）' if args.dry_run else ''))
 
     config = load_config()
