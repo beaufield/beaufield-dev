@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.13.0
+# Version: v1.14.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -117,6 +117,32 @@
 #   ただし手動の「🚫除外」「🔚終売」設定は従来通り最優先で常に非表示のまま
 #   （在庫マイナスでも意図的に提案不要と判断された商品を強制的に出さないため）。
 #
+# まとめ発注グループ（Phase J・v1.14.0で追加。設計原本: まとめ発注グループ_設計プラン.md）:
+#   一部のメーカーは「系列合計が○本の倍数」でないと発注できず、1商品あたりも○本単位。
+#   商品単位の提案だけでは発注書が作れないため、系列でまとめて発注時期を判定し、
+#   発注単位ぴったりになる組み合わせを自動で組む。
+#   対象メーカー・発注単位・所属判定ルールはGASの「発注グループ設定」シートで管理する
+#   （このスクリプトは getReorderConfig 経由で受け取るだけでハードコードしない）。
+#
+#   発注時期の判定（どちらかを満たしたら発注時期）:
+#     (1) 系列の不足合計 ≥ min(発注単位 × トリガー割合, 系列の適正在庫合計 × トリガー割合)
+#         ※ min を取るのは、商品数が少なく「発注単位が系列の適正在庫合計を上回る」系列では
+#            発注単位ベースの閾値が理論上の不足最大値を超えて永久に成立しないため
+#     (2) 在庫0以下（欠品中）の商品が1つ以上ある
+#
+#   配分（在庫日数の水平化・商品単位のブロックを積む貪欲法）:
+#     必須枠① 在庫0以下（欠品中）の商品   … 最優先で1ブロック確保
+#     必須枠② 必須枠日数以内に切れる商品   … 次に1ブロック確保
+#     任意枠   在庫日数がいちばん少ない商品 … 発注単位に達するまで1ブロックずつ積む
+#
+#   ⚠️ 必須枠も「月需要が最低月需要以上」の商品に限る。月0.1本しか出ない死に筋が在庫0に
+#     なるたびに必須枠を消費すると、1回の発注で30本前後が死に筋に吸われる（検証済み）。
+#     死に筋の欠品は自動発注ではなく人の判断に回す（画面には参考表示で出る）。
+#
+#   グループ所属商品は個別の提案行を出さず、必ずグループの配分結果に置き換える
+#   （個別提案とグループ提案の二重発注を防ぐため）。まだ発注時期でないグループの行は
+#   refOnly（参考表示）にしてチェックOFF・グレー表示にし、件数・金額・KPI・通知から外す。
+#
 # 実行方法:
 #   py -3.12 analyze_demand.py             # 分析＋GASへ書き込み＋通知
 #   py -3.12 analyze_demand.py --dry-run   # 分析のみ（ローカル出力・新旧比較レポートのみ・GAS送信なし）
@@ -189,6 +215,14 @@ POSTING_LAG_MIN_SAMPLES = 20    # 仕入先別の計上ラグを実績から推�
 POSTING_LAG_MONTHS      = 6     # 計上ラグ推定に使う実績の期間（ヶ月）
 POSTING_LAG_MAX_DAYS    = 90    # 外れ値除外（これを超えるラグは推定に使わない）
 DEFAULT_POSTING_LAG_DAYS = 6    # 実績が足りない仕入先に使う既定値（全体中央値の実測値）
+
+# ---- まとめ発注グループ パラメータ（Phase J, v1.14.0） ----
+# 個別の値は GAS の「発注グループ設定」シートから来る。ここはシート未設定時の既定値
+GROUP_TRIGGER_PCT_DEFAULT = 50    # トリガー閾値の割合（発注単位・適正在庫合計に対する%）
+GROUP_MUST_DAYS_DEFAULT   = 7     # 必須枠②: この日数以内に在庫が切れる商品は無条件で1ブロック確保
+GROUP_CAP_DAYS_DEFAULT    = 60    # 任意枠: 配分後の在庫日数がこれを超える商品には積まない
+GROUP_MIN_MEAN_DEFAULT    = 0.5   # 自動配分の対象にする最低月需要（これ未満は死に筋として人の判断へ）
+GROUP_DUE_FORECAST_DAYS   = 90    # 「発注時期までの目安日数」を試算する上限日数
 
 # ---- CSVパスの候補（デバイスによりドライブ構成が異なる） ----
 _ONEDRIVE_DATA_DIRS = [
@@ -528,6 +562,371 @@ def fetch_reorder_config(gas_url, api_key):
     return result
 
 
+# ============================================================
+# まとめ発注グループ（Phase J, v1.14.0）
+# ============================================================
+
+def normalize_group_name(s):
+    """グループ所属判定用の商品名正規化
+
+    ⚠️ 商品名のグラム表記に全角ｇを使っている商品が実際にあり（主力商品を含む）、半角の `120g` だけで
+    判定すると取りこぼす。そのため判定前に必ず正規化する。
+    英字の大小・全角空白のゆらぎもここで吸収する。
+    """
+    return (str(s or '')
+            .replace('ｇ', 'g').replace('Ｇ', 'G')
+            .replace('　', ' ')
+            .upper())
+
+
+def parse_order_groups(raw_groups):
+    """GASの「発注グループ設定」から受け取ったグループ定義を正規化する"""
+    groups = []
+    for g in raw_groups or []:
+        group_unit = int(float(g.get('groupUnit') or 0))
+        item_unit  = int(float(g.get('itemUnit') or 0))
+        includes = [normalize_group_name(x) for x in (g.get('nameIncludes') or []) if str(x).strip()]
+        if group_unit <= 0 or item_unit <= 0 or not includes:
+            logging.warning(f'発注グループ設定が不正なためスキップ: {g}')
+            continue
+        groups.append({
+            'groupId':      str(g.get('groupId') or '').strip(),
+            'groupName':    str(g.get('groupName') or '').strip(),
+            'supplierCode': normalize_supplier_code(g.get('supplierCode')),
+            'groupUnit':    group_unit,
+            'itemUnit':     item_unit,
+            'includes':     includes,
+            'excludes':     [normalize_group_name(x) for x in (g.get('nameExcludes') or []) if str(x).strip()],
+            'excludeCodes': {normalize_code(x) for x in (g.get('excludeCodes') or [])} - {None},
+            'triggerPct':   float(g.get('triggerPct') or GROUP_TRIGGER_PCT_DEFAULT),
+            'mustDays':     float(g.get('mustDays') or GROUP_MUST_DAYS_DEFAULT),
+            'capDays':      float(g.get('capDays') or GROUP_CAP_DAYS_DEFAULT),
+            'minMean':      float(g.get('minMean') if g.get('minMean') is not None else GROUP_MIN_MEAN_DEFAULT),
+        })
+    return groups
+
+
+def assign_group_members(groups, products, exclusions, eol_codes):
+    """商品マスターからグループ所属商品を判定する
+
+    戻り値: (members_by_group {groupId: [code]}, group_by_code {code: group})
+
+    手動の「🚫除外」「🔚終売」は既存仕様どおり最優先なので、ここでグループからも外す
+    （グループに入れてしまうと配分対象になり、除外したはずの商品が発注されてしまう）。
+    """
+    members_by_group = {g['groupId']: [] for g in groups}
+    group_by_code = {}
+    if not groups:
+        return members_by_group, group_by_code
+
+    for code in products.index.unique():
+        prod = products.loc[code]
+        if isinstance(prod, pd.DataFrame):
+            prod = prod.iloc[0]
+        if prod['stock_mgmt'] != 'する' or prod['discontinued'] == '廃番':
+            continue
+        if code in exclusions or code in eol_codes:
+            continue
+        name_n = normalize_group_name(prod['name'])
+        supp_key = normalize_supplier_code(prod['supplier_cd'])
+        for g in groups:
+            if g['supplierCode'] and supp_key != g['supplierCode']:
+                continue
+            if code in g['excludeCodes']:
+                continue
+            if not all(k in name_n for k in g['includes']):
+                continue
+            if any(k in name_n for k in g['excludes']):
+                continue
+            if code in group_by_code:
+                logging.warning(
+                    f"商品 {code} {prod['name'].strip()} が複数グループに該当します "
+                    f"（{group_by_code[code]['groupId']} を採用し {g['groupId']} は無視）")
+                break
+            group_by_code[code] = g
+            members_by_group[g['groupId']].append(code)
+            break
+    return members_by_group, group_by_code
+
+
+def resolve_group_lot(group, lot_override):
+    """グループ所属商品の最低発注数を決める
+
+    メーカー側の制約（1商品あたり itemUnit 本単位）が絶対なので、原則 itemUnit を使う。
+    手動設定（アプリの提案タブ）が itemUnit の正の倍数ならその意思を尊重する
+    （12本単位で運用したい等）。倍数でない値は制約違反なので itemUnit に丸める。
+    """
+    unit = int(group['itemUnit'])
+    if lot_override:
+        try:
+            lot = int(lot_override)
+        except (TypeError, ValueError):
+            return unit
+        if lot >= unit and lot % unit == 0:
+            return lot
+    return unit
+
+
+def allocate_group(members, target, group):
+    """系列の発注単位ぴったりになるように商品へ数量を配分する（在庫日数の水平化）
+
+    members の各要素は allocate 用に次のキーを持つ dict:
+      pos     … 手当済在庫（現在庫＋発注済み未入荷）
+      daily   … 1日あたり需要
+      mm      … 月需要
+    配分結果を 'alloc'（本数）と 'tier'（'欠品'/'切迫'/'追加'）に書き込み、配分できた本数を返す。
+
+    3段の優先枠にしているのは、系列内の需要の偏りが極端に大きいため。
+    上位1〜2割の商品が系列需要の半分を占める一方、遅い色は「1ブロック入れると数ヶ月分」になるので、
+    在庫日数の少ない順に積むだけでは永久に選ばれず静かに欠品する（シミュレーション検証済み）。
+    """
+    unit = int(group['itemUnit'])
+    min_mean = group['minMean']
+    for m in members:
+        m['alloc'] = 0
+        m['tier'] = ''
+
+    placed = 0
+    active = [m for m in members if m['mm'] >= min_mean]
+
+    # 必須枠①: 欠品中（手当済在庫が0以下）を最優先。在庫の少ない順
+    for m in sorted(active, key=lambda x: x['pos']):
+        if placed + unit > target:
+            break
+        if m['pos'] <= 0:
+            m['alloc'] += unit
+            m['tier'] = '欠品'
+            placed += unit
+
+    # 必須枠②: mustDays以内に在庫が切れる商品。在庫日数の少ない順
+    for m in sorted(active, key=lambda x: x['pos'] / x['daily']):
+        if placed + unit > target:
+            break
+        if m['alloc'] == 0 and m['pos'] > 0 and m['pos'] / m['daily'] <= group['mustDays']:
+            m['alloc'] += unit
+            m['tier'] = '切迫'
+            placed += unit
+
+    # 任意枠: 配分後の在庫日数が一番少ない商品に積む（上限日数を超える商品は対象外）
+    #
+    # ⚠️ 発注単位は絶対（120本／72本ぴったりでないと発注できない）なので、上限日数は
+    #   「積み過ぎ防止の安全弁」でしかなく、目標本数の達成を妨げてはいけない。
+    #   商品数が少ない系列では、発注単位を満たすと1商品あたりの在庫日数が必ず上限を超える
+    #   （実在するグループで発生）。上限で弾くと1本も配分できず発注書が作れなくなるため、
+    #   目標に届かない場合は上限を外して同じ水平化ロジックで積み切る（capped=False の2周目）。
+    for capped in (True, False):
+        while placed + unit <= target:
+            cand, worst = None, None
+            for m in active:
+                if capped and (m['pos'] + m['alloc'] + unit) / m['daily'] > group['capDays']:
+                    continue
+                cur = (m['pos'] + m['alloc']) / m['daily']
+                if worst is None or cur < worst:
+                    worst, cand = cur, m
+            if cand is None:
+                break
+            cand['alloc'] += unit
+            if not cand['tier']:
+                cand['tier'] = '追加' if capped else '単位調整'
+            placed += unit
+        if placed >= target:
+            break
+
+    return placed
+
+
+def estimate_days_until_due(members, threshold, min_mean):
+    """在庫が今のペースで減った場合、何日後に発注時期（不足合計≥閾値）になるかの目安
+
+    在庫0以下の商品が出た時点でも発注時期になるため、そちらも併せて見る。
+    需要を平均で均した粗い試算なので画面には「目安」として出す。
+    """
+    active = [m for m in members if m['mm'] >= min_mean]
+    if not active:
+        return None
+    for d in range(0, GROUP_DUE_FORECAST_DAYS + 1):
+        shortage = sum(max(0.0, m['rec'] - (m['pos'] - m['daily'] * d)) for m in active)
+        if shortage >= threshold or any((m['pos'] - m['daily'] * d) <= 0 for m in active):
+            return d
+    return None
+
+
+def build_group_note(group, m, due, shortage, threshold):
+    """グループ配分の根拠メモ"""
+    unit = int(group['itemUnit'])
+    parts = []
+    if not due:
+        parts.append(f"📎参考表示（{group['groupName']}はまだ発注時期ではありません。"
+                     f"系列の不足{shortage:.0f}本／{threshold:.0f}本で発注時期）")
+    parts.append(f"{group['groupName']}は系列合計{group['groupUnit']}本単位でしか発注できないため、"
+                 f"系列全体で組み合わせを算出（1商品{unit}本単位）")
+    if m['tier'] == '欠品':
+        parts.append(f"⚠️在庫0以下（欠品中）のため最優先で{unit}本を確保")
+    elif m['tier'] == '切迫':
+        parts.append(f"あと約{m['pos'] / m['daily']:.0f}日で在庫切れ（{group['mustDays']:.0f}日以内）のため"
+                     f"{unit}本を確保")
+    elif m['tier'] == '追加':
+        parts.append(f"在庫日数が少ない順に{m['alloc']:.0f}本を配分"
+                     f"（配分前{m['pos'] / m['daily']:.0f}日分→配分後{(m['pos'] + m['alloc']) / m['daily']:.0f}日分）")
+    elif m['tier'] == '単位調整':
+        parts.append(f"{group['groupUnit']}本ぴったりにするため{m['alloc']:.0f}本を追加配分"
+                     f"（配分後{(m['pos'] + m['alloc']) / m['daily']:.0f}日分。積み上げ上限"
+                     f"{group['capDays']:.0f}日を超えるが、系列全体で{group['groupUnit']}本に満たないため）")
+    elif m['mm'] <= 0:
+        parts.append(f"分析期間{WINDOW_MONTHS}ヶ月の売上が0件のため自動配分の対象外"
+                     f"（廃番ではない現行品。発注は個別判断で）")
+        if m['pos'] <= 0:
+            parts.append("⚠️在庫も0以下です。終売にするか現行品として維持するか判断してください")
+    elif m['mm'] < group['minMean']:
+        parts.append(f"月需要{m['mm']:.1f}本（{group['minMean']:g}本未満）のため自動配分の対象外。"
+                     f"{unit}本入れると約{unit / m['daily']:.0f}日分になるので発注は個別判断で")
+    else:
+        parts.append(f"在庫{m['pos']:.0f}本＝約{m['pos'] / m['daily']:.0f}日分あるため今回は配分なし")
+    if m['onOrder'] > 0:
+        parts.append(f"発注済み（仕入未計上）{m['onOrder']:.0f}本を在庫に加算済み")
+    return '。'.join(parts)
+
+
+def build_group_proposals(groups, members_by_group, results_by_code, products):
+    """グループごとに発注時期を判定し、配分結果を提案行として組み立てる
+
+    戻り値: (group_proposals, group_status, member_codes)
+      group_proposals … 提案シートへ送る行（グループ所属商品ぶん。未配分の商品も含む）
+      group_status    … グループ状況シートへ送る行（1グループ1行）
+      member_codes    … グループに属する商品コードのset（個別提案から除外するのに使う）
+
+    未配分の商品も行として送るのは、アプリ側で「組み直す」「2ロット」を押したときに
+    同じロジックで再配分できるようにするため（判定に使う数値はすべてこの行から取る）。
+    アプリでは既定で折りたたんで表示する。
+    """
+    group_proposals = []
+    group_status = []
+    member_codes = set()
+
+    for g in groups:
+        codes = members_by_group.get(g['groupId'], [])
+        if not codes:
+            logging.warning(f"発注グループ「{g['groupName']}」に該当する商品がありません "
+                            f"（含む={g['includes']} / 除く={g['excludes']} / 仕入先={g['supplierCode']}）")
+            continue
+        member_codes.update(codes)
+
+        members = []
+        for code in codes:
+            r = results_by_code.get(code)
+            if r:
+                mm = float(r['mean_monthly'])
+                members.append({
+                    'code': code, 'name': r['name'], 'supplierCode': r['supplier_cd'],
+                    'supplierName': r['supplier'], 'pattern': r['pattern'], 'abc': r['abc'],
+                    'stock': float(r['stock']), 'onOrder': float(r['on_order']),
+                    'pos': float(r['stock']) + float(r['on_order']),
+                    'rec': float(r['recommended']), 'cost': float(r['unit_cost']),
+                    'mm': mm, 'daily': (mm / DAYS_PER_MONTH) if mm > 0 else 1e-9,
+                    'lot': int(r['lot']), 'p95': float(r['p95_order_size']),
+                    'maxOrder': float(r['max_order_size']),
+                })
+            else:
+                # 分析期間(24ヶ月)に売上が1件も無い商品（廃番ではなく現行品として残っているケース）。
+                # 需要が分からないので自動配分はせず、在庫状況だけ見えるように行として出す
+                prod = products.loc[code]
+                if isinstance(prod, pd.DataFrame):
+                    prod = prod.iloc[0]
+                members.append({
+                    'code': code, 'name': prod['name'],
+                    'supplierCode': normalize_supplier_code(prod['supplier_cd']) or prod['supplier_cd'],
+                    'supplierName': prod['supplier'], 'pattern': f'{WINDOW_MONTHS}ヶ月売上なし', 'abc': '',
+                    'stock': float(prod['stock']), 'onOrder': 0.0,
+                    'pos': float(prod['stock']), 'rec': 0.0, 'cost': float(prod['cost']),
+                    'mm': 0.0, 'daily': 1e-9, 'lot': int(g['itemUnit']), 'p95': 0.0, 'maxOrder': 0.0,
+                })
+
+        active = [m for m in members if m['mm'] >= g['minMean']]
+        shortage = sum(max(0.0, m['rec'] - m['pos']) for m in active)
+        rec_sum  = sum(m['rec'] for m in active)
+        mm_sum   = sum(m['mm'] for m in active)
+        pos_sum  = sum(m['pos'] for m in members)
+        pct = g['triggerPct'] / 100.0
+        # ⚠️ min を取るのが要点。発注単位が系列の適正在庫合計を上回る系列（商品数が少ない系列）では
+        #   発注単位ベースの閾値が不足合計の理論上の最大値を超えてしまい永久に成立しない
+        threshold = min(g['groupUnit'] * pct, rec_sum * pct) if rec_sum > 0 else g['groupUnit'] * pct
+        out_of_stock = [m for m in active if m['pos'] <= 0]
+        due = (shortage >= threshold) or bool(out_of_stock)
+
+        lots = max(1, math.ceil(shortage / g['groupUnit'])) if shortage > g['groupUnit'] else 1
+        target = lots * g['groupUnit']
+        placed = allocate_group(members, target, g)
+        if placed < target:
+            logging.warning(
+                f"発注グループ「{g['groupName']}」: 積み上げ上限{g['capDays']:.0f}日に達し "
+                f"{target - placed}本を配分できませんでした（{placed}/{target}本）。"
+                f"上限日数の見直しか、需要の落ち込みを確認してください")
+
+        daily_sum = mm_sum / DAYS_PER_MONTH if mm_sum > 0 else 0
+        cover_days = round(pos_sum / daily_sum, 1) if daily_sum > 0 else 0
+        days_until = None if due else estimate_days_until_due(members, threshold, g['minMean'])
+
+        for m in members:
+            # 発注時期でない、または配分が無い行は参考表示（チェックOFF・グレー・集計対象外）
+            ref_only = (not due) or m['alloc'] <= 0
+            group_proposals.append({
+                'code': m['code'],
+                'name': m['name'],
+                'supplierCode': m['supplierCode'],
+                'supplierName': m['supplierName'],
+                'pattern': m['pattern'],
+                'abcRank': m['abc'],
+                'stock': m['stock'],
+                'onOrder': m['onOrder'],
+                'recommended': m['rec'],
+                'proposedQty': m['alloc'],
+                'unitCost': m['cost'],
+                'amount': round(m['cost'] * m['alloc']),
+                'lot': m['lot'],
+                'meanMonthly': m['mm'],
+                'p95Order': m['p95'],
+                'maxOrder': m['maxOrder'],
+                'refOnly': ref_only,
+                'groupId': g['groupId'],
+                'allocTier': m['tier'],
+                'note': build_group_note(g, m, due, shortage, threshold),
+            })
+
+        group_status.append({
+            'groupId': g['groupId'],
+            'groupName': g['groupName'],
+            'supplierCode': g['supplierCode'] or (members[0]['supplierCode'] if members else ''),
+            'supplierName': members[0]['supplierName'] if members else '',
+            'groupUnit': g['groupUnit'],
+            'itemUnit': g['itemUnit'],
+            'itemCount': len(members),
+            'meanMonthly': round(mm_sum, 1),
+            'stock': sum(m['stock'] for m in members),
+            'onOrder': sum(m['onOrder'] for m in members),
+            'recommended': rec_sum,
+            'shortage': round(shortage, 1),
+            'threshold': round(threshold, 1),
+            'due': due,
+            'proposedQty': placed,
+            'lots': lots,
+            'coverDays': cover_days,
+            'daysUntilDue': days_until,
+        })
+
+        allocated = [m for m in members if m['alloc'] > 0]
+        logging.info(
+            f"  {g['groupName']}: {len(members)}商品 / 月需要{mm_sum:.0f}本 / 在庫{pos_sum:.0f}本({cover_days:.1f}日分) / "
+            f"不足{shortage:.0f}本（閾値{threshold:.0f}本）→ "
+            + (f"発注時期✅ {placed}本({lots}ロット)・{len(allocated)}商品・"
+               f"¥{sum(m['alloc'] * m['cost'] for m in allocated):,.0f}"
+               if due else
+               f"まだ発注時期でない（目安あと{days_until}日）" if days_until is not None
+               else 'まだ発注時期でない')
+            + (f" ⚠️欠品{len(out_of_stock)}商品" if out_of_stock else ''))
+
+    return group_proposals, group_status, member_codes
+
+
 def classify(adi, cv2):
     if adi < ADI_THRESHOLD:
         return '安定型' if cv2 < CV2_THRESHOLD else '変動型'
@@ -705,7 +1104,7 @@ def post_reorder_points(gas_url, api_key, results, analyzed_at):
     return False
 
 
-def post_proposals(gas_url, api_key, proposals, excess, dead, kpi, analyzed_at):
+def post_proposals(gas_url, api_key, proposals, excess, dead, kpi, analyzed_at, group_status=None):
     payload = {
         'action': 'updateOrderProposals',
         'api_key': api_key,
@@ -714,11 +1113,14 @@ def post_proposals(gas_url, api_key, proposals, excess, dead, kpi, analyzed_at):
         'excess': excess,
         'dead': dead,
         'kpi': kpi,
+        'groupStatus': group_status or [],
     }
     ref_count = sum(1 for x in proposals if x.get('refOnly'))
-    logging.info(f'GASへ発注提案・過剰在庫・死蔵在庫・KPIを送信中... '
+    due_groups = sum(1 for x in (group_status or []) if x.get('due'))
+    logging.info(f'GASへ発注提案・過剰在庫・死蔵在庫・KPI・発注グループを送信中... '
                  f'(提案{len(proposals) - ref_count}件＋参考{ref_count}件 / '
-                 f'過剰在庫{len(excess)}件 / 死蔵在庫{len(dead)}件)')
+                 f'過剰在庫{len(excess)}件 / 死蔵在庫{len(dead)}件 / '
+                 f'発注グループ{len(group_status or [])}件（うち発注時期{due_groups}件）)')
     for attempt in range(1, 4):
         try:
             resp = requests.post(gas_url, json=payload, timeout=300)
@@ -804,7 +1206,7 @@ def main():
 
     log_file = setup_logger()
     logging.info('=' * 60)
-    logging.info('Beaufield 需要分析・発注提案スクリプト v1.13.0 開始'
+    logging.info('Beaufield 需要分析・発注提案スクリプト v1.14.0 開始'
                  + ('（dry-run）' if args.dry_run else ''))
 
     config = load_config()
@@ -825,6 +1227,7 @@ def main():
     lot_stats = {}
     lot_overrides = {}
     recent_orders = {}
+    order_groups = []
     try:
         cfg = fetch_reorder_config(config['gas_url'], config['api_key'])
         for s in cfg.get('suppliers', []):
@@ -839,6 +1242,7 @@ def main():
                          if normalize_code(k)}
         recent_orders = {normalize_code(k): v for k, v in cfg.get('recentOrders', {}).items()
                          if normalize_code(k)}
+        order_groups = parse_order_groups(cfg.get('orderGroups', []))
     except Exception as e:
         if args.dry_run:
             logging.warning(f'GAS設定取得失敗（dry-runのため既定値で続行）: {e}')
@@ -855,6 +1259,17 @@ def main():
 
     sales, last_sale_by_code = load_sales(sales_path, start_str, end_str)
     products = load_products(products_path)
+
+    # ---- まとめ発注グループの所属判定（Phase J, v1.14.0） ----
+    # 商品名ベースなので新色が追加されても自動で系列に入る（マスター保守が不要）。
+    # 最低発注数の決定に使うため、需要分析ループより前に確定させる必要がある
+    group_members, group_by_code = assign_group_members(order_groups, products, exclusions, eol_codes)
+    if order_groups:
+        logging.info(f'まとめ発注グループ: {len(order_groups)}グループ / '
+                     f'所属商品 計{sum(len(v) for v in group_members.values())}件')
+        for g in order_groups:
+            logging.info(f"  {g['groupName']}（{g['groupUnit']}本単位・1商品{g['itemUnit']}本単位）: "
+                         f"{len(group_members.get(g['groupId'], []))}商品")
 
     # ---- 発注×仕入の突き合わせ（Phase G, v1.12.0） ----
     receipt_cutoff = (date.today() - timedelta(days=RECEIPT_LOOKBACK_DAYS)).strftime('%Y%m%d')
@@ -949,7 +1364,13 @@ def main():
         # ABCランク分類だけに使う経済価値の代理指標。仕入単価が未設定(0円)の商品は
         # 売上単価で代用する（提案金額の表示にはこのフォールバックを使わず unit_cost のまま）
         value_basis = unit_cost or float(prod['sale_price'])
-        lot = estimate_lot(lot_stats.get(code), lot_overrides.get(code))
+        # まとめ発注グループ所属商品はメーカー側の制約（1商品itemUnit本単位）を強制する。
+        # 過去発注回数が少なくGCD推定が効かず「最低発注数=1」と誤登録されている商品が
+        # 半数近くあったため（グループ所属商品はメーカー制約が既知なので推定に頼らない）
+        if code in group_by_code:
+            lot = resolve_group_lot(group_by_code[code], lot_overrides.get(code))
+        else:
+            lot = estimate_lot(lot_stats.get(code), lot_overrides.get(code))
 
         # 発注済み・未入荷分（Phase G, v1.12.0）: 仕入データとの突き合わせで
         # 「発注したが仕入計上されていない」数量を求め、在庫に加算して二重発注を防ぐ。
@@ -1046,6 +1467,8 @@ def main():
             'pattern': pattern_label,
             'abc': abc,
             'mto_recommended': mto_recommended,
+            'group_id': group_by_code[code]['groupId'] if code in group_by_code else '',
+            'alloc_tier': '',   # グループ配分の枠（欠品/切迫/追加）。下のグループ処理で埋める
             'ref_only': ref_only,
             'excluded': excluded,
             'eol_flagged': eol_flagged,
@@ -1134,6 +1557,30 @@ def main():
                 'proposed_old': proposed_qty_old, 'proposed_new': proposed_qty,
                 'amount_old': round(unit_cost * proposed_qty_old), 'amount_new': round(unit_cost * proposed_qty),
             })
+
+    # ---- まとめ発注グループの発注時期判定・配分（Phase J, v1.14.0） ----
+    # ⚠️ グループ所属商品の個別提案は必ずここで捨ててグループの配分結果に置き換える。
+    #   両方残すと「個別4商品20本」と「グループ120本」が二重に発注される
+    group_status = []
+    if order_groups:
+        logging.info('まとめ発注グループの発注時期判定:')
+        results_by_code = {r['code']: r for r in results}
+        group_proposals, group_status, group_member_codes = build_group_proposals(
+            order_groups, group_members, results_by_code, products)
+        dropped = sum(1 for x in proposals if x['code'] in group_member_codes)
+        proposals = [x for x in proposals if x['code'] not in group_member_codes]
+        proposals.extend(group_proposals)
+        logging.info(f'  個別提案{dropped}件をグループの配分結果{len(group_proposals)}行に置き換えました')
+        # results（ローカルCSV）側にも配分結果を反映して突き合わせできるようにする
+        alloc_by_code = {x['code']: x for x in group_proposals}
+        for r in results:
+            g = alloc_by_code.get(r['code'])
+            if not g:
+                continue
+            r['proposed_qty'] = g['proposedQty']
+            r['amount'] = g['amount']
+            r['ref_only'] = g['refOnly']
+            r['alloc_tier'] = g['allocTier']
 
     # 仕入先→提案が先・参考は後→提案数量の多い順で並べる（シートを直接見た時の分かりやすさ優先。
     # アプリ側は棚番順に並べ替えるのでここの並びは表示順には影響しない）
@@ -1229,6 +1676,11 @@ def main():
     dead_csv_out = OUTPUT_DIR / f'dead_stock_{stamp}.csv'
     pd.DataFrame(dead_rows).to_csv(dead_csv_out, index=False, encoding='utf-8-sig')
 
+    group_csv_out = None
+    if group_status:
+        group_csv_out = OUTPUT_DIR / f'order_groups_{stamp}.csv'
+        pd.DataFrame(group_status).to_csv(group_csv_out, index=False, encoding='utf-8-sig')
+
     json_out = OUTPUT_DIR / 'demand_stats.json'
     with open(json_out, 'w', encoding='utf-8') as f:
         json.dump({
@@ -1264,6 +1716,12 @@ def main():
         ref_amount = sum(p['amount'] for p in ref_proposals)
         logging.info(f'  参考表示（自動提案の対象外だが在庫が推奨を下回る）: {len(ref_proposals):,}件 / '
                      f'参考額 {ref_amount:,.0f}円 ※KPI・通知には含めない')
+    if group_status:
+        due = [g for g in group_status if g['due']]
+        group_amount = sum(p['amount'] for p in real_proposals if p.get('groupId'))
+        logging.info(f'まとめ発注グループ: {len(group_status)}グループ / '
+                     f'発注時期 {len(due)}グループ / 合計 {sum(g["proposedQty"] for g in due):,}本 / '
+                     f'{group_amount:,.0f}円')
     warn_if_proposal_count_swings(len(real_proposals))
     excess_total = sum(r['excessAmount'] for r in excess_rows)
     logging.info(f'過剰在庫: {len(excess_rows):,}件 / 過剰額合計 {excess_total:,.0f}円'
@@ -1277,6 +1735,8 @@ def main():
     logging.info(f'出力: {csv_out}')
     logging.info(f'出力: {excess_csv_out}')
     logging.info(f'出力: {dead_csv_out}')
+    if group_csv_out:
+        logging.info(f'出力: {group_csv_out}')
     logging.info(f'出力: {json_out}')
 
     # ---- 経営KPI ----
@@ -1337,7 +1797,8 @@ def main():
     if args.dry_run:
         logging.info('dry-run のため GAS への送信をスキップしました')
     else:
-        if not post_proposals(config['gas_url'], config['api_key'], proposals, excess_rows, dead_rows, kpi, analyzed_at):
+        if not post_proposals(config['gas_url'], config['api_key'], proposals, excess_rows, dead_rows,
+                              kpi, analyzed_at, group_status):
             logging.error('GASへの発注提案送信が3回すべて失敗しました。ログ: %s', log_file)
             sys.exit(1)
         if not post_reorder_points(config['gas_url'], config['api_key'], results, analyzed_at):

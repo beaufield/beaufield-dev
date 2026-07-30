@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.26.0';
+const VERSION         = 'v1.27.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -50,6 +50,8 @@ const SHEET_DEAD_ACK    = '死蔵在庫確認済み'; // 死蔵と承知の上�
 const SHEET_RECEIVED    = '入荷済み記録';    // 入荷待ちを手動で「✓入荷済み」にした発注（Phase F, v1.24.0〜）
 const SHEET_RECEIPT_AUTO = '入荷実績（自動）'; // analyze_demand.pyが仕入データと突合して入荷確認できた発注（Phase G, v1.25.0〜）
 const SHEET_POSTING_LAG  = '計上ラグ（自動）'; // 仕入先ごとの「仕入日→仕入入力日」の実績中央値（Phase G, v1.25.0〜）
+const SHEET_ORDER_GROUPS = '発注グループ設定'; // 系列合計が一定本数の倍数でしか発注できないメーカーの設定（Phase J, v1.27.0〜）
+const SHEET_GROUP_STATUS = '発注グループ状況'; // analyze_demand.py がグループ別の発注時期判定を毎回全面書き換え（Phase J, v1.27.0〜）
 
 // 入荷待ち判定パラメータ（Phase F, v1.24.0〜）
 // 提案の抑制（on_order加算）はリードタイムまでで変更しない。入荷待ちリストへの表示だけ
@@ -896,12 +898,13 @@ function saveSupplier(p, user_id) {
 // ============================================================
 
 // 発注提案シートの列定義（updateOrderProposals / getOrderProposals で共有）
-// 区分列（末尾）は v1.26.0 で追加。'提案'=通常の発注提案 / '参考'=自動条件では提案対象外だが
+// 区分列は v1.26.0 で追加。'提案'=通常の発注提案 / '参考'=自動条件では提案対象外だが
 // 在庫が推奨在庫を下回っている商品（アプリではチェックOFF・グレー表示で金額合計に入れない）
+// グループID・配分枠は v1.27.0（Phase J）で追加。まとめ発注グループに属する商品の行に入る
 const PROPOSAL_HEADERS = ['商品コード','商品名','仕入先コード','仕入先名','パターン',
                           '現在庫','発注済','推奨在庫','提案数量','最低発注数','月平均',
                           '注文P95','最大注文','根拠メモ','AI説明','分析日時','仕入単価','提案金額','ABCランク',
-                          '区分'];
+                          '区分','グループID','配分枠'];
 
 // 過剰在庫シートの列定義（updateOrderProposals / getOrderProposals で共有）
 const EXCESS_HEADERS = ['商品コード','商品名','仕入先コード','仕入先名','現在庫','推奨在庫',
@@ -932,6 +935,80 @@ const POSTING_LAG_HEADERS = ['仕入先コード','計上ラグ日数','分析�
 
 // 計上ラグの実績が無い仕入先に使う既定値（analyze_demand.py の DEFAULT_POSTING_LAG_DAYS と揃える）
 const DEFAULT_POSTING_LAG_DAYS = 6;
+
+// ============================================================
+// まとめ発注グループ（Phase J, v1.27.0〜。設計原本: まとめ発注グループ_設計プラン.md）
+//
+// 一部のメーカーは「系列合計が○本の倍数」でないと発注できない（1商品あたりも○本単位）。
+// 商品単位の提案だけでは発注書が作れないため、系列でまとめて発注時期を判定し、
+// 発注単位ぴったりになる組み合わせを analyze_demand.py が自動で組む。
+//
+// 対象メーカー・発注単位・所属判定ルールは「発注グループ設定」シート側で管理する
+// （下の ORDER_GROUP_DEFAULTS は初回アクセス時の投入値。以後はシートが正）。
+// 仕様と実データの検証内容は まとめ発注グループ_設計プラン.md 参照
+// ============================================================
+const ORDER_GROUP_HEADERS = ['グループID','グループ名','仕入先コード','発注単位（系列）','発注単位（商品）',
+                             '名前に含む','名前に含まない','個別除外コード',
+                             'トリガー割合(%)','必須枠日数','積み上げ上限日数','最低月需要','有効'];
+
+// 初回アクセス時に投入する既定グループ（2026-07-30 時点の運用設定）
+// ⚠️ 「名前に含む」のグラム表記は analyze_demand.py 側で全角ｇを半角gに正規化してから判定する。
+//   商品名に全角ｇを使っているものが実際にあり、半角だけで判定すると取りこぼす
+const ORDER_GROUP_DEFAULTS = [
+  ['MILFY',       'ミルフィシリーズ',        '48', 120, 6, 'ミルフィ,120g',    'オキシ,OX', '', 50, 7, 60, 0.5, true],
+  ['WAKAN18',     '和漢彩染 十八番',        '54',  72, 6, '十八番,120g',      'LUC',       '', 50, 7, 60, 0.5, true],
+  ['WAKAN18_LUC', '和漢彩染 十八番 LUC',    '54',  72, 6, '十八番,120g,LUC',  '',          '', 50, 7, 60, 0.5, true]
+];
+
+// 発注グループ状況シートの列定義（updateOrderProposals / getOrderProposals で共有）
+// analyze_demand.py が毎回全面書き換えする。1グループ1行
+const GROUP_STATUS_HEADERS = ['グループID','グループ名','仕入先コード','仕入先名','発注単位（系列）','発注単位（商品）',
+                              '商品数','月需要','系列在庫','系列発注済','系列適正在庫','不足合計','トリガー閾値',
+                              '発注時期','提案本数','ロット数','系列在庫日数','発注時期までの目安日数','分析日時'];
+
+// 発注グループ設定シートを取得（無ければ既定グループ入りで作成する）
+function ensureOrderGroupSheet_() {
+  const ss = getSS();
+  let sh = ss.getSheetByName(SHEET_ORDER_GROUPS);
+  if (sh) return sh;
+  sh = ss.insertSheet(SHEET_ORDER_GROUPS);
+  sh.getRange(1, 1, 1, ORDER_GROUP_HEADERS.length).setValues([ORDER_GROUP_HEADERS]);
+  sh.getRange(2, 1, ORDER_GROUP_DEFAULTS.length, ORDER_GROUP_HEADERS.length)
+    .setValues(ORDER_GROUP_DEFAULTS);
+  // 仕入先コード・名前パターンは「48」「120g」等が数値・日付に化けないようテキスト固定にする
+  // （v1.20.0 で発注限時刻の '11:00' がDateシリアル値に変換された事案と同種の予防）
+  sh.getRange(2, 3, ORDER_GROUP_DEFAULTS.length, 1).setNumberFormat('@');
+  sh.getRange(2, 6, ORDER_GROUP_DEFAULTS.length, 3).setNumberFormat('@');
+  sh.setFrozenRows(1);
+  Logger.log('✅ 発注グループ設定シートを既定値で作成しました');
+  return sh;
+}
+
+// 発注グループ設定を読み出す（getReorderConfig から Python へ返す）
+function readOrderGroups_() {
+  const sh = ensureOrderGroupSheet_();
+  if (sh.getLastRow() < 2) return [];
+  const csv = s => String(s == null ? '' : s).split(',').map(x => x.trim()).filter(Boolean);
+  const num = (v, d) => (parseFloat(v) > 0 ? parseFloat(v) : d);
+  return sh.getDataRange().getValues().slice(1)
+    .filter(r => String(r[0] || '').trim() !== '')
+    .filter(r => r[12] !== false && String(r[12]).toUpperCase() !== 'FALSE')
+    .map(r => ({
+      groupId:      String(r[0]).trim(),
+      groupName:    String(r[1] || '').trim(),
+      supplierCode: String(r[2] || '').trim(),
+      groupUnit:    num(r[3], 0),          // 系列の発注単位（120本 / 72本）
+      itemUnit:     num(r[4], 6),          // 1商品の発注単位（6本）
+      nameIncludes: csv(r[5]),
+      nameExcludes: csv(r[6]),
+      excludeCodes: csv(r[7]),
+      triggerPct:   num(r[8], 50),
+      mustDays:     num(r[9], 7),
+      capDays:      num(r[10], 60),
+      minMean:      parseFloat(r[11]) >= 0 ? parseFloat(r[11]) : 0.5
+    }))
+    .filter(g => g.groupUnit > 0 && g.itemUnit > 0 && g.nameIncludes.length > 0);
+}
 
 // POST(APIキー): 分析に必要な設定を返す
 // レスポンス: { success, suppliers: [{code,name,leadTimeDays,orderCycleDays}],
@@ -1014,6 +1091,11 @@ function getReorderConfig() {
     }
   });
 
+  // まとめ発注グループ設定（Phase J, v1.27.0〜。シート未作成なら既定3グループで自動作成）
+  // 所属商品の判定は商品名で行うため Python 側（商品.CSVを持っている）で実施する。
+  // ここでは設定を返すだけにして、判定ロジックを1箇所（analyze_demand.py）に集約する
+  const orderGroups = readOrderGroups_();
+
   return {
     success: true,
     suppliers,
@@ -1022,6 +1104,7 @@ function getReorderConfig() {
     lotStats,
     lotOverrides,
     recentOrders,
+    orderGroups,
     defaults: { leadTimeDays: DEFAULT_LEAD_TIME_DAYS, orderCycleDays: DEFAULT_ORDER_CYCLE_DAYS }
   };
 }
@@ -1269,9 +1352,42 @@ function updateOrderProposals(p) {
       parseFloat(x.unitCost) || 0,
       parseFloat(x.amount)   || 0,
       String(x.abcRank || ''),
-      x.refOnly ? '参考' : '提案'
+      x.refOnly ? '参考' : '提案',
+      String(x.groupId   || ''),
+      String(x.allocTier || '')
     ]);
     sh.getRange(2, 1, rows.length, PROPOSAL_HEADERS.length).setValues(rows);
+  }
+
+  // 発注グループ状況シート（全面書き換え。Phase J, v1.27.0〜）
+  const groupStatus = p.groupStatus || [];
+  let gsSh = ss.getSheetByName(SHEET_GROUP_STATUS);
+  if (!gsSh) gsSh = ss.insertSheet(SHEET_GROUP_STATUS);
+  gsSh.clearContents();
+  gsSh.getRange(1, 1, 1, GROUP_STATUS_HEADERS.length).setValues([GROUP_STATUS_HEADERS]);
+  if (groupStatus.length > 0) {
+    const gsRows = groupStatus.map(x => [
+      String(x.groupId      || ''),
+      String(x.groupName    || ''),
+      String(x.supplierCode || ''),
+      String(x.supplierName || ''),
+      parseFloat(x.groupUnit)   || 0,
+      parseFloat(x.itemUnit)    || 0,
+      parseFloat(x.itemCount)   || 0,
+      parseFloat(x.meanMonthly) || 0,
+      parseFloat(x.stock)       || 0,
+      parseFloat(x.onOrder)     || 0,
+      parseFloat(x.recommended) || 0,
+      parseFloat(x.shortage)    || 0,
+      parseFloat(x.threshold)   || 0,
+      x.due ? 'TRUE' : 'FALSE',
+      parseFloat(x.proposedQty) || 0,
+      parseFloat(x.lots)        || 0,
+      parseFloat(x.coverDays)   || 0,
+      x.daysUntilDue === null || x.daysUntilDue === undefined ? '' : parseFloat(x.daysUntilDue),
+      analyzedAt
+    ]);
+    gsSh.getRange(2, 1, gsRows.length, GROUP_STATUS_HEADERS.length).setValues(gsRows);
   }
 
   // 過剰在庫シート（全面書き換え）
@@ -1351,18 +1467,28 @@ function updateOrderProposals(p) {
     const refLine = refCount > 0
       ? ('\n📎 参考: 提案対象外だが在庫が推奨を下回った商品 ' + refCount + '件（提案タブにグレー表示）')
       : '';
+    // まとめ発注グループ（Phase J）: 発注時期になったグループだけ通知に出す。
+    // まだ時期でないグループは参考表示扱いなので通知しない（件数・金額にも入らない）
+    const dueGroups = groupStatus.filter(x => x.due);
+    const groupLine = dueGroups.length > 0
+      ? ('\n📦 まとめ発注: ' + dueGroups.map(x =>
+          x.groupName + ' ' + (parseFloat(x.proposedQty) || 0) + '本（' +
+          (parseFloat(x.groupUnit) || 0) + '本単位）').join(' / '))
+      : '';
     notifyLineWorks(
       '📋 発注提案の分析が完了しました（' + analyzedAt + '）\n' +
       '提案: ' + realProposals.length + '件・合計' + formatManYen(totalAmount) + '\n' + lines.join('\n') + more +
-      excessLine + deadLine + refLine + '\n' +
+      excessLine + deadLine + groupLine + refLine + '\n' +
       '発注アプリの「発注提案」タブで確認してください。'
     );
   }
 
   Logger.log('✅ 発注提案更新完了: ' + realProposals.length + '件（参考 ' + refCount + '件）/ 過剰在庫 '
-             + excess.length + '件 / 死蔵在庫 ' + dead.length + '件');
+             + excess.length + '件 / 死蔵在庫 ' + dead.length + '件 / 発注グループ '
+             + groupStatus.length + '件（うち発注時期 ' + groupStatus.filter(x => x.due).length + '件）');
   return { success: true, count: realProposals.length, refCount: refCount,
-           excessCount: excess.length, deadCount: dead.length };
+           excessCount: excess.length, deadCount: dead.length,
+           groupCount: groupStatus.length };
 }
 
 // POST(APIキー): 発注×仕入の突合結果を書き込む（Phase G, v1.25.0〜）
@@ -1511,7 +1637,10 @@ function getOrderProposals() {
         amount:       parseFloat(r[17]) || 0,
         abcRank:      String(r[18] || ''),
         // 区分列（v1.26.0〜）。列が無い旧データは空文字→false＝通常の提案として扱う
-        refOnly:      String(r[19] || '').trim() === '参考'
+        refOnly:      String(r[19] || '').trim() === '参考',
+        // まとめ発注グループ（v1.27.0〜）。列が無い旧データは空文字＝グループ外の通常商品
+        groupId:      String(r[20] || '').trim(),
+        allocTier:    String(r[21] || '').trim()
       }));
     analyzedAt = cellToStr(data[1][15], 'yyyy-MM-dd HH:mm');
   }
@@ -1661,10 +1790,42 @@ function getOrderProposals() {
       }));
   }
 
+  // まとめ発注グループの状況（Phase J, v1.27.0〜。analyze_demand.py が毎回全面書き換え）
+  let groupStatus = [];
+  const gsSh2 = ss.getSheetByName(SHEET_GROUP_STATUS);
+  if (gsSh2 && gsSh2.getLastRow() > 1) {
+    groupStatus = gsSh2.getDataRange().getValues().slice(1)
+      .filter(r => String(r[0]).trim() !== '')
+      .map(r => ({
+        groupId:      String(r[0]).trim(),
+        groupName:    String(r[1] || ''),
+        supplierCode: String(r[2] || '').trim(),
+        supplierName: String(r[3] || ''),
+        groupUnit:    parseFloat(r[4])  || 0,
+        itemUnit:     parseFloat(r[5])  || 6,
+        itemCount:    parseFloat(r[6])  || 0,
+        meanMonthly:  parseFloat(r[7])  || 0,
+        stock:        parseFloat(r[8])  || 0,
+        onOrder:      parseFloat(r[9])  || 0,
+        recommended:  parseFloat(r[10]) || 0,
+        shortage:     parseFloat(r[11]) || 0,
+        threshold:    parseFloat(r[12]) || 0,
+        due:          String(r[13] || '').trim().toUpperCase() === 'TRUE',
+        proposedQty:  parseFloat(r[14]) || 0,
+        lots:         parseFloat(r[15]) || 0,
+        coverDays:    parseFloat(r[16]) || 0,
+        daysUntilDue: r[17] === '' ? null : (parseFloat(r[17]) || 0)
+      }));
+  }
+
+  // グループ設定（アプリ側の再配分に必要なパラメータ。シート未作成なら既定値で自動作成される）
+  const orderGroups = readOrderGroups_();
+
   // 入荷待ちリスト（Phase F, v1.24.0〜）。GAS内でリアルタイム集計するため常に最新
   const pendingOrders = buildPendingOrders();
 
-  return { success: true, proposals, analyzedAt, exclusions, eol, excess, excessAcks, dead, deadAcks, pendingOrders, kpi, lotOverrides };
+  return { success: true, proposals, analyzedAt, exclusions, eol, excess, excessAcks, dead, deadAcks,
+           pendingOrders, kpi, lotOverrides, groupStatus, orderGroups };
 }
 
 // POST(セッション): 過剰在庫の確認済み登録/解除
@@ -1915,12 +2076,20 @@ function saveLotOverride(p, user_id) {
 
 // ヘルパー: 「発注提案」シートに該当商品の行があれば、最低発注数と提案数量・提案金額を
 // その場で再計算して書き込む（次回のanalyze_demand.py実行を待たずに画面へ反映するため）
+//
+// ⚠️ まとめ発注グループ（Phase J）に属する商品はここで再計算してはいけない。
+//   提案数量は「系列合計を発注単位ぴったりにする配分結果」なので、1商品だけを
+//   個別の不足数から再計算すると系列合計が発注単位からズレる。最低発注数の列だけ更新する
 function applyLotToProposal_(ss, code, lot) {
   const prSh = ss.getSheetByName(SHEET_PROPOSALS);
   if (!prSh || prSh.getLastRow() <= 1) return;
   const data = prSh.getDataRange().getValues();
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][0]).trim() !== code) continue;
+    if (String(data[i][20] || '').trim() !== '') {   // U列=グループID
+      prSh.getRange(i + 1, 10, 1, 1).setValue(lot);  // J列=最低発注数のみ更新
+      return;
+    }
     const stock       = parseFloat(data[i][5])  || 0;
     const onOrder     = parseFloat(data[i][6])  || 0;
     const recommended = parseFloat(data[i][7])  || 0;
