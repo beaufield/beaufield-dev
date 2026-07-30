@@ -669,6 +669,26 @@
     .prop-excl-btn    { padding: 4px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-light); cursor: pointer; white-space: nowrap; }
     .prop-eol-btn     { padding: 4px 8px; font-size: 11px; border: 1px solid #ffab91; border-radius: 6px; background: #fff3e0; color: #bf360c; cursor: pointer; white-space: nowrap; }
     .prop-group-summary { font-size: 13px; font-weight: 700; text-align: right; margin-top: 10px; color: var(--text); }
+    /* まとめ発注グループ（Phase J）: 系列合計が発注単位の倍数でないと発注できないメーカー */
+    .prop-mg           { border: 1px solid var(--border); border-radius: 8px; margin: 10px 0; overflow: hidden; }
+    .prop-mg.due       { border-color: var(--primary); }
+    .prop-mg-head      { padding: 8px 10px; background: #f3f7fa; }
+    .prop-mg.due .prop-mg-head { background: #e7f3fb; }
+    .prop-mg-title     { font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .prop-mg-unit      { font-size: 10px; font-weight: 700; border-radius: 8px; padding: 1px 6px; background: #ede7f6; color: #5e35b1; }
+    .prop-mg-state     { font-size: 12px; margin-top: 4px; color: var(--text-light); line-height: 1.6; }
+    .prop-mg.due .prop-mg-state { color: var(--primary); font-weight: 700; }
+    .prop-mg-acts      { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+    .prop-mg-btn       { padding: 5px 10px; font-size: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); cursor: pointer; white-space: nowrap; }
+    .prop-mg-btn.primary { border-color: var(--primary); background: var(--primary); color: #fff; font-weight: 700; }
+    .prop-mg-body      { padding: 0 10px 10px; }
+    .prop-mg-total     { font-size: 13px; font-weight: 700; text-align: right; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+    .prop-mg-total.ok  { color: #2e7d32; }
+    .prop-mg-total.ng  { color: #c62828; }
+    .prop-mg-rest-btn  { width: 100%; margin-top: 8px; padding: 7px; font-size: 12px; border: 1px dashed var(--border); border-radius: 6px; background: transparent; color: var(--text-light); cursor: pointer; }
+    .prop-badge.tier-欠品 { background: #ffebee; color: #c62828; }
+    .prop-badge.tier-切迫 { background: #fff3e0; color: #e65100; }
+    .prop-badge.tier-単位調整 { background: #e8eaf6; color: #3949ab; }
     .prop-sort-btn.active { background: var(--primary); color: #fff; }
     .prop-web-btn.active  { background: var(--primary); color: #fff; }
     .excess-item      { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
@@ -1243,7 +1263,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.50.0'; // 提案対象外でも在庫が推奨を下回った商品を「参考」としてグレー表示（Phase I）
+const APP_VERSION    = 'v1.51.0'; // まとめ発注グループ（系列合計が発注単位の倍数でしか発注できないメーカー）に対応（Phase J）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -4104,13 +4124,15 @@ function closeModal(id) { document.getElementById(id).classList.remove('open'); 
    analyze_demand.py（週次）が「発注提案」シートに書いた提案を表示し、
    チェックした商品をカートに積んで発注フローへ流し込む
 =================================================== */
-let proposalsData    = { proposals: [], analyzedAt: '', exclusions: [], eol: [], excess: [], excessAcks: [], dead: [], deadAcks: [], pendingOrders: [], kpi: null, lotOverrides: [] };
+let proposalsData    = { proposals: [], analyzedAt: '', exclusions: [], eol: [], excess: [], excessAcks: [], dead: [], deadAcks: [], pendingOrders: [], kpi: null, lotOverrides: [], groupStatus: [], orderGroups: [] };
 let proposalsLoaded  = false;
 let proposalsLoading = false;
 let proposalsSort    = 'name'; // 'name'（あ順・既定）| 'amount'（金額が多い順）
 let propWebFilter    = 'all'; // 'all'（既定）| 'onlyWeb'（Webのみ）| 'excludeWeb'（Web除外）
 let excessShowCount  = 20; // 「持ちすぎ在庫」の初期表示件数（もっと見るで増える）
 let propUncheckedItems = new Set(); // ユーザーが手動でチェックを外した商品（"仕入先コード|商品コード"）。再描画してもチェック状態を維持するため
+let propMgOpenRest   = new Set(); // まとめ発注グループで「今回配分なしの商品」を展開しているグループID
+let propMgQty        = {};        // まとめ発注グループをアプリ側で組み直した数量 {グループID: {商品コード: 本数}}
 let deadShowCount    = 20; // 「整理」タブの初期表示件数（もっと見るで増える）
 let deadFilter       = 'all'; // 'all' | 'tier1'（完全死蔵）| 'tier2'（休眠）| 'unsold'（未販売）
 let deadSort         = 'amount'; // 'amount'（金額が多い順）| 'months'（放置期間が長い順）
@@ -4163,11 +4185,15 @@ async function loadProposals(force = false) {
         deadAcks:   res.deadAcks   || [],
         pendingOrders: res.pendingOrders || [],
         kpi:        res.kpi        || null,
-        lotOverrides: res.lotOverrides || []
+        lotOverrides: res.lotOverrides || [],
+        groupStatus:  res.groupStatus  || [],
+        orderGroups:  res.orderGroups  || []
       };
       proposalsLoaded = true;
       excessShowCount = 20;
       deadShowCount = 20;
+      propMgOpenRest = new Set();
+      propMgQty = {};
       document.getElementById('prop-analyzed-at').textContent =
         proposalsData.analyzedAt ? '分析日時: ' + proposalsData.analyzedAt : '分析結果がまだありません';
       renderProposalKpi();
@@ -4309,7 +4335,9 @@ function renderProposalList() {
     Object.values(groups).forEach(g => {
       // 参考表示は「気づくため」の行なので、グループ見出しの件数・数量・金額には含めない
       g.mainItems = g.items.filter(p => !p.refOnly);
-      g.refCount  = g.items.length - g.mainItems.length;
+      // まとめ発注グループ（Phase J）の行は専用ブロックで見せるので、仕入先見出しの
+      // 「＋参考N件」には数えない（未配分の商品が全部そこに乗って数字が意味をなさなくなる）
+      g.refCount  = g.items.filter(p => p.refOnly && !p.groupId).length;
       g.totalAmount = g.mainItems.reduce((s, p) => s + (parseFloat(p.unitCost) || 0) * (p.proposedQty || 0), 0);
       // 商品の並び順: 棚番→JANコード順（棚番未設定の商品は末尾にまとめる）
       g.items.sort((a, b) => {
@@ -4324,58 +4352,85 @@ function renderProposalList() {
     const sortedCodes = proposalsSort === 'amount'
       ? Object.keys(groups).sort((a, b) => groups[b].totalAmount - groups[a].totalAmount)
       : Object.keys(groups).sort((a, b) => groups[a].name.localeCompare(groups[b].name, 'ja'));
+    // 1商品ぶんの行HTML。通常の提案行とまとめ発注グループの行で共通に使う
+    const renderPropItem = (p, code) => {
+      const badgeCls = PROP_PATTERN_CLASS[p.pattern] || 'sporadic';
+      const note = p.aiNote || p.note || '';
+      const stockNeg = (parseFloat(p.stock) || 0) < 0;
+      // 発注済み（仕入未計上）＝実物は届いている可能性が高いが在庫にはまだ反映されていない分
+      const onOrder = p.onOrder > 0 ? `<span style="color:var(--text-light)">＋発注済(未計上) <b>${p.onOrder}</b></span> ` : '';
+      const unitCost = parseFloat(p.unitCost) || 0;
+      const abcCls = ABC_BADGE_CLASS[p.abcRank] || '';
+      const abcBadge = p.abcRank ? `<span class="abc-badge ${abcCls}">${escHtml(p.abcRank)}</span>` : '';
+      const hist = productHistory[p.code] || null;
+      const lastOrder = hist && hist.date
+        ? `<span style="color:var(--danger);font-weight:bold">🛒 直近発注 ${fmtOrderDate(hist.date)}×${hist.qty}${hist.unit||''}</span>`
+        : '';
+      const delayed = delayedByCode[p.code];
+      const delayWarn = delayed
+        ? `<div class="prop-pending-warn">⚠️ ${delayed.orderDate.slice(5)}に${delayed.qty}個発注済み（仕入計上の見込み日を${delayed.overdueDays}日超過・未入荷の可能性）</div>`
+        : '';
+      const itemKey = code + '|' + p.code;
+      // 参考行＝提案対象外だが在庫が推奨を下回った商品。チェックOFF・グレー表示で
+      // 金額合計には入らないが、拾いたい時はチェックすれば通常どおり発注へ送れる
+      const refBadge = p.refOnly && !p.groupId ? '<span class="prop-badge ref">📎 参考</span>' : '';
+      // まとめ発注グループの行は数量の刻みを商品単位（6本）にし、配分理由のバッジを出す
+      const mgCfg  = p.groupId ? mgConfigById(p.groupId) : null;
+      const step   = mgCfg ? (mgCfg.itemUnit || 6) : 1;
+      const qty    = p.groupId ? mgQtyOf(p.groupId, p) : (p.proposedQty || 0);
+      const tierBadge = p.allocTier
+        ? `<span class="prop-badge tier-${escAttr(p.allocTier)}">${escHtml(p.allocTier)}</span>` : '';
+      const chips = p.groupId
+        ? `<button type="button" class="prop-qty-chip" onclick="setPropQtyDelta(this,${-step})">−${step}</button>
+           <button type="button" class="prop-qty-chip" onclick="setPropQtyDelta(this,${step})">＋${step}</button>`
+        : PROP_QTY_CHIPS.map(v => `<button type="button" class="prop-qty-chip${qty === v ? ' active' : ''}" onclick="setPropQty(this,${v})">${v}</button>`).join('');
+      // グループ行は「配分ゼロ＝アクション不要」のときだけグレーにする。発注時期前でも
+      // 「今すぐ組む」で数量が入った行はチェックONになるので、グレーのままだと食い違う
+      const isGrey = p.groupId ? qty <= 0 : p.refOnly;
+      return `
+      <div class="prop-item${isGrey ? ' prop-ref' : ''}" data-code="${escHtml(p.code)}" data-unit-cost="${unitCost}">
+        <div class="prop-item-top">
+          <input type="checkbox" class="prop-check" data-key="${escAttr(itemKey)}" ${propUncheckedItems.has(itemKey) ? '' : 'checked'}>
+          <div class="prop-item-name">${escHtml(p.name)}
+            <div class="prop-item-code">${escHtml(p.code)}<span class="prop-badge ${badgeCls}">${escHtml(p.pattern)}</span>${abcBadge}${tierBadge}${refBadge}</div>
+          </div>
+          <div class="prop-item-actions">
+            <button class="prop-excl-btn" onclick="excludeProposal('${escAttr(p.code)}','${escAttr(p.name)}')">🚫 除外</button>
+            <button class="prop-eol-btn" onclick="markEol('${escAttr(p.code)}','${escAttr(p.name)}')">🔚 終売</button>
+          </div>
+        </div>
+        ${stockNeg ? `<div class="prop-pending-warn">⚠️ 在庫マイナス（${p.stock}）：欠品・バックオーダー中の可能性</div>` : ''}
+        <div class="prop-item-stats">
+          <span>在庫 <b style="${stockNeg ? 'color:var(--danger)' : ''}">${p.stock}</b> ${onOrder}→ 推奨 <b>${p.recommended}</b></span>
+          <span>発注数 <input type="number" class="prop-qty" value="${qty}" min="0" step="${step}"></span>
+          <span class="prop-qty-chips">${chips}</span>
+          <button type="button" class="prop-lot-btn" onclick="openLotModal('${escAttr(p.code)}','${escAttr(p.name)}')">最低発注数 ${p.lot} ✏️</button>
+          <span class="prop-item-amount">${formatItemAmount(unitCost, qty)}</span>
+        </div>
+        ${lastOrder ? `<div class="prop-item-stats" style="margin-top:2px;font-size:11px">${lastOrder}</div>` : ''}
+        ${note ? `<div class="prop-note">${escHtml(note)}</div>` : ''}
+        ${delayWarn}
+      </div>`;
+    };
+
     wrap.innerHTML = sortedCodes
       .map(code => {
         const g = groups[code];
-        const items = g.items.map(p => {
-          const badgeCls = PROP_PATTERN_CLASS[p.pattern] || 'sporadic';
-          const note = p.aiNote || p.note || '';
-          const stockNeg = (parseFloat(p.stock) || 0) < 0;
-          // 発注済み（仕入未計上）＝実物は届いている可能性が高いが在庫にはまだ反映されていない分
-          const onOrder = p.onOrder > 0 ? `<span style="color:var(--text-light)">＋発注済(未計上) <b>${p.onOrder}</b></span> ` : '';
-          const unitCost = parseFloat(p.unitCost) || 0;
-          const abcCls = ABC_BADGE_CLASS[p.abcRank] || '';
-          const abcBadge = p.abcRank ? `<span class="abc-badge ${abcCls}">${escHtml(p.abcRank)}</span>` : '';
-          const hist = productHistory[p.code] || null;
-          const lastOrder = hist && hist.date
-            ? `<span style="color:var(--danger);font-weight:bold">🛒 直近発注 ${fmtOrderDate(hist.date)}×${hist.qty}${hist.unit||''}</span>`
-            : '';
-          const delayed = delayedByCode[p.code];
-          const delayWarn = delayed
-            ? `<div class="prop-pending-warn">⚠️ ${delayed.orderDate.slice(5)}に${delayed.qty}個発注済み（仕入計上の見込み日を${delayed.overdueDays}日超過・未入荷の可能性）</div>`
-            : '';
-          const itemKey = code + '|' + p.code;
-          // 参考行＝提案対象外だが在庫が推奨を下回った商品。チェックOFF・グレー表示で
-          // 金額合計には入らないが、拾いたい時はチェックすれば通常どおり発注へ送れる
-          const refBadge = p.refOnly ? '<span class="prop-badge ref">📎 参考</span>' : '';
-          return `
-          <div class="prop-item${p.refOnly ? ' prop-ref' : ''}" data-code="${escHtml(p.code)}" data-unit-cost="${unitCost}">
-            <div class="prop-item-top">
-              <input type="checkbox" class="prop-check" data-key="${escAttr(itemKey)}" ${propUncheckedItems.has(itemKey) ? '' : 'checked'}>
-              <div class="prop-item-name">${escHtml(p.name)}
-                <div class="prop-item-code">${escHtml(p.code)}<span class="prop-badge ${badgeCls}">${escHtml(p.pattern)}</span>${abcBadge}${refBadge}</div>
-              </div>
-              <div class="prop-item-actions">
-                <button class="prop-excl-btn" onclick="excludeProposal('${escAttr(p.code)}','${escAttr(p.name)}')">🚫 除外</button>
-                <button class="prop-eol-btn" onclick="markEol('${escAttr(p.code)}','${escAttr(p.name)}')">🔚 終売</button>
-              </div>
-            </div>
-            ${stockNeg ? `<div class="prop-pending-warn">⚠️ 在庫マイナス（${p.stock}）：欠品・バックオーダー中の可能性</div>` : ''}
-            <div class="prop-item-stats">
-              <span>在庫 <b style="${stockNeg ? 'color:var(--danger)' : ''}">${p.stock}</b> ${onOrder}→ 推奨 <b>${p.recommended}</b></span>
-              <span>発注数 <input type="number" class="prop-qty" value="${p.proposedQty}" min="1" step="1"></span>
-              <span class="prop-qty-chips">${PROP_QTY_CHIPS.map(v => `<button type="button" class="prop-qty-chip${p.proposedQty === v ? ' active' : ''}" onclick="setPropQty(this,${v})">${v}</button>`).join('')}</span>
-              <button type="button" class="prop-lot-btn" onclick="openLotModal('${escAttr(p.code)}','${escAttr(p.name)}')">最低発注数 ${p.lot} ✏️</button>
-              <span class="prop-item-amount">${formatItemAmount(unitCost, p.proposedQty)}</span>
-            </div>
-            ${lastOrder ? `<div class="prop-item-stats" style="margin-top:2px;font-size:11px">${lastOrder}</div>` : ''}
-            ${note ? `<div class="prop-note">${escHtml(note)}</div>` : ''}
-            ${delayWarn}
-          </div>`;
-        }).join('');
+        // まとめ発注グループ（Phase J）の行は専用ブロックにまとめ、通常の提案行と分ける
+        const mgIds = [];
+        g.items.forEach(p => { if (p.groupId && !mgIds.includes(p.groupId)) mgIds.push(p.groupId); });
+        const items = mgIds.map(gid => renderMgBlock(gid, code, renderPropItem)).join('')
+          + g.items.filter(p => !p.groupId).map(p => renderPropItem(p, code)).join('');
         const totalQty = g.mainItems.reduce((s, p) => s + (p.proposedQty || 0), 0);
         const totalAmount = g.totalAmount;
         const refNote = g.refCount ? `<span style="color:var(--text-light)"> ＋参考${g.refCount}件</span>` : '';
+        // まとめ発注グループを持つ仕入先は見出しにも状況を出す。全グループが発注時期前だと
+        // 通常の提案が0件になり「0件 / 計0個 / ¥0」だけが並んで意味が伝わらないため
+        const mgDue = mgIds.filter(gid => (mgStatusById(gid) || {}).due).length;
+        const countText = (g.mainItems.length === 0 && mgIds.length > 0)
+          ? `📦 まとめ発注${mgIds.length}系列：発注時期ではありません`
+          : `${g.mainItems.length}件${refNote} / 計${totalQty}個 / ${formatYen(totalAmount)}`
+            + (mgIds.length > 0 ? `<span style="color:var(--text-light)"> ・📦${mgDue}/${mgIds.length}系列</span>` : '');
         // 「選択中」の初期値は実際のチェック状態から出す（参考行は既定OFF、ユーザーが外した行もOFF）。
         // 固定値にすると再描画のたびに実際のチェックと食い違うため
         const checkedItems  = g.items.filter(p => !propUncheckedItems.has(code + '|' + p.code));
@@ -4389,7 +4444,7 @@ function renderProposalList() {
           <div class="prop-group-head" onclick="toggleProposalGroup('${escAttr(code)}')">
             <span class="prop-group-chev">▶</span>
             <span class="prop-group-name">${escHtml(g.name)}${webBadge}</span>
-            <span class="prop-group-count">${g.mainItems.length}件${refNote} / 計${totalQty}個 / ${formatYen(totalAmount)}</span>
+            <span class="prop-group-count">${countText}</span>
           </div>
           <div class="prop-group-body">
             ${items}
@@ -4399,11 +4454,193 @@ function renderProposalList() {
         </div>`;
       }).join('');
   }
+  // まとめ発注グループの「合計 N / M本」を初期表示ぶんも計算しておく
+  document.querySelectorAll('#prop-list .prop-mg').forEach(updatePropMgTotal);
   renderPendingOrders();
   renderProposalExcess();
   renderProposalExclusions();
   renderEolList();
   renderLotOverrides();
+}
+
+/* ===================================================
+   まとめ発注グループ（Phase J, v1.51.0〜）
+   系列合計が発注単位（120本/72本）の倍数でしか発注できないメーカーの表示・再配分。
+   判定に使う数値（在庫・推奨在庫・月需要）はすべて提案シートの行から取り、
+   ここでは再計算しない（Python側とのロジックのズレを防ぐため）。
+=================================================== */
+const MG_DAYS_PER_MONTH = 30.4;   // analyze_demand.py の DAYS_PER_MONTH と必ず揃える
+
+function mgStatusById(groupId) {
+  return (proposalsData.groupStatus || []).find(s => s.groupId === groupId) || null;
+}
+function mgConfigById(groupId) {
+  return (proposalsData.orderGroups || []).find(g => g.groupId === groupId) || null;
+}
+function mgItemsOf(groupId) {
+  return proposalsData.proposals.filter(p => p.groupId === groupId);
+}
+// 表示する発注数。アプリ側で組み直した場合はその値、していなければサーバーの配分結果
+function mgQtyOf(groupId, p) {
+  const o = propMgQty[groupId];
+  return (o && o[p.code] !== undefined) ? o[p.code] : (p.proposedQty || 0);
+}
+
+// 発注単位ぴったりになるように配分する（analyze_demand.py の allocate_group と同じロジック）
+function mgAllocate(items, target, cfg) {
+  const unit     = cfg.itemUnit || 6;
+  const minMean  = (cfg.minMean !== undefined && cfg.minMean !== null) ? cfg.minMean : 0.5;
+  const capDays  = cfg.capDays  || 60;
+  const mustDays = cfg.mustDays || 7;
+  const ms = items.map(p => {
+    const mm = parseFloat(p.meanMonthly) || 0;
+    return {
+      code: p.code, mm,
+      daily: mm > 0 ? mm / MG_DAYS_PER_MONTH : 1e-9,
+      pos: (parseFloat(p.stock) || 0) + (parseFloat(p.onOrder) || 0),
+      alloc: 0
+    };
+  });
+  const active = ms.filter(m => m.mm >= minMean);
+  let placed = 0;
+  // 必須枠①: 欠品中（在庫0以下）を最優先
+  active.slice().sort((a, b) => a.pos - b.pos).forEach(m => {
+    if (placed + unit > target || m.pos > 0) return;
+    m.alloc += unit; placed += unit;
+  });
+  // 必須枠②: mustDays以内に切れる商品
+  active.slice().sort((a, b) => a.pos / a.daily - b.pos / b.daily).forEach(m => {
+    if (placed + unit > target || m.alloc > 0 || m.pos <= 0) return;
+    if (m.pos / m.daily > mustDays) return;
+    m.alloc += unit; placed += unit;
+  });
+  // 任意枠: 在庫日数の少ない順。上限日数で目標に届かない場合は上限を外して積み切る
+  for (const capped of [true, false]) {
+    while (placed + unit <= target) {
+      let cand = null, worst = null;
+      for (const m of active) {
+        if (capped && (m.pos + m.alloc + unit) / m.daily > capDays) continue;
+        const cur = (m.pos + m.alloc) / m.daily;
+        if (worst === null || cur < worst) { worst = cur; cand = m; }
+      }
+      if (!cand) break;
+      cand.alloc += unit; placed += unit;
+    }
+    if (placed >= target) break;
+  }
+  const out = {};
+  ms.forEach(m => { out[m.code] = m.alloc; });
+  return out;
+}
+
+// 「今すぐ組む」「組み直す」「2ロットにする」の共通処理
+function mgRebuild(groupId, lots) {
+  const st = mgStatusById(groupId), cfg = mgConfigById(groupId);
+  if (!st || !cfg) { showToast('発注グループの設定が読み込めていません', 'error'); return; }
+  const items = mgItemsOf(groupId);
+  const target = Math.max(1, lots || st.lots || 1) * st.groupUnit;
+  propMgQty[groupId] = mgAllocate(items, target, cfg);
+  // 配分された商品だけチェックON。既存の propUncheckedItems に流し込むので
+  // 再描画・集計・発注画面への引き渡しは通常の商品とまったく同じ経路で動く
+  items.forEach(p => {
+    const key = p.supplierCode + '|' + p.code;
+    if ((propMgQty[groupId][p.code] || 0) > 0) propUncheckedItems.delete(key);
+    else propUncheckedItems.add(key);
+  });
+  const placed = Object.values(propMgQty[groupId]).reduce((s, v) => s + v, 0);
+  renderProposalList();
+  if (placed < target) {
+    showToast(`${st.groupName}: ${target}本に対し${placed}本しか配分できませんでした`, 'error');
+  } else {
+    showToast(`${st.groupName}を${placed}本（${target / st.groupUnit}ロット）で組みました`, 'success');
+  }
+}
+
+// 未配分商品の折りたたみ開閉
+function mgToggleRest(groupId) {
+  if (propMgOpenRest.has(groupId)) propMgOpenRest.delete(groupId);
+  else propMgOpenRest.add(groupId);
+  renderProposalList();
+}
+
+function renderMgBlock(groupId, supplierCode, renderItem) {
+  const st = mgStatusById(groupId);
+  const items = mgItemsOf(groupId).filter(p => p.supplierCode === supplierCode);
+  if (!st || items.length === 0) return '';
+  const unit = st.groupUnit || 0;
+  const allocated = items.filter(p => mgQtyOf(groupId, p) > 0);
+  const rest      = items.filter(p => mgQtyOf(groupId, p) <= 0);
+  const total     = allocated.reduce((s, p) => s + mgQtyOf(groupId, p), 0);
+  const amount    = allocated.reduce((s, p) => s + (parseFloat(p.unitCost) || 0) * mgQtyOf(groupId, p), 0);
+  // 在庫0以下（欠品中）の商品は、配分されていなくても必ず気づけるように件数を出す
+  const outCount  = items.filter(p => (parseFloat(p.stock) || 0) + (parseFloat(p.onOrder) || 0) <= 0).length;
+
+  const state = st.due
+    ? `発注時期です（系列の不足 ${Math.round(st.shortage)}本 ／ 系列在庫 ${st.coverDays}日分）`
+    : `まだ発注時期ではありません（不足 ${Math.round(st.shortage)}本 ／ ${Math.round(st.threshold)}本で発注時期 ・ 系列在庫 ${st.coverDays}日分）`
+      + (st.daysUntilDue !== null && st.daysUntilDue !== undefined ? `<br>目安：あと約${st.daysUntilDue}日` : '');
+  const summary = st.due
+    ? `<b>提案 ${total}本</b> ・ ${allocated.length}商品 ・ ${formatYen(amount)}`
+    : `組むと ${total}本 ・ ${allocated.length}商品 ・ ${formatYen(amount)}<span style="color:var(--text-light)">（チェックOFF・金額合計には入っていません）</span>`;
+
+  const acts = [];
+  if (st.due) acts.push(`<button class="prop-mg-btn" onclick="mgRebuild('${escAttr(groupId)}',${st.lots || 1})">🔄 組み直す</button>`);
+  else        acts.push(`<button class="prop-mg-btn primary" onclick="mgRebuild('${escAttr(groupId)}',1)">🛒 今すぐ${unit}本を組む</button>`);
+  acts.push(`<button class="prop-mg-btn" onclick="mgRebuild('${escAttr(groupId)}',2)">${unit * 2}本（2ロット）にする</button>`);
+  if ((st.lots || 1) > 1 || (propMgQty[groupId] && total > unit)) {
+    acts.push(`<button class="prop-mg-btn" onclick="mgRebuild('${escAttr(groupId)}',1)">${unit}本（1ロット）に戻す</button>`);
+  }
+
+  const restBtn = rest.length > 0
+    ? `<button class="prop-mg-rest-btn" onclick="mgToggleRest('${escAttr(groupId)}')">${
+        propMgOpenRest.has(groupId)
+          ? '▲ 今回配分なしの商品を隠す'
+          : `▼ 今回配分なしの商品も見る（${rest.length}件）`}</button>`
+    : '';
+
+  return `
+  <div class="prop-mg${st.due ? ' due' : ''}" data-group-id="${escAttr(groupId)}" data-group-unit="${unit}">
+    <div class="prop-mg-head">
+      <div class="prop-mg-title">📦 ${escHtml(st.groupName)}<span class="prop-mg-unit">${unit}本単位</span></div>
+      <div class="prop-mg-state">${state}</div>
+      <div class="prop-mg-state">${summary}</div>
+      ${outCount > 0 ? `<div class="prop-pending-warn">⚠️ 在庫0以下の商品が${outCount}件あります</div>` : ''}
+      <div class="prop-mg-acts">${acts.join('')}</div>
+    </div>
+    <div class="prop-mg-body">
+      ${allocated.map(p => renderItem(p, supplierCode)).join('')}
+      ${propMgOpenRest.has(groupId) ? rest.map(p => renderItem(p, supplierCode)).join('') : ''}
+      ${restBtn}
+      <div class="prop-mg-total"></div>
+    </div>
+  </div>`;
+}
+
+// チェック中の行の合計が発注単位の倍数になっているかを表示する（手動で数量を変えた時の歯止め）
+function updatePropMgTotal(mgEl) {
+  const el = mgEl.querySelector('.prop-mg-total');
+  if (!el) return;
+  const unit = parseFloat(mgEl.dataset.groupUnit) || 0;
+  let total = 0;
+  mgEl.querySelectorAll('.prop-item').forEach(item => {
+    if (!item.querySelector('.prop-check').checked) return;
+    total += parseFloat(item.querySelector('.prop-qty').value) || 0;
+  });
+  // 1本もチェックが無い状態（発注時期前など）は警告ではなく案内にする
+  if (total === 0) {
+    el.className = 'prop-mg-total';
+    el.style.color = 'var(--text-light)';
+    el.textContent = 'チェックなし（このメーカーへの発注には含まれません）';
+    return;
+  }
+  el.style.color = '';
+  const ok = unit > 0 && total % unit === 0;
+  const lots = unit > 0 ? Math.ceil(total / unit) : 0;
+  const goal = unit > 0 ? Math.max(unit, lots * unit) : 0;
+  el.className = 'prop-mg-total ' + (ok ? 'ok' : 'ng');
+  el.innerHTML = ok
+    ? `合計 ${total} / ${goal}本 ✅（${lots}ロット）`
+    : `合計 ${total} / ${goal}本 ⚠️ あと${goal - total}本`;
 }
 
 // 金額表示（¥12,400 形式）。仕入単価0円（マスター未整備）の商品行は「—」表示にする
@@ -4422,6 +4659,16 @@ function setPropQty(btn, value) {
   if (!item) return;
   const input = item.querySelector('.prop-qty');
   input.value = value;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// まとめ発注グループ用の ±6 ボタン（商品単位の倍数を保ったまま増減する）
+function setPropQtyDelta(btn, delta) {
+  const item = btn.closest('.prop-item');
+  if (!item) return;
+  const input = item.querySelector('.prop-qty');
+  const next = Math.max(0, (parseFloat(input.value) || 0) + delta);
+  input.value = next;
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
@@ -4447,6 +4694,9 @@ function handlePropItemInputChange(e) {
   item.querySelectorAll('.prop-qty-chip').forEach(c => {
     c.classList.toggle('active', parseInt(c.textContent, 10) === qty);
   });
+  // まとめ発注グループの行なら、系列合計が発注単位の倍数かどうかを更新する
+  const mgEl = e.target.closest('.prop-mg');
+  if (mgEl) updatePropMgTotal(mgEl);
   updatePropGroupSummary(group);
 }
 function updatePropGroupSummary(group) {
