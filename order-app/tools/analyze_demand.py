@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.15.0
+# Version: v1.16.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -36,6 +36,16 @@
 #   全ランク共通で「月平均needs×CAP_MONTHS_GLOBALヶ月分」を上限キャップ
 #   （減少トレンド商品はCAP_MONTHS_GLOBALの代わりにCAP_MONTHS_DECLINEを使う）
 #   リードタイム・発注サイクルは発注先マスターのF/G列（未設定は各7日）
+#
+# 実績ベースの安全在庫フロア（v1.16.0で追加）:
+#   「安定型」は月次標準偏差だけでは月内の受注バースト（1回の受注が月間需要の
+#   大半を占めるケース）を拾えないため、上記の推奨在庫に加えて保護日数の
+#   ローリング窓（日次実績の合計）の実績分布から下限を計算し、大きい方を採用する。
+#   下限は (a)ガンマ分布近似(Wilson-Hilferty)による分位点 と (b)実績分位数そのもの
+#   の大きい方。既存の月数キャップを下限側にも適用してから比較するため、
+#   最終推奨在庫が上限キャップを超えることはない（下げない・上げるだけのフロア）。
+#   減少トレンド商品は下限計算の窓も直近12ヶ月に限定する（旧体制の大口注文に
+#   引きずられないため）。詳細・検証結果は 安定型安全在庫_設計プラン.md 参照
 #
 # 発注提案の対象:
 #   月平均1個以上・販売歴6ヶ月以上・提案除外設定に無い・Cランクの間欠需要でない商品のうち、
@@ -161,6 +171,7 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import requests
 
@@ -203,6 +214,13 @@ HOLDING_COST_RATE = 0.20   # 年間保有コスト率（資金・場所・廃番
 DECLINE_TREND_MONTHS    = 12    # 比較に使う月数（1年）
 DECLINE_RATIO_THRESHOLD = 0.4   # 直近12ヶ月平均が1年前の12ヶ月平均のこの比率以下なら「減少トレンド」
 CAP_MONTHS_DECLINING    = 2.0   # 減少トレンド商品の推奨在庫上限（月平均の何ヶ月分まで許すか。P95フロアの代わり）
+
+# ---- 実績ベースの安全在庫フロア（v1.16.0） ----
+# 「安定型」でも月内の受注バースト（1回の受注が月間需要の大半を占めるケース）を
+# 拾うため、保護日数のローリング窓の実績分布から下限を計算し現行推奨と併用する。
+# 詳細・検証結果は 安定型安全在庫_設計プラン.md 参照
+WINDOW_FLOOR_MIN_SAMPLES = 60     # フロア計算に必要な最低ウィンドウ件数（未満は現行式のみで判断）
+QUANTILE_BY_CLASS = {'A': 0.95, 'B': 0.90, 'C': 0.80}   # ランク別目標分位点（SERVICE_ALLOWANCE_PCTと対応）
 
 # ---- 発注×仕入 突き合わせパラメータ（Phase G, v1.12.0） ----
 # 発注済み未入荷（on_order）の判定を「リードタイム以内の発注」という時間窓の推測から
@@ -1024,6 +1042,46 @@ def compute_recommended(stat, protect_days, service_z, p95_mode='full', p95_cap_
     return recommended
 
 
+def wilson_hilferty_quantile(mu, sd, z):
+    """平均・標準偏差からガンマ分布近似で分位点を返す（Wilson-Hilferty近似）。
+    平均に対して標準偏差が大きすぎる（歪度の仮定が崩れる）場合は正規近似にフォールバックする"""
+    if mu <= 0 or sd <= 0:
+        return max(mu, 0.0)
+    k = (mu / sd) ** 2
+    if k < 0.3:
+        return mu + z * sd
+    theta = mu / k
+    return theta * k * (1 - 1 / (9 * k) + z / (3 * math.sqrt(k))) ** 3
+
+
+def compute_window_floor(daily_arr, protect_days, z, quantile, mean_monthly, cap_months):
+    """保護日数のローリング窓（日次実績の合計）から、ガンマ近似と実績分位数の
+    両方でフロア値を計算し、大きい方を返す。「安定型」でも月内の受注バーストを
+    安全在庫に反映するための下限（compute_recommended の結果とは別に計算し、
+    呼び出し側で max() を取ってフロアとして使う）。
+    既存の月数キャップ（cap_months）を独立に適用してから比較するため、
+    このフロアが最終推奨在庫の上限を超えることはない。
+    戻り値: (フロア値, 採用した方式のラベル'ガンマ近似'/'実績分位数'/'')"""
+    protect_days = max(1, int(round(protect_days)))
+    if daily_arr is None or len(daily_arr) < protect_days:
+        return 0.0, ''
+    csum = np.concatenate([[0.0], np.cumsum(daily_arr)])
+    window = csum[protect_days:] - csum[:-protect_days]
+    if len(window) < WINDOW_FLOOR_MIN_SAMPLES:
+        return 0.0, ''
+    mu, sd = float(window.mean()), float(window.std(ddof=1))
+    gamma_val = math.ceil(max(wilson_hilferty_quantile(mu, sd, z), 0.0))
+    emp_val = math.ceil(max(float(np.quantile(window, quantile)), 0.0))
+    if mean_monthly > 0:
+        cap = math.ceil(mean_monthly * cap_months)
+        if cap > 0:
+            gamma_val = min(gamma_val, cap)
+            emp_val = min(emp_val, cap)
+    if gamma_val >= emp_val:
+        return float(gamma_val), 'ガンマ近似'
+    return float(emp_val), '実績分位数'
+
+
 def classify_abc(items, value_key='monthly_value'):
     """月次原価貢献の降順・累積構成比でABCランクを付与する（items内の dict に 'abc' キーを追加）"""
     total_value = sum(x[value_key] for x in items) or 1.0
@@ -1054,7 +1112,7 @@ def estimate_lot(lot_stats_entry, lot_override=None):
 
 
 def build_note(stat, protect_days, lot, on_order=0, abc='A', is_declining=False, older_mean=None,
-                forced_by_negative_stock=False, ref_reason=''):
+                forced_by_negative_stock=False, ref_reason='', floor_source=''):
     """提案根拠の短い説明文（ルールベース）"""
     parts = []
     pattern = stat['pattern']
@@ -1085,6 +1143,9 @@ def build_note(stat, protect_days, lot, on_order=0, abc='A', is_declining=False,
     else:
         parts.append(f"月平均{stat['mean_monthly']:.0f}個の安定需要")
     parts.append(f"{protect_days:.0f}日分＋安全在庫で算出")
+    if floor_source:
+        parts.append(f"月次のばらつきだけでは拾えない受注のバーストがあるため、"
+                     f"保護日数実績の{floor_source}を下限に採用")
     if lot > 1:
         parts.append(f"最低発注数{lot}個単位に切り上げ")
     allowance = SERVICE_ALLOWANCE_PCT.get(abc)
@@ -1222,7 +1283,7 @@ def main():
 
     log_file = setup_logger()
     logging.info('=' * 60)
-    logging.info('Beaufield 需要分析・発注提案スクリプト v1.15.0 開始'
+    logging.info('Beaufield 需要分析・発注提案スクリプト v1.16.0 開始'
                  + ('（dry-run）' if args.dry_run else ''))
 
     config = load_config()
@@ -1334,6 +1395,25 @@ def main():
     for (code, _slip), qty in slip_sum_recent.items():
         sizes_by_code_recent.setdefault(code, []).append(qty)
 
+    # ---- 保護日数フロア用: 商品コード別の日次実績配列（v1.16.0） ----
+    # 「安定型」でも1回の受注が大きい商品は月次標準偏差だけでは山を拾えないため、
+    # 保護日数のローリング窓（日次実績の合計）から実績ベースの下限を別途計算する。
+    # 追加のCSV読み込みはせず、既存の sales（分析期間24ヶ月分）を再利用する
+    all_days = pd.date_range(start_date, end_date, freq='D').strftime('%Y%m%d')
+    day_index = {d: i for i, d in enumerate(all_days)}
+    daily_sum = sales.groupby(['code', 'date'])['qty'].sum()
+    daily_arr_by_code = {}
+    for (code, d), qty in daily_sum.items():
+        idx = day_index.get(d)
+        if idx is None:
+            continue
+        arr = daily_arr_by_code.get(code)
+        if arr is None:
+            arr = np.zeros(window_days)
+            daily_arr_by_code[code] = arr
+        arr[idx] += qty
+    recent_offset = (recent_start_date - start_date).days  # 直近12ヶ月分の開始位置
+
     min_mean = float(config.get('min_mean_monthly', MIN_MEAN_MONTHLY))
 
     # ---- 1周目: 需要統計・仕入単価などを集める（ABCランクはまだ決められない） ----
@@ -1442,6 +1522,20 @@ def main():
             recommended = compute_recommended(stat, protect_days, z,
                                                p95_mode='none', global_cap_months=CAP_MONTHS_GLOBAL)
 
+        # ---- 実績ベースの安全在庫フロア（v1.16.0） ----
+        # 「安定型」は月次標準偏差だけでは受注バーストを拾えないため、保護日数の
+        # ローリング窓の実績分布（ガンマ近似・実績分位数）と現行推奨の大きい方を採用する
+        # （フロアなので下げない）。減少トレンド商品は窓も直近12ヶ月に限定する
+        cap_months = CAP_MONTHS_DECLINING if is_declining else CAP_MONTHS_GLOBAL
+        daily_arr = daily_arr_by_code.get(code)
+        window_arr = daily_arr[recent_offset:] if (is_declining and daily_arr is not None) else daily_arr
+        floor_val, floor_source = compute_window_floor(
+            window_arr, protect_days, z, QUANTILE_BY_CLASS[abc], stat['mean_monthly'], cap_months)
+        if floor_val > recommended:
+            recommended = int(floor_val)
+        else:
+            floor_source = ''
+
         # Cランクの間欠需要（散発型・まとめ買い型）は提案を出さず受注発注推奨とする
         mto_recommended = (abc == 'C') and (stat['pattern'] in ('まとめ買い型', '散発型'))
 
@@ -1490,6 +1584,7 @@ def main():
             'eol_flagged': eol_flagged,
             'is_declining': is_declining,
             'older_12mo_mean': older_mean,
+            'floor_source': floor_source,
             'stock': stock,
             'on_order': on_order,
             'recommended': recommended,
@@ -1556,7 +1651,7 @@ def main():
                 'maxOrder': stat['max_order_size'],
                 'refOnly': ref_only,
                 'note': build_note(stat, protect_days, lot, on_order, abc, is_declining, older_mean,
-                                   forced_by_negative_stock, ref_reason),
+                                   forced_by_negative_stock, ref_reason, floor_source),
             })
 
         if args.dry_run:
