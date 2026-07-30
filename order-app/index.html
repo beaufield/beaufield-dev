@@ -686,6 +686,9 @@
     .prop-mg-total.ok  { color: #2e7d32; }
     .prop-mg-total.ng  { color: #c62828; }
     .prop-mg-rest-btn  { width: 100%; margin-top: 8px; padding: 7px; font-size: 12px; border: 1px dashed var(--border); border-radius: 6px; background: transparent; color: var(--text-light); cursor: pointer; }
+    /* 不足しているのに今回配分されなかった商品（折りたたまず必ず出す） */
+    .prop-mg-short      { margin-top: 8px; border-left: 3px solid #ef9a9a; padding-left: 8px; }
+    .prop-mg-short-head { font-size: 12px; font-weight: 700; color: #c62828; padding: 6px 0; line-height: 1.5; }
     .prop-badge.tier-欠品 { background: #ffebee; color: #c62828; }
     .prop-badge.tier-切迫 { background: #fff3e0; color: #e65100; }
     .prop-badge.tier-単位調整 { background: #e8eaf6; color: #3949ab; }
@@ -1263,7 +1266,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.51.0'; // まとめ発注グループ（系列合計が発注単位の倍数でしか発注できないメーカー）に対応（Phase J）
+const APP_VERSION    = 'v1.52.0'; // まとめ発注グループで「不足しているのに今回配分されなかった商品」を折りたたまず常時表示（Phase J-2）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -4378,15 +4381,20 @@ function renderProposalList() {
       const mgCfg  = p.groupId ? mgConfigById(p.groupId) : null;
       const step   = mgCfg ? (mgCfg.itemUnit || 6) : 1;
       const qty    = p.groupId ? mgQtyOf(p.groupId, p) : (p.proposedQty || 0);
+      // 配分枠のバッジ。配分ゼロでも在庫が推奨を下回っているなら「不足」を必ず出す
       const tierBadge = p.allocTier
-        ? `<span class="prop-badge tier-${escAttr(p.allocTier)}">${escHtml(p.allocTier)}</span>` : '';
+        ? `<span class="prop-badge tier-${escAttr(p.allocTier)}">${escHtml(p.allocTier)}</span>`
+        : (p.groupId && qty <= 0 && mgIsShort(p)
+            ? `<span class="prop-badge tier-${stockNeg || (parseFloat(p.stock)||0) + (parseFloat(p.onOrder)||0) <= 0 ? '欠品' : '切迫'}">⚠️ 不足</span>`
+            : '');
       const chips = p.groupId
         ? `<button type="button" class="prop-qty-chip" onclick="setPropQtyDelta(this,${-step})">−${step}</button>
            <button type="button" class="prop-qty-chip" onclick="setPropQtyDelta(this,${step})">＋${step}</button>`
         : PROP_QTY_CHIPS.map(v => `<button type="button" class="prop-qty-chip${qty === v ? ' active' : ''}" onclick="setPropQty(this,${v})">${v}</button>`).join('');
       // グループ行は「配分ゼロ＝アクション不要」のときだけグレーにする。発注時期前でも
-      // 「今すぐ組む」で数量が入った行はチェックONになるので、グレーのままだと食い違う
-      const isGrey = p.groupId ? qty <= 0 : p.refOnly;
+      // 「今すぐ組む」で数量が入った行はチェックONになるので、グレーのままだと食い違う。
+      // 在庫が推奨を下回っている行は配分ゼロでもグレーにしない（気づいてほしい行なので）
+      const isGrey = p.groupId ? (qty <= 0 && !mgIsShort(p)) : p.refOnly;
       return `
       <div class="prop-item${isGrey ? ' prop-ref' : ''}" data-code="${escHtml(p.code)}" data-unit-cost="${unitCost}">
         <div class="prop-item-top">
@@ -4563,17 +4571,27 @@ function mgToggleRest(groupId) {
   renderProposalList();
 }
 
+// 手当済在庫（現在庫＋発注済み未計上）が推奨在庫を下回っているか
+function mgIsShort(p) {
+  return (parseFloat(p.stock) || 0) + (parseFloat(p.onOrder) || 0) < (parseFloat(p.recommended) || 0);
+}
+
 function renderMgBlock(groupId, supplierCode, renderItem) {
   const st = mgStatusById(groupId);
   const items = mgItemsOf(groupId).filter(p => p.supplierCode === supplierCode);
   if (!st || items.length === 0) return '';
   const unit = st.groupUnit || 0;
   const allocated = items.filter(p => mgQtyOf(groupId, p) > 0);
-  const rest      = items.filter(p => mgQtyOf(groupId, p) <= 0);
+  // ⚠️ 在庫が推奨を下回っているのに今回配分されなかった商品は、折りたたみに入れずに必ず出す。
+  //   ここを「配分なし」でまとめて隠すと、在庫1本の商品が画面から消えて気づけなくなる
+  //   （Phase Iで通常商品に対して解決した問題と同じことがグループ内で起きる）
+  const shortNoAlloc = items.filter(p => mgQtyOf(groupId, p) <= 0 && mgIsShort(p));
+  const rest         = items.filter(p => mgQtyOf(groupId, p) <= 0 && !mgIsShort(p));
   const total     = allocated.reduce((s, p) => s + mgQtyOf(groupId, p), 0);
   const amount    = allocated.reduce((s, p) => s + (parseFloat(p.unitCost) || 0) * mgQtyOf(groupId, p), 0);
   // 在庫0以下（欠品中）の商品は、配分されていなくても必ず気づけるように件数を出す
   const outCount  = items.filter(p => (parseFloat(p.stock) || 0) + (parseFloat(p.onOrder) || 0) <= 0).length;
+  const shortCount = items.filter(mgIsShort).length;
 
   const state = st.due
     ? `発注時期です（系列の不足 ${Math.round(st.shortage)}本 ／ 系列在庫 ${st.coverDays}日分）`
@@ -4594,9 +4612,16 @@ function renderMgBlock(groupId, supplierCode, renderItem) {
   const restBtn = rest.length > 0
     ? `<button class="prop-mg-rest-btn" onclick="mgToggleRest('${escAttr(groupId)}')">${
         propMgOpenRest.has(groupId)
-          ? '▲ 今回配分なしの商品を隠す'
-          : `▼ 今回配分なしの商品も見る（${rest.length}件）`}</button>`
+          ? '▲ 在庫が足りている商品を隠す'
+          : `▼ 在庫が足りている商品も見る（${rest.length}件）`}</button>`
     : '';
+
+  // 不足しているのに今回配分されなかった商品のセクション（常時表示）
+  const shortSection = shortNoAlloc.length > 0 ? `
+    <div class="prop-mg-short">
+      <div class="prop-mg-short-head">⚠️ 在庫が推奨を下回っていますが、今回の${unit}本には入っていません（${shortNoAlloc.length}件）</div>
+      ${shortNoAlloc.map(p => renderItem(p, supplierCode)).join('')}
+    </div>` : '';
 
   return `
   <div class="prop-mg${st.due ? ' due' : ''}" data-group-id="${escAttr(groupId)}" data-group-unit="${unit}">
@@ -4604,11 +4629,14 @@ function renderMgBlock(groupId, supplierCode, renderItem) {
       <div class="prop-mg-title">📦 ${escHtml(st.groupName)}<span class="prop-mg-unit">${unit}本単位</span></div>
       <div class="prop-mg-state">${state}</div>
       <div class="prop-mg-state">${summary}</div>
-      ${outCount > 0 ? `<div class="prop-pending-warn">⚠️ 在庫0以下の商品が${outCount}件あります</div>` : ''}
+      ${shortCount > 0 ? `<div class="prop-pending-warn">⚠️ 在庫が推奨を下回っている商品 ${shortCount}件${
+        shortNoAlloc.length > 0 ? `（うち${shortNoAlloc.length}件は今回の配分に入っていません・下に表示）` : ''}${
+        outCount > 0 ? ` ／ うち在庫0以下 ${outCount}件` : ''}</div>` : ''}
       <div class="prop-mg-acts">${acts.join('')}</div>
     </div>
     <div class="prop-mg-body">
       ${allocated.map(p => renderItem(p, supplierCode)).join('')}
+      ${shortSection}
       ${propMgOpenRest.has(groupId) ? rest.map(p => renderItem(p, supplierCode)).join('') : ''}
       ${restBtn}
       <div class="prop-mg-total"></div>
@@ -4634,13 +4662,20 @@ function updatePropMgTotal(mgEl) {
     return;
   }
   el.style.color = '';
-  const ok = unit > 0 && total % unit === 0;
-  const lots = unit > 0 ? Math.ceil(total / unit) : 0;
-  const goal = unit > 0 ? Math.max(unit, lots * unit) : 0;
-  el.className = 'prop-mg-total ' + (ok ? 'ok' : 'ng');
-  el.innerHTML = ok
-    ? `合計 ${total} / ${goal}本 ✅（${lots}ロット）`
-    : `合計 ${total} / ${goal}本 ⚠️ あと${goal - total}本`;
+  if (unit <= 0) { el.className = 'prop-mg-total'; el.textContent = `合計 ${total}本`; return; }
+  if (total % unit === 0) {
+    el.className = 'prop-mg-total ok';
+    el.textContent = `合計 ${total} / ${total}本 ✅（${total / unit}ロット）`;
+    return;
+  }
+  // 倍数から外れている。1ロット未満なら「あとN本」、超えているなら減らす／増やす両方を出す
+  //（「126 / 240本 あと114本」だけだと6本超過していることが伝わらない）
+  el.className = 'prop-mg-total ng';
+  const lower = Math.floor(total / unit) * unit;
+  const upper = Math.ceil(total / unit) * unit;
+  el.textContent = lower < unit
+    ? `合計 ${total} / ${unit}本 ⚠️ あと${unit - total}本`
+    : `合計 ${total}本 ⚠️ ${lower}本を${total - lower}本超過（−${total - lower}で${lower}本 / ＋${upper - total}で${upper}本）`;
 }
 
 // 金額表示（¥12,400 形式）。仕入単価0円（マスター未整備）の商品行は「—」表示にする
@@ -4663,12 +4698,19 @@ function setPropQty(btn, value) {
 }
 
 // まとめ発注グループ用の ±6 ボタン（商品単位の倍数を保ったまま増減する）
+// 数量を入れたらチェックも自動でONにする（チェックOFFのままだと合計にも発注にも入らず、
+// 「＋6を押したのに合計が変わらない」という食い違いになるため）
 function setPropQtyDelta(btn, delta) {
   const item = btn.closest('.prop-item');
   if (!item) return;
   const input = item.querySelector('.prop-qty');
   const next = Math.max(0, (parseFloat(input.value) || 0) + delta);
   input.value = next;
+  const check = item.querySelector('.prop-check');
+  if (check && check.checked !== next > 0) {
+    check.checked = next > 0;
+    check.dispatchEvent(new Event('change', { bubbles: true }));
+  }
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
