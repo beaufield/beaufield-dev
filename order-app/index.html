@@ -692,6 +692,9 @@
     .prop-badge.tier-欠品 { background: #ffebee; color: #c62828; }
     .prop-badge.tier-切迫 { background: #fff3e0; color: #e65100; }
     .prop-badge.tier-単位調整 { background: #e8eaf6; color: #3949ab; }
+    .prop-badge.tier-手動 { background: #fff9c4; color: #8d6e00; }
+    .prop-mg-pin-note  { font-size: 12px; margin-top: 6px; color: #8d6e00; }
+    .prop-mg-pin-clear { padding: 2px 8px; font-size: 11px; border: 1px solid #ffe082; border-radius: 10px; background: #fff9c4; color: #8d6e00; cursor: pointer; margin-left: 6px; }
     .prop-sort-btn.active { background: var(--primary); color: #fff; }
     .prop-web-btn.active  { background: var(--primary); color: #fff; }
     .excess-item      { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
@@ -1266,7 +1269,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.52.0'; // まとめ発注グループで「不足しているのに今回配分されなかった商品」を折りたたまず常時表示（Phase J-2）
+const APP_VERSION    = 'v1.53.0'; // まとめ発注グループで、候補外の商品にチェックを入れると発注単位ぴったりに自動で組み直す手動固定（ピン）に対応（Phase L）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -4136,6 +4139,8 @@ let excessShowCount  = 20; // 「持ちすぎ在庫」の初期表示件数（�
 let propUncheckedItems = new Set(); // ユーザーが手動でチェックを外した商品（"仕入先コード|商品コード"）。再描画してもチェック状態を維持するため
 let propMgOpenRest   = new Set(); // まとめ発注グループで「今回配分なしの商品」を展開しているグループID
 let propMgQty        = {};        // まとめ発注グループをアプリ側で組み直した数量 {グループID: {商品コード: 本数}}
+let propMgPins        = {};       // まとめ発注グループで手動固定した本数 {グループID: {商品コード: 本数}}（0=今回は入れない）
+let propMgLots        = {};       // まとめ発注グループの現在のロット数 {グループID: 本数}。ピン操作時に同じロット数で組み直すため
 let deadShowCount    = 20; // 「整理」タブの初期表示件数（もっと見るで増える）
 let deadFilter       = 'all'; // 'all' | 'tier1'（完全死蔵）| 'tier2'（休眠）| 'unsold'（未販売）
 let deadSort         = 'amount'; // 'amount'（金額が多い順）| 'months'（放置期間が長い順）
@@ -4171,6 +4176,8 @@ async function loadProposals(force = false) {
     const res = await gasGet({ action: 'getOrderProposals' });
     if (res.success) {
       propUncheckedItems = new Set(); // サーバーから再取得した時だけチェック状態をリセット
+      propMgQty = {};  // 組み直し結果も同様にリセット（古い提案データに基づく配分を持ち越さない）
+      propMgPins = {}; // 手動固定（Phase L）も同様にリセット
       // 参考表示（提案対象外だが在庫が推奨を下回った商品）は既定でチェックOFFにする。
       // ここで propUncheckedItems に入れておけば、以後のチェック操作・再描画は
       // 通常の商品とまったく同じ仕組み（propUncheckedItems）で状態が保たれる
@@ -4381,20 +4388,25 @@ function renderProposalList() {
       const mgCfg  = p.groupId ? mgConfigById(p.groupId) : null;
       const step   = mgCfg ? (mgCfg.itemUnit || 6) : 1;
       const qty    = p.groupId ? mgQtyOf(p.groupId, p) : (p.proposedQty || 0);
+      // 手動固定（ピン, Phase L）。配分枠バッジ・不足バッジより優先して「これは人が決めた」ことを示す
+      const pinned = p.groupId && mgIsPinned(p.groupId, p);
       // 配分枠のバッジ。配分ゼロでも在庫が推奨を下回っているなら「不足」を必ず出す
-      const tierBadge = p.allocTier
-        ? `<span class="prop-badge tier-${escAttr(p.allocTier)}">${escHtml(p.allocTier)}</span>`
-        : (p.groupId && qty <= 0 && mgIsShort(p)
-            ? `<span class="prop-badge tier-${stockNeg || (parseFloat(p.stock)||0) + (parseFloat(p.onOrder)||0) <= 0 ? '欠品' : '切迫'}">⚠️ 不足</span>`
-            : '');
+      const tierBadge = pinned
+        ? `<span class="prop-badge tier-手動">${qty > 0 ? '📌 手動' : '📌 今回は入れない'}</span>`
+        : (p.allocTier
+            ? `<span class="prop-badge tier-${escAttr(p.allocTier)}">${escHtml(p.allocTier)}</span>`
+            : (p.groupId && qty <= 0 && mgIsShort(p)
+                ? `<span class="prop-badge tier-${stockNeg || (parseFloat(p.stock)||0) + (parseFloat(p.onOrder)||0) <= 0 ? '欠品' : '切迫'}">⚠️ 不足</span>`
+                : ''));
       const chips = p.groupId
         ? `<button type="button" class="prop-qty-chip" onclick="setPropQtyDelta(this,${-step})">−${step}</button>
            <button type="button" class="prop-qty-chip" onclick="setPropQtyDelta(this,${step})">＋${step}</button>`
         : PROP_QTY_CHIPS.map(v => `<button type="button" class="prop-qty-chip${qty === v ? ' active' : ''}" onclick="setPropQty(this,${v})">${v}</button>`).join('');
       // グループ行は「配分ゼロ＝アクション不要」のときだけグレーにする。発注時期前でも
       // 「今すぐ組む」で数量が入った行はチェックONになるので、グレーのままだと食い違う。
-      // 在庫が推奨を下回っている行は配分ゼロでもグレーにしない（気づいてほしい行なので）
-      const isGrey = p.groupId ? (qty <= 0 && !mgIsShort(p)) : p.refOnly;
+      // 在庫が推奨を下回っている行は配分ゼロでもグレーにしない（気づいてほしい行なので）。
+      // ただし「📌 今回は入れない」と人が明示的に決めた行は、不足していてもグレーのままにする
+      const isGrey = p.groupId ? (qty <= 0 && (pinned || !mgIsShort(p))) : p.refOnly;
       return `
       <div class="prop-item${isGrey ? ' prop-ref' : ''}" data-code="${escHtml(p.code)}" data-unit-cost="${unitCost}">
         <div class="prop-item-top">
@@ -4488,14 +4500,24 @@ function mgConfigById(groupId) {
 function mgItemsOf(groupId) {
   return proposalsData.proposals.filter(p => p.groupId === groupId);
 }
-// 表示する発注数。アプリ側で組み直した場合はその値、していなければサーバーの配分結果
+// 表示する発注数。優先順位: 手動固定（ピン）＞ アプリ側で組み直した値 ＞ サーバーの配分結果
 function mgQtyOf(groupId, p) {
+  const pins = propMgPins[groupId];
+  if (pins && pins[p.code] !== undefined) return pins[p.code];
   const o = propMgQty[groupId];
   return (o && o[p.code] !== undefined) ? o[p.code] : (p.proposedQty || 0);
 }
+// この商品が手動固定（ピン）されているか
+function mgIsPinned(groupId, p) {
+  const pins = propMgPins[groupId];
+  return !!(pins && pins[p.code] !== undefined);
+}
 
 // 発注単位ぴったりになるように配分する（analyze_demand.py の allocate_group と同じロジック）
-function mgAllocate(items, target, cfg) {
+// pins {商品コード: 本数} を渡すと、その商品は死に筋ガード・上限日数を無視して本数を確定し、
+// 自動配分（必須枠①②・任意枠）の対象から外す。残り（target − ピン合計）を通常どおり配分する
+function mgAllocate(items, target, cfg, pins) {
+  pins = pins || {};
   const unit     = cfg.itemUnit || 6;
   const minMean  = (cfg.minMean !== undefined && cfg.minMean !== null) ? cfg.minMean : 0.5;
   const capDays  = cfg.capDays  || 60;
@@ -4506,11 +4528,18 @@ function mgAllocate(items, target, cfg) {
       code: p.code, mm,
       daily: mm > 0 ? mm / MG_DAYS_PER_MONTH : 1e-9,
       pos: (parseFloat(p.stock) || 0) + (parseFloat(p.onOrder) || 0),
-      alloc: 0
+      alloc: 0, pinned: false
     };
   });
-  const active = ms.filter(m => m.mm >= minMean);
   let placed = 0;
+  // ピン: 人の明示指定を最優先で確定する。死に筋ガード・上限日数のどちらも無視する
+  ms.forEach(m => {
+    if (pins[m.code] === undefined) return;
+    m.alloc = Math.max(0, pins[m.code]);
+    m.pinned = true;
+    placed += m.alloc;
+  });
+  const active = ms.filter(m => !m.pinned && m.mm >= minMean);
   // 必須枠①: 欠品中（在庫0以下）を最優先
   active.slice().sort((a, b) => a.pos - b.pos).forEach(m => {
     if (placed + unit > target || m.pos > 0) return;
@@ -4541,26 +4570,86 @@ function mgAllocate(items, target, cfg) {
   return out;
 }
 
-// 「今すぐ組む」「組み直す」「2ロットにする」の共通処理
-function mgRebuild(groupId, lots) {
+// 再描画で画面が勝手にスクロールしないよう、直前のスクロール位置を保って再描画する
+// （チェックや＋6を押すたびに他の商品が増減して行の並びが変わるため）
+function reRenderProposalsKeepScroll() {
+  const y = window.scrollY;
+  renderProposalList();
+  window.scrollTo(0, y);
+}
+
+// 「今すぐ組む」「組み直す」「2ロットにする」「ピン操作による再配分」の共通処理。
+// keepPins=false のときだけ手動固定（ピン）を破棄してゼロから組み直す（「最初から組み直す」用）。
+// changedCode を渡すと、その商品以外で減った分をトーストに出す（ピン操作からの呼び出し用）
+function mgRebuild(groupId, lots, keepPins = true, changedCode) {
   const st = mgStatusById(groupId), cfg = mgConfigById(groupId);
   if (!st || !cfg) { showToast('発注グループの設定が読み込めていません', 'error'); return; }
   const items = mgItemsOf(groupId);
+  // 差分トースト用に、この呼び出し直前の表示値を控えておく（未組成でも proposedQty ベースで取れる）
+  const prevQty = {};
+  items.forEach(p => { prevQty[p.code] = mgQtyOf(groupId, p); });
+  if (!keepPins) delete propMgPins[groupId];
   const target = Math.max(1, lots || st.lots || 1) * st.groupUnit;
-  propMgQty[groupId] = mgAllocate(items, target, cfg);
+  propMgLots[groupId] = target / st.groupUnit;
+  const pins = propMgPins[groupId] || {};
+  propMgQty[groupId] = mgAllocate(items, target, cfg, pins);
+  const newQty = propMgQty[groupId];
   // 配分された商品だけチェックON。既存の propUncheckedItems に流し込むので
   // 再描画・集計・発注画面への引き渡しは通常の商品とまったく同じ経路で動く
   items.forEach(p => {
     const key = p.supplierCode + '|' + p.code;
-    if ((propMgQty[groupId][p.code] || 0) > 0) propUncheckedItems.delete(key);
+    if ((newQty[p.code] || 0) > 0) propUncheckedItems.delete(key);
     else propUncheckedItems.add(key);
   });
-  const placed = Object.values(propMgQty[groupId]).reduce((s, v) => s + v, 0);
-  renderProposalList();
+  const placed = Object.values(newQty).reduce((s, v) => s + v, 0);
+  reRenderProposalsKeepScroll();
+  if (placed > target) {
+    showToast(`${st.groupName}: 手動指定だけで${placed}本です（${target}本を${placed - target}本超過）。数量を減らすか${target * 2}本にしてください`, 'error');
+    return;
+  }
   if (placed < target) {
     showToast(`${st.groupName}: ${target}本に対し${placed}本しか配分できませんでした`, 'error');
+    return;
+  }
+  let diffNote = '';
+  if (changedCode) {
+    const decreased = [];
+    items.forEach(p => {
+      if (p.code === changedCode) return;
+      const before = prevQty[p.code] || 0, after = newQty[p.code] || 0;
+      if (after < before) decreased.push(`${p.name}−${before - after}本`);
+    });
+    if (decreased.length > 0) diffNote = `（${decreased.slice(0, 2).join('・')}${decreased.length > 2 ? ' 他' : ''}）`;
+  }
+  showToast(`${st.groupName}を${placed}本（${target / st.groupUnit}ロット）で組みました${diffNote}`, 'success');
+}
+
+// 手動固定（ピン）を設定する。組成済み（発注時期 or 組んだことがある）ならその場で再配分し、
+// 未組成なら記録だけして「今すぐ組む」を押したときに反映されるようにする
+function mgSetPin(groupId, code, qty) {
+  qty = Math.max(0, qty);
+  const st = mgStatusById(groupId);
+  if (!st) return;
+  if (!propMgPins[groupId]) propMgPins[groupId] = {};
+  propMgPins[groupId][code] = qty;
+  if (st.due || propMgQty[groupId]) {
+    const lots = propMgLots[groupId] || st.lots || 1;
+    mgRebuild(groupId, lots, true, code);
   } else {
-    showToast(`${st.groupName}を${placed}本（${target / st.groupUnit}ロット）で組みました`, 'success');
+    reRenderProposalsKeepScroll();
+    showToast('手動指定を記録しました。「今すぐ組む」を押すと反映されます', 'success');
+  }
+}
+
+// グループの手動固定（ピン）を全解除して組み直す
+function mgClearPins(groupId) {
+  if (!propMgPins[groupId]) return;
+  delete propMgPins[groupId];
+  const st = mgStatusById(groupId);
+  if (st && (st.due || propMgQty[groupId])) {
+    mgRebuild(groupId, propMgLots[groupId] || st.lots || 1, true);
+  } else {
+    reRenderProposalsKeepScroll();
   }
 }
 
@@ -4601,9 +4690,20 @@ function renderMgBlock(groupId, supplierCode, renderItem) {
     ? `<b>提案 ${total}本</b> ・ ${allocated.length}商品 ・ ${formatYen(amount)}`
     : `組むと ${total}本 ・ ${allocated.length}商品 ・ ${formatYen(amount)}<span style="color:var(--text-light)">（チェックOFF・金額合計には入っていません）</span>`;
 
+  // 手動固定（ピン, Phase L）。このグループの商品に対するピンだけを数える
+  const pinsForGroup = propMgPins[groupId] || {};
+  const pinnedCount = Object.keys(pinsForGroup).filter(code => items.some(p => p.code === code)).length;
+  const pinNote = pinnedCount > 0
+    ? `<div class="prop-mg-pin-note">📌 手動指定 ${pinnedCount}件<button type="button" class="prop-mg-pin-clear" onclick="mgClearPins('${escAttr(groupId)}')">解除</button></div>`
+    : '';
+
   const acts = [];
-  if (st.due) acts.push(`<button class="prop-mg-btn" onclick="mgRebuild('${escAttr(groupId)}',${st.lots || 1})">🔄 組み直す</button>`);
-  else        acts.push(`<button class="prop-mg-btn primary" onclick="mgRebuild('${escAttr(groupId)}',1)">🛒 今すぐ${unit}本を組む</button>`);
+  if (st.due) {
+    acts.push(`<button class="prop-mg-btn" onclick="mgRebuild('${escAttr(groupId)}',${st.lots || 1},false)">🔄 最初から組み直す（手動指定を破棄）</button>`);
+  } else {
+    const startLabel = pinnedCount > 0 ? `🛒 手動指定を含めて今すぐ${unit}本を組む` : `🛒 今すぐ${unit}本を組む`;
+    acts.push(`<button class="prop-mg-btn primary" onclick="mgRebuild('${escAttr(groupId)}',1)">${startLabel}</button>`);
+  }
   acts.push(`<button class="prop-mg-btn" onclick="mgRebuild('${escAttr(groupId)}',2)">${unit * 2}本（2ロット）にする</button>`);
   if ((st.lots || 1) > 1 || (propMgQty[groupId] && total > unit)) {
     acts.push(`<button class="prop-mg-btn" onclick="mgRebuild('${escAttr(groupId)}',1)">${unit}本（1ロット）に戻す</button>`);
@@ -4629,6 +4729,7 @@ function renderMgBlock(groupId, supplierCode, renderItem) {
       <div class="prop-mg-title">📦 ${escHtml(st.groupName)}<span class="prop-mg-unit">${unit}本単位</span></div>
       <div class="prop-mg-state">${state}</div>
       <div class="prop-mg-state">${summary}</div>
+      ${pinNote}
       ${shortCount > 0 ? `<div class="prop-pending-warn">⚠️ 在庫が推奨を下回っている商品 ${shortCount}件${
         shortNoAlloc.length > 0 ? `（うち${shortNoAlloc.length}件は今回の配分に入っていません・下に表示）` : ''}${
         outCount > 0 ? ` ／ うち在庫0以下 ${outCount}件` : ''}</div>` : ''}
@@ -4697,14 +4798,18 @@ function setPropQty(btn, value) {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
-// まとめ発注グループ用の ±6 ボタン（商品単位の倍数を保ったまま増減する）
-// 数量を入れたらチェックも自動でONにする（チェックOFFのままだと合計にも発注にも入らず、
-// 「＋6を押したのに合計が変わらない」という食い違いになるため）
+// まとめ発注グループ用の ±6 ボタン（商品単位の倍数を保ったまま増減する）。
+// グループ内の行では手動固定（ピン, Phase L）として記録し、mgSetPin が発注単位ぴったりに組み直す
 function setPropQtyDelta(btn, delta) {
   const item = btn.closest('.prop-item');
   if (!item) return;
+  const mgEl = btn.closest('.prop-mg');
   const input = item.querySelector('.prop-qty');
   const next = Math.max(0, (parseFloat(input.value) || 0) + delta);
+  if (mgEl) {
+    mgSetPin(mgEl.dataset.groupId, item.dataset.code, next);
+    return;
+  }
   input.value = next;
   const check = item.querySelector('.prop-check');
   if (check && check.checked !== next > 0) {
@@ -4722,6 +4827,33 @@ function handlePropItemInputChange(e) {
   const item = e.target.closest('.prop-item');
   const group = e.target.closest('.prop-group');
   if (!item || !group) return;
+  const mgEl = e.target.closest('.prop-mg');
+  const code = item.dataset.code;
+
+  // まとめ発注グループの行: チェック確定・数量確定（change）は手動固定（ピン）として記録し、
+  // mgSetPin がグループ全体を発注単位ぴったりに組み直して再描画する
+  if (mgEl) {
+    const groupId = mgEl.dataset.groupId;
+    if (e.target.matches('.prop-check')) {
+      if (e.type !== 'change') return; // チェックボックスのinputイベントは無視（changeで確定）
+      const qtyInput = item.querySelector('.prop-qty');
+      const step = parseFloat(qtyInput.step) || 6;
+      const curQty = parseFloat(qtyInput.value) || 0;
+      mgSetPin(groupId, code, e.target.checked ? (curQty > 0 ? curQty : step) : 0);
+      return;
+    }
+    // 数量欄: 1文字ごとの input では金額表示だけその場で更新し、毎打鍵での組み直しは避ける。
+    // フォーカスが外れた確定（change）でピンへ反映して組み直す
+    const unitCost = parseFloat(item.dataset.unitCost) || 0;
+    const qty = parseFloat(item.querySelector('.prop-qty').value) || 0;
+    const amountEl = item.querySelector('.prop-item-amount');
+    if (amountEl) amountEl.textContent = formatItemAmount(unitCost, qty);
+    updatePropMgTotal(mgEl);
+    if (e.type === 'change') mgSetPin(groupId, code, qty);
+    return;
+  }
+
+  // 通常の提案行（グループ外）: 従来どおりチェック状態とライブ表示だけを更新する
   if (e.target.matches('.prop-check')) {
     const key = e.target.dataset.key;
     if (key) {
@@ -4736,9 +4868,6 @@ function handlePropItemInputChange(e) {
   item.querySelectorAll('.prop-qty-chip').forEach(c => {
     c.classList.toggle('active', parseInt(c.textContent, 10) === qty);
   });
-  // まとめ発注グループの行なら、系列合計が発注単位の倍数かどうかを更新する
-  const mgEl = e.target.closest('.prop-mg');
-  if (mgEl) updatePropMgTotal(mgEl);
   updatePropGroupSummary(group);
 }
 function updatePropGroupSummary(group) {
@@ -5327,7 +5456,11 @@ function startOrderFromProposals(supplierCode) {
     const code = el.dataset.code;
     const p = proposalsData.proposals.find(x => x.code === code && x.supplierCode === supplierCode);
     if (!p) return;
-    const qty = parseInt(el.querySelector('.prop-qty').value) || p.proposedQty;
+    // チェックONでも数量0（手動でその商品を除外した行など）はカートに入れない。
+    // parseInt(値) || p.proposedQty だと「明示的に0にした」行が誤って proposedQty に化けるため、
+    // 入力値が数値として読めない（空欄など）ときだけ proposedQty にフォールバックする
+    const rawQty = parseInt(el.querySelector('.prop-qty').value, 10);
+    const qty = Number.isNaN(rawQty) ? p.proposedQty : rawQty;
     if (qty < 1) return;
     picked.push({ p, qty });
   });
