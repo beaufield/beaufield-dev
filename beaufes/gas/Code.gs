@@ -1,6 +1,6 @@
 // ============================================================
 // ビューフェス申込アプリ - Google Apps Script
-// Version: 0.2.0
+// Version: 0.3.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -13,18 +13,24 @@
 //   3. プロジェクトの設定でスクリプトプロパティ SPREADSHEET_ID を設定
 //   4. GASエディタの関数選択で setupSheets を選び、一度だけ実行（シート・見出し・configの初期値を作成）
 //   5. デプロイ → 新しいデプロイ → 種類「ウェブアプリ」
-//        実行ユーザー: 自分（takashi@beaufield.co.jp）
+//        実行ユーザー: 自分（tak.maejima@gmail.com。スプレッドシート作成に使ったGoogleアカウント）
 //        アクセスできるユーザー: 全員（お客様の申込フォームが認証なしで動く必要があるため）
 //   6. 発行されたウェブアプリURLを index.html / pass.html の GAS_URL に設定
 //
 // メール送信元（beaufes@gmail.com）を実際に使うには、事前に
-// takashi@beaufield.co.jp のGmail設定で「別のメールアドレスを追加」から
+// tak.maejima@gmail.com のGmail設定で「他のメールアドレスを追加」から
 // beaufes@gmail.com を送信元アドレス（send-as）として登録しておくこと。
-// 未登録の場合は自動的に MailApp（送信元は takashi@ のまま・差出人名とReply-Toで代替）にフォールバックする。
+// 未登録の場合は自動的に MailApp（送信元は tak.maejima@ のまま・差出人名とReply-Toで代替）にフォールバックする。
+//
+// 🔴 送信量の注意（2026-08-04 実測確認済み）: スクリプト実行アカウント tak.maejima@gmail.com は
+// Google Workspace Individual契約だが、Apps Scriptの送信枠は個人アカウント扱いで1日100通
+//（MailApp.getRemainingDailyQuota()で実測確認済み。checkMailQuota()関数で再確認できる）。
+// 申込受付中の分散送信は問題ないが、前日リマインド等で200名に一括送信する機能を作る際は、
+// 50〜80件ずつ複数回に分けて送るなどの対策が必須。
 // 詳細: LINEHarness/ビューフェス申込_設計.md §7-0-1〜7-0-2
 // ============================================================
 
-const VERSION  = '0.2.0';
+const VERSION  = '0.3.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -459,4 +465,13 @@ function setupSheets() {
   }
 
   Logger.log('setupSheets完了');
+}
+
+// ============================================================
+// 本日のメール送信残数を確認する（診断用・手動実行）
+// 2026-08-04実測: tak.maejima@gmail.com（Workspace Individual契約）は
+// Apps Script上では個人アカウント扱いで100通/日
+// ============================================================
+function checkMailQuota() {
+  Logger.log('本日の残りメール送信可能数: ' + MailApp.getRemainingDailyQuota());
 }
