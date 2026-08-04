@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ビューフェス2026 入場パス</title>
+<style>
+  :root {
+    --main: #5BC8E8;
+    --main-dark: #2fa8cc;
+    --text: #333;
+    --bg: #f7fafc;
+    --border: #e0e6ea;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    background: linear-gradient(135deg, var(--main), var(--main-dark));
+    color: #fff;
+    padding: 22px 20px;
+    text-align: center;
+  }
+  header h1 { margin: 0; font-size: 18px; }
+  main { max-width: 420px; margin: 0 auto; padding: 20px 16px 60px; }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 24px 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    text-align: center;
+  }
+  .newBadge {
+    background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0;
+    border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 16px;
+  }
+  .name { font-size: 20px; font-weight: bold; margin: 4px 0; }
+  .salon { font-size: 14px; color: #666; margin-bottom: 18px; }
+  #qrBox { margin: 12px 0; }
+  #qrBox svg { width: 220px; height: 220px; }
+  .event-info { font-size: 13px; color: #555; line-height: 1.9; text-align: left; margin-top: 18px; border-top: 1px dashed var(--border); padding-top: 14px; }
+  .event-info b { color: var(--main-dark); }
+  .checkedIn {
+    margin-top: 14px; background: #eff6ff; color: #1d4ed8;
+    border: 1px solid #bfdbfe; border-radius: 8px; padding: 8px 12px; font-size: 13px;
+  }
+  .fallback { font-size: 12px; color: #888; margin-top: 20px; line-height: 1.7; }
+  .errorCard { text-align: center; padding: 40px 20px; color: #666; }
+  #loading { text-align: center; padding: 60px 20px; color: #888; }
+</style>
+</head>
+<body>
+
+<header><h1>ビューフェス2026 入場パス</h1></header>
+
+<main>
+  <div id="loading">読み込み中…</div>
+  <div class="card" id="passCard" style="display:none;">
+    <div class="newBadge" id="newBadge" style="display:none;">お申し込みが完了しました</div>
+    <div class="salon" id="salonName"></div>
+    <div class="name" id="staffName"></div>
+
+    <div id="qrBox"></div>
+
+    <div id="checkedInBox"></div>
+
+    <div class="event-info" id="eventInfo"></div>
+  </div>
+
+  <div class="card errorCard" id="errorCard" style="display:none;">
+    パスが見つかりませんでした。<br>お申し込み時のメールに記載のリンクをご確認いただくか、<br>
+    当日は受付でお名前をお伝えください。
+  </div>
+
+  <div class="fallback">
+    ※このパスが出せなくても、受付でお名前を伺えばご入場いただけます<br>
+    ※このページをスマホのホーム画面に追加しておくと当日スムーズです
+  </div>
+  <p style="font-size:11px;color:#ccc;text-align:center;" id="versionLine"></p>
+</main>
+
+<script src="lib/qrcode.min.js"></script>
+<script>
+const APP_VERSION = '0.1.0';
+const GAS_URL = 'PLACEHOLDER_GAS_URL'; // ← デプロイ後にGASウェブアプリURLへ差し替える
+document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
+
+function qs(name) {
+  return new URLSearchParams(location.search).get(name);
+}
+
+async function init() {
+  const token = qs('t');
+  const isNew = qs('new') === '1';
+
+  if (!token) {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('errorCard').style.display = 'block';
+    return;
+  }
+
+  try {
+    const params = new URLSearchParams({
+      action: 'getPass',
+      data: JSON.stringify({ ticket_token: token })
+    });
+    const res  = await fetch(GAS_URL + '?' + params, { redirect: 'follow' });
+    const json = await res.json();
+
+    document.getElementById('loading').style.display = 'none';
+
+    if (!json.success) {
+      document.getElementById('errorCard').style.display = 'block';
+      return;
+    }
+
+    const d = json.data;
+    document.getElementById('passCard').style.display = 'block';
+    if (isNew) document.getElementById('newBadge').style.display = 'block';
+    document.getElementById('salonName').textContent = d.salon_name;
+    document.getElementById('staffName').textContent = d.staff_name + ' 様';
+    document.getElementById('eventInfo').innerHTML =
+      '<div><b>日時</b>：' + d.event.date + ' ' + d.event.time + '</div>' +
+      '<div><b>会場</b>：' + d.event.venue_name + ' ' + d.event.venue_addr + '</div>';
+
+    if (d.checked_in_at) {
+      document.getElementById('checkedInBox').innerHTML =
+        '<div class="checkedIn">✅ ' + d.checked_in_at + ' に入場済みです</div>';
+    }
+
+    // QRコードをクライアント側で生成（外部API不使用・当日の通信障害の影響を受けない）
+    const qr = qrcode(0, 'M');
+    qr.addData(d.pass_url);
+    qr.make();
+    document.getElementById('qrBox').innerHTML = qr.createSvgTag({ cellSize: 5, margin: 2 });
+
+  } catch (e) {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('errorCard').style.display = 'block';
+  }
+}
+
+init();
+</script>
+
+</body>
+</html>
