@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ビューフェス2026 お申し込み</title>
+<style>
+  :root {
+    --main: #5BC8E8;
+    --main-dark: #2fa8cc;
+    --text: #333;
+    --bg: #f7fafc;
+    --border: #e0e6ea;
+    --error: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding-bottom: 60px;
+  }
+  header {
+    background: linear-gradient(135deg, var(--main), var(--main-dark));
+    color: #fff;
+    padding: 28px 20px 24px;
+    text-align: center;
+  }
+  header h1 { margin: 0 0 6px; font-size: 22px; }
+  header p  { margin: 0; font-size: 13px; opacity: .95; }
+  main { max-width: 520px; margin: 0 auto; padding: 20px 16px; }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    margin-bottom: 16px;
+  }
+  .event-info { font-size: 14px; line-height: 1.9; }
+  .event-info b { color: var(--main-dark); }
+  label { display: block; font-weight: bold; font-size: 14px; margin: 16px 0 6px; }
+  label .req { color: var(--error); font-size: 12px; margin-left: 4px; }
+  input[type=text], input[type=email], input[type=tel], select, textarea {
+    width: 100%;
+    padding: 11px 12px;
+    font-size: 15px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--text);
+  }
+  textarea { resize: vertical; min-height: 60px; }
+  .radio-group { display: flex; gap: 16px; margin-top: 6px; }
+  .radio-group label { display: flex; align-items: center; gap: 6px; font-weight: normal; margin: 0; }
+  .checkbox-line { display: flex; align-items: flex-start; gap: 8px; margin-top: 18px; font-size: 14px; }
+  .checkbox-line input { margin-top: 3px; }
+  #newFields { display: none; margin-top: 6px; }
+  .hint { font-size: 12px; color: #888; margin-top: 4px; }
+  button#submitBtn {
+    width: 100%;
+    padding: 15px;
+    margin-top: 24px;
+    font-size: 16px;
+    font-weight: bold;
+    color: #fff;
+    background: var(--main-dark);
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  button#submitBtn:disabled { opacity: .5; }
+  .errorMsg {
+    display: none;
+    color: var(--error);
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+    margin-top: 14px;
+  }
+  #loadingOverlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(255,255,255,.85);
+    align-items: center; justify-content: center;
+    font-size: 15px; color: var(--main-dark); font-weight: bold;
+    z-index: 100;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>ビューフェス2026 お申し込み</h1>
+  <p>美容従事者(理美容師・エステ等サロン様)限定のイベントです</p>
+</header>
+
+<main>
+  <div class="card event-info" id="eventInfo">
+    <div><b>日時</b>：2026年10月26日（月）10:00〜16:00</div>
+    <div><b>会場</b>：青島屋（AOSHIMAYA）宮崎市青島2丁目12-11</div>
+    <div><b>申込締切</b>：2026年10月20日（火）</div>
+  </div>
+
+  <form class="card" id="applyForm">
+    <label>サロン様名<span class="req">必須</span></label>
+    <input type="text" id="salon_name" required>
+
+    <label>お名前（フルネーム）<span class="req">必須</span></label>
+    <input type="text" id="staff_name" required>
+
+    <label>メールアドレス<span class="req">必須</span></label>
+    <input type="email" id="email" required>
+    <div class="hint">入場パスの送付先です。入力ミスにご注意ください。</div>
+
+    <label>お電話番号<span class="req">必須</span></label>
+    <input type="tel" id="phone" required>
+
+    <label>サロン様エリア<span class="req">必須</span></label>
+    <select id="area" required>
+      <option value="">選択してください</option>
+      <option>宮崎市内</option>
+      <option>都城市</option>
+      <option>児湯郡（都農・川南・高鍋・新富）</option>
+      <option>県北地域（日向・門川・延岡・高千穂）</option>
+      <option>県南（日南・串間）</option>
+      <option>小林市</option>
+    </select>
+
+    <label>ビューフィールドとお取引はありますか？<span class="req">必須</span></label>
+    <div class="radio-group">
+      <label><input type="radio" name="has_transaction" value="yes" checked> あり</label>
+      <label><input type="radio" name="has_transaction" value="no"> なし（初めて）</label>
+    </div>
+
+    <div id="newFields">
+      <label>サロンのご住所</label>
+      <input type="text" id="address">
+      <label>ご紹介サロン名・お名前（あれば）</label>
+      <input type="text" id="referrer">
+    </div>
+
+    <label>備考（あれば）</label>
+    <textarea id="note"></textarea>
+
+    <div class="checkbox-line">
+      <input type="checkbox" id="agree_capability" required>
+      <label style="font-weight:normal;margin:0;" for="agree_capability">
+        美容従事者(理美容師、エステ等サロン様)であることを確認しました
+      </label>
+    </div>
+
+    <div class="errorMsg" id="errorMsg"></div>
+
+    <button type="submit" id="submitBtn">この内容で申し込む</button>
+  </form>
+
+  <p style="font-size:12px;color:#888;text-align:center;">
+    ※プチセミナーのご予約は、内容確定後に改めてご案内いたします
+  </p>
+  <p style="font-size:11px;color:#bbb;text-align:center;" id="versionLine"></p>
+</main>
+
+<div id="loadingOverlay">送信中…</div>
+
+<script>
+const APP_VERSION = '0.1.0';
+const GAS_URL = 'PLACEHOLDER_GAS_URL'; // ← デプロイ後にGASウェブアプリURLへ差し替える
+document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
+
+document.querySelectorAll('input[name=has_transaction]').forEach(r => {
+  r.addEventListener('change', () => {
+    document.getElementById('newFields').style.display =
+      document.querySelector('input[name=has_transaction]:checked').value === 'no' ? 'block' : 'none';
+  });
+});
+
+function showError(msg) {
+  const el = document.getElementById('errorMsg');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+function hideError() {
+  document.getElementById('errorMsg').style.display = 'none';
+}
+
+document.getElementById('applyForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  hideError();
+
+  const payload = {
+    salon_name: document.getElementById('salon_name').value.trim(),
+    staff_name: document.getElementById('staff_name').value.trim(),
+    email: document.getElementById('email').value.trim(),
+    phone: document.getElementById('phone').value.trim(),
+    area: document.getElementById('area').value,
+    has_transaction: document.querySelector('input[name=has_transaction]:checked').value,
+    address: document.getElementById('address').value.trim(),
+    referrer: document.getElementById('referrer').value.trim(),
+    note: document.getElementById('note').value.trim(),
+    agree_capability: document.getElementById('agree_capability').checked
+  };
+
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  document.getElementById('loadingOverlay').style.display = 'flex';
+
+  try {
+    const body = new URLSearchParams({ action: 'apply', data: JSON.stringify(payload) });
+    const res = await fetch(GAS_URL, { method: 'POST', body, redirect: 'follow' });
+    const json = await res.json();
+
+    if (!json.success) {
+      showError(json.error || '送信に失敗しました。時間をおいて再度お試しください。');
+      btn.disabled = false;
+      document.getElementById('loadingOverlay').style.display = 'none';
+      return;
+    }
+
+    // 入場パス画面へ遷移（QR表示・完了メッセージはそちらで担う）
+    location.href = 'pass.html?t=' + encodeURIComponent(json.data.pass_url.split('t=')[1]) + '&new=1';
+  } catch (e) {
+    showError('通信エラーが発生しました。電波の良い場所で再度お試しください。');
+    btn.disabled = false;
+    document.getElementById('loadingOverlay').style.display = 'none';
+  }
+});
+</script>
+
+</body>
+</html>
