@@ -5,10 +5,10 @@
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
 // GASエディタ → 「プロジェクトの設定」→「スクリプトプロパティ」→「プロパティを追加」
-//   SPREADSHEET_ID  : ビューフェス申込データのスプレッドシートID（新規に「viewfes」という名前で作成する）
+//   SPREADSHEET_ID  : ビューフェス申込データのスプレッドシートID（新規に「beaufes2026」という名前で作成する）
 //
 // 初回セットアップ手順:
-//   1. 新規Googleスプレッドシートを作成（名前: viewfes）
+//   1. 新規Googleスプレッドシートを作成（名前: beaufes2026）
 //   2. 拡張機能 → Apps Script でこのファイルの内容を貼り付け
 //   3. プロジェクトの設定でスクリプトプロパティ SPREADSHEET_ID を設定
 //   4. GASエディタの関数選択で setupSheets を選び、一度だけ実行（シート・見出し・configの初期値を作成）
@@ -24,8 +24,8 @@
 // 詳細: LINEHarness/ビューフェス申込_設計.md §7-0-1〜7-0-2
 // ============================================================
 
-const VERSION  = '0.1.0';
-const APP_NAME = 'viewfes';
+const VERSION  = '0.2.0';
+const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS         = PropertiesService.getScriptProperties();
@@ -44,7 +44,7 @@ const MAIL_FROM_ADDR = 'beaufes@gmail.com';
 const MAIL_FROM_NAME = '株式会社ビューフィールド ビューフェス事務局';
 
 // GitHub Pagesの公開URL（QRコード・メール内のパスリンク生成に使用）
-const SITE_BASE_URL = 'https://beaufield.github.io/beaufield-dev/viewfes/';
+const SITE_BASE_URL = 'https://beaufield.github.io/beaufield-dev/beaufes/';
 
 // ============================================================
 // 起動時チェック（プロパティ未設定を早期検知）
