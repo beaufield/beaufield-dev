@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.16.0
+# Version: v1.17.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -564,20 +564,34 @@ def warn_if_proposal_count_swings(new_count, threshold=0.5):
 
 
 def fetch_reorder_config(gas_url, api_key):
-    """GASから分析設定を取得（発注先リードタイム・除外商品・ロット推定材料）"""
+    """GASから分析設定を取得（発注先リードタイム・除外商品・ロット推定材料）
+
+    GAS Webアプリの結果配信は同時アクセスが無くても一定確率でHTTP 404を返すため
+    （詳細: order-app/通信エラー対策_設計プラン.md）、書き込み系（post_reorder_points等）と
+    同型の3回リトライを行う。ここで失敗すると分析そのものが始められないため、
+    3回とも失敗した場合は最後の例外を送出して呼び出し元（sys.exit(1) or dry-run続行）に委ねる
+    """
     logging.info('GASから設定を取得中 (getReorderConfig)...')
-    resp = requests.post(gas_url, json={'action': 'getReorderConfig', 'api_key': api_key},
-                         timeout=120)
-    resp.raise_for_status()
-    result = resp.json()
-    if not result.get('success'):
-        raise RuntimeError(f'getReorderConfig エラー応答: {result.get("error")}')
-    logging.info(f"設定取得完了: 発注先{len(result.get('suppliers', []))}件 / "
-                 f"除外{len(result.get('exclusions', []))}件 / "
-                 f"終売{len(result.get('eolCodes', []))}件 / "
-                 f"ロット材料{len(result.get('lotStats', {}))}商品 / "
-                 f"手動ロット設定{len(result.get('lotOverrides', {}))}商品")
-    return result
+    last_err = None
+    for attempt in range(1, 4):
+        try:
+            resp = requests.post(gas_url, json={'action': 'getReorderConfig', 'api_key': api_key},
+                                 timeout=120)
+            resp.raise_for_status()
+            result = resp.json()
+            if not result.get('success'):
+                raise RuntimeError(f'getReorderConfig エラー応答: {result.get("error")}')
+            logging.info(f"設定取得完了: 発注先{len(result.get('suppliers', []))}件 / "
+                         f"除外{len(result.get('exclusions', []))}件 / "
+                         f"終売{len(result.get('eolCodes', []))}件 / "
+                         f"ロット材料{len(result.get('lotStats', {}))}商品 / "
+                         f"手動ロット設定{len(result.get('lotOverrides', {}))}商品"
+                         + (f' (試行{attempt}回目)' if attempt > 1 else ''))
+            return result
+        except Exception as e:
+            last_err = e
+            logging.warning(f'GAS設定取得の通信エラー (試行{attempt}): {e}')
+    raise last_err
 
 
 # ============================================================

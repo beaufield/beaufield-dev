@@ -1,6 +1,6 @@
 // ============================================================
 // Beaufield 発注アプリ - Google Apps Script バックエンド
-// Version: v1.26.0
+// Version: v1.28.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.27.0';
+const VERSION         = 'v1.28.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -96,7 +96,10 @@ function validateSession(token) {
   try {
     const ss   = SpreadsheetApp.openById(AUTH_SHEET_ID);
     const sh   = ss.getSheetByName('sessions');
-    if (!sh) return { valid: false };
+    // シート取得失敗は「セッション無効」ではなく一時障害。負キャッシュしない
+    // （Google側の一時的な応答不良でも起こりうるため。負キャッシュすると
+    //  有効なトークンがTTLの間ブロックされ続けてしまう）
+    if (!sh) return { valid: false, transient: true };
 
     const data = sh.getDataRange().getValues();
     const now  = Date.now();
@@ -120,8 +123,11 @@ function validateSession(token) {
       }
     }
   } catch(e) {
+    // 認証シートを読めなかった＝一時障害。ここも負キャッシュしない（上記と同じ理由）
     Logger.log('セッション検証エラー: ' + e);
+    return { valid: false, transient: true };
   }
+  // ここに到達＝シートは読めたがトークンが見つからなかった＝本物の無効
   const r = { valid: false };
   cache.put(cacheKey, JSON.stringify(r), 60);
   return r;
@@ -138,6 +144,11 @@ function doGet(e) {
   // セッション検証
   const auth = validateSession(token);
   if (!auth.valid) {
+    // 認証シートを一時的に読めなかっただけの場合はSESSION_INVALIDにしない。
+    // クライアント側はこれを見てログアウトさせず、リトライ対象として扱う
+    if (auth.transient) {
+      return jsonResponse({ success: false, error: 'AUTH_UNAVAILABLE', message: '認証確認に失敗しました。もう一度お試しください。' });
+    }
     return jsonResponse({ success: false, error: 'SESSION_INVALID', message: '認証が必要です。ポータルからログインし直してください。' });
   }
 
@@ -219,6 +230,11 @@ function doPost(e) {
   const token = p.session_token || '';
   const auth = validateSession(token);
   if (!auth.valid) {
+    // 認証シートを一時的に読めなかっただけの場合はSESSION_INVALIDにしない。
+    // クライアント側はこれを見てログアウトさせず、リトライ対象として扱う
+    if (auth.transient) {
+      return jsonResponse({ success: false, error: 'AUTH_UNAVAILABLE', message: '認証確認に失敗しました。もう一度お試しください。' });
+    }
     return jsonResponse({ success: false, error: 'SESSION_INVALID', message: '認証が必要です。ポータルからログインし直してください。' });
   }
 
@@ -669,6 +685,8 @@ function saveOrder(p, user_id) {
   const staff               = p.staff        || '';
   const outputType          = p.outputType   || '';
   const items               = JSON.parse(p.items || '[]');
+  // クライアント側で発注1件ごとに発行される冪等キー（通信エラーによる再送の二重登録防止用）
+  const requestId           = String(p.requestId || '').trim();
   // 修正発注の場合は元の発注Noが渡される（保存後に削除する）
   const revisionBaseOrderNo = String(p.revisionBaseOrderNo || '').trim();
 
@@ -685,12 +703,29 @@ function saveOrder(p, user_id) {
   }
 
   try {
+    const histSh = getSheet(SHEET_HISTORY);
+
+    // K列（requestId）が無い既存シートにも後付けで対応する
+    if (histSh.getRange(1, 11).getValue() !== 'requestId') {
+      histSh.getRange(1, 11).setValue('requestId');
+    }
+
+    // 冪等チェック: 同じrequestIdの行が既にあれば、新規採番せずその発注Noを返す
+    // （「サーバーは保存できたがクライアントには404が返った」ケースの再送で二重登録を防ぐ）
+    if (requestId) {
+      const histData = histSh.getDataRange().getValues();
+      for (let i = 1; i < histData.length; i++) {
+        if (String(histData[i][10] || '').trim() === requestId) {
+          return { success: true, orderNo: String(histData[i][0]).trim() };
+        }
+      }
+    }
+
     const orderNo = generateOrderNo(date);
     const now     = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
 
-    const histSh = getSheet(SHEET_HISTORY);
     // user_id をサーバー側から記録（フロントから渡されたstaffとは別に監査用として保持）
-    histSh.appendRow([orderNo, date, supplierCode, supplierName, fax, staff, items.length, outputType, now, user_id]);
+    histSh.appendRow([orderNo, date, supplierCode, supplierName, fax, staff, items.length, outputType, now, user_id, requestId]);
 
     const itemsSh = getSheet(SHEET_ITEMS);
     if (items.length > 0) {
@@ -762,7 +797,8 @@ function deleteOrder(p, user_id) {
     }
   }
   if (!deletedHist) {
-    return { success: false, error: '発注No「' + orderNo + '」が見つかりません' };
+    // 通信エラーによる再送で「既に削除済み」に来ることがある。冪等に成功扱いにする
+    return { success: true, notFound: true, deletedItems: 0 };
   }
 
   // 発注明細シートから削除（複数行）
@@ -1848,7 +1884,8 @@ function saveExcessAck(p, user_id) {
   if (mode === 'add') {
     const data = sh.getDataRange().getValues();
     const exists = data.slice(1).some(r => String(r[0]).trim() === code);
-    if (exists) return { success: false, error: '商品コード「' + code + '」はすでに確認済みです' };
+    // 通信エラーによる再送で「既に確認済み」に来ることがある。冪等に成功扱いにする
+    if (exists) return { success: true, alreadyExists: true };
     sh.appendRow([code, name, reason, user_id, now]);
     return { success: true };
   } else if (mode === 'delete') {
@@ -1859,7 +1896,8 @@ function saveExcessAck(p, user_id) {
         return { success: true };
       }
     }
-    return { success: false, error: '商品コード「' + code + '」が見つかりません' };
+    // 通信エラーによる再送で「既に解除済み」に来ることがある。冪等に成功扱いにする
+    return { success: true, notFound: true };
   }
   return { success: false, error: '不明なmode: ' + mode };
 }
@@ -1884,7 +1922,8 @@ function saveDeadAck(p, user_id) {
   if (mode === 'add') {
     const data = sh.getDataRange().getValues();
     const exists = data.slice(1).some(r => String(r[0]).trim() === code);
-    if (exists) return { success: false, error: '商品コード「' + code + '」はすでに確認済みです' };
+    // 通信エラーによる再送で「既に確認済み」に来ることがある。冪等に成功扱いにする
+    if (exists) return { success: true, alreadyExists: true };
     sh.appendRow([code, name, reason, user_id, now]);
     return { success: true };
   } else if (mode === 'delete') {
@@ -1895,7 +1934,8 @@ function saveDeadAck(p, user_id) {
         return { success: true };
       }
     }
-    return { success: false, error: '商品コード「' + code + '」が見つかりません' };
+    // 通信エラーによる再送で「既に解除済み」に来ることがある。冪等に成功扱いにする
+    return { success: true, notFound: true };
   }
   return { success: false, error: '不明なmode: ' + mode };
 }
@@ -1923,7 +1963,8 @@ function saveReceived(p, user_id) {
   if (mode === 'add') {
     const data = sh.getDataRange().getValues();
     const exists = data.slice(1).some(r => String(r[0]).trim() === orderNo && String(r[1]).trim() === code);
-    if (exists) return { success: false, error: 'すでに入荷済みとして登録されています' };
+    // 通信エラーによる再送で「既に入荷済み」に来ることがある。冪等に成功扱いにする
+    if (exists) return { success: true, alreadyExists: true };
     sh.appendRow([orderNo, code, name, qty, user_id, now]);
     return { success: true };
   } else if (mode === 'delete') {
@@ -1934,7 +1975,8 @@ function saveReceived(p, user_id) {
         return { success: true };
       }
     }
-    return { success: false, error: '該当する発注が見つかりません' };
+    // 通信エラーによる再送で「既に解除済み」に来ることがある。冪等に成功扱いにする
+    return { success: true, notFound: true };
   }
   return { success: false, error: '不明なmode: ' + mode };
 }
@@ -1959,7 +2001,8 @@ function saveProposalExclusion(p, user_id) {
   if (mode === 'add') {
     const data = sh.getDataRange().getValues();
     const exists = data.slice(1).some(r => String(r[0]).trim() === code);
-    if (exists) return { success: false, error: '商品コード「' + code + '」はすでに除外登録されています' };
+    // 通信エラーによる再送で「既に除外登録済み」に来ることがある。冪等に成功扱いにする
+    if (exists) return { success: true, alreadyExists: true };
     sh.appendRow([code, name, reason, user_id, now]);
     // 現在の提案シートからも即時削除（次回分析を待たずに消す）
     const prSh = ss.getSheetByName(SHEET_PROPOSALS);
@@ -1978,7 +2021,8 @@ function saveProposalExclusion(p, user_id) {
         return { success: true };
       }
     }
-    return { success: false, error: '商品コード「' + code + '」が見つかりません' };
+    // 通信エラーによる再送で「既に解除済み」に来ることがある。冪等に成功扱いにする
+    return { success: true, notFound: true };
   }
   return { success: false, error: '不明なmode: ' + mode };
 }
@@ -2003,7 +2047,8 @@ function saveEolFlag(p, user_id) {
   if (mode === 'add') {
     const data = sh.getDataRange().getValues();
     const exists = data.slice(1).some(r => String(r[0]).trim() === code);
-    if (exists) return { success: false, error: '商品コード「' + code + '」はすでに終売登録されています' };
+    // 通信エラーによる再送で「既に終売登録済み」に来ることがある。冪等に成功扱いにする
+    if (exists) return { success: true, alreadyExists: true };
     sh.appendRow([code, name, reason, user_id, now]);
     // 現在の提案シートからも即時削除（次回分析を待たずに消す）
     const prSh = ss.getSheetByName(SHEET_PROPOSALS);
@@ -2022,7 +2067,8 @@ function saveEolFlag(p, user_id) {
         return { success: true };
       }
     }
-    return { success: false, error: '商品コード「' + code + '」が見つかりません' };
+    // 通信エラーによる再送で「既に解除済み」に来ることがある。冪等に成功扱いにする
+    return { success: true, notFound: true };
   }
   return { success: false, error: '不明なmode: ' + mode };
 }
@@ -2069,7 +2115,8 @@ function saveLotOverride(p, user_id) {
         return { success: true };
       }
     }
-    return { success: false, error: '商品コード「' + code + '」が見つかりません' };
+    // 通信エラーによる再送で「既に解除済み」に来ることがある。冪等に成功扱いにする
+    return { success: true, notFound: true };
   }
   return { success: false, error: '不明なmode: ' + mode };
 }
@@ -2148,7 +2195,7 @@ function initializeSheets() {
     return sh;
   }
 
-  ensureSheet(SHEET_HISTORY,  ['発注No','発注日','発注先コード','発注先名','FAX番号','担当者','品目数','出力方法','登録日時','user_id']);
+  ensureSheet(SHEET_HISTORY,  ['発注No','発注日','発注先コード','発注先名','FAX番号','担当者','品目数','出力方法','登録日時','user_id','requestId']);
   ensureSheet(SHEET_ITEMS,    ['発注No','JANコード','Beaufieldコード','商品名','数量','単位','備考','手書きフラグ','登録日時']);
   ensureSheet(SHEET_REORDER,  ['商品コード','適正在庫','更新日時']);
   ensureSheet(SHEET_RECEIPT_AUTO, RECEIPT_AUTO_HEADERS);
