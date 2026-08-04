@@ -1,17 +1,19 @@
 // ============================================================
-// シリアルNo管理アプリ (SerialApps) - Code.gs v2.3.0
+// シリアルNo管理アプリ (SerialApps) - Code.gs v2.6.0
 // アーキテクチャ: GitHub Pages (front) + GAS WebApp (API)
 // ============================================================
 // [重要] コードに機密値を直書きしない。GASスクリプトプロパティに設定すること。
 //   GASエディタ → プロジェクトの設定 → スクリプトプロパティ → プロパティを追加
-//     SHEET_ID      : このアプリのスプレッドシートID
-//     AUTH_SHEET_ID : beaufield-auth スプレッドシートID（共通）
+//     SHEET_ID        : このアプリのスプレッドシートID
+//     AUTH_SHEET_ID   : beaufield-auth スプレッドシートID（共通）
+//     EXPORT_API_KEY  : 月次CSV自動出力（exportShippingCsv）用のAPIキー（ローカルスクリプトと共有）
 // ============================================================
 
-var VERSION = 'v2.4.0';
+var VERSION = 'v2.6.0';
 
-var SHEET_ID      = PropertiesService.getScriptProperties().getProperty('SHEET_ID')      || '';
-var AUTH_SHEET_ID = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID') || '';
+var SHEET_ID       = PropertiesService.getScriptProperties().getProperty('SHEET_ID')       || '';
+var AUTH_SHEET_ID  = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID')  || '';
+var EXPORT_API_KEY = PropertiesService.getScriptProperties().getProperty('EXPORT_API_KEY') || '';
 var CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // シート名
@@ -68,8 +70,21 @@ function doGet(e) {
     return jsonResponse({ success: true, version: VERSION });
   }
 
+  // メーカー別・月単位のCSV出力（ローカル自動化/スキル用。bf_sessionではなくAPIキーで認証）
+  if (action === 'exportShippingCsv') {
+    if (!EXPORT_API_KEY || p.api_key !== EXPORT_API_KEY) {
+      return ContentService.createTextOutput('UNAUTHORIZED').setMimeType(ContentService.MimeType.TEXT);
+    }
+    return exportShippingCsv(p);
+  }
+
   var auth = validateSession(token);
   if (!auth.valid) {
+    // 認証シートを一時的に読めなかっただけの場合はSESSION_INVALIDにしない。
+    // クライアント側はこれを見てログアウトさせず、リトライ対象として扱う
+    if (auth.transient) {
+      return jsonResponse({ success: false, error: 'AUTH_UNAVAILABLE', message: '認証確認に失敗しました。もう一度お試しください。' });
+    }
     return jsonResponse({ success: false, error: 'SESSION_INVALID', message: '認証が必要です' });
   }
 
@@ -107,6 +122,11 @@ function doPost(e) {
 
   var auth = validateSession(p.session_token || '');
   if (!auth.valid) {
+    // 認証シートを一時的に読めなかっただけの場合はSESSION_INVALIDにしない。
+    // クライアント側はこれを見てログアウトさせず、リトライ対象として扱う
+    if (auth.transient) {
+      return jsonResponse({ success: false, error: 'AUTH_UNAVAILABLE', message: '認証確認に失敗しました。もう一度お試しください。' });
+    }
     return jsonResponse({ success: false, error: 'SESSION_INVALID', message: '認証が必要です' });
   }
 
@@ -137,8 +157,12 @@ function validateSession(token) {
   }
 
   try {
-    var sh   = SpreadsheetApp.openById(AUTH_SHEET_ID).getSheetByName('sessions');
-    if (!sh) return { valid: false };
+    var sh = SpreadsheetApp.openById(AUTH_SHEET_ID).getSheetByName('sessions');
+    // シート取得失敗は「セッション無効」ではなく一時障害。負キャッシュしない
+    // （Google側の一時的な応答不良でも起こりうるため。負キャッシュすると
+    //  有効なトークンがTTLの間ブロックされ続けてしまう）
+    if (!sh) return { valid: false, transient: true };
+
     var rows = sh.getDataRange().getValues();
     var now  = Date.now();
     for (var i = 1; i < rows.length; i++) {
@@ -155,8 +179,11 @@ function validateSession(token) {
       }
     }
   } catch (e) {
+    // 認証シートを読めなかった＝一時障害。ここも負キャッシュしない（上記と同じ理由）
     Logger.log('validateSession error: ' + e.message);
+    return { valid: false, transient: true };
   }
+  // ここに到達＝シートは読めたがトークンが見つからなかった＝本物の無効
   var result = { valid: false };
   cache.put(cacheKey, JSON.stringify(result), 60);
   return result;
@@ -410,6 +437,92 @@ function searchRecords(params) {
     Logger.log('searchRecords error: ' + e);
     return { success: false, message: '検索に失敗しました' };
   }
+}
+
+// ============================================================
+// メーカー別・月単位のCSV出力
+// params: maker（完全一致・商品マスタ突き合わせ含む）, yearMonth（"YYYY-MM"）
+// 対象: 出荷日が yearMonth に該当し、状態が「出荷中」の行のみ
+// 出力列: 出荷日/商品コード/商品名/JANコード/シリアルNo/状態/返品日/取消日/取消理由/得意先
+// ============================================================
+function exportShippingCsv(params) {
+  try {
+    var maker      = params.maker || '';
+    var yearMonth  = params.yearMonth || '';
+    if (!maker || !/^\d{4}-\d{2}$/.test(yearMonth)) {
+      return ContentService.createTextOutput('ERROR: maker, yearMonth(YYYY-MM) は必須です').setMimeType(ContentService.MimeType.TEXT);
+    }
+
+    var ss   = SpreadsheetApp.openById(SHEET_ID);
+    var sh   = ss.getSheetByName(SH_SHIPPING);
+    var data = sh.getDataRange().getValues();
+
+    // メーカー突き合わせ用にProductMasterをメモリ展開（searchRecordsと同じフォールバック方式）
+    var pData   = ss.getSheetByName(SH_PRODUCT).getDataRange().getValues();
+    var prodMap = {};
+    for (var p = 1; p < pData.length; p++) {
+      var pr = pData[p];
+      prodMap[String(pr[PCOL.CODE])] = { maker: String(pr[PCOL.MAKER]) };
+    }
+
+    var makerNorm = _normalizeText(maker);
+    var rows = [['出荷日','商品コード','商品名','JANコード','シリアルNo','状態','返品日','取消日','取消理由','得意先']];
+
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      if (!row[COL.SERIAL]) continue;
+      if (String(row[COL.STATUS]) !== '出荷中') continue;
+
+      var shipDateYmd = _shipDateYmd(row[COL.SHIP_DATE]);
+      if (!shipDateYmd || shipDateYmd.substring(0, 7) !== yearMonth) continue;
+
+      var pm       = prodMap[String(row[COL.PROD_CODE])];
+      var effMaker = String(row[COL.MAKER] || '') || (pm ? pm.maker : '');
+      if (_normalizeText(effMaker) !== makerNorm) continue;
+
+      rows.push([
+        _formatDate(row[COL.SHIP_DATE]),
+        String(row[COL.PROD_CODE]),
+        String(row[COL.PROD_NAME]),
+        String(row[COL.JAN]),
+        String(row[COL.SERIAL]),
+        String(row[COL.STATUS]),
+        _formatDate(row[COL.RETURN_DATE]),
+        _formatDate(row[COL.CANCEL_DATE]),
+        String(row[COL.REASON] || ''),
+        String(row[COL.CUSTOMER] || '')
+      ]);
+    }
+
+    var csv = rows.map(function(r) { return r.map(_csvEscape).join(','); }).join('\r\n');
+    // 先頭にBOMを付与（ExcelでのUTF-8日本語文字化け対策）。可視文字の混入を避けるためfromCharCodeで生成
+    return ContentService.createTextOutput(String.fromCharCode(65279) + csv).setMimeType(ContentService.MimeType.CSV);
+  } catch (e) {
+    Logger.log('exportShippingCsv error: ' + e);
+    return ContentService.createTextOutput('ERROR: ' + e).setMimeType(ContentService.MimeType.TEXT);
+  }
+}
+
+// 出荷日セルをYYYY-MM-DD文字列に正規化（searchRecordsの日付比較ロジックと同じ方式）
+function _shipDateYmd(val) {
+  if (!val) return '';
+  if (val instanceof Date) {
+    return Utilities.formatDate(val, 'Asia/Tokyo', 'yyyy-MM-dd');
+  }
+  var parts = String(val).split(/[\/\-]/);
+  if (parts.length === 3) {
+    return parts[0].padStart(4, '0') + '-' + parts[1].padStart(2, '0') + '-' + parts[2].padStart(2, '0');
+  }
+  return '';
+}
+
+// CSVフィールドのエスケープ（カンマ・改行・ダブルクォートを含む場合のみクォート）
+function _csvEscape(v) {
+  var s = String(v == null ? '' : v);
+  if (/[",\r\n]/.test(s)) {
+    s = '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
 }
 
 // ============================================================
