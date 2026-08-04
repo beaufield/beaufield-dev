@@ -447,6 +447,7 @@ select:focus { border-color: #2a6acc; }
   justify-content: center;
 }
 .loading-overlay.active { display: flex; }
+.loading-overlay { flex-direction: column; gap: 12px; }
 .spinner {
   width: 48px; height: 48px;
   border: 5px solid #ddd;
@@ -455,6 +456,7 @@ select:focus { border-color: #2a6acc; }
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+.loading-msg { font-size: 13px; color: #555; min-height: 1em; }
 
 /* 開始シリアル入力行 */
 .seq-start-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
@@ -503,7 +505,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.14.0</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.15.0</span>
   </div>
 
   <!-- タブバー -->
@@ -772,10 +774,11 @@ select:focus { border-color: #2a6acc; }
 <!-- ローディング -->
 <div class="loading-overlay" id="loadingOverlay">
   <div class="spinner"></div>
+  <div class="loading-msg" id="loadingMsg"></div>
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.14.0</div>
+<div class="version-label">HTML v2.15.0</div>
 
 <!-- ZXing バーコードスキャナー（CODE128/JAN用） -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+" crossorigin="anonymous"></script>
@@ -897,41 +900,140 @@ function showMain() {
 
 // ============================================================
 // GAS 通信ヘルパー
+// GAS Webアプリの結果配信（/exec→script.googleusercontent.com）が
+// 同時アクセス無しでも一定確率でHTTP 404を返し、稀にPOSTパラメータが
+// 失われた状態で実行されて正常な200応答としてSESSION_INVALIDが返る
+// （作業中に誤ログアウトする）ことが order-app での実機テストで判明した。
+// GASの実行ログは常に「完了」でエラーが残らないため、サーバー側からは
+// この問題を検知できない（詳細: order-app/通信エラー対策_設計プラン.md）。
 // ============================================================
-async function gasGet(params) {
+
+class GasTransientError extends Error {
+  constructor(detail) { super('GAS_TRANSIENT: ' + detail); this.name = 'GasTransientError'; }
+}
+
+// 読み込みが重いアクションはタイムアウトを長めに取る
+var _GAS_HEAVY_ACTIONS = { getProductMaster: true, search: true };
+function _gasTimeoutFor(action) {
+  return _GAS_HEAVY_ACTIONS[action] ? 60000 : 30000;
+}
+
+// 通信中オーバーレイが開いていれば、再試行中であることをメッセージで知らせる
+function _gasNotifyRetry(attemptNumber) {
+  var overlay = document.getElementById('loadingOverlay');
+  var msgEl   = document.getElementById('loadingMsg');
+  if (overlay && msgEl && overlay.classList.contains('active')) {
+    msgEl.textContent = '接続をやり直しています（' + attemptNumber + '回目）...';
+  }
+}
+
+// catch(e)で表示するエラーメッセージを原因別に出し分ける。
+// GasTransientError/AbortError＝リトライを使い切ってもGAS側の応答が
+// 不安定だっただけ（実際にはネットワークは繋がっている）ことが多いため、
+// 「ネットワークを確認してください」という誤誘導を避ける。
+// TypeError（fetch自体が失敗＝オフライン等の真の通信断）のときだけ従来の文言にする
+function _gasErrorMessage(e) {
+  if (e && e.name === 'TypeError') return '通信エラー。ネットワークを確認してください。';
+  return 'Google側が一時的に混み合っています。もう一度お試しください。';
+}
+
+// 1回分のfetch。404等の非JSON応答・タイムアウトをGasTransientErrorとして検出する
+async function _gasFetchOnce(url, init, timeoutMs) {
+  var ac    = new AbortController();
+  var timer = setTimeout(function() { ac.abort(); }, timeoutMs);
+  try {
+    var res  = await fetch(url, Object.assign({}, init, { signal: ac.signal }));
+    var text = await res.text(); // res.json()ではなくtext()。404のHTMLをここで検出するため
+    if (!res.ok) throw new GasTransientError('HTTP ' + res.status);
+    try { return JSON.parse(text); }
+    catch (e) { throw new GasTransientError('non-JSON response'); }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// 通信エラー（404・タイムアウト・通信断）を最大2回まで自動リトライする（計3試行）。
+// registerShipping/registerReturnはどちらも「出荷中の同一シリアル」を
+// 重複チェックでスキップする設計のため、再送しても二重登録は起きない
+// （盲目的な全再送で安全）。meta.retried は「このやり取りでリトライが
+// 発生したか」をhandler側が知るためのフラグ（出荷登録の重複スキップ表示で使用）
+async function _gasCall(url, init, timeoutMs, meta) {
+  var retries = 2;
+  var lastErr;
+  for (var attempt = 0; attempt <= retries; attempt++) {
+    try {
+      var data = await _gasFetchOnce(url, init, timeoutMs);
+      if (attempt > 0 && meta) meta.retried = true;
+      return data;
+    } catch (e) {
+      lastErr = e;
+      var transient = e.name === 'GasTransientError' || e.name === 'AbortError' || e.name === 'TypeError';
+      if (!transient || attempt === retries) break;
+      _gasNotifyRetry(attempt + 1);
+      await new Promise(function(r) { setTimeout(r, attempt === 0 ? 1000 : 3000); });
+    }
+  }
+  throw lastErr;
+}
+
+// gasGet/gasPost共通処理: 通信レベルのリトライ(_gasCall)に加え、
+// AUTH_UNAVAILABLE（GAS側の認証シート一時読み込み失敗）とSESSION_INVALID
+// （POSTボディ喪失の疑いを含む）を区別して扱う
+async function _gasRequest(url, init, timeoutMs, hasToken, meta) {
+  var data = await _gasCall(url, init, timeoutMs, meta);
+
+  // 認証確認そのものが一時的に失敗しただけ。ログアウトさせず1回だけ全再送する
+  if (data && data.error === 'AUTH_UNAVAILABLE') {
+    _gasNotifyRetry(1);
+    if (meta) meta.retried = true;
+    return await _gasCall(url, init, timeoutMs, meta);
+  }
+
+  // トークンを送っているのにSESSION_INVALID＝POSTボディ喪失の可能性があるので
+  // 1回だけ全再送する。2連続でSESSION_INVALIDのときだけ本当に無効とみなす
+  if (data && data.error === 'SESSION_INVALID' && hasToken) {
+    _gasNotifyRetry(1);
+    if (meta) meta.retried = true;
+    var retryData = await _gasCall(url, init, timeoutMs, meta);
+    if (retryData && retryData.error === 'SESSION_INVALID') {
+      localStorage.removeItem(SESSION_KEY);
+      location.replace(PORTAL_URL);
+    }
+    return retryData;
+  }
+
+  // トークンを送っていないのにSESSION_INVALID＝本当に未ログイン。即送還
+  if (data && data.error === 'SESSION_INVALID' && !hasToken) {
+    localStorage.removeItem(SESSION_KEY);
+    location.replace(PORTAL_URL);
+    return data;
+  }
+
+  return data;
+}
+
+async function gasGet(params, meta) {
   params.session_token = appState.token;
   var qs = Object.keys(params).map(function(k) {
     return encodeURIComponent(k) + '=' + encodeURIComponent(
       Array.isArray(params[k]) ? JSON.stringify(params[k]) : params[k]
     );
   }).join('&');
-  var res  = await fetch(GAS_URL + '?' + qs);
-  var data = await res.json();
-  if (data && data.error === 'SESSION_INVALID') {
-    localStorage.removeItem(SESSION_KEY);
-    location.replace(PORTAL_URL);
-  }
-  return data;
+  return await _gasRequest(GAS_URL + '?' + qs, {}, _gasTimeoutFor(params.action), !!appState.token, meta);
 }
 
-async function gasPost(params) {
+async function gasPost(params, meta) {
   params.session_token = appState.token;
   // 配列はJSON文字列に変換してform-encodedで送信
   var body = Object.keys(params).map(function(k) {
     var v = Array.isArray(params[k]) ? JSON.stringify(params[k]) : params[k];
     return encodeURIComponent(k) + '=' + encodeURIComponent(v);
   }).join('&');
-  var res  = await fetch(GAS_URL, {
+  return await _gasRequest(GAS_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body
-  });
-  var data = await res.json();
-  if (data && data.error === 'SESSION_INVALID') {
-    localStorage.removeItem(SESSION_KEY);
-    location.replace(PORTAL_URL);
-  }
-  return data;
+  }, _gasTimeoutFor(params.action), !!appState.token, meta);
 }
 
 // ============================================================
@@ -976,7 +1078,7 @@ async function loadProductMaster() {
       showToast('商品マスタ読込失敗: ' + res.message, 'error');
     }
   } catch(e) {
-    showToast('商品マスタ読込エラー: ' + e.message, 'error');
+    showToast('商品マスタ読込エラー: ' + _gasErrorMessage(e), 'error');
   }
 }
 
@@ -1277,6 +1379,12 @@ async function doRegisterShipping(method) {
 
   showLoading(true);
   try {
+    // retryMeta.retried: このリクエストが通信エラーで自動再送された場合にtrueになる。
+    // registerShippingは同一シリアルを重複スキップする設計のため、再送で
+    // 「実は自分の直前の送信がすでに成功していた」ケースが起こりうる
+    // （通信エラー表示 → 実は登録済み、の温床）。この場合はスキップを
+    // 「他の人がすでに出荷登録済み」と誤解させる取消・返品への誘導をしない
+    var retryMeta = { retried: false };
     var res = await gasPost({
       action:       'registerShipping',
       productCode:  product.code,
@@ -1290,7 +1398,7 @@ async function doRegisterShipping(method) {
       maker:        product.maker  || '',
       series:       product.series || '',
       size:         product.size   || ''
-    });
+    }, retryMeta);
     if (res.success) {
 
       // ── スキップなし: 全クリアして終了 ──────────────────────
@@ -1300,12 +1408,6 @@ async function doRegisterShipping(method) {
         else                     { appState.shSeqSerials = [];    renderSeqList('sh'); }
         return;
       }
-
-      // ── 一部/全件スキップあり ────────────────────────────────
-      var toastMsg = res.registered > 0
-        ? res.registered + '件登録完了（' + res.skipped + '件は出荷中のためスキップ）'
-        : res.skipped + '件すべてが出荷中のためスキップされました';
-      showToast(toastMsg, res.registered > 0 ? 'success' : 'warn');
 
       // 登録済み分のみリストから除去・スキップ分は保持（取消後に再登録できるよう）
       var skippedSet = {};
@@ -1317,6 +1419,22 @@ async function doRegisterShipping(method) {
         appState.shSeqSerials = appState.shSeqSerials.filter(function(s) { return skippedSet[s]; });
         renderSeqList('sh');
       }
+
+      // ── 通信リトライが起きた上でのスキップ: おそらく自分の直前の送信が
+      //    通信エラーの陰で実は成功していただけ。取消・返品への誘導はしない ──
+      if (retryMeta.retried) {
+        var toastMsgRetried = res.registered > 0
+          ? res.registered + '件登録完了（' + res.skipped + '件は通信エラー時にすでに登録済みでした）'
+          : res.skipped + '件は通信エラー時にすでに登録済みでした（再登録不要です）';
+        showToast(toastMsgRetried, res.registered > 0 ? 'success' : 'success');
+        return;
+      }
+
+      // ── 一部/全件スキップあり（通常経路＝他者による既存出荷の可能性） ──────
+      var toastMsg = res.registered > 0
+        ? res.registered + '件登録完了（' + res.skipped + '件は出荷中のためスキップ）'
+        : res.skipped + '件すべてが出荷中のためスキップされました';
+      showToast(toastMsg, res.registered > 0 ? 'success' : 'warn');
 
       // トースト表示後に確認ダイアログ
       setTimeout(function() {
@@ -1338,7 +1456,7 @@ async function doRegisterShipping(method) {
       showToast('登録失敗: ' + res.message, 'error');
     }
   } catch(e) {
-    showToast('通信エラー', 'error');
+    showToast(_gasErrorMessage(e), 'error');
   } finally {
     showLoading(false);
   }
@@ -1404,7 +1522,7 @@ async function doRegisterReturn(method) {
       showToast('登録失敗: ' + res.message, 'error');
     }
   } catch(e) {
-    showToast('通信エラー', 'error');
+    showToast(_gasErrorMessage(e), 'error');
   } finally {
     showLoading(false);
   }
@@ -1457,7 +1575,7 @@ async function doSearch() {
     if (res.success) renderSearchResults(res.data, res.total);
     else showToast('検索失敗: ' + res.message, 'error');
   } catch(e) {
-    showToast('通信エラー', 'error');
+    showToast(_gasErrorMessage(e), 'error');
   } finally {
     showLoading(false);
   }
@@ -2067,6 +2185,7 @@ function showToast(msg, type) {
 
 function showLoading(show) {
   document.getElementById('loadingOverlay').className = 'loading-overlay' + (show ? ' active' : '');
+  if (!show) document.getElementById('loadingMsg').textContent = '';
 }
 </script>
 </body>
