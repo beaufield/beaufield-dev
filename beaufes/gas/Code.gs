@@ -22,11 +22,10 @@
 // beaufes@gmail.com を送信元アドレス（send-as）として登録しておくこと。
 // 未登録の場合は自動的に MailApp（送信元は tak.maejima@ のまま・差出人名とReply-Toで代替）にフォールバックする。
 //
-// 🔴 送信量の注意（2026-08-04 実測確認済み）: beaufield.co.jpドメインはGoogle Workspace Business
-// Standardを契約しているが、これはドメイン（takashi@beaufield.co.jp）に紐づくライセンスであり、
-// スクリプト実行アカウント tak.maejima@gmail.com（個人の@gmail.comアドレス）はその対象外。
-// Apps Scriptの送信枠は個人アカウント扱いで1日100通（MailApp.getRemainingDailyQuota()で実測確認済み。
-// checkMailQuota()関数で再確認できる）。
+// 🔴 送信量の注意（2026-08-04 実測確認済み）: tak.maejima@gmail.com はGoogle Workspace Business
+// Standardを契約しているにもかかわらず、Apps Scriptの送信枠は個人アカウント扱いで1日100通だった
+//（MailApp.getRemainingDailyQuota()で実測確認済み。契約と実測の食い違いの原因は未特定・追跡はせず
+// 実測値を設計上の正として採用。checkMailQuota()関数でいつでも再確認できる）。
 // 申込受付中の分散送信は問題ないが、前日リマインド等で200名に一括送信する機能を作る際は、
 // 50〜80件ずつ複数回に分けて送るなどの対策が必須。
 // 詳細: LINEHarness/ビューフェス申込_設計.md §7-0-1〜7-0-2
@@ -471,9 +470,8 @@ function setupSheets() {
 
 // ============================================================
 // 本日のメール送信残数を確認する（診断用・手動実行）
-// 2026-08-04実測: beaufield.co.jpはGoogle Workspace Business Standard契約だが
-// tak.maejima@gmail.com（ドメイン外の個人アカウント）はその対象外のため、
-// Apps Script上では個人アカウント扱いで100通/日
+// 2026-08-04実測: tak.maejima@gmail.comはGoogle Workspace Business Standard契約にも
+// かかわらず、Apps Script上では個人アカウント扱いで100通/日だった（原因未特定）
 // ============================================================
 function checkMailQuota() {
   Logger.log('本日の残りメール送信可能数: ' + MailApp.getRemainingDailyQuota());
