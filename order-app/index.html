@@ -1269,7 +1269,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.53.0'; // まとめ発注グループで、候補外の商品にチェックを入れると発注単位ぴったりに自動で組み直す手動固定（ピン）に対応（Phase L）
+const APP_VERSION    = 'v1.54.0'; // GAS通信の404・POSTボディ喪失対策（リトライ・同時数制限・誤ログアウト防止・発注の二重登録防止）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1298,6 +1298,7 @@ let currentOrder = {
 };
 
 let savedOrderNo          = null;
+let orderRequestId        = null; // 発注1件ごとの冪等キー（通信エラーによる再送の二重登録防止用）
 let revisionBaseOrderNo   = null; // 修正発注時：元の発注No（保存時に削除される）
 let pendingProduct= null;
 let pendingDupInfo= null; // 重複確認中のデータ { item, dupIndex, isHandwrite }
@@ -1345,10 +1346,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadProductMasterFromCache();
   updateMasterBadge();
   updateInventoryBadge();
-  // キャッシュが当日でない場合はバックグラウンドでGASから最新取得（await しない）
-  if (localStorage.getItem(LS_MASTER_DATE) !== getTodayStr()) {
-    loadProductMasterFromGAS();
-  }
   updateMemoDatalist();
 
   // 直近注文履歴をlocalStorageから即座に復元
@@ -1356,8 +1353,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const ph = localStorage.getItem(LS_PROD_HIST);
     if (ph) productHistory = JSON.parse(ph);
   } catch(e) {}
-  // バックグラウンドで最新履歴を取得（画面描画をブロックしない）
-  loadHistory(false);
 
   document.getElementById('csv-file').addEventListener('change', onCSVSelected);
   setupScanInput();
@@ -1370,47 +1365,168 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   await loadMasters();
+
+  // 商品マスター・発注履歴のバックグラウンド更新はここから開始する（await しない）。
+  // loadMasters() の完了後にずらすことで、起動直後に複数本が同時に飛ぶのを避ける
+  // （GAS Webアプリは同時アクセスで結果配信の失敗率が悪化するため。詳細: 通信エラー対策_設計プラン.md）
+  if (localStorage.getItem(LS_MASTER_DATE) !== getTodayStr()) {
+    loadProductMasterFromGAS();
+  }
+  loadHistory(false);
 });
 
 /* ===================================================
-   GAS通信
+   GAS通信基盤
+   GAS Webアプリの結果配信（/exec → script.googleusercontent.com）は
+   同時アクセスが無くても一定確率でHTTP 404の空応答を返す（Google側の一時障害）。
+   また稀に、リクエストのパラメータが失われた状態で実行されることがあり
+   （POSTボディ喪失）、その場合は正常な200応答としてSESSION_INVALIDが返る。
+   詳細・実測データ: 通信エラー対策_設計プラン.md
 =================================================== */
-async function gasGet(params) {
-  // セッショントークンを自動付与
-  const session = getAuthSession();
-  if (session && session.token) params.session_token = session.token;
-  const qs = Object.keys(params).map(k => `${k}=${encodeURIComponent(params[k])}`).join('&');
-  const res = await fetch(`${GAS_URL}?${qs}`);
-  const data = await res.json();
-  // セッション無効エラーはポータルへリダイレクト
-  if (data && data.error === 'SESSION_INVALID') {
+
+// 同時リクエスト数を制限する軽量セマフォ。完全直列（同時1本）にはしない
+// ——リトライとの掛け算で待ち時間が膨張することが実測済み（3本同時が全部
+// リトライすると71秒かかった）。同時2本までに留めて悪化要因（8本同時で
+// 失敗率50%）だけを緩和する
+const GAS_MAX_CONCURRENCY = 2;
+let _gasActive = 0;
+const _gasWaiters = [];
+function _gasAcquire() {
+  if (_gasActive < GAS_MAX_CONCURRENCY) { _gasActive++; return Promise.resolve(); }
+  return new Promise(resolve => _gasWaiters.push(resolve));
+}
+function _gasRelease() {
+  const next = _gasWaiters.shift();
+  if (next) next();      // 枠をそのまま次の待機者へ引き継ぐ（_gasActiveは据え置き）
+  else _gasActive--;     // 待機者が居ないときだけ枠を返す
+}
+
+class GasTransientError extends Error {
+  constructor(detail) { super('GAS_TRANSIENT: ' + detail); this.name = 'GasTransientError'; }
+}
+
+// 読み込みが重いアクションはタイムアウトを長めに取る
+// （実測: getReorderConfig相当の重い呼び出しは負荷時22〜28秒かかる。
+//   失敗時は16〜47秒かかってから404が返る）
+const _GAS_HEAVY_ACTIONS = new Set(['getOrderProposals', 'getProductMaster', 'getOrders', 'getMasters', 'getOrderTemplate']);
+function _gasTimeoutFor(action) {
+  return _GAS_HEAVY_ACTIONS.has(action) ? 60000 : 30000;
+}
+
+// 通信中オーバーレイが開いていれば、再試行中であることをメッセージで知らせる
+// （最悪1分超待たせることがあるため、無言で固まらせない）
+function _gasNotifyRetry(attemptNumber) {
+  const overlay = document.getElementById('loading-overlay');
+  const msgEl   = document.getElementById('loading-msg');
+  if (overlay && msgEl && overlay.classList.contains('open')) {
+    msgEl.textContent = `接続をやり直しています（${attemptNumber}回目）...`;
+  }
+}
+
+// catch(e)で表示するエラーメッセージを原因別に出し分ける。
+// GasTransientError/AbortError＝リトライを使い切ってもGAS側の応答が
+// 不安定だっただけ（実際にはネットワークは繋がっている）ことが多いため、
+// 「ネットワークを確認してください」という誤誘導を避ける。
+// TypeError（fetch自体が失敗＝オフライン等の真の通信断）のときだけ従来の文言にする
+function _gasErrorMessage(e) {
+  if (e && e.name === 'TypeError') return '通信エラー。ネットワークを確認してください。';
+  return 'Google側が一時的に混み合っています。もう一度お試しください。';
+}
+
+// 1回分のfetch。404等の非JSON応答・タイムアウトをGasTransientErrorとして検出する
+async function _gasFetchOnce(url, init, timeoutMs) {
+  const ac    = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  await _gasAcquire();
+  try {
+    const res  = await fetch(url, { ...init, signal: ac.signal });
+    const text = await res.text(); // res.json()ではなくtext()。404のHTMLをここで検出するため
+    if (!res.ok) throw new GasTransientError('HTTP ' + res.status);
+    try { return JSON.parse(text); }
+    catch (e) { throw new GasTransientError('non-JSON response'); }
+  } finally {
+    clearTimeout(timer);
+    _gasRelease();
+  }
+}
+
+// 通信エラー（404・タイムアウト・通信断）を最大2回まで自動リトライする（計3試行）。
+// 増やすと同時実行との掛け算で待ち時間が膨張するためこれ以上は増やさないこと。
+// GAS側の冪等化（add/delete系はそのまま安全・saveOrderはrequestIdで重複防止）と
+// セットで運用する前提
+async function _gasCall(url, init, timeoutMs) {
+  const retries = 2;
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await _gasFetchOnce(url, init, timeoutMs);
+    } catch (e) {
+      lastErr = e;
+      const transient = e.name === 'GasTransientError' || e.name === 'AbortError' || e.name === 'TypeError';
+      if (!transient || attempt === retries) break;
+      _gasNotifyRetry(attempt + 1);
+      await new Promise(r => setTimeout(r, attempt === 0 ? 1000 : 3000));
+    }
+  }
+  throw lastErr;
+}
+
+// gasGet/gasPost共通処理: 通信レベルのリトライ(_gasCall)に加え、
+// AUTH_UNAVAILABLE（GAS側の認証シート一時読み込み失敗）とSESSION_INVALID
+// （POSTボディ喪失の疑いを含む）を区別して扱う
+async function _gasRequest(url, init, timeoutMs, hasToken) {
+  const data = await _gasCall(url, init, timeoutMs);
+
+  // 認証確認そのものが一時的に失敗しただけ。ログアウトさせず1回だけ全再送する
+  if (data && data.error === 'AUTH_UNAVAILABLE') {
+    _gasNotifyRetry(1);
+    return await _gasCall(url, init, timeoutMs);
+  }
+
+  // トークンを送っているのにSESSION_INVALID＝POSTボディ喪失の可能性があるので
+  // 1回だけ全再送する。2連続でSESSION_INVALIDのときだけ本当に無効とみなす
+  if (data && data.error === 'SESSION_INVALID' && hasToken) {
+    _gasNotifyRetry(1);
+    const retryData = await _gasCall(url, init, timeoutMs);
+    if (retryData && retryData.error === 'SESSION_INVALID') {
+      localStorage.removeItem(SESSION_KEY);
+      location.replace(PORTAL_URL);
+    }
+    return retryData;
+  }
+
+  // トークンを送っていないのにSESSION_INVALID＝本当に未ログイン。即送還
+  if (data && data.error === 'SESSION_INVALID' && !hasToken) {
     localStorage.removeItem(SESSION_KEY);
     location.replace(PORTAL_URL);
     return data;
   }
+
   return data;
+}
+
+async function gasGet(params) {
+  // セッショントークンを自動付与
+  const session  = getAuthSession();
+  const hasToken = !!(session && session.token);
+  if (hasToken) params.session_token = session.token;
+  const qs = Object.keys(params).map(k => `${k}=${encodeURIComponent(params[k])}`).join('&');
+  return _gasRequest(`${GAS_URL}?${qs}`, { method: 'GET' }, _gasTimeoutFor(params.action), hasToken);
 }
 
 async function gasPost(params) {
   // セッショントークンを自動付与
-  const session = getAuthSession();
-  if (session && session.token) params.session_token = session.token;
+  const session  = getAuthSession();
+  const hasToken = !!(session && session.token);
+  if (hasToken) params.session_token = session.token;
   const body = Object.keys(params)
     .map(k => encodeURIComponent(k) + '=' + encodeURIComponent(params[k]))
     .join('&');
-  const res = await fetch(GAS_URL, {
+  return _gasRequest(GAS_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body
-  });
-  const data = await res.json();
-  // セッション無効エラーはポータルへリダイレクト
-  if (data && data.error === 'SESSION_INVALID') {
-    localStorage.removeItem(SESSION_KEY);
-    location.replace(PORTAL_URL);
-    return data;
-  }
-  return data;
+  }, _gasTimeoutFor(params.action), hasToken);
 }
 
 /* ===================================================
@@ -1446,7 +1562,7 @@ async function loadMasters() {
       showToast('マスター取得エラー: ' + (res.error || '不明'), 'error');
     }
   } catch(e) {
-    showToast('通信エラー。ネットワークを確認してください。', 'error');
+    showToast(_gasErrorMessage(e), 'error');
   } finally {
     hideLoading();
   }
@@ -1726,7 +1842,7 @@ async function startOrder() {
   };
   // 修正発注フラグも必ずクリアする。これがないと、直前に「修正発注」を押した状態で
   // 別の発注を新規開始した場合、その新規発注の保存時に直前の発注が誤って削除されてしまう（v1.24.5で修正）。
-  cartItems = []; savedOrderNo = null; revisionBaseOrderNo = null; saveCart();
+  cartItems = []; savedOrderNo = null; orderRequestId = null; revisionBaseOrderNo = null; saveCart();
   updateInputHeader(); showStep('step-input'); renderItemList();
   setTimeout(() => focusScanInput(), 150);
 }
@@ -1788,7 +1904,7 @@ function goToInput() {
 }
 
 function startNewOrder() {
-  cartItems = []; savedOrderNo = null; revisionBaseOrderNo = null; saveCart();
+  cartItems = []; savedOrderNo = null; orderRequestId = null; revisionBaseOrderNo = null; saveCart();
   showStep('step-select'); updateMasterBadge();
   document.getElementById('header-sub').textContent = '発注先を選んでください';
 }
@@ -1806,6 +1922,7 @@ function resumeOrderForRevision() {
 
   revisionBaseOrderNo = savedOrderNo; // 修正前の発注Noを記憶
   savedOrderNo = null;
+  orderRequestId = null; // 修正内容は新しい保存リクエストとして扱う
   goToInput();
   showToast('修正発注モード：内容を変更後、再度出力してください', 'success');
 }
@@ -2258,6 +2375,7 @@ function saveCart() {
   // ファイルはダウンロードされるのに履歴に残らない不具合が起きるため（v1.24.5で修正）。
   // ※同一カートを複数形式で出力する場合は saveCart が呼ばれない＝フラグ維持で重複保存を防ぐ。
   savedOrderNo = null;
+  orderRequestId = null; // カート内容が変わった＝新しい発注リクエストとして扱う
   sessionStorage.setItem(SS_CART, JSON.stringify(cartItems));
   if (currentScreen === 'inventory') renderInventoryList();
 }
@@ -2405,13 +2523,30 @@ function applyOutputButtons() {
 /* ===================================================
    出力処理
 =================================================== */
+// 発注1件ごとの冪等キーを発行する。「サーバーは保存できたがクライアントには
+// 404が返った」ケースで再送しても、GAS側がこのIDで既存発注を検出し二重登録しない
+function _generateRequestId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // 古いiOS Safari等 crypto.randomUUID 非対応環境向けフォールバック
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0'));
+  return `${hex.slice(0,4).join('')}-${hex.slice(4,6).join('')}-${hex.slice(6,8).join('')}-${hex.slice(8,10).join('')}-${hex.slice(10,16).join('')}`;
+}
+
 async function saveOrderToGAS(outputType) {
   if (savedOrderNo) return savedOrderNo;
+  if (!orderRequestId) orderRequestId = _generateRequestId();
   const params = {
     action: 'saveOrder', date: currentOrder.date,
     supplierCode: currentOrder.supplierCode, supplierName: currentOrder.supplierName,
     fax: currentOrder.fax, staff: currentOrder.staff, outputType,
-    items: JSON.stringify(cartItems)
+    items: JSON.stringify(cartItems),
+    requestId: orderRequestId
   };
   // 修正発注の場合は元の発注Noを渡す（GAS側で新規保存後に削除する）
   if (revisionBaseOrderNo) params.revisionBaseOrderNo = revisionBaseOrderNo;
@@ -3205,7 +3340,7 @@ async function loadHistory(forceRefresh, filterSupplierCode) {
       container.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><div>履歴がありません</div></div>`;
     }
   } catch(e) {
-    container.innerHTML = `<div class="empty-state"><div>読み込みエラー</div></div>`;
+    container.innerHTML = `<div class="empty-state"><div>${escHtml(_gasErrorMessage(e))}</div></div>`;
   }
 }
 
@@ -3304,7 +3439,7 @@ async function toggleHistoryDetail(el, orderNo) {
       detailDiv.innerHTML = '<div style="font-size:13px;color:var(--text-light)">明細データがありません</div>';
     }
   } catch(e) {
-    detailDiv.innerHTML = '<div style="font-size:13px;color:var(--danger)">読み込みエラー</div>';
+    detailDiv.innerHTML = `<div style="font-size:13px;color:var(--danger)">${escHtml(_gasErrorMessage(e))}</div>`;
   }
 }
 
@@ -3631,7 +3766,7 @@ async function copyOrderFromHistory(orderNo) {
         showToast('取得エラー: ' + (res.error || '不明'), 'error'); return;
       }
     } catch(e) {
-      showToast('通信エラー', 'error'); return;
+      showToast(_gasErrorMessage(e), 'error'); return;
     } finally { hideLoading(); }
   }
 
@@ -3673,6 +3808,7 @@ async function copyOrderFromHistory(orderNo) {
   }));
 
   savedOrderNo = null;
+  orderRequestId = null;
   revisionBaseOrderNo = null; // 複製は新規発注。修正発注フラグの残留による誤削除を防ぐ
   saveCart();
 
@@ -3709,7 +3845,7 @@ async function deleteOrderHistory(orderNo) {
       showToast('エラー: ' + (res.error || '不明'), 'error');
     }
   } catch(e) {
-    showToast('通信エラー', 'error');
+    showToast(_gasErrorMessage(e), 'error');
   } finally { hideLoading(); }
 }
 
@@ -3805,7 +3941,7 @@ async function saveSupplierModal() {
       await loadMasters();
       showToast(mode === 'add' ? '発注先を追加しました' : '発注先を更新しました', 'success');
     } else { showToast('エラー: ' + (res.error || '不明'), 'error'); }
-  } catch(e) { showToast('通信エラー', 'error'); } finally { hideLoading(); }
+  } catch(e) { showToast(_gasErrorMessage(e), 'error'); } finally { hideLoading(); }
 }
 async function deleteSupplier(code, name) {
   if (!confirm(`「${name}」を削除しますか？`)) return;
@@ -3814,7 +3950,7 @@ async function deleteSupplier(code, name) {
     const res = await gasPost({ action: 'saveSupplier', code, name, fax: '', mode: 'delete' });
     if (res.success) { await loadMasters(); showToast('削除しました', 'success'); }
     else { showToast('エラー: ' + (res.error || '不明'), 'error'); }
-  } catch(e) { showToast('通信エラー', 'error'); } finally { hideLoading(); }
+  } catch(e) { showToast(_gasErrorMessage(e), 'error'); } finally { hideLoading(); }
 }
 
 function checkSupplierCodes() {
@@ -4097,6 +4233,7 @@ function openInventoryQtyModal(idx) {
       outputType:   ''
     };
     savedOrderNo = null;
+    orderRequestId = null;
     revisionBaseOrderNo = null; // 新規発注扱い。修正発注フラグの残留による誤削除を防ぐ
   }
 
@@ -4216,7 +4353,7 @@ async function loadProposals(force = false) {
       wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div>取得エラー: ${escHtml(res.error || '不明')}</div></div>`;
     }
   } catch(e) {
-    wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><div>通信エラー。ネットワークを確認してください。</div></div>';
+    wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div>${escHtml(_gasErrorMessage(e))}</div></div>`;
   } finally {
     proposalsLoading = false;
   }
@@ -4958,7 +5095,7 @@ async function ackReceived(orderNo, code, name, qty) {
       showToast('登録エラー: ' + (res.error || '不明'), 'error');
     }
   } catch(e) {
-    showToast('通信エラー。ネットワークを確認してください。', 'error');
+    showToast(_gasErrorMessage(e), 'error');
   } finally {
     hideLoading();
   }
@@ -5036,6 +5173,8 @@ async function ackExcess(code, name) {
     const res = await gasPost({ action: 'saveExcessAck', mode: 'add', code, name, reason: reason.trim() });
     if (res.success) {
       proposalsData.excess = proposalsData.excess.filter(x => x.code !== code);
+      // alreadyExists（冪等化された再送）でも重複登録しないよう、先に同一コードを除いてから追加する
+      proposalsData.excessAcks = proposalsData.excessAcks.filter(x => x.code !== code);
       proposalsData.excessAcks.push({ code, name, reason: reason.trim() });
       renderProposalExcess();
       showToast(`「${name}」を確認済みにしました`, 'success');
@@ -5043,7 +5182,7 @@ async function ackExcess(code, name) {
       showToast('登録エラー: ' + (res.error || '不明'), 'error');
     }
   } catch(e) {
-    showToast('通信エラー。ネットワークを確認してください。', 'error');
+    showToast(_gasErrorMessage(e), 'error');
   } finally {
     hideLoading();
   }
@@ -5060,7 +5199,7 @@ async function restoreExcessAck(code) {
       showToast('解除エラー: ' + (res.error || '不明'), 'error');
     }
   } catch(e) {
-    showToast('通信エラー。ネットワークを確認してください。', 'error');
+    showToast(_gasErrorMessage(e), 'error');
   } finally {
     hideLoading();
   }
@@ -5190,6 +5329,8 @@ async function ackDead(code, name) {
     const res = await gasPost({ action: 'saveDeadAck', mode: 'add', code, name, reason: reason.trim() });
     if (res.success) {
       proposalsData.dead = proposalsData.dead.filter(x => x.code !== code);
+      // alreadyExists（冪等化された再送）でも重複登録しないよう、先に同一コードを除いてから追加する
+      proposalsData.deadAcks = proposalsData.deadAcks.filter(x => x.code !== code);
       proposalsData.deadAcks.push({ code, name, reason: reason.trim() });
       renderDeadScreen();
       updateDeadBadge();
@@ -5198,7 +5339,7 @@ async function ackDead(code, name) {
       showToast('登録エラー: ' + (res.error || '不明'), 'error');
     }
   } catch(e) {
-    showToast('通信エラー。ネットワークを確認してください。', 'error');
+    showToast(_gasErrorMessage(e), 'error');
   } finally {
     hideLoading();
   }
@@ -5215,7 +5356,7 @@ async function restoreDeadAck(code) {
       showToast('解除エラー: ' + (res.error || '不明'), 'error');
     }
   } catch(e) {
-    showToast('通信エラー。ネットワークを確認してください。', 'error');
+    showToast(_gasErrorMessage(e), 'error');
   } finally {
     hideLoading();
   }
@@ -5250,6 +5391,8 @@ async function excludeProposal(code, name) {
     const res = await gasPost({ action: 'saveProposalExclusion', mode: 'add', code, name, reason: reason.trim() });
     if (res.success) {
       proposalsData.proposals = proposalsData.proposals.filter(p => p.code !== code);
+      // alreadyExists（冪等化された再送）でも重複登録しないよう、先に同一コードを除いてから追加する
+      proposalsData.exclusions = proposalsData.exclusions.filter(x => x.code !== code);
       proposalsData.exclusions.push({ code, name, reason: reason.trim() });
       renderProposalFilter();
       renderProposalList();
@@ -5259,7 +5402,7 @@ async function excludeProposal(code, name) {
       showToast('除外登録エラー: ' + (res.error || '不明'), 'error');
     }
   } catch(e) {
-    showToast('通信エラー。ネットワークを確認してください。', 'error');
+    showToast(_gasErrorMessage(e), 'error');
   } finally {
     hideLoading();
   }
@@ -5277,7 +5420,7 @@ async function restoreProposalExclusion(code) {
       showToast('解除エラー: ' + (res.error || '不明'), 'error');
     }
   } catch(e) {
-    showToast('通信エラー。ネットワークを確認してください。', 'error');
+    showToast(_gasErrorMessage(e), 'error');
   } finally {
     hideLoading();
   }
@@ -5313,6 +5456,8 @@ async function markEol(code, name) {
     const res = await gasPost({ action: 'saveEolFlag', mode: 'add', code, name, reason: reason.trim() });
     if (res.success) {
       proposalsData.proposals = proposalsData.proposals.filter(p => p.code !== code);
+      // alreadyExists（冪等化された再送）でも重複登録しないよう、先に同一コードを除いてから追加する
+      proposalsData.eol = proposalsData.eol.filter(x => x.code !== code);
       proposalsData.eol.push({ code, name, reason: reason.trim() });
       renderProposalFilter();
       renderProposalList();
@@ -5322,7 +5467,7 @@ async function markEol(code, name) {
       showToast('終売登録エラー: ' + (res.error || '不明'), 'error');
     }
   } catch(e) {
-    showToast('通信エラー。ネットワークを確認してください。', 'error');
+    showToast(_gasErrorMessage(e), 'error');
   } finally {
     hideLoading();
   }
@@ -5340,7 +5485,7 @@ async function restoreEol(code) {
       showToast('解除エラー: ' + (res.error || '不明'), 'error');
     }
   } catch(e) {
-    showToast('通信エラー。ネットワークを確認してください。', 'error');
+    showToast(_gasErrorMessage(e), 'error');
   } finally {
     hideLoading();
   }
@@ -5421,7 +5566,7 @@ async function saveLotModal() {
       showToast('保存エラー: ' + (res.error || '不明'), 'error');
     }
   } catch(e) {
-    showToast('通信エラー。ネットワークを確認してください。', 'error');
+    showToast(_gasErrorMessage(e), 'error');
   } finally {
     hideLoading();
   }
@@ -5439,7 +5584,7 @@ async function restoreLotOverride(code) {
       showToast('解除エラー: ' + (res.error || '不明'), 'error');
     }
   } catch(e) {
-    showToast('通信エラー。ネットワークを確認してください。', 'error');
+    showToast(_gasErrorMessage(e), 'error');
   } finally {
     hideLoading();
   }
@@ -5481,7 +5626,7 @@ function startOrderFromProposals(supplierCode) {
     date: getTodayStr(),
     outputType: ''
   };
-  savedOrderNo = null; revisionBaseOrderNo = null;
+  savedOrderNo = null; orderRequestId = null; revisionBaseOrderNo = null;
 
   cartItems = picked.map(({ p, qty }) => {
     const master = productMaster.find(m => m.code === p.code) || {};
@@ -5508,11 +5653,18 @@ function startOrderFromProposals(supplierCode) {
   showToast(`提案から${cartItems.length}件をカートに追加しました`, 'success');
 }
 
+// 参照カウント方式（同時2本まで通信できるため、片方の完了でもう片方の
+// ローディング表示を消してしまわないようにする）
+let _loadingDepth = 0;
 function showLoading(msg = '処理中...') {
+  _loadingDepth++;
   document.getElementById('loading-msg').textContent = msg;
   document.getElementById('loading-overlay').classList.add('open');
 }
-function hideLoading() { document.getElementById('loading-overlay').classList.remove('open'); }
+function hideLoading() {
+  _loadingDepth = Math.max(0, _loadingDepth - 1);
+  if (_loadingDepth === 0) document.getElementById('loading-overlay').classList.remove('open');
+}
 
 function showToast(msg, type = '') {
   const el = document.getElementById('toast');
