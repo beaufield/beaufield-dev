@@ -36,7 +36,7 @@
 // 新規にsetupSheetsでシートを作る場合はヘッダーに最初から含まれるため不要。
 // ============================================================
 
-const VERSION  = '0.5.0';
+const VERSION  = '0.6.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -180,7 +180,6 @@ function applyApplication(data) {
   const staffName      = String(data.staff_name || '').trim();
   const email          = String(data.email || '').trim();
   const phone          = String(data.phone || '').trim();
-  const area           = String(data.area || '').trim();
   const businessType   = String(data.business_type || '').trim(); // 🆕 U列。名札の色分けに使用（§4-1-2）
   const hasTransaction = String(data.has_transaction || '').trim(); // 'yes' / 'no'
   const address        = String(data.address || '').trim();        // 新規客のみ
@@ -192,7 +191,6 @@ function applyApplication(data) {
   if (!staffName) return _err('お名前を入力してください');
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return _err('メールアドレスの形式が正しくありません');
   if (!phone) return _err('お電話番号を入力してください');
-  if (!area) return _err('サロン様エリアを選択してください');
   if (!businessType) return _err('業態を選択してください');
   if (!agree) return _err('美容従事者であることの確認にチェックしてください');
 
@@ -225,7 +223,8 @@ function applyApplication(data) {
 
       sh.getRange(foundRow, 3, 1, 1).setValue(now); // updated_at
       sh.getRange(foundRow, 5, 1, 9).setValues([[
-        salonName, staffName, email, emailNorm, phone, area, hasTransaction, address, referrer
+        // J列(area)はフォームから削除済み（2026-08-06）。列位置を保つため空文字を書き続ける
+        salonName, staffName, email, emailNorm, phone, '', hasTransaction, address, referrer
       ]]);
       sh.getRange(foundRow, 14, 1, 1).setValue(agree);
       sh.getRange(foundRow, 18, 1, 1).setValue('confirmed');
@@ -238,7 +237,7 @@ function applyApplication(data) {
 
       sh.appendRow([
         appId, now, now, 'web',
-        salonName, staffName, email, emailNorm, phone, area,
+        salonName, staffName, email, emailNorm, phone, '', // J列(area)はフォームから削除済み（2026-08-06）
         hasTransaction, address, referrer, agree,
         '', '',                 // line_friend_id / line_user_id（LIFF連動はP2で使用）
         ticketToken, 'confirmed', '', note,
@@ -387,7 +386,7 @@ function setupSheets() {
     appSh = ss.insertSheet(SHEET_APPLICATIONS);
     appSh.getRange(1, 1, 1, 21).setValues([[
       'app_id', 'created_at', 'updated_at', 'source',
-      'salon_name', 'staff_name', 'email', 'email_norm', 'phone', 'area',
+      'salon_name', 'staff_name', 'email', 'email_norm', 'phone', 'area', // areaは2026-08-06にフォームから削除・列は維持（空文字のみ）
       'has_transaction', 'address', 'referrer', 'agree_capability',
       'line_friend_id', 'line_user_id',
       'ticket_token', 'status', 'checked_in_at', 'note',
