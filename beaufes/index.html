@@ -129,6 +129,17 @@
       <option>小林市</option>
     </select>
 
+    <label>業態<span class="req">必須</span></label>
+    <select id="business_type" required>
+      <option value="">選択してください</option>
+      <option>美容室</option>
+      <option>理容室</option>
+      <option>エステ</option>
+      <option>ネイル</option>
+      <option>アイ</option>
+      <option>その他</option>
+    </select>
+
     <label>ビューフィールドとお取引はありますか？<span class="req">必須</span></label>
     <div class="radio-group">
       <label><input type="radio" name="has_transaction" value="yes" checked> あり</label>
@@ -158,7 +169,7 @@
   </form>
 
   <p style="font-size:12px;color:#888;text-align:center;">
-    ※プチセミナーのご予約は、内容確定後に改めてご案内いたします
+    ※セミナーのご予約は、内容が決まり次第、入場パス画面からお申し込みいただけます（現在準備中）
   </p>
   <p style="font-size:11px;color:#bbb;text-align:center;" id="versionLine"></p>
 </main>
@@ -166,7 +177,7 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.2.0';
+const APP_VERSION = '0.3.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
@@ -196,6 +207,7 @@ document.getElementById('applyForm').addEventListener('submit', async (ev) => {
     email: document.getElementById('email').value.trim(),
     phone: document.getElementById('phone').value.trim(),
     area: document.getElementById('area').value,
+    business_type: document.getElementById('business_type').value,
     has_transaction: document.querySelector('input[name=has_transaction]:checked').value,
     address: document.getElementById('address').value.trim(),
     referrer: document.getElementById('referrer').value.trim(),

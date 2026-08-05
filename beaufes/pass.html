@@ -69,6 +69,10 @@
     <div id="checkedInBox"></div>
 
     <div class="event-info" id="eventInfo"></div>
+
+    <div class="event-info" id="seminarInfo">
+      <b>セミナー</b>：内容が決まり次第、この画面からご予約いただけます（現在準備中）
+    </div>
   </div>
 
   <div class="card errorCard" id="errorCard" style="display:none;">
@@ -84,7 +88,7 @@
 
 <script src="lib/qrcode.min.js"></script>
 <script>
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.4.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
