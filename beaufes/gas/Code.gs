@@ -1,6 +1,6 @@
 // ============================================================
 // ビューフェス申込アプリ - Google Apps Script
-// Version: 0.3.0
+// Version: 0.5.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -29,9 +29,14 @@
 // 申込受付中の分散送信は問題ないが、前日リマインド等で200名に一括送信する機能を作る際は、
 // 50〜80件ずつ複数回に分けて送るなどの対策が必須。
 // 詳細: LINEHarness/ビューフェス申込_設計.md §7-0-1〜7-0-2
+//
+// 🆕 v0.5.0（2026-08-05・設計書v3対応）: applications シートに business_type 列（U列=21列目）を追加。
+// 既存の本番シート（beaufes2026）には自動で列が増えないため、デプロイ後に一度だけ
+// migrateAddBusinessType() をGASエディタから手動実行してヘッダーを追加すること。
+// 新規にsetupSheetsでシートを作る場合はヘッダーに最初から含まれるため不要。
 // ============================================================
 
-const VERSION  = '0.3.0';
+const VERSION  = '0.5.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -176,6 +181,7 @@ function applyApplication(data) {
   const email          = String(data.email || '').trim();
   const phone          = String(data.phone || '').trim();
   const area           = String(data.area || '').trim();
+  const businessType   = String(data.business_type || '').trim(); // 🆕 U列。名札の色分けに使用（§4-1-2）
   const hasTransaction = String(data.has_transaction || '').trim(); // 'yes' / 'no'
   const address        = String(data.address || '').trim();        // 新規客のみ
   const referrer       = String(data.referrer || '').trim();       // 新規客のみ
@@ -187,6 +193,7 @@ function applyApplication(data) {
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return _err('メールアドレスの形式が正しくありません');
   if (!phone) return _err('お電話番号を入力してください');
   if (!area) return _err('サロン様エリアを選択してください');
+  if (!businessType) return _err('業態を選択してください');
   if (!agree) return _err('美容従事者であることの確認にチェックしてください');
 
   const emailNorm = email.toLowerCase();
@@ -222,6 +229,7 @@ function applyApplication(data) {
       ]]);
       sh.getRange(foundRow, 14, 1, 1).setValue(agree);
       sh.getRange(foundRow, 18, 1, 1).setValue('confirmed');
+      sh.getRange(foundRow, 21, 1, 1).setValue(businessType); // U列（§4-1-2）
     } else {
       // --- 新規申込 ---
       isUpdate    = false;
@@ -233,7 +241,8 @@ function applyApplication(data) {
         salonName, staffName, email, emailNorm, phone, area,
         hasTransaction, address, referrer, agree,
         '', '',                 // line_friend_id / line_user_id（LIFF連動はP2で使用）
-        ticketToken, 'confirmed', '', note
+        ticketToken, 'confirmed', '', note,
+        businessType             // U列（§4-1-2）
       ]);
     }
   } finally {
@@ -307,7 +316,6 @@ function _sendConfirmationMail(email, salonName, staffName, passUrl, isUpdate) {
     '▼ 当日は入場口でこちらの入場パスをご提示ください\n' +
     '  ' + passUrl + '\n\n' +
     '※このメールを保存いただくか、上のリンクをスマホのホーム画面に追加しておくと当日スムーズです\n' +
-    '※お手元にご用意がなくても、受付でお名前を伺えばご入場いただけます\n' +
     '\n' +
     '--\n' +
     'ビューフェス事務局（' + MAIL_FROM_ADDR + '）\n';
@@ -319,8 +327,7 @@ function _sendConfirmationMail(email, salonName, staffName, passUrl, isUpdate) {
     '会場: ' + _escapeHtml(venueName) + ' ' + _escapeHtml(venueAddr) + '</p>' +
     '<p><a href="' + passUrl + '">▼ 入場パスを開く</a></p>' +
     '<p style="color:#666;font-size:13px;">' +
-    '※このメールを保存いただくか、上のリンクをスマホのホーム画面に追加しておくと当日スムーズです<br>' +
-    '※お手元にご用意がなくても、受付でお名前を伺えばご入場いただけます</p>' +
+    '※このメールを保存いただくか、上のリンクをスマホのホーム画面に追加しておくと当日スムーズです</p>' +
     '<p style="color:#999;font-size:12px;">ビューフェス事務局（' + MAIL_FROM_ADDR + '）</p>';
 
   _sendMail(email, subject, textBody, htmlBody, isUpdate ? 'resend' : 'apply');
@@ -378,12 +385,13 @@ function setupSheets() {
   let appSh = ss.getSheetByName(SHEET_APPLICATIONS);
   if (!appSh) {
     appSh = ss.insertSheet(SHEET_APPLICATIONS);
-    appSh.getRange(1, 1, 1, 20).setValues([[
+    appSh.getRange(1, 1, 1, 21).setValues([[
       'app_id', 'created_at', 'updated_at', 'source',
       'salon_name', 'staff_name', 'email', 'email_norm', 'phone', 'area',
       'has_transaction', 'address', 'referrer', 'agree_capability',
       'line_friend_id', 'line_user_id',
-      'ticket_token', 'status', 'checked_in_at', 'note'
+      'ticket_token', 'status', 'checked_in_at', 'note',
+      'business_type'          // 🆕 U列（§4-1-2・v0.5.0で追加）
     ]]);
     appSh.setFrozenRows(1);
     appSh.setColumnWidth(1, 110);
@@ -466,6 +474,30 @@ function setupSheets() {
   }
 
   Logger.log('setupSheets完了');
+}
+
+// ============================================================
+// 🆕 マイグレーション: 既存の applications シートに business_type 列（U列）を追加する
+// 2026-08-05・設計書v3（§4-1-2）対応。
+// 【本番シートに対して一度だけ手動実行すること】GASエディタの関数選択で
+// migrateAddBusinessType を選び、▷実行する。setupSheetsとは別に必要（setupSheetsは
+// シートが既に存在する場合は何もしないため、既存シートへの列追加はこの関数が担う）。
+// 新規にsetupSheetsでシートを作る場合はヘッダーに最初から含まれるため実行不要。
+// ============================================================
+function migrateAddBusinessType() {
+  _checkProps();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh = _getSheet(ss, SHEET_APPLICATIONS);
+  const header = sh.getRange(1, 21).getValue();
+  if (header === 'business_type') {
+    Logger.log('business_type列は既にU1に存在します。何もしませんでした。');
+    return;
+  }
+  if (header) {
+    throw new Error('U1に想定外の値が入っています（"' + header + '"）。手動で確認してください。');
+  }
+  sh.getRange(1, 21).setValue('business_type');
+  Logger.log('business_type列をU1に追加しました。');
 }
 
 // ============================================================
