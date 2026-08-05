@@ -79,6 +79,7 @@
     padding: 10px 12px;
     font-size: 13px;
     margin-top: 14px;
+    line-height: 1.7;
   }
   #loadingOverlay {
     display: none;
@@ -87,6 +88,32 @@
     align-items: center; justify-content: center;
     font-size: 15px; color: var(--main-dark); font-weight: bold;
     z-index: 100;
+  }
+  /* 重複確認・パス再発行の共通パーツ */
+  .panelTitle { font-size: 16px; font-weight: bold; margin: 0 0 10px; }
+  .panelLead  { font-size: 14px; line-height: 1.8; color: #555; margin: 0 0 16px; }
+  .existing {
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px; margin-bottom: 12px; background: #fbfdfe;
+  }
+  .existing .who  { font-weight: bold; font-size: 15px; }
+  .existing .meta { font-size: 12px; color: #888; margin-top: 4px; }
+  .btn {
+    width: 100%; padding: 13px; margin-top: 10px;
+    font-size: 15px; font-weight: bold; border-radius: 9px; cursor: pointer;
+    border: none; color: #fff; background: var(--main-dark);
+  }
+  .btnOutline {
+    background: #fff; color: var(--main-dark); border: 2px solid var(--main-dark);
+  }
+  .btnQuiet {
+    background: #fff; color: #888; border: 1px solid var(--border); font-weight: normal;
+  }
+  .linkLine { text-align: center; margin-top: 18px; font-size: 13px; }
+  .linkLine a { color: var(--main-dark); }
+  .okMsg {
+    background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0;
+    border-radius: 8px; padding: 14px; font-size: 14px; line-height: 1.8;
   }
 </style>
 </head>
@@ -104,129 +131,331 @@
     <div><b>申込締切</b>：2026年10月20日（火）</div>
   </div>
 
-  <form class="card" id="applyForm">
-    <label>サロン様名<span class="req">必須</span></label>
-    <input type="text" id="salon_name" required>
+  <!-- ============ 申込フォーム ============ -->
+  <div id="formWrap">
+    <form class="card" id="applyForm">
+      <label>サロン様名<span class="req">必須</span></label>
+      <input type="text" id="salon_name" required>
 
-    <label>お名前（フルネーム）<span class="req">必須</span></label>
-    <input type="text" id="staff_name" required>
+      <label>お名前（フルネーム）<span class="req">必須</span></label>
+      <input type="text" id="staff_name" required>
 
+      <label>メールアドレス<span class="req">必須</span></label>
+      <input type="email" id="email" required>
+      <div class="hint">入場パスの送付先です。入力ミスにご注意ください。</div>
+
+      <label>お電話番号<span class="req">必須</span></label>
+      <input type="tel" id="phone" required>
+
+      <label>業態<span class="req">必須</span></label>
+      <select id="business_type" required>
+        <option value="">選択してください</option>
+        <option>美容室</option>
+        <option>理容室</option>
+        <option>エステ</option>
+        <option>ネイル</option>
+        <option>アイ</option>
+        <option>その他</option>
+      </select>
+
+      <label>ビューフィールドとお取引はありますか？<span class="req">必須</span></label>
+      <div class="radio-group">
+        <label><input type="radio" name="has_transaction" value="yes" checked> あり</label>
+        <label><input type="radio" name="has_transaction" value="no"> なし（初めて）</label>
+      </div>
+
+      <div id="newFields">
+        <label>サロンのご住所</label>
+        <input type="text" id="address">
+        <label>ご紹介サロン名・お名前（あれば）</label>
+        <input type="text" id="referrer">
+      </div>
+
+      <label>備考（あれば）</label>
+      <textarea id="note"></textarea>
+
+      <div class="checkbox-line">
+        <input type="checkbox" id="agree_capability" required>
+        <label style="font-weight:normal;margin:0;" for="agree_capability">
+          美容従事者(理美容師、エステ等サロン様)であることを確認しました
+        </label>
+      </div>
+
+      <div class="errorMsg" id="errorMsg"></div>
+
+      <button type="submit" id="submitBtn">この内容で申し込む</button>
+    </form>
+
+    <p style="font-size:12px;color:#888;text-align:center;">
+      ※セミナーのご予約は、内容が決まり次第、入場パス画面からお申し込みいただけます（現在準備中）
+    </p>
+    <div class="linkLine">
+      <a href="#" id="toResend">入場パスのリンクを紛失した方はこちら</a>
+    </div>
+  </div>
+
+  <!-- ============ 重複確認（既に同じメールでの申込がある場合） ============ -->
+  <div class="card" id="confirmPanel" style="display:none;">
+    <p class="panelTitle">すでにお申し込みがあります</p>
+    <p class="panelLead">
+      このメールアドレスでは、すでに次のお申し込みをお預かりしています。<br>
+      どちらにするかお選びください。
+    </p>
+    <div id="existingList"></div>
+    <button class="btn btnOutline" id="addNewBtn">別の方として新しく申し込む</button>
+    <button class="btn btnQuiet" id="backToFormBtn">入力画面に戻る</button>
+    <div class="errorMsg" id="confirmError"></div>
+  </div>
+
+  <!-- ============ パス再発行 ============ -->
+  <div class="card" id="resendPanel" style="display:none;">
+    <p class="panelTitle">入場パスのリンクを再送します</p>
+    <p class="panelLead">
+      お申し込み時のメールアドレスを入力してください。<br>
+      ご登録があれば、入場パスのリンクをお送りします。
+    </p>
     <label>メールアドレス<span class="req">必須</span></label>
-    <input type="email" id="email" required>
-    <div class="hint">入場パスの送付先です。入力ミスにご注意ください。</div>
-
-    <label>お電話番号<span class="req">必須</span></label>
-    <input type="tel" id="phone" required>
-
-    <label>業態<span class="req">必須</span></label>
-    <select id="business_type" required>
-      <option value="">選択してください</option>
-      <option>美容室</option>
-      <option>理容室</option>
-      <option>エステ</option>
-      <option>ネイル</option>
-      <option>アイ</option>
-      <option>その他</option>
-    </select>
-
-    <label>ビューフィールドとお取引はありますか？<span class="req">必須</span></label>
-    <div class="radio-group">
-      <label><input type="radio" name="has_transaction" value="yes" checked> あり</label>
-      <label><input type="radio" name="has_transaction" value="no"> なし（初めて）</label>
+    <input type="email" id="resendEmail">
+    <button class="btn" id="resendBtn">パスのリンクを送る</button>
+    <button class="btn btnQuiet" id="backFromResendBtn">申し込み画面に戻る</button>
+    <div class="errorMsg" id="resendError"></div>
+    <div id="resendDone" style="display:none;margin-top:16px;">
+      <div class="okMsg">
+        ご登録があれば、入場パスのリンクをお送りしました。<br>
+        メールが届かない場合は、迷惑メールフォルダもご確認ください。
+      </div>
     </div>
+  </div>
 
-    <div id="newFields">
-      <label>サロンのご住所</label>
-      <input type="text" id="address">
-      <label>ご紹介サロン名・お名前（あれば）</label>
-      <input type="text" id="referrer">
-    </div>
-
-    <label>備考（あれば）</label>
-    <textarea id="note"></textarea>
-
-    <div class="checkbox-line">
-      <input type="checkbox" id="agree_capability" required>
-      <label style="font-weight:normal;margin:0;" for="agree_capability">
-        美容従事者(理美容師、エステ等サロン様)であることを確認しました
-      </label>
-    </div>
-
-    <div class="errorMsg" id="errorMsg"></div>
-
-    <button type="submit" id="submitBtn">この内容で申し込む</button>
-  </form>
-
-  <p style="font-size:12px;color:#888;text-align:center;">
-    ※セミナーのご予約は、内容が決まり次第、入場パス画面からお申し込みいただけます（現在準備中）
-  </p>
   <p style="font-size:11px;color:#bbb;text-align:center;" id="versionLine"></p>
 </main>
 
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.5.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
-document.querySelectorAll('input[name=has_transaction]').forEach(r => {
-  r.addEventListener('change', () => {
-    document.getElementById('newFields').style.display =
+// GASの結果配信は逐次でも約7%失敗する（実測）。リトライ前提で組む。
+const FETCH_TIMEOUT_MS = 15000;
+const MAX_ATTEMPTS     = 3;
+const RETRY_WAIT_MS    = [800, 2000];
+
+function el(id) { return document.getElementById(id); }
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+document.querySelectorAll('input[name=has_transaction]').forEach(function (r) {
+  r.addEventListener('change', function () {
+    el('newFields').style.display =
       document.querySelector('input[name=has_transaction]:checked').value === 'no' ? 'block' : 'none';
   });
 });
 
-function showError(msg) {
-  const el = document.getElementById('errorMsg');
-  el.textContent = msg;
-  el.style.display = 'block';
+function showError(id, msg) {
+  const e = el(id);
+  e.innerHTML = msg;
+  e.style.display = 'block';
 }
-function hideError() {
-  document.getElementById('errorMsg').style.display = 'none';
+function hideError(id) { el(id).style.display = 'none'; }
+function overlay(on) { el('loadingOverlay').style.display = on ? 'flex' : 'none'; }
+
+// ------------------------------------------------------------
+// GASへのPOST（1回ぶん）
+// 結果配信に失敗すると404のHTMLが返るため、テキストで受けてから自前でJSON.parseする。
+// ------------------------------------------------------------
+async function postOnce(params) {
+  const ctrl  = new AbortController();
+  const timer = setTimeout(function () { ctrl.abort(); }, FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      body: new URLSearchParams(params),
+      redirect: 'follow',
+      signal: ctrl.signal
+    });
+    if (!res.ok) throw new Error('HTTP_' + res.status);
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new Error('NON_JSON');
+    }
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-document.getElementById('applyForm').addEventListener('submit', async (ev) => {
-  ev.preventDefault();
-  hideError();
+// リトライ付きPOST。
+// 🔴 リトライしても二重登録にならない理由: サーバー側は同じメールの申込を見つけると
+// 行を作らずに duplicate_found を返す（Code.gs v0.7.0）。つまり再送信は安全。
+// 1回目が実は成功していた場合は duplicate_found が返るので、確認画面でお客様に選んでもらう。
+async function postWithRetry(params) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) await sleep(RETRY_WAIT_MS[attempt - 1] || 2000);
+    try {
+      return await postOnce(params);
+    } catch (e) {
+      lastErr = e && e.message ? e.message : String(e);
+    }
+  }
+  throw new Error(lastErr || 'UNKNOWN');
+}
 
-  const payload = {
-    salon_name: document.getElementById('salon_name').value.trim(),
-    staff_name: document.getElementById('staff_name').value.trim(),
-    email: document.getElementById('email').value.trim(),
-    phone: document.getElementById('phone').value.trim(),
-    business_type: document.getElementById('business_type').value,
-    has_transaction: document.querySelector('input[name=has_transaction]:checked').value,
-    address: document.getElementById('address').value.trim(),
-    referrer: document.getElementById('referrer').value.trim(),
-    note: document.getElementById('note').value.trim(),
-    agree_capability: document.getElementById('agree_capability').checked
+// ------------------------------------------------------------
+// 画面の出し分け
+// ------------------------------------------------------------
+function showPanel(which) {
+  el('formWrap').style.display     = (which === 'form')    ? 'block' : 'none';
+  el('confirmPanel').style.display = (which === 'confirm') ? 'block' : 'none';
+  el('resendPanel').style.display  = (which === 'resend')  ? 'block' : 'none';
+  window.scrollTo(0, 0);
+}
+
+// ------------------------------------------------------------
+// 申込データの組み立て
+// ------------------------------------------------------------
+function buildPayload() {
+  return {
+    salon_name:       el('salon_name').value.trim(),
+    staff_name:       el('staff_name').value.trim(),
+    email:            el('email').value.trim(),
+    phone:            el('phone').value.trim(),
+    business_type:    el('business_type').value,
+    has_transaction:  document.querySelector('input[name=has_transaction]:checked').value,
+    address:          el('address').value.trim(),
+    referrer:         el('referrer').value.trim(),
+    note:             el('note').value.trim(),
+    agree_capability: el('agree_capability').checked
   };
+}
 
-  const btn = document.getElementById('submitBtn');
-  btn.disabled = true;
-  document.getElementById('loadingOverlay').style.display = 'flex';
+// 申込を送信する。mode: '' | 'update' | 'new'
+async function sendApply(mode, targetAppId) {
+  const payload = buildPayload();
+  if (mode) payload.mode = mode;
+  if (targetAppId) payload.target_app_id = targetAppId;
+
+  overlay(true);
+  el('submitBtn').disabled = true;
 
   try {
-    const body = new URLSearchParams({ action: 'apply', data: JSON.stringify(payload) });
-    const res = await fetch(GAS_URL, { method: 'POST', body, redirect: 'follow' });
-    const json = await res.json();
+    const json = await postWithRetry({ action: 'apply', data: JSON.stringify(payload) });
 
     if (!json.success) {
-      showError(json.error || '送信に失敗しました。時間をおいて再度お試しください。');
-      btn.disabled = false;
-      document.getElementById('loadingOverlay').style.display = 'none';
+      overlay(false);
+      el('submitBtn').disabled = false;
+      showPanel('form');
+      showError('errorMsg', json.error || '送信に失敗しました。時間をおいて再度お試しください。');
+      return;
+    }
+
+    // すでに同じメールの申込がある → お客様に選んでもらう（無言で上書きしない）
+    if (json.data.duplicate_found) {
+      overlay(false);
+      el('submitBtn').disabled = false;
+      renderConfirm(json.data.existing);
+      showPanel('confirm');
       return;
     }
 
     // 入場パス画面へ遷移（QR表示・完了メッセージはそちらで担う）
-    location.href = 'pass.html?t=' + encodeURIComponent(json.data.pass_url.split('t=')[1]) + '&new=1';
+    const ticket = new URL(json.data.pass_url, location.href).searchParams.get('t');
+    location.href = 'pass.html?t=' + encodeURIComponent(ticket) + '&new=1';
+
   } catch (e) {
-    showError('通信エラーが発生しました。電波の良い場所で再度お試しください。');
-    btn.disabled = false;
-    document.getElementById('loadingOverlay').style.display = 'none';
+    overlay(false);
+    el('submitBtn').disabled = false;
+    showPanel('form');
+    showError('errorMsg',
+      '送信結果を確認できませんでした。<br>' +
+      'お手数ですが、もう一度「この内容で申し込む」を押してください。<br>' +
+      '<span style="color:#888;">※二重にお申し込みが登録されることはありません。</span>');
+  }
+}
+
+// 重複確認画面の描画
+function renderConfirm(existing) {
+  hideError('confirmError');
+  const box = el('existingList');
+  box.innerHTML = '';
+
+  existing.forEach(function (item) {
+    const div = document.createElement('div');
+    div.className = 'existing';
+
+    const who = document.createElement('div');
+    who.className = 'who';
+    who.textContent = item.staff_name + ' 様（' + item.salon_name + '）';
+    div.appendChild(who);
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = 'お申し込み日：' + (item.created_at || '—') +
+      (item.same_name ? '　※今回入力されたお名前と同じ方です' : '');
+    div.appendChild(meta);
+
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.textContent = 'この方の内容を更新する';
+    btn.addEventListener('click', function () { sendApply('update', item.app_id); });
+    div.appendChild(btn);
+
+    box.appendChild(div);
+  });
+}
+
+// ------------------------------------------------------------
+// イベント登録
+// ------------------------------------------------------------
+el('applyForm').addEventListener('submit', function (ev) {
+  ev.preventDefault();
+  hideError('errorMsg');
+  sendApply('', '');
+});
+
+el('addNewBtn').addEventListener('click', function () { sendApply('new', ''); });
+el('backToFormBtn').addEventListener('click', function () { showPanel('form'); });
+
+el('toResend').addEventListener('click', function (ev) {
+  ev.preventDefault();
+  showPanel('resend');
+});
+el('backFromResendBtn').addEventListener('click', function () { showPanel('form'); });
+
+el('resendBtn').addEventListener('click', async function () {
+  hideError('resendError');
+  const email = el('resendEmail').value.trim();
+  if (!email || email.indexOf('@') < 0) {
+    showError('resendError', 'メールアドレスをご入力ください。');
+    return;
+  }
+
+  overlay(true);
+  el('resendBtn').disabled = true;
+  try {
+    const json = await postWithRetry({ action: 'resendPass', data: JSON.stringify({ email: email }) });
+    overlay(false);
+    el('resendBtn').disabled = false;
+
+    if (!json.success) {
+      showError('resendError', json.error || '送信に失敗しました。時間をおいて再度お試しください。');
+      return;
+    }
+    el('resendDone').style.display = 'block';
+    el('resendBtn').style.display = 'none';
+  } catch (e) {
+    overlay(false);
+    el('resendBtn').disabled = false;
+    showError('resendError', '送信できませんでした。お手数ですが、もう一度お試しください。');
   }
 });
+
+// pass.html のエラー画面から ?resend=1 で飛んでくる導線
+if (new URLSearchParams(location.search).get('resend') === '1') {
+  showPanel('resend');
+}
 </script>
 
 </body>
