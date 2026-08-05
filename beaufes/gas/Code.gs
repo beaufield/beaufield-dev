@@ -1,6 +1,6 @@
 // ============================================================
 // ビューフェス申込アプリ - Google Apps Script
-// Version: 0.3.0
+// Version: 0.4.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -31,7 +31,7 @@
 // 詳細: LINEHarness/ビューフェス申込_設計.md §7-0-1〜7-0-2
 // ============================================================
 
-const VERSION  = '0.3.0';
+const VERSION  = '0.4.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -307,7 +307,6 @@ function _sendConfirmationMail(email, salonName, staffName, passUrl, isUpdate) {
     '▼ 当日は入場口でこちらの入場パスをご提示ください\n' +
     '  ' + passUrl + '\n\n' +
     '※このメールを保存いただくか、上のリンクをスマホのホーム画面に追加しておくと当日スムーズです\n' +
-    '※お手元にご用意がなくても、受付でお名前を伺えばご入場いただけます\n' +
     '\n' +
     '--\n' +
     'ビューフェス事務局（' + MAIL_FROM_ADDR + '）\n';
@@ -319,8 +318,7 @@ function _sendConfirmationMail(email, salonName, staffName, passUrl, isUpdate) {
     '会場: ' + _escapeHtml(venueName) + ' ' + _escapeHtml(venueAddr) + '</p>' +
     '<p><a href="' + passUrl + '">▼ 入場パスを開く</a></p>' +
     '<p style="color:#666;font-size:13px;">' +
-    '※このメールを保存いただくか、上のリンクをスマホのホーム画面に追加しておくと当日スムーズです<br>' +
-    '※お手元にご用意がなくても、受付でお名前を伺えばご入場いただけます</p>' +
+    '※このメールを保存いただくか、上のリンクをスマホのホーム画面に追加しておくと当日スムーズです</p>' +
     '<p style="color:#999;font-size:12px;">ビューフェス事務局（' + MAIL_FROM_ADDR + '）</p>';
 
   _sendMail(email, subject, textBody, htmlBody, isUpdate ? 'resend' : 'apply');
