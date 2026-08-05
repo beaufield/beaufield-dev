@@ -1269,7 +1269,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.54.0'; // GAS通信の404・POSTボディ喪失対策（リトライ・同時数制限・誤ログアウト防止・発注の二重登録防止）
+const APP_VERSION    = 'v1.55.0'; // テキスト/CSV出力がGAS保存待ちで固まる不具合を修正（出力を先に完了させ保存はバックグラウンド化）＋fetchタイムアウトの保険を強化
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1434,16 +1434,26 @@ function _gasErrorMessage(e) {
 }
 
 // 1回分のfetch。404等の非JSON応答・タイムアウトをGasTransientErrorとして検出する
+// 注意: ac.abort()はSafari等で「タイマー発火後もfetchのPromiseが解決も拒否もされないまま
+// 固まる」不具合が確認されている（バックグラウンド遷移中の中断などで発生）。abort()自体に
+// 頼らず、素のsetTimeoutによる強制タイムアウトをPromise.raceで併用し、このawaitが
+// 必ずtimeoutMs+3秒以内に決着することを保証する（＝呼び出し元の画面が無期限に固まらない）
 async function _gasFetchOnce(url, init, timeoutMs) {
   const ac    = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   await _gasAcquire();
   try {
-    const res  = await fetch(url, { ...init, signal: ac.signal });
-    const text = await res.text(); // res.json()ではなくtext()。404のHTMLをここで検出するため
-    if (!res.ok) throw new GasTransientError('HTTP ' + res.status);
-    try { return JSON.parse(text); }
-    catch (e) { throw new GasTransientError('non-JSON response'); }
+    const doFetch = (async () => {
+      const res  = await fetch(url, { ...init, signal: ac.signal });
+      const text = await res.text(); // res.json()ではなくtext()。404のHTMLをここで検出するため
+      if (!res.ok) throw new GasTransientError('HTTP ' + res.status);
+      try { return JSON.parse(text); }
+      catch (e) { throw new GasTransientError('non-JSON response'); }
+    })();
+    const hardTimeout = new Promise((_, reject) => {
+      setTimeout(() => reject(new GasTransientError('client timeout (hard)')), timeoutMs + 3000);
+    });
+    return await Promise.race([doFetch, hardTimeout]);
   } finally {
     clearTimeout(timer);
     _gasRelease();
@@ -2541,27 +2551,38 @@ function _generateRequestId() {
 async function saveOrderToGAS(outputType) {
   if (savedOrderNo) return savedOrderNo;
   if (!orderRequestId) orderRequestId = _generateRequestId();
+  // GAS応答を待つ間（最悪1分超）にユーザーが「新しい発注」へ進んでいる可能性があるため、
+  // このカートを識別する値をこの時点で固定しておく。await後にグローバル状態
+  // （orderRequestId/revisionBaseOrderNo）を直接読むと、既に次の発注のものに
+  // 書き換わっていて、古い呼び出しが新しい発注の状態を汚染しうる（テキスト/CSV出力を
+  // GAS保存と切り離してバックグラウンド実行できるようにするための対策）
+  const myRequestId    = orderRequestId;
+  const myRevisionBase = revisionBaseOrderNo;
   const params = {
     action: 'saveOrder', date: currentOrder.date,
     supplierCode: currentOrder.supplierCode, supplierName: currentOrder.supplierName,
     fax: currentOrder.fax, staff: currentOrder.staff, outputType,
     items: JSON.stringify(cartItems),
-    requestId: orderRequestId
+    requestId: myRequestId
   };
   // 修正発注の場合は元の発注Noを渡す（GAS側で新規保存後に削除する）
-  if (revisionBaseOrderNo) params.revisionBaseOrderNo = revisionBaseOrderNo;
+  if (myRevisionBase) params.revisionBaseOrderNo = myRevisionBase;
 
   const res = await gasPost(params);
   if (res.success) {
-    savedOrderNo = res.orderNo;
-    // 修正前の発注をローカルキャッシュからも除去
-    if (revisionBaseOrderNo) {
-      allHistoryOrders = allHistoryOrders.filter(o => o.orderNo !== revisionBaseOrderNo);
-      delete historyDetailCache[revisionBaseOrderNo];
-      sessionStorage.removeItem(SS_HIST_CACHE);
-      revisionBaseOrderNo = null;
+    // 呼び出し後にorderRequestIdが変わっていたら、このカートは既に「新しい発注」に
+    // 置き換わっている（＝savedOrderNo等はもう別カートのもの）。反映せずスキップする
+    if (orderRequestId === myRequestId) {
+      savedOrderNo = res.orderNo;
+      // 修正前の発注をローカルキャッシュからも除去
+      if (myRevisionBase) {
+        allHistoryOrders = allHistoryOrders.filter(o => o.orderNo !== myRevisionBase);
+        delete historyDetailCache[myRevisionBase];
+        sessionStorage.removeItem(SS_HIST_CACHE);
+        revisionBaseOrderNo = null;
+      }
     }
-    return savedOrderNo;
+    return res.orderNo;
   } else {
     throw new Error(res.error || 'GAS保存に失敗しました');
   }
@@ -2595,13 +2616,19 @@ async function copyToClipboard(text) {
 // テキスト出力（LINE等のメッセージ用）
 // 手書き商品も含め「商品名 × 数量単位」形式で出力
 // クリップボードコピー + .txtダウンロードの両方を実行
+//
+// GAS保存(saveOrderToGAS)は404・POSTボディ喪失で応答に最悪1分超かかることがある
+// （通信エラー対策_設計プラン.md参照）。以前はこの保存完了を待ってからテキストを
+// 出力していたため、GASが詰まると「保存・出力中...」のまま固まり、テキストも
+// 一切受け取れなかった。テキスト出力の本来の目的（LINE送信用テキストをすぐ得る）に
+// GAS保存を待たせる理由は無いため、テキスト出力は即座に行い、履歴への保存は
+// バックグラウンドで実行する（requestIdで冪等なので再送・重複の心配なし）
 async function outputText() {
   const lines = cartItems.map(i => `${i.name} × ${i.qty}${i.unit || ''}`);
   const text  = lines.join('\n');
 
-  showLoading('保存・出力中...');
+  showLoading('出力中...');
   try {
-    await saveOrderToGAS('テキスト');
     const copied = await copyToClipboard(text);
     const bom  = new Uint8Array([0xEF, 0xBB, 0xBF]);
     const blob = new Blob([bom, text], { type: 'text/plain;charset=utf-8' });
@@ -2611,7 +2638,13 @@ async function outputText() {
     showToast(copied ? 'テキストをコピー＆ダウンロードしました' : 'テキストを出力しました', 'success');
   } catch(e) {
     showToast('エラー: ' + e.message, 'error');
+    return;
   } finally { hideLoading(); }
+
+  // 発注履歴への保存はテキスト出力完了後にバックグラウンドで実行
+  saveOrderToGAS('テキスト').catch(e => {
+    showToast('発注履歴への保存に失敗しました（テキストは出力済みです）。時間をおいて画面を再読み込みし、履歴タブで保存されているかご確認ください。', 'error');
+  });
 }
 
 // Web発注先の発注記録として保存（アプリからは送信しない。Phase H）
@@ -2632,14 +2665,15 @@ async function outputWebRecord() {
 }
 
 // CSV出力（ヘッダー行なし）
+// テキスト出力と同じ理由（GAS保存の遅延で本来の出力まで固まるのを避ける）で、
+// CSV出力を先に完了させ、履歴への保存はバックグラウンドで実行する
 async function outputCSV() {
   const csvItems = cartItems.filter(i => !i.isHandwritten);
   if (csvItems.length === 0) {
     showToast('CSV出力可能な商品がありません\n（手書き商品はCSV対象外）', 'error'); return;
   }
-  showLoading('保存・出力中...');
+  showLoading('出力中...');
   try {
-    await saveOrderToGAS('CSV');
     const body = csvItems.map(i => `${i.janCode},${i.qty}`).join('\n');
     const bom  = new Uint8Array([0xEF, 0xBB, 0xBF]);
     const blob = new Blob([bom, body], { type: 'text/csv;charset=utf-8' });
@@ -2650,7 +2684,13 @@ async function outputCSV() {
     showToast('CSV出力が完了しました', 'success');
   } catch(e) {
     showToast('エラー: ' + e.message, 'error');
+    return;
   } finally { hideLoading(); }
+
+  // 発注履歴への保存はCSV出力完了後にバックグラウンドで実行
+  saveOrderToGAS('CSV').catch(e => {
+    showToast('発注履歴への保存に失敗しました（CSVは出力済みです）。時間をおいて画面を再読み込みし、履歴タブで保存されているかご確認ください。', 'error');
+  });
 }
 
 /* ===================================================
