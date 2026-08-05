@@ -147,14 +147,18 @@
       <label>お電話番号<span class="req">必須</span></label>
       <input type="tel" id="phone" required>
 
+      <!-- 🔴 選択肢はLINE公式アカウントの顧客登録フォーム（formId: 6c1eeebf…）の実物と
+           1文字も違えないこと。LIFF申込のプリフィルで値が突合できなくなるため。
+           2026-08-06: 実物を確認したところ「エステサロン/ネイルサロン/アイサロン」であり、
+           設計書の記載（エステ/ネイル/アイ）が誤っていた。実物に合わせて修正済み。 -->
       <label>業態<span class="req">必須</span></label>
       <select id="business_type" required>
         <option value="">選択してください</option>
         <option>美容室</option>
         <option>理容室</option>
-        <option>エステ</option>
-        <option>ネイル</option>
-        <option>アイ</option>
+        <option>エステサロン</option>
+        <option>ネイルサロン</option>
+        <option>アイサロン</option>
         <option>その他</option>
       </select>
 
@@ -233,7 +237,7 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.5.0';
+const APP_VERSION = '0.6.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
