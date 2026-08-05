@@ -118,17 +118,6 @@
     <label>お電話番号<span class="req">必須</span></label>
     <input type="tel" id="phone" required>
 
-    <label>サロン様エリア<span class="req">必須</span></label>
-    <select id="area" required>
-      <option value="">選択してください</option>
-      <option>宮崎市内</option>
-      <option>都城市</option>
-      <option>児湯郡（都農・川南・高鍋・新富）</option>
-      <option>県北地域（日向・門川・延岡・高千穂）</option>
-      <option>県南（日南・串間）</option>
-      <option>小林市</option>
-    </select>
-
     <label>業態<span class="req">必須</span></label>
     <select id="business_type" required>
       <option value="">選択してください</option>
@@ -177,7 +166,7 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.4.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
@@ -206,7 +195,6 @@ document.getElementById('applyForm').addEventListener('submit', async (ev) => {
     staff_name: document.getElementById('staff_name').value.trim(),
     email: document.getElementById('email').value.trim(),
     phone: document.getElementById('phone').value.trim(),
-    area: document.getElementById('area').value,
     business_type: document.getElementById('business_type').value,
     has_transaction: document.querySelector('input[name=has_transaction]:checked').value,
     address: document.getElementById('address').value.trim(),
