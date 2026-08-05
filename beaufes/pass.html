@@ -38,8 +38,9 @@
     background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0;
     border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 16px;
   }
-  .name { font-size: 20px; font-weight: bold; margin: 4px 0; }
-  .salon { font-size: 14px; color: #666; margin-bottom: 18px; }
+  .name { font-size: 20px; font-weight: bold; margin: 4px 0; min-height: 24px; }
+  .salon { font-size: 14px; color: #666; margin-bottom: 18px; min-height: 20px; }
+  .placeholder { color: #bbb; font-weight: normal; font-size: 14px; }
   #qrBox { margin: 12px 0; }
   #qrBox svg { width: 220px; height: 220px; }
   .event-info { font-size: 13px; color: #555; line-height: 1.9; text-align: left; margin-top: 18px; border-top: 1px dashed var(--border); padding-top: 14px; }
@@ -48,9 +49,21 @@
     margin-top: 14px; background: #eff6ff; color: #1d4ed8;
     border: 1px solid #bfdbfe; border-radius: 8px; padding: 8px 12px; font-size: 13px;
   }
+  /* 通信に失敗したがQRは出せている状態の注意書き（パス自体は使える） */
+  .warnBox {
+    display: none;
+    margin-top: 16px; background: #fffbeb; color: #92400e;
+    border: 1px solid #fde68a; border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.7;
+  }
+  .reloadBtn {
+    display: inline-block; margin-top: 10px; padding: 10px 18px;
+    font-size: 14px; font-weight: bold; color: #fff; background: var(--main-dark);
+    border: none; border-radius: 8px; cursor: pointer;
+  }
   .fallback { font-size: 12px; color: #888; margin-top: 20px; line-height: 1.7; }
-  .errorCard { text-align: center; padding: 40px 20px; color: #666; }
-  #loading { text-align: center; padding: 60px 20px; color: #888; }
+  .errorCard { text-align: center; padding: 36px 20px; color: #666; line-height: 1.9; }
+  .errorCard a { color: var(--main-dark); }
+  .stale { font-size: 12px; color: #999; margin-top: 10px; }
 </style>
 </head>
 <body>
@@ -58,11 +71,11 @@
 <header><h1>ビューフェス2026 入場パス</h1></header>
 
 <main>
-  <div id="loading">読み込み中…</div>
+  <!-- QRは通信を待たずに即描画するため、最初から表示しておく（#loadingは廃止） -->
   <div class="card" id="passCard" style="display:none;">
     <div class="newBadge" id="newBadge" style="display:none;">お申し込みが完了しました</div>
     <div class="salon" id="salonName"></div>
-    <div class="name" id="staffName"></div>
+    <div class="name" id="staffName"><span class="placeholder">確認中…</span></div>
 
     <div id="qrBox"></div>
 
@@ -73,11 +86,15 @@
     <div class="event-info" id="seminarInfo">
       <b>セミナー</b>：内容が決まり次第、この画面からご予約いただけます（現在準備中）
     </div>
+
+    <div class="warnBox" id="warnBox">
+      <div id="warnText"></div>
+      <button class="reloadBtn" id="reloadBtn">もう一度読み込む</button>
+    </div>
   </div>
 
   <div class="card errorCard" id="errorCard" style="display:none;">
-    パスが見つかりませんでした。<br>お申し込み時のメールに記載のリンクをご確認いただくか、<br>
-    当日は受付でお名前をお伝えください。
+    <div id="errorText"></div>
   </div>
 
   <div class="fallback">
@@ -88,64 +105,213 @@
 
 <script src="lib/qrcode.min.js"></script>
 <script>
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.5.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
+
+// 通信の設定（GASの結果配信は逐次でも約7%失敗するため、リトライは必須。
+// 失敗時は16〜47秒かかってから返ることがあるので、1回あたりの待ち時間も切る）
+const FETCH_TIMEOUT_MS = 10000;
+const MAX_ATTEMPTS     = 3;
+const RETRY_WAIT_MS    = [800, 2000];
 
 function qs(name) {
   return new URLSearchParams(location.search).get(name);
 }
+function el(id) {
+  return document.getElementById(id);
+}
+function sleep(ms) {
+  return new Promise(function (r) { setTimeout(r, ms); });
+}
 
+// ------------------------------------------------------------
+// QRの描画 —— サーバーに一切問い合わせずに行う
+// QRの中身は「このページ自身のURL（?t=<token>）」なので、tokenさえあれば描ける。
+// 当日の入場口で最も重要なのはQRが出ること。ここを通信に依存させない。
+//
+// サーバーから正式なURL（config由来の公開URL）が取れた場合はそちらで描き直す。
+// 内容が同じなら描き直さないので、通常は画面がちらつかない。
+// ------------------------------------------------------------
+let currentQrData = '';
+
+function renderQr(passUrl) {
+  if (!passUrl || currentQrData === passUrl) return;
+  currentQrData = passUrl;
+  const qr = qrcode(0, 'M');
+  qr.addData(passUrl);
+  qr.make();
+  el('qrBox').innerHTML = qr.createSvgTag({ cellSize: 5, margin: 2 });
+}
+
+// 通信なしで組み立てる、このページ自身のURL
+function localPassUrl(token) {
+  return location.origin + location.pathname + '?t=' + encodeURIComponent(token);
+}
+
+// ------------------------------------------------------------
+// 表示用データの反映
+// ------------------------------------------------------------
+function renderDetail(d) {
+  el('salonName').textContent = d.salon_name || '';
+  el('staffName').textContent = (d.staff_name || '') + ' 様';
+
+  // サーバー（またはキャッシュ）が正式なパスURLを持っていればQRを更新する
+  if (d.pass_url) renderQr(d.pass_url);
+
+  if (d.event) {
+    el('eventInfo').innerHTML =
+      '<div><b>日時</b>：' + (d.event.date || '') + ' ' + (d.event.time || '') + '</div>' +
+      '<div><b>会場</b>：' + (d.event.venue_name || '') + ' ' + (d.event.venue_addr || '') + '</div>';
+  }
+
+  if (d.checked_in_at) {
+    el('checkedInBox').innerHTML =
+      '<div class="checkedIn">✅ ' + d.checked_in_at + ' に入場済みです</div>';
+  }
+}
+
+// ------------------------------------------------------------
+// キャッシュ（一度表示できた内容は端末に残し、圏外・通信失敗でも出せるようにする）
+// ------------------------------------------------------------
+function cacheKey(token) { return 'beaufes_pass_' + token; }
+
+function saveCache(token, d) {
+  try { localStorage.setItem(cacheKey(token), JSON.stringify(d)); } catch (e) { /* 保存できなくても致命的ではない */ }
+}
+function loadCache(token) {
+  try {
+    const s = localStorage.getItem(cacheKey(token));
+    return s ? JSON.parse(s) : null;
+  } catch (e) { return null; }
+}
+
+// ------------------------------------------------------------
+// GASからの取得（1回ぶん）
+// GASは結果配信に失敗すると404のHTMLを返す。res.jsonだとSyntaxErrorになって
+// 「通信エラー」に見えるため、必ずテキストで受けてから自前でJSON.parseし、
+// 「一時的な配信失敗」と「本当にパスが無い」を区別できるようにする。
+// ------------------------------------------------------------
+async function fetchPassOnce(token) {
+  const params = new URLSearchParams({
+    action: 'getPass',
+    data: JSON.stringify({ ticket_token: token })
+  });
+
+  const ctrl  = new AbortController();
+  const timer = setTimeout(function () { ctrl.abort(); }, FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(GAS_URL + '?' + params, { redirect: 'follow', signal: ctrl.signal });
+    if (!res.ok) throw new Error('HTTP_' + res.status);   // GASの配信失敗404はここに来る
+    const text = await res.text();
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch (e) {
+      throw new Error('NON_JSON');                        // 404のHTMLを掴んだ場合
+    }
+    return json;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// リトライ付き取得。戻り値は { ok:true, data } / { ok:false, notFound:true } / { ok:false, transient:true }
+async function fetchPassWithRetry(token) {
+  let lastErr = null;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) await sleep(RETRY_WAIT_MS[attempt - 1] || 2000);
+    try {
+      const json = await fetchPassOnce(token);
+      if (json && json.success) return { ok: true, data: json.data };
+
+      // サーバーが明確に「このtokenは無い」と答えた場合はリトライしても同じ
+      const code = json && json.error ? String(json.error) : '';
+      if (code === 'NOT_FOUND' || code === 'INVALID_TOKEN') return { ok: false, notFound: true };
+
+      lastErr = code || 'UNKNOWN';   // INTERNAL_ERROR等は一時障害の可能性があるので再試行する
+    } catch (e) {
+      lastErr = e && e.message ? e.message : String(e);
+    }
+  }
+  console.warn('getPass失敗（リトライ上限）:', lastErr);
+  return { ok: false, transient: true };
+}
+
+// ------------------------------------------------------------
+// 画面状態
+// ------------------------------------------------------------
+function showErrorCard(html) {
+  el('passCard').style.display = 'none';
+  el('errorCard').style.display = 'block';
+  el('errorText').innerHTML = html;
+}
+
+function showWarn(text) {
+  el('warnText').textContent = text;
+  el('warnBox').style.display = 'block';
+}
+
+// ------------------------------------------------------------
+// メイン
+// ------------------------------------------------------------
 async function init() {
   const token = qs('t');
   const isNew = qs('new') === '1';
 
+  // tokenが無い＝リンクが壊れている。QRも出せないのでこの場合だけ最初からエラー表示
   if (!token) {
-    document.getElementById('loading').style.display = 'none';
-    document.getElementById('errorCard').style.display = 'block';
+    showErrorCard(
+      'このリンクからは入場パスを表示できませんでした。<br>' +
+      'お申し込み時のメールに記載のリンクを、もう一度お開きください。<br><br>' +
+      '<a href="index.html?resend=1">リンクが見つからない方はこちら（パスの再送）</a>'
+    );
     return;
   }
 
-  try {
-    const params = new URLSearchParams({
-      action: 'getPass',
-      data: JSON.stringify({ ticket_token: token })
-    });
-    const res  = await fetch(GAS_URL + '?' + params, { redirect: 'follow' });
-    const json = await res.json();
+  // 1) まずQRを出す（通信ゼロ・ここは絶対に失敗しない）
+  el('passCard').style.display = 'block';
+  if (isNew) el('newBadge').style.display = 'block';
+  renderQr(localPassUrl(token));
 
-    document.getElementById('loading').style.display = 'none';
+  // 2) 前回表示できた内容があれば先に出しておく（圏外でも名前が出る）
+  const cached = loadCache(token);
+  if (cached) renderDetail(cached);
 
-    if (!json.success) {
-      document.getElementById('errorCard').style.display = 'block';
-      return;
-    }
+  // 3) 裏で最新を取りにいく
+  const result = await fetchPassWithRetry(token);
 
-    const d = json.data;
-    document.getElementById('passCard').style.display = 'block';
-    if (isNew) document.getElementById('newBadge').style.display = 'block';
-    document.getElementById('salonName').textContent = d.salon_name;
-    document.getElementById('staffName').textContent = d.staff_name + ' 様';
-    document.getElementById('eventInfo').innerHTML =
-      '<div><b>日時</b>：' + d.event.date + ' ' + d.event.time + '</div>' +
-      '<div><b>会場</b>：' + d.event.venue_name + ' ' + d.event.venue_addr + '</div>';
+  if (result.ok) {
+    renderDetail(result.data);
+    saveCache(token, result.data);
+    el('warnBox').style.display = 'none';
+    return;
+  }
 
-    if (d.checked_in_at) {
-      document.getElementById('checkedInBox').innerHTML =
-        '<div class="checkedIn">✅ ' + d.checked_in_at + ' に入場済みです</div>';
-    }
+  if (result.notFound) {
+    // サーバーが明確に否定した場合だけエラー画面にする
+    showErrorCard(
+      'このリンクからは入場パスを表示できませんでした。<br>' +
+      'お申し込み時のメールに記載のリンクを、もう一度お開きください。<br><br>' +
+      '<a href="index.html?resend=1">リンクが見つからない方はこちら（パスの再送）</a>'
+    );
+    return;
+  }
 
-    // QRコードをクライアント側で生成（外部API不使用・当日の通信障害の影響を受けない）
-    const qr = qrcode(0, 'M');
-    qr.addData(d.pass_url);
-    qr.make();
-    document.getElementById('qrBox').innerHTML = qr.createSvgTag({ cellSize: 5, margin: 2 });
-
-  } catch (e) {
-    document.getElementById('loading').style.display = 'none';
-    document.getElementById('errorCard').style.display = 'block';
+  // 一時的な通信失敗。QRは有効なので消さず、再読み込みを促す
+  if (cached) {
+    showWarn('最新の情報を取得できませんでした。表示中のQRコードはそのままご利用いただけます。');
+  } else {
+    el('staffName').innerHTML = '<span class="placeholder">お名前を取得できませんでした</span>';
+    showWarn('読み込みに失敗しました。お手数ですが「もう一度読み込む」を押してください。QRコードはこのままご利用いただけます。');
   }
 }
+
+el('reloadBtn').addEventListener('click', function () {
+  location.reload();
+});
 
 init();
 </script>

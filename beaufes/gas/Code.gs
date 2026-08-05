@@ -39,9 +39,17 @@
 // お客様に選ばせる必要がないと判断。Takashiさん指示）。J列(area)は列位置維持のため
 // 残すが常に空文字を書き込む。詳細: LINEHarness/ビューフェス申込_設計.md §4-1
 // 🆕 v0.6.1: 別端末で先行push済みのbusiness_type機能(v0.5.0)とのマージ調整のみ。機能変更なし
+//
+// 🆕 v0.7.0（2026-08-06）: 重複申込対策（設計書§4-3の未実装分を実装）
+//   1. 氏名の照合を正規化（`_normalizeName`）。「山田太郎」「山田 太郎」「山田　太郎」を同一人物として扱う
+//   2. 同じメールアドレスの申込が既にある場合、無言で更新せず **確認画面用の応答を返す**
+//      （`duplicate_found:true`）。クライアントが mode='update'/'new' を付けて再送信して確定する。
+//      → 同じサロンの別スタッフが代表メールで申し込んだときの「上書き事故」を構造的に防ぐ
+//   3. `resendPass` アクションを新設。パスURLを紛失した人がメールアドレスだけで再発行できる
+//      （フォーム再送信で重複行が生まれる経路を塞ぐため）
 // ============================================================
 
-const VERSION  = '0.6.1';
+const VERSION  = '0.7.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -108,8 +116,9 @@ function doPost(e) {
 
   try {
     switch (action) {
-      case 'apply': return _jsonResponse(applyApplication(data));
-      default:      return _jsonResponse(_err('不明なアクション: ' + action));
+      case 'apply':      return _jsonResponse(applyApplication(data));
+      case 'resendPass': return _jsonResponse(resendPass(data));
+      default:           return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
     Logger.log('doPost error: ' + err);
@@ -144,6 +153,17 @@ function _escapeHtml(s) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// 🆕 氏名の「照合キー」を作る（v0.7.0・§4-3）
+// シートに保存する表示用の氏名は入力どおりのまま。照合のときだけこの関数を通す。
+// 「山田太郎」「山田 太郎」「山田　太郎（全角空白）」を同一人物として扱うため。
+// 本人は同じ表記のつもりでも空白の有無で別行ができてしまう事故を防ぐ。
+function _normalizeName(s) {
+  return String(s || '')
+    .normalize('NFKC')     // 全角英数・全角空白・半角カナなどを正規形に統一
+    .replace(/\s+/g, '')   // 空白を全て除去（半角・全角とも）
+    .toLowerCase();        // ローマ字表記の大文字小文字の揺れを吸収
+}
+
 // 既存app_idの最大連番+1を発番（例: F2026-0007 → F2026-0008）
 function _nextAppId(rows) {
   const year = new Date().getFullYear();
@@ -175,8 +195,15 @@ function _getConfig() {
 
 // ============================================================
 // ① 申込受付（doPost: action=apply）
-//    キーは email_norm + staff_name（§4-3）
-//    一致する既存申込があれば更新（内容変更・パス再送）、なければ新規登録
+//    キーは email_norm + 正規化した staff_name（§4-3・v0.7.0で正規化を追加）
+//
+//    🆕 v0.7.0: 同じメールアドレスの申込が既にある場合は**無言で更新しない**。
+//    `duplicate_found:true` を返してクライアントに確認画面を出させ、
+//    お客様が選んだ結果を mode='update'（対象は target_app_id）/ mode='new' で
+//    再送信してもらってから確定する（設計書§4-3の3行目「本人に選ばせる」の実装）。
+//
+//    これがないと「同じサロンの2人目が代表メールで申し込み、1人目の名前を
+//    打ち間違えて1人目の申込を消す」事故が起こりうる。
 // ============================================================
 function applyApplication(data) {
   _checkProps();
@@ -185,6 +212,9 @@ function applyApplication(data) {
   const staffName      = String(data.staff_name || '').trim();
   const email          = String(data.email || '').trim();
   const phone          = String(data.phone || '').trim();
+  // 🆕 '' = 未確定（重複があれば確認を返す） / 'update' = 既存を更新 / 'new' = 別人として追加
+  const mode           = String(data.mode || '').trim();
+  const targetAppId    = String(data.target_app_id || '').trim();
   const businessType   = String(data.business_type || '').trim(); // 🆕 U列。名札の色分けに使用（§4-1-2）
   const hasTransaction = String(data.has_transaction || '').trim(); // 'yes' / 'no'
   const address        = String(data.address || '').trim();        // 新規客のみ
@@ -200,6 +230,7 @@ function applyApplication(data) {
   if (!agree) return _err('美容従事者であることの確認にチェックしてください');
 
   const emailNorm = email.toLowerCase();
+  const nameKey   = _normalizeName(staffName);
 
   let appId, ticketToken, isUpdate;
 
@@ -211,14 +242,56 @@ function applyApplication(data) {
     const rows = sh.getDataRange().getValues();
     const now  = _now();
 
-    // 既存申込を探す（email_norm + staff_name 完全一致。§4-3）
-    let foundRow = -1;
+    // 🆕 同じメールアドレスの申込を全て集める（§4-3）
+    // 「同じサロンの複数名が代表メールで申し込む」は必ず起きるので、
+    // メール一致だけでは本人と断定せず、氏名の正規化キーで突き合わせる。
+    const sameEmail = [];
     for (let i = 1; i < rows.length; i++) {
-      if (String(rows[i][7]).toLowerCase() === emailNorm && String(rows[i][5]) === staffName) {
-        foundRow = i + 1; // 1-indexed 行番号
-        break;
+      // 取消済みの申込は「既存」として扱わない（再申込は新規行になる）
+      if (String(rows[i][7]).toLowerCase() === emailNorm && String(rows[i][17]) !== 'cancelled') {
+        sameEmail.push({
+          row:        i + 1, // 1-indexed 行番号
+          appId:      String(rows[i][0]),
+          salonName:  String(rows[i][4]),
+          staffName:  String(rows[i][5]),
+          createdAt:  String(rows[i][1]),
+          nameKey:    _normalizeName(rows[i][5])
+        });
       }
     }
+
+    // 🆕 既存申込があり、まだお客様が選んでいない → 確認画面を出してもらう
+    // （ここでは一切書き込まない。無言の上書き・無言の重複作成をどちらも防ぐ）
+    if (sameEmail.length > 0 && mode !== 'update' && mode !== 'new') {
+      return _ok({
+        duplicate_found: true,
+        existing: sameEmail.map(function (m) {
+          return {
+            app_id:     m.appId,
+            salon_name: m.salonName,
+            staff_name: m.staffName,
+            created_at: m.createdAt,
+            same_name:  m.nameKey === nameKey  // 今回の入力と同一人物とみられるか
+          };
+        })
+      });
+    }
+
+    // 更新対象の決定
+    let foundRow = -1;
+    if (mode === 'update') {
+      // お客様が確認画面で選んだ申込を優先し、無ければ氏名の正規化キーで引き当てる
+      for (let k = 0; k < sameEmail.length; k++) {
+        if (targetAppId && sameEmail[k].appId === targetAppId) { foundRow = sameEmail[k].row; break; }
+      }
+      if (foundRow < 0) {
+        for (let k = 0; k < sameEmail.length; k++) {
+          if (sameEmail[k].nameKey === nameKey) { foundRow = sameEmail[k].row; break; }
+        }
+      }
+      if (foundRow < 0) return _err('更新対象のお申し込みが見つかりませんでした。お手数ですが最初からやり直してください。');
+    }
+    // mode === 'new' の場合は foundRow = -1 のまま＝新規行を追加する
 
     if (foundRow > 0) {
       // --- 既存申込を更新（内容変更・パス再送の導線を兼ねる） ---
@@ -295,6 +368,44 @@ function getPass(data) {
 }
 
 // ============================================================
+// 🆕 ③ 入場パスの再発行（doPost: action=resendPass）―― v0.7.0
+//    パスURLを紛失した方が、メールアドレスだけで自分のパスを取り戻せるようにする。
+//    これが無いと「URLを失った人がフォームを再送信 → 氏名の表記揺れで既存申込に
+//    辿り着けず重複行ができる」という経路が残ってしまう（§4-3）。
+//
+//    🔴 メールアドレスの存在有無を応答で区別しない（該当が無くても success を返す）。
+//    そうしないと「このメールアドレスは申込済みか」を外部から総当たりで調べられてしまう。
+// ============================================================
+function resendPass(data) {
+  _checkProps();
+  const email = String(data.email || '').trim();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return _err('メールアドレスの形式が正しくありません');
+  }
+  const emailNorm = email.toLowerCase();
+
+  const ss   = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh   = _getSheet(ss, SHEET_APPLICATIONS);
+  const rows = sh.getDataRange().getValues();
+
+  const list = [];
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][7]).toLowerCase() === emailNorm && String(rows[i][17]) !== 'cancelled') {
+      list.push({
+        salonName: String(rows[i][4]),
+        staffName: String(rows[i][5]),
+        passUrl:   SITE_BASE_URL + 'pass.html?t=' + String(rows[i][16])
+      });
+    }
+  }
+
+  // 該当があるときだけ送る。応答は該当の有無にかかわらず同じ（列挙攻撃の防止）
+  if (list.length > 0) _sendPassResendMail(email, list);
+
+  return _ok({ requested: true });
+}
+
+// ============================================================
 // メール送信
 //    送信元は beaufes@gmail.com（send-as登録済み前提）。
 //    GmailAppでの送信に失敗した場合（send-as未登録等）は
@@ -335,6 +446,34 @@ function _sendConfirmationMail(email, salonName, staffName, passUrl, isUpdate) {
     '<p style="color:#999;font-size:12px;">ビューフェス事務局（' + MAIL_FROM_ADDR + '）</p>';
 
   _sendMail(email, subject, textBody, htmlBody, isUpdate ? 'resend' : 'apply');
+}
+
+// 🆕 入場パスの再発行メール（v0.7.0）
+// 同じメールアドレスで複数名の申込があることは普通に起きるため、
+// 1通にまとめて「◯◯様の入場パス」と担当者名を明記して並べる（§4-3）。
+function _sendPassResendMail(email, list) {
+  const subject = '【ビューフェス2026】入場パスのリンクをお送りします';
+
+  let textBody = 'ビューフェス2026の入場パスのリンクをお送りします。\n\n';
+  let htmlBody = '<p>ビューフェス2026の入場パスのリンクをお送りします。</p>';
+
+  for (let i = 0; i < list.length; i++) {
+    const it = list[i];
+    textBody += '■ ' + it.staffName + ' 様（' + it.salonName + '）\n' +
+                '  ' + it.passUrl + '\n\n';
+    htmlBody += '<p style="margin:14px 0;">■ ' + _escapeHtml(it.staffName) + ' 様' +
+                '（' + _escapeHtml(it.salonName) + '）<br>' +
+                '<a href="' + it.passUrl + '">入場パスを開く</a></p>';
+  }
+
+  textBody += '当日は入場口でこちらの画面をご提示ください。\n' +
+              '※このメールを保存いただくか、リンクをスマホのホーム画面に追加しておくと当日スムーズです\n\n' +
+              '--\nビューフェス事務局（' + MAIL_FROM_ADDR + '）\n';
+  htmlBody += '<p style="color:#666;font-size:13px;">当日は入場口でこちらの画面をご提示ください。<br>' +
+              '※このメールを保存いただくか、リンクをスマホのホーム画面に追加しておくと当日スムーズです</p>' +
+              '<p style="color:#999;font-size:12px;">ビューフェス事務局（' + MAIL_FROM_ADDR + '）</p>';
+
+  _sendMail(email, subject, textBody, htmlBody, 'resend_pass');
 }
 
 function _sendMail(to, subject, textBody, htmlBody, type) {
