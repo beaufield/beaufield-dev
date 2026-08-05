@@ -1,6 +1,6 @@
 // ============================================================
 // Beaufield 発注アプリ - Google Apps Script バックエンド
-// Version: v1.28.0
+// Version: v1.29.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -21,7 +21,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.28.0';
+const VERSION         = 'v1.29.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
 
 // Google Drive上の商品マスターCSVファイル名
@@ -280,6 +280,58 @@ function getSheet(name) {
   const sh = getSS().getSheetByName(name);
   if (!sh) throw new Error('シートが見つかりません: ' + name);
   return sh;
+}
+
+// ============================================================
+// ヘルパー: 末尾限定読み込み（パフォーマンス改善_設計プラン.md 対策1）
+//
+// 発注履歴・発注明細は追記のみ（削除は稀）で、A列（発注No。YYYYMMDD-NNN形式）が
+// 日付を含むため、行の物理的な並び順＝時系列の昇順になっている。アプリが実際に
+// 使うのは常に「直近」のデータのため、シート全件ではなく末尾から必要な分だけを
+// 読むことで、データが何年蓄積しても速度が変わらないようにする。
+//
+// 取りこぼしを防ぐため、必ず「十分読めたか」を確認しながら段階的に遡る。
+// 十分と判定できないままシート先頭に達したら、結果的に全件を返す（＝従来と同じ動作を保証）。
+// ============================================================
+
+// A列の値だけを頼りに、「A列が key 以下になる行」まで遡った開始行番号を返す。
+// 1セルずつの軽い読み取りで探索するため、対象範囲が広くても低コスト。
+// （発注No・日付キーのように昇順に並んでいる列に対してのみ使えること）
+function findTailStartRow_(sheet, key) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 2;
+  let chunk = 300;
+  while (true) {
+    const startRow = Math.max(2, lastRow - chunk + 1);
+    if (startRow === 2) return 2;
+    const firstVal = String(sheet.getRange(startRow, 1).getValue() || '').trim();
+    if (firstVal <= key) return startRow;
+    chunk *= 4; // 見つかるまで大きく倍加し、往復回数（＝実行時間）を抑える
+  }
+}
+
+// A列の値が orderNo と一致する行を末尾から探して読み取る（1発注分の明細取得等に使用）。
+// 戻り値: { startRow, rows }（rows はヘッダーを含まない・シート上の並び順のまま）
+function readRowsForKey_(sheet, key, numCols) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { startRow: 2, rows: [] };
+  const startRow = findTailStartRow_(sheet, key);
+  const rows = sheet.getRange(startRow, 1, lastRow - startRow + 1, numCols).getValues();
+  return { startRow, rows };
+}
+
+// 末尾から段階的に広げて読み込み、isEnough(rows) が true になった時点（＝もう遡らなくて
+// 良いと呼び出し元が判断できた時点）で打ち切る。count系の判定（「直近20件揃った」等）向け。
+function readTailRowsUntil_(sheet, numCols, isEnough, initialChunk) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  let chunk = initialChunk || 300;
+  while (true) {
+    const startRow = Math.max(2, lastRow - chunk + 1);
+    const rows = sheet.getRange(startRow, 1, lastRow - startRow + 1, numCols).getValues();
+    if (startRow === 2 || isEnough(rows)) return rows;
+    chunk *= 4;
+  }
 }
 
 // ============================================================
@@ -593,15 +645,23 @@ function findColIdxGAS(headers, name) {
 function getOrders(filterSupplierCode) {
   filterSupplierCode = String(filterSupplierCode || '').trim();
 
-  const sh   = getSheet(SHEET_HISTORY);
-  const data = sh.getDataRange().getValues();
+  const sh = getSheet(SHEET_HISTORY);
+  const matchesFilter = r => r[0] !== '' && r[0] !== null &&
+    (!filterSupplierCode || String(r[2] || '').trim() === filterSupplierCode);
 
-  if (data.length <= 1) return { success: true, orders: [], productHistory: {} };
+  // 発注No・日付・仕入先名等9列のみでよい（K列のrequestIdはここでは不要）。
+  // 「マッチする行が20件揃うまで」だけ末尾から遡って読む（対策1）
+  const histRows = readTailRowsUntil_(sh, 9, rows => {
+    let n = 0;
+    for (const r of rows) { if (matchesFilter(r)) { n++; if (n >= 20) return true; } }
+    return false;
+  });
+
+  if (histRows.length === 0) return { success: true, orders: [], productHistory: {} };
 
   // メーカー指定がある場合は先にフィルターしてから直近20件を取得する
-  const orders = data.slice(1)
-    .filter(r => r[0] !== '' && r[0] !== null)
-    .filter(r => !filterSupplierCode || String(r[2] || '').trim() === filterSupplierCode)
+  const orders = histRows
+    .filter(matchesFilter)
     .map(r => ({
       orderNo:      String(r[0] || ''),
       // r[1] は発注日。スプレッドシートが日付型として認識するため cellToStr で変換
@@ -618,17 +678,22 @@ function getOrders(filterSupplierCode) {
     .reverse()
     .slice(0, 20);
 
+  if (orders.length === 0) return { success: true, orders: [], productHistory: {} };
+
   // 直近20件の発注明細から商品ごとの最新注文情報を構築
   // 追加のAPI通信なし（発注明細シートをここで一括読込）
   const orderNos     = new Set(orders.map(o => o.orderNo));
   const orderDateMap = {};
   orders.forEach(o => { orderDateMap[o.orderNo] = o.date; });
+  // 発注明細は発注No順（＝時系列順）に追記される前提。20件の中で最も古い発注Noより
+  // 前まで読み終えたら、それより古い行にこの20件の明細は存在しないので打ち切る（対策1）
+  const minOrderNo = orders.reduce((min, o) => (o.orderNo < min ? o.orderNo : min), orders[0].orderNo);
 
   const itemsSh   = getSheet(SHEET_ITEMS);
-  const itemsData = itemsSh.getDataRange().getValues();
+  const itemsData = readRowsForKey_(itemsSh, minOrderNo, 6).rows; // jan/code/qty/unit までの6列で足りる
   const productHistory = {}; // キー: 商品コードまたはJANコード → { date, qty, unit }
 
-  itemsData.slice(1).forEach(r => {
+  itemsData.forEach(r => {
     const orderNo = String(r[0] || '').trim();
     if (!orderNos.has(orderNo)) return; // 直近20件以外はスキップ
 
@@ -655,11 +720,13 @@ function getOrders(filterSupplierCode) {
 // ============================================================
 function getOrderDetail(orderNo) {
   if (!orderNo) return { success: false, error: 'orderNoが未指定です' };
-  const sh   = getSheet(SHEET_ITEMS);
-  const data = sh.getDataRange().getValues();
+  const sh     = getSheet(SHEET_ITEMS);
+  const target = String(orderNo).trim();
+  // 発注明細は発注No順に追記される前提で、対象の発注Noより前まで読み終えたら打ち切る（対策1）
+  const data = readRowsForKey_(sh, target, 8).rows;
 
-  const items = data.slice(1)
-    .filter(r => String(r[0]).trim() === String(orderNo).trim())
+  const items = data
+    .filter(r => String(r[0]).trim() === target)
     .map(r => ({
       jan:           String(r[1] || ''),
       code:          String(r[2] || ''),
@@ -712,11 +779,12 @@ function saveOrder(p, user_id) {
 
     // 冪等チェック: 同じrequestIdの行が既にあれば、新規採番せずその発注Noを返す
     // （「サーバーは保存できたがクライアントには404が返った」ケースの再送で二重登録を防ぐ）
+    // 同一リクエストの再送は必ずごく短時間内に起こるため、末尾の一定件数だけ確認すれば十分（対策1）
     if (requestId) {
-      const histData = histSh.getDataRange().getValues();
-      for (let i = 1; i < histData.length; i++) {
-        if (String(histData[i][10] || '').trim() === requestId) {
-          return { success: true, orderNo: String(histData[i][0]).trim() };
+      const histTail = readTailRowsUntil_(histSh, 11, () => true, 300);
+      for (let i = 0; i < histTail.length; i++) {
+        if (String(histTail[i][10] || '').trim() === requestId) {
+          return { success: true, orderNo: String(histTail[i][0]).trim() };
         }
       }
     }
@@ -744,21 +812,22 @@ function saveOrder(p, user_id) {
     }
 
     // 修正発注の場合：新規保存が完了してから元の発注を削除する
+    // 対象は必ず「今まさに修正した直前の発注」＝ごく最近の行のため、末尾から探す（対策1）
     if (revisionBaseOrderNo) {
       try {
         // 発注履歴から削除
-        const histData = histSh.getDataRange().getValues();
-        for (let i = histData.length - 1; i >= 1; i--) {
-          if (String(histData[i][0]).trim() === revisionBaseOrderNo) {
-            histSh.deleteRow(i + 1);
+        const histTail = readRowsForKey_(histSh, revisionBaseOrderNo, 1);
+        for (let i = histTail.rows.length - 1; i >= 0; i--) {
+          if (String(histTail.rows[i][0]).trim() === revisionBaseOrderNo) {
+            histSh.deleteRow(histTail.startRow + i);
             break;
           }
         }
         // 発注明細から削除
-        const itemsData = itemsSh.getDataRange().getValues();
-        for (let i = itemsData.length - 1; i >= 1; i--) {
-          if (String(itemsData[i][0]).trim() === revisionBaseOrderNo) {
-            itemsSh.deleteRow(i + 1);
+        const itemsTail = readRowsForKey_(itemsSh, revisionBaseOrderNo, 1);
+        for (let i = itemsTail.rows.length - 1; i >= 0; i--) {
+          if (String(itemsTail.rows[i][0]).trim() === revisionBaseOrderNo) {
+            itemsSh.deleteRow(itemsTail.startRow + i);
           }
         }
       } catch(e) {
@@ -786,12 +855,13 @@ function deleteOrder(p, user_id) {
   }
 
   // 発注履歴シートから削除（1行）
+  // 削除操作は履歴タブ（直近20件）からのみ行われるため、対象は必ず末尾付近にある（対策1）
   const histSh   = getSheet(SHEET_HISTORY);
-  const histData = histSh.getDataRange().getValues();
+  const histTail = readRowsForKey_(histSh, orderNo, 1);
   let deletedHist = false;
-  for (let i = histData.length - 1; i >= 1; i--) {
-    if (String(histData[i][0]).trim() === orderNo) {
-      histSh.deleteRow(i + 1);
+  for (let i = histTail.rows.length - 1; i >= 0; i--) {
+    if (String(histTail.rows[i][0]).trim() === orderNo) {
+      histSh.deleteRow(histTail.startRow + i);
       deletedHist = true;
       break; // 発注Noはユニーク
     }
@@ -803,12 +873,12 @@ function deleteOrder(p, user_id) {
 
   // 発注明細シートから削除（複数行）
   const itemsSh   = getSheet(SHEET_ITEMS);
-  const itemsData = itemsSh.getDataRange().getValues();
+  const itemsTail = readRowsForKey_(itemsSh, orderNo, 1);
   let deletedCount = 0;
   // 後ろから削除しないと行番号がズレる
-  for (let i = itemsData.length - 1; i >= 1; i--) {
-    if (String(itemsData[i][0]).trim() === orderNo) {
-      itemsSh.deleteRow(i + 1);
+  for (let i = itemsTail.rows.length - 1; i >= 0; i--) {
+    if (String(itemsTail.rows[i][0]).trim() === orderNo) {
+      itemsSh.deleteRow(itemsTail.startRow + i);
       deletedCount++;
     }
   }
@@ -841,10 +911,14 @@ function getIsAdmin(user_id) {
 // 発注No採番（YYYYMMDD-NNN）
 function generateOrderNo(dateStr) {
   const dateKey = dateStr.replace(/-/g, '');
-  const sh      = getSheet(SHEET_HISTORY);
-  const data    = sh.getDataRange().getValues();
+  const sh = getSheet(SHEET_HISTORY);
+  // 対象日より前の行まで読み終えたら打ち切る（発注Noは日付を含み昇順に並ぶ前提。対策1）。
+  // A列（発注No）だけで判定できるので1列のみ読む（対策2）
+  const rows = readTailRowsUntil_(sh, 1, chunkRows =>
+    chunkRows.length > 0 && String(chunkRows[0][0] || '').trim() < dateKey
+  );
   let maxSeq = 0;
-  data.slice(1).forEach(r => {
+  rows.forEach(r => {
     const no = String(r[0] || '');
     if (no.startsWith(dateKey + '-')) {
       const seq = parseInt(no.split('-')[1]) || 0;
@@ -1232,19 +1306,9 @@ function buildPendingOrders() {
   const ss = getSS();
   const itemsSh = ss.getSheetByName(SHEET_ITEMS);
   if (!itemsSh || itemsSh.getLastRow() < 2) return [];
-  const itemsData = itemsSh.getDataRange().getValues();
-
-  // 発注No → 仕入先情報（発注履歴シートから。発注明細には仕入先が入っていないため）
-  const histSh = ss.getSheetByName(SHEET_HISTORY);
-  const supplierByOrderNo = {};
-  if (histSh && histSh.getLastRow() > 1) {
-    histSh.getDataRange().getValues().slice(1).forEach(r => {
-      const orderNo = String(r[0] || '').trim();
-      if (orderNo) supplierByOrderNo[orderNo] = { code: String(r[2] || '').trim(), name: String(r[3] || '') };
-    });
-  }
 
   // 発注先コード → リードタイム（発注先マスターF列。未入力は既定値）
+  // ※ 発注先マスターは数十行程度で増え続けないシートなので全件読みのままでよい
   const suppData = getSheet(SHEET_SUPPLIERS).getDataRange().getValues();
   const leadTimeByCode = {};
   suppData.slice(1).forEach(r => {
@@ -1256,12 +1320,42 @@ function buildPendingOrders() {
   const receivedKeys = getReceivedKeys(true);
   const postingLagByCode = getPostingLagByCode();
 
+  // 発注明細・発注履歴は「入荷待ちとして意味を持つ期間」だけに絞って読む（対策1）。
+  // 猶予期限（graceDeadline）を過ぎた発注はどのみち対象外になるので、
+  // 「最大リードタイム＋最大計上ラグ＋猶予日数」より前の発注は読む必要が無い
+  const leadTimeValues = Object.values(leadTimeByCode);
+  const maxLeadTime    = leadTimeValues.length > 0 ? Math.max(DEFAULT_LEAD_TIME_DAYS, ...leadTimeValues) : DEFAULT_LEAD_TIME_DAYS;
+  const lagValues      = Object.values(postingLagByCode);
+  const maxPostingLag  = lagValues.length > 0 ? Math.max(DEFAULT_POSTING_LAG_DAYS, ...lagValues) : DEFAULT_POSTING_LAG_DAYS;
+  const scanWindowDays = Math.ceil(maxLeadTime) + Math.ceil(maxPostingLag) + PENDING_GRACE_DAYS + 5; // +5日は安全マージン
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - scanWindowDays);
+  const cutoffKey = Utilities.formatDate(cutoffDate, 'Asia/Tokyo', 'yyyyMMdd');
+
+  // 発注No/JAN/コード/商品名/数量の5列で足りる
+  const itemsData = readTailRowsUntil_(itemsSh, 5, rows =>
+    rows.length > 0 && String(rows[0][0] || '').trim() < cutoffKey
+  );
+
+  // 発注No → 仕入先情報（発注履歴シートから。発注明細には仕入先が入っていないため）
+  // 発注No/日付/仕入先コード/仕入先名の4列で足りる
+  const histSh = ss.getSheetByName(SHEET_HISTORY);
+  const supplierByOrderNo = {};
+  if (histSh && histSh.getLastRow() > 1) {
+    readTailRowsUntil_(histSh, 4, rows =>
+      rows.length > 0 && String(rows[0][0] || '').trim() < cutoffKey
+    ).forEach(r => {
+      const orderNo = String(r[0] || '').trim();
+      if (orderNo) supplierByOrderNo[orderNo] = { code: String(r[2] || '').trim(), name: String(r[3] || '') };
+    });
+  }
+
   const todayStr = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
   const todayParts = todayStr.split('-').map(Number);
   const todayEpochDay = ymdToEpochDay(todayParts[0], todayParts[1], todayParts[2]);
 
   const candidates = [];
-  itemsData.slice(1).forEach(r => {
+  itemsData.forEach(r => {
     const orderNo = String(r[0] || '').trim();
     const code    = String(r[2] || '').trim();
     const name    = String(r[3] || '');
@@ -1304,20 +1398,24 @@ function buildPendingOrders() {
 
   if (candidates.length === 0) return [];
 
-  // 仕入単価を商品マスターから引く（対象コードのみに絞って走査）
+  // 仕入単価を商品マスターから引く（対象コードのみに絞って走査）。
+  // 商品マスターは9,000件超×約20列あるが、必要なのは「コード」「仕入単価」の2列だけなので、
+  // その2列だけを読み込む（対策2）。ヘッダー行だけ先に読んで列位置を特定してから読む
   const codeSet = new Set(candidates.map(c => c.code));
   const unitCostByCode = {};
   const prodSh = ss.getSheetByName(SHEET_PRODUCTS);
   if (prodSh && prodSh.getLastRow() > 1) {
-    const prodData = prodSh.getDataRange().getValues();
-    const headers  = prodData[0].map(h => String(h).trim());
-    const colCode  = findColIdxGAS(headers, 'コード');
-    const colCost  = findColIdxGAS(headers, '仕入単価');
+    const prodLastRow = prodSh.getLastRow();
+    const headers = prodSh.getRange(1, 1, 1, prodSh.getLastColumn()).getValues()[0].map(h => String(h).trim());
+    const colCode = findColIdxGAS(headers, 'コード');
+    const colCost = findColIdxGAS(headers, '仕入単価');
     if (colCode !== -1 && colCost !== -1) {
-      for (let i = 1; i < prodData.length; i++) {
-        const code = String(prodData[i][colCode] || '').trim();
+      const codeCol = prodSh.getRange(2, colCode + 1, prodLastRow - 1, 1).getValues();
+      const costCol = prodSh.getRange(2, colCost + 1, prodLastRow - 1, 1).getValues();
+      for (let i = 0; i < codeCol.length; i++) {
+        const code = String(codeCol[i][0] || '').trim();
         if (codeSet.has(code) && !(code in unitCostByCode)) {
-          unitCostByCode[code] = parseFloat(String(prodData[i][colCost] || '0').replace(/,/g, '')) || 0;
+          unitCostByCode[code] = parseFloat(String(costCol[i][0] || '0').replace(/,/g, '')) || 0;
         }
       }
     }
