@@ -225,12 +225,12 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.7.0';
+const APP_VERSION = '0.8.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
 // GASの結果配信は逐次でも約7%失敗する（実測）。リトライ前提で組む。
-const FETCH_TIMEOUT_MS = 15000;
+const FETCH_TIMEOUT_MS = 20000; // 🆕 v0.8.0: GASの応答が遅い日は20〜60秒かかることがあるため15秒→20秒に延長
 const MAX_ATTEMPTS     = 3;
 const RETRY_WAIT_MS    = [800, 2000];
 
