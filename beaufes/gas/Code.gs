@@ -1,6 +1,6 @@
 // ============================================================
 // ビューフェス申込アプリ - Google Apps Script
-// Version: 0.9.0
+// Version: 0.9.1
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -81,11 +81,17 @@
 //   友だちは `line_user_id` での直接検索手段がAPIに無いため、全件を `line_friends_cache` シートに
 //   キャッシュし、時間トリガー（6時間ごと・GASエディタで手動設定）で同期する方式にした（§2-1）。
 //   Script Propertiesに `LINE_HARNESS_API_URL` / `LINE_HARNESS_API_KEY` / `BEAUFES_TAG_ID` が必要
-//  （2026-08-06 Takashiさんが登録済み）。
+//  （2026-08-06 Takashiさんが登録済み。デプロイ・実機確認済み: probeLineHarnessでtotal:103・
+//   syncLineFriendsで103件同期・6時間ごとの時間トリガーも設定済み）。
 //   詳細: 開発・自動化/beaufes/LINE連携_実装プラン.md §1・§2-1・§4 L1-a
+//
+// 🆕 v0.9.1（2026-08-06・L1-b）: LINEのIDトークンをサーバー側で検証する `_verifyLineIdToken` を新設。
+//   `liff.getProfile()` の結果をそのまま信用せず、`POST https://api.line.me/oauth2/v2.1/verify` の
+//   応答（aud/exp/iss）を自分で検証してから `sub`（=lineUserId）を使う（§2-3）。まだ呼び出し元は無い。
+//   診断用に `testVerifyBadIdToken()` を追加（不正なトークンで確実に例外になることをGASエディタから確認できる）。
 // ============================================================
 
-const VERSION  = '0.8.1';
+const VERSION  = '0.9.1';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -112,6 +118,9 @@ const SITE_BASE_URL = 'https://beaufield.github.io/beaufield-dev/beaufes/';
 const LINE_HARNESS_API_URL = _PROPS.getProperty('LINE_HARNESS_API_URL');
 const LINE_HARNESS_API_KEY = _PROPS.getProperty('LINE_HARNESS_API_KEY');
 const BEAUFES_TAG_ID       = _PROPS.getProperty('BEAUFES_TAG_ID'); // タグ「ビューフェス2026申込」のtagId（秘密情報ではない）
+
+// 🆕 L1-b: LIFF/LINEログインチャネルID（秘密情報ではないため直書きでよい。§0で発行済み）
+const LIFF_CHANNEL_ID = '2010404613';
 
 // ============================================================
 // 起動時チェック（プロパティ未設定を早期検知）
@@ -773,6 +782,73 @@ function probeLineHarness() {
   Logger.log('1件目のキー: ' + Object.keys(first).join(', '));
   Logger.log('lineUserIdあり: ' + (first.lineUserId !== undefined));
   Logger.log('line_user_idあり（誤表記チェック・falseが正常）: ' + (first.line_user_id !== undefined));
+}
+
+// ============================================================
+// 🆕 L1-b: LINEのIDトークン検証
+//
+// 🔴 liff.getProfile()の結果をブラウザから送られてきたまま信用してはいけない
+// （なりすまし申込が可能になる・§2-3）。IDトークンを必ずサーバー側で検証し、
+// 応答（aud/exp/iss）を鵜呑みにせず自分で判定する。
+// ============================================================
+
+// LINEのIDトークンを検証し、本人を一意に表すsub（= lineUserId）を返す。
+// 不正・改竄・期限切れ・他チャネル宛のトークンは必ず例外にする（無言でnullを返さない）。
+function _verifyLineIdToken(idToken) {
+  if (!idToken) throw new Error('IDトークンがありません');
+
+  const options = {
+    method: 'post',
+    contentType: 'application/x-www-form-urlencoded',
+    payload: {
+      id_token:  idToken,
+      client_id: LIFF_CHANNEL_ID
+    },
+    muteHttpExceptions: true // 🔴 自動では例外にならないため、必ず自分でステータス判定する（§2-3）
+  };
+
+  const res  = UrlFetchApp.fetch('https://api.line.me/oauth2/v2.1/verify', options);
+  const code = res.getResponseCode();
+  const text = res.getContentText();
+
+  if (code !== 200) {
+    throw new Error('IDトークン検証に失敗しました: HTTP_' + code + ' / ' + text.substring(0, 300));
+  }
+
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch (e) {
+    throw new Error('IDトークン検証: 非JSON応答 / ' + text.substring(0, 300));
+  }
+
+  // 🔴 LINE側が200を返しても、内容は自分で検証する（§2-3の3項目）
+  if (json.iss !== 'https://access.line.me') {
+    throw new Error('IDトークンのissが不正です: ' + json.iss);
+  }
+  if (json.aud !== LIFF_CHANNEL_ID) {
+    throw new Error('IDトークンのaudが自チャネル宛ではありません: ' + json.aud);
+  }
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (!json.exp || json.exp <= nowSec) {
+    throw new Error('IDトークンの有効期限が切れています');
+  }
+  if (!json.sub) {
+    throw new Error('IDトークンにsub（ユーザー識別子）がありません');
+  }
+
+  return json.sub;
+}
+
+// 診断用（GASエディタから手動実行）。実在しない/改竄されたIDトークンを渡し、
+// 確実に例外になることを確認する。正しいIDトークンでの確認はliff.html実装後（L1-d）に実機で行う。
+function testVerifyBadIdToken() {
+  try {
+    _verifyLineIdToken('this-is-not-a-real-id-token');
+    Logger.log('🔴 異常: 不正なトークンなのに例外になりませんでした（要調査）');
+  } catch (e) {
+    Logger.log('✅ 正常: 不正なトークンで例外になりました → ' + e.message);
+  }
 }
 
 // ============================================================
