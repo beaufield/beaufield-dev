@@ -1,6 +1,6 @@
 // ============================================================
 // ビューフェス申込アプリ - Google Apps Script
-// Version: 0.6.1
+// Version: 0.8.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -42,14 +42,36 @@
 //
 // 🆕 v0.7.0（2026-08-06）: 重複申込対策（設計書§4-3の未実装分を実装）
 //   1. 氏名の照合を正規化（`_normalizeName`）。「山田太郎」「山田 太郎」「山田　太郎」を同一人物として扱う
-//   2. 同じメールアドレスの申込が既にある場合、無言で更新せず **確認画面用の応答を返す**
+//   2. 同じメールアドレスの申込が既にある場合、無言で更新せず確認画面用の応答を返す
 //      （`duplicate_found:true`）。クライアントが mode='update'/'new' を付けて再送信して確定する。
-//      → 同じサロンの別スタッフが代表メールで申し込んだときの「上書き事故」を構造的に防ぐ
 //   3. `resendPass` アクションを新設。パスURLを紛失した人がメールアドレスだけで再発行できる
 //      （フォーム再送信で重複行が生まれる経路を塞ぐため）
+//   → v0.8.0でこの確認画面方式は**廃止**（下記参照）。
+//
+// 🆕 v0.8.0（2026-08-06・L0-X）: 重複確認画面を廃止し「トークンURLを知っている人だけ編集できる」方式へ移行。
+//   問題: v0.7.0の`applyApplication`は、メールアドレスが一致すると`duplicate_found`とともに
+//   **既存申込のsalon_name/staff_name/created_atをそのまま返していた**。他人のメールアドレスを
+//   入力すれば、その人の参加事実・サロン名・氏名が分かってしまう情報漏洩経路だった。
+//   （`resendPass`は列挙対策済みだったが`apply`側が抜けていた）
+//
+//   対策: 確認画面そのものを廃止。`applyApplication`から`mode`/`target_app_id`/`duplicate_found`を削除し、
+//   以下の3分岐のみにする。
+//     - メールに一致なし               → そのまま新規登録
+//     - メール一致 かつ 正規化氏名も一致 → 既存行は一切変更せず・情報も一切返さず、
+//                                        パスURLをメール再送。応答は{existing_notified:true}のみ
+//     - メール一致 だが氏名が違う       → 別人として新規登録（同一サロン複数名の代表メール申込に対応）
+//   漏れる情報は「そのメール＋その氏名の組み合わせが登録済みか」という真偽値のみになる。
+//
+//   新設 `updateApplication`: ticket_tokenで行を特定して更新する唯一の経路（capability URL方式）。
+//   ticket_token・app_id・statusは書き換えない。重複判定は行わない（本人の編集のため）。
+//   `getPass`もpass.htmlの編集UI向けにphone/email/business_type/has_transaction/address/referrer/noteを返すよう拡張。
+//
+//   受容したリスク: QR提示時に第三者が撮影するとticket_tokenを入手でき、内容を閲覧・編集できてしまう。
+//   イベント規模・性質から実害は小さいと判断し受容（Takashiさん了解済み・token は16桁の乱数で総当たり不可能）。
+//   詳細: 開発・自動化/beaufes/LINE連携_実装プラン.md §2-2・§4 L0-X
 // ============================================================
 
-const VERSION  = '0.7.0';
+const VERSION  = '0.8.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -116,9 +138,10 @@ function doPost(e) {
 
   try {
     switch (action) {
-      case 'apply':      return _jsonResponse(applyApplication(data));
-      case 'resendPass': return _jsonResponse(resendPass(data));
-      default:           return _jsonResponse(_err('不明なアクション: ' + action));
+      case 'apply':            return _jsonResponse(applyApplication(data));
+      case 'resendPass':       return _jsonResponse(resendPass(data));
+      case 'updateApplication': return _jsonResponse(updateApplication(data));
+      default:                 return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
     Logger.log('doPost error: ' + err);
@@ -195,15 +218,14 @@ function _getConfig() {
 
 // ============================================================
 // ① 申込受付（doPost: action=apply）
-//    キーは email_norm + 正規化した staff_name（§4-3・v0.7.0で正規化を追加）
+//    キーは email_norm + 正規化した staff_name（§4-3）
 //
-//    🆕 v0.7.0: 同じメールアドレスの申込が既にある場合は**無言で更新しない**。
-//    `duplicate_found:true` を返してクライアントに確認画面を出させ、
-//    お客様が選んだ結果を mode='update'（対象は target_app_id）/ mode='new' で
-//    再送信してもらってから確定する（設計書§4-3の3行目「本人に選ばせる」の実装）。
-//
-//    これがないと「同じサロンの2人目が代表メールで申し込み、1人目の名前を
-//    打ち間違えて1人目の申込を消す」事故が起こりうる。
+//    🆕 v0.8.0（L0-X）: 確認画面は廃止。以下の3分岐のみ。
+//      - メールに一致なし               → そのまま新規登録
+//      - メール一致 かつ 正規化氏名も一致 → 既存行は一切変更せず・情報も一切返さず、
+//                                        パスURLをメール再送するだけ（{existing_notified:true}）
+//      - メール一致 だが氏名が違う       → 別人として新規登録（代表メールでの複数名申込に対応）
+//    既存申込の内容を変更する経路は updateApplication（ticket_token方式）のみに一本化。
 // ============================================================
 function applyApplication(data) {
   _checkProps();
@@ -212,10 +234,7 @@ function applyApplication(data) {
   const staffName      = String(data.staff_name || '').trim();
   const email          = String(data.email || '').trim();
   const phone          = String(data.phone || '').trim();
-  // 🆕 '' = 未確定（重複があれば確認を返す） / 'update' = 既存を更新 / 'new' = 別人として追加
-  const mode           = String(data.mode || '').trim();
-  const targetAppId    = String(data.target_app_id || '').trim();
-  const businessType   = String(data.business_type || '').trim(); // 🆕 U列。名札の色分けに使用（§4-1-2）
+  const businessType   = String(data.business_type || '').trim(); // U列。名札の色分けに使用（§4-1-2）
   const hasTransaction = String(data.has_transaction || '').trim(); // 'yes' / 'no'
   const address        = String(data.address || '').trim();        // 新規客のみ
   const referrer       = String(data.referrer || '').trim();       // 新規客のみ
@@ -232,7 +251,9 @@ function applyApplication(data) {
   const emailNorm = email.toLowerCase();
   const nameKey   = _normalizeName(staffName);
 
-  let appId, ticketToken, isUpdate;
+  let appId, ticketToken;
+  let existingNotified = false;
+  let resendList        = null; // メール一致・氏名一致が見つかった場合の再送先（ロック解放後に送信）
 
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -242,74 +263,24 @@ function applyApplication(data) {
     const rows = sh.getDataRange().getValues();
     const now  = _now();
 
-    // 🆕 同じメールアドレスの申込を全て集める（§4-3）
-    // 「同じサロンの複数名が代表メールで申し込む」は必ず起きるので、
-    // メール一致だけでは本人と断定せず、氏名の正規化キーで突き合わせる。
-    const sameEmail = [];
+    // 同じメール＋同じ氏名（正規化）の既存申込を探す。見つかっても内容は一切書き換えない・
+    // 一切返さない（他人のメールで氏名・サロン名が引ける経路を作らないため・§2-2）。
     for (let i = 1; i < rows.length; i++) {
-      // 取消済みの申込は「既存」として扱わない（再申込は新規行になる）
-      if (String(rows[i][7]).toLowerCase() === emailNorm && String(rows[i][17]) !== 'cancelled') {
-        sameEmail.push({
-          row:        i + 1, // 1-indexed 行番号
-          appId:      String(rows[i][0]),
-          salonName:  String(rows[i][4]),
-          staffName:  String(rows[i][5]),
-          createdAt:  String(rows[i][1]),
-          nameKey:    _normalizeName(rows[i][5])
-        });
-      }
+      if (String(rows[i][7]).toLowerCase() !== emailNorm) continue;
+      if (String(rows[i][17]) === 'cancelled') continue; // 取消済みは既存として扱わない
+      if (_normalizeName(rows[i][5]) !== nameKey) continue;
+
+      existingNotified = true;
+      resendList = [{
+        salonName: String(rows[i][4]),
+        staffName: String(rows[i][5]),
+        passUrl:   SITE_BASE_URL + 'pass.html?t=' + String(rows[i][16])
+      }];
+      break;
     }
 
-    // 🆕 既存申込があり、まだお客様が選んでいない → 確認画面を出してもらう
-    // （ここでは一切書き込まない。無言の上書き・無言の重複作成をどちらも防ぐ）
-    if (sameEmail.length > 0 && mode !== 'update' && mode !== 'new') {
-      return _ok({
-        duplicate_found: true,
-        existing: sameEmail.map(function (m) {
-          return {
-            app_id:     m.appId,
-            salon_name: m.salonName,
-            staff_name: m.staffName,
-            created_at: m.createdAt,
-            same_name:  m.nameKey === nameKey  // 今回の入力と同一人物とみられるか
-          };
-        })
-      });
-    }
-
-    // 更新対象の決定
-    let foundRow = -1;
-    if (mode === 'update') {
-      // お客様が確認画面で選んだ申込を優先し、無ければ氏名の正規化キーで引き当てる
-      for (let k = 0; k < sameEmail.length; k++) {
-        if (targetAppId && sameEmail[k].appId === targetAppId) { foundRow = sameEmail[k].row; break; }
-      }
-      if (foundRow < 0) {
-        for (let k = 0; k < sameEmail.length; k++) {
-          if (sameEmail[k].nameKey === nameKey) { foundRow = sameEmail[k].row; break; }
-        }
-      }
-      if (foundRow < 0) return _err('更新対象のお申し込みが見つかりませんでした。お手数ですが最初からやり直してください。');
-    }
-    // mode === 'new' の場合は foundRow = -1 のまま＝新規行を追加する
-
-    if (foundRow > 0) {
-      // --- 既存申込を更新（内容変更・パス再送の導線を兼ねる） ---
-      isUpdate    = true;
-      appId       = rows[foundRow - 1][0];
-      ticketToken = rows[foundRow - 1][16];
-
-      sh.getRange(foundRow, 3, 1, 1).setValue(now); // updated_at
-      sh.getRange(foundRow, 5, 1, 9).setValues([[
-        // J列(area)はフォームから削除済み（2026-08-06）。列位置を保つため空文字を書き続ける
-        salonName, staffName, email, emailNorm, phone, '', hasTransaction, address, referrer
-      ]]);
-      sh.getRange(foundRow, 14, 1, 1).setValue(agree);
-      sh.getRange(foundRow, 18, 1, 1).setValue('confirmed');
-      sh.getRange(foundRow, 21, 1, 1).setValue(businessType); // U列（§4-1-2）
-    } else {
-      // --- 新規申込 ---
-      isUpdate    = false;
+    if (!existingNotified) {
+      // 新規登録（メールが一致しても氏名が違えば別人として登録＝同一サロン複数名の代表メール申込に対応）
       appId       = _nextAppId(rows);
       ticketToken = _genToken();
 
@@ -317,7 +288,7 @@ function applyApplication(data) {
         appId, now, now, 'web',
         salonName, staffName, email, emailNorm, phone, '', // J列(area)はフォームから削除済み（2026-08-06）
         hasTransaction, address, referrer, agree,
-        '', '',                 // line_friend_id / line_user_id（LIFF連動はP2で使用）
+        '', '',                 // line_friend_id / line_user_id（LIFF連動はL1で使用）
         ticketToken, 'confirmed', '', note,
         businessType             // U列（§4-1-2）
       ]);
@@ -326,15 +297,86 @@ function applyApplication(data) {
     lock.releaseLock();
   }
 
-  const passUrl = SITE_BASE_URL + 'pass.html?t=' + ticketToken;
-  _sendConfirmationMail(email, salonName, staffName, passUrl, isUpdate);
+  if (existingNotified) {
+    _sendPassResendMail(email, resendList);
+    return _ok({ existing_notified: true });
+  }
 
-  return _ok({ app_id: appId, pass_url: passUrl, is_update: isUpdate });
+  const passUrl = SITE_BASE_URL + 'pass.html?t=' + ticketToken;
+  _sendConfirmationMail(email, salonName, staffName, passUrl, false);
+
+  return _ok({ app_id: appId, pass_url: passUrl, is_update: false });
+}
+
+// ============================================================
+// 🆕 ④ 申込内容の変更（doPost: action=updateApplication）―― v0.8.0（L0-X・§2-2）
+//    ticket_token を知っている本人だけが自分の申込を編集できる（capability URL方式）。
+//    pass.html の編集UI（L1-e）から呼ばれる。既存内容を変更する唯一の経路。
+//
+//    🔴 ticket_token（列17）・app_id（列1）・status（列18）は絶対に書き換えない。
+//    🔴 重複判定は行わない（token を持っている時点で本人の編集と確定しているため）。
+// ============================================================
+function updateApplication(data) {
+  _checkProps();
+
+  const token = String(data.ticket_token || '').trim();
+  if (!token) return _err('INVALID_TOKEN');
+
+  const salonName      = String(data.salon_name || '').trim();
+  const staffName      = String(data.staff_name || '').trim();
+  const email          = String(data.email || '').trim();
+  const phone          = String(data.phone || '').trim();
+  const businessType   = String(data.business_type || '').trim();
+  const hasTransaction = String(data.has_transaction || '').trim();
+  const address        = String(data.address || '').trim();
+  const referrer       = String(data.referrer || '').trim();
+  const note           = String(data.note || '').trim();
+
+  if (!salonName) return _err('サロン名を入力してください');
+  if (!staffName) return _err('お名前を入力してください');
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return _err('メールアドレスの形式が正しくありません');
+  if (!phone) return _err('お電話番号を入力してください');
+  if (!businessType) return _err('業態を選択してください');
+
+  const emailNorm = email.toLowerCase();
+  let appId;
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sh  = _getSheet(ss, SHEET_APPLICATIONS);
+    const rows = sh.getDataRange().getValues();
+    const now  = _now();
+
+    let foundRow = -1;
+    for (let i = 1; i < rows.length; i++) {
+      if (String(rows[i][16]) === token) { foundRow = i + 1; break; }
+    }
+    if (foundRow < 0) return _err('NOT_FOUND');
+
+    appId = rows[foundRow - 1][0];
+
+    sh.getRange(foundRow, 3, 1, 1).setValue(now); // updated_at
+    sh.getRange(foundRow, 5, 1, 9).setValues([[
+      // J列(area)はフォームから削除済み（2026-08-06）。列位置を保つため空文字を書き続ける
+      salonName, staffName, email, emailNorm, phone, '', hasTransaction, address, referrer
+    ]]);
+    sh.getRange(foundRow, 20, 1, 1).setValue(note);
+    sh.getRange(foundRow, 21, 1, 1).setValue(businessType); // U列（§4-1-2）
+  } finally {
+    lock.releaseLock();
+  }
+
+  return _ok({ app_id: appId, pass_url: SITE_BASE_URL + 'pass.html?t=' + token });
 }
 
 // ============================================================
 // ② 入場パス取得（doGet: action=getPass）―― 完全公開・認証なし
 //    token を知っている人だけが自分の情報を見られる
+//
+//    🆕 v0.8.0（L0-X）: pass.html の編集UI（L1-e）向けに編集対象項目を追加。
+//    token を持つ本人しか開けないので返してよい（§8のcapability方針）。
 // ============================================================
 function getPass(data) {
   _checkProps();
@@ -354,6 +396,14 @@ function getPass(data) {
         staff_name:     rows[i][5],
         status:         rows[i][17],
         checked_in_at:  rows[i][18] || null,
+        // 🆕 編集UI用
+        email:           rows[i][6],
+        phone:           rows[i][8],
+        business_type:   rows[i][20],
+        has_transaction: rows[i][10],
+        address:         rows[i][11],
+        referrer:        rows[i][12],
+        note:            rows[i][19],
         event: {
           date:       cfg.event_date       || '',
           time:       cfg.event_time       || '',

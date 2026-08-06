@@ -89,22 +89,13 @@
     font-size: 15px; color: var(--main-dark); font-weight: bold;
     z-index: 100;
   }
-  /* 重複確認・パス再発行の共通パーツ */
+  /* 申込済み通知・パス再発行の共通パーツ */
   .panelTitle { font-size: 16px; font-weight: bold; margin: 0 0 10px; }
   .panelLead  { font-size: 14px; line-height: 1.8; color: #555; margin: 0 0 16px; }
-  .existing {
-    border: 1px solid var(--border); border-radius: 10px;
-    padding: 14px; margin-bottom: 12px; background: #fbfdfe;
-  }
-  .existing .who  { font-weight: bold; font-size: 15px; }
-  .existing .meta { font-size: 12px; color: #888; margin-top: 4px; }
   .btn {
     width: 100%; padding: 13px; margin-top: 10px;
     font-size: 15px; font-weight: bold; border-radius: 9px; cursor: pointer;
     border: none; color: #fff; background: var(--main-dark);
-  }
-  .btnOutline {
-    background: #fff; color: var(--main-dark); border: 2px solid var(--main-dark);
   }
   .btnQuiet {
     background: #fff; color: #888; border: 1px solid var(--border); font-weight: normal;
@@ -198,17 +189,14 @@
     </div>
   </div>
 
-  <!-- ============ 重複確認（既に同じメールでの申込がある場合） ============ -->
-  <div class="card" id="confirmPanel" style="display:none;">
-    <p class="panelTitle">すでにお申し込みがあります</p>
-    <p class="panelLead">
-      このメールアドレスでは、すでに次のお申し込みをお預かりしています。<br>
-      どちらにするかお選びください。
-    </p>
-    <div id="existingList"></div>
-    <button class="btn btnOutline" id="addNewBtn">別の方として新しく申し込む</button>
-    <button class="btn btnQuiet" id="backToFormBtn">入力画面に戻る</button>
-    <div class="errorMsg" id="confirmError"></div>
+  <!-- ============ 申込済み通知（同じメール＋同じお名前で再送信された場合） ============ -->
+  <div class="card" id="existingNoticePanel" style="display:none;">
+    <p class="panelTitle">すでにお申し込みをお預かりしています</p>
+    <div class="okMsg">
+      ご登録のメールアドレスに、内容の確認・変更ができるリンクをお送りしました。<br>
+      メールが届かない場合は、迷惑メールフォルダもご確認ください。
+    </div>
+    <button class="btn btnQuiet" id="backFromExistingBtn">入力画面に戻る</button>
   </div>
 
   <!-- ============ パス再発行 ============ -->
@@ -237,7 +225,7 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.6.0';
+const APP_VERSION = '0.7.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
@@ -291,9 +279,9 @@ async function postOnce(params) {
 }
 
 // リトライ付きPOST。
-// 🔴 リトライしても二重登録にならない理由: サーバー側は同じメールの申込を見つけると
-// 行を作らずに duplicate_found を返す（Code.gs v0.7.0）。つまり再送信は安全。
-// 1回目が実は成功していた場合は duplicate_found が返るので、確認画面でお客様に選んでもらう。
+// 🔴 リトライしても二重登録にならない理由: 1回目が実は成功していた場合、同じメール＋
+// 同じお名前で再送信すると、サーバー側は行を作らず existing_notified を返すだけ（Code.gs v0.8.0）。
+// メールが変わらない・お名前も同じ表記のつもりで送っている限り、再送信は安全。
 async function postWithRetry(params) {
   let lastErr = null;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -311,9 +299,9 @@ async function postWithRetry(params) {
 // 画面の出し分け
 // ------------------------------------------------------------
 function showPanel(which) {
-  el('formWrap').style.display     = (which === 'form')    ? 'block' : 'none';
-  el('confirmPanel').style.display = (which === 'confirm') ? 'block' : 'none';
-  el('resendPanel').style.display  = (which === 'resend')  ? 'block' : 'none';
+  el('formWrap').style.display           = (which === 'form')     ? 'block' : 'none';
+  el('existingNoticePanel').style.display = (which === 'existing') ? 'block' : 'none';
+  el('resendPanel').style.display        = (which === 'resend')   ? 'block' : 'none';
   window.scrollTo(0, 0);
 }
 
@@ -335,11 +323,9 @@ function buildPayload() {
   };
 }
 
-// 申込を送信する。mode: '' | 'update' | 'new'
-async function sendApply(mode, targetAppId) {
+// 申込を送信する。
+async function sendApply() {
   const payload = buildPayload();
-  if (mode) payload.mode = mode;
-  if (targetAppId) payload.target_app_id = targetAppId;
 
   overlay(true);
   el('submitBtn').disabled = true;
@@ -355,12 +341,11 @@ async function sendApply(mode, targetAppId) {
       return;
     }
 
-    // すでに同じメールの申込がある → お客様に選んでもらう（無言で上書きしない）
-    if (json.data.duplicate_found) {
+    // すでに同じメール＋同じお名前の申込がある → 内容は書き換えず、パスURLをメール再送しただけ
+    if (json.data.existing_notified) {
       overlay(false);
       el('submitBtn').disabled = false;
-      renderConfirm(json.data.existing);
-      showPanel('confirm');
+      showPanel('existing');
       return;
     }
 
@@ -379,48 +364,16 @@ async function sendApply(mode, targetAppId) {
   }
 }
 
-// 重複確認画面の描画
-function renderConfirm(existing) {
-  hideError('confirmError');
-  const box = el('existingList');
-  box.innerHTML = '';
-
-  existing.forEach(function (item) {
-    const div = document.createElement('div');
-    div.className = 'existing';
-
-    const who = document.createElement('div');
-    who.className = 'who';
-    who.textContent = item.staff_name + ' 様（' + item.salon_name + '）';
-    div.appendChild(who);
-
-    const meta = document.createElement('div');
-    meta.className = 'meta';
-    meta.textContent = 'お申し込み日：' + (item.created_at || '—') +
-      (item.same_name ? '　※今回入力されたお名前と同じ方です' : '');
-    div.appendChild(meta);
-
-    const btn = document.createElement('button');
-    btn.className = 'btn';
-    btn.textContent = 'この方の内容を更新する';
-    btn.addEventListener('click', function () { sendApply('update', item.app_id); });
-    div.appendChild(btn);
-
-    box.appendChild(div);
-  });
-}
-
 // ------------------------------------------------------------
 // イベント登録
 // ------------------------------------------------------------
 el('applyForm').addEventListener('submit', function (ev) {
   ev.preventDefault();
   hideError('errorMsg');
-  sendApply('', '');
+  sendApply();
 });
 
-el('addNewBtn').addEventListener('click', function () { sendApply('new', ''); });
-el('backToFormBtn').addEventListener('click', function () { showPanel('form'); });
+el('backFromExistingBtn').addEventListener('click', function () { showPanel('form'); });
 
 el('toResend').addEventListener('click', function (ev) {
   ev.preventDefault();

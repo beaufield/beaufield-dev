@@ -64,6 +64,51 @@
   .errorCard { text-align: center; padding: 36px 20px; color: #666; line-height: 1.9; }
   .errorCard a { color: var(--main-dark); }
   .stale { font-size: 12px; color: #999; margin-top: 10px; }
+
+  /* 🆕 L1-e: お申し込み内容の変更UI（トークンURLを知っている本人のみ・§2-2） */
+  .editToggleLine { text-align: center; margin-top: 16px; font-size: 13px; }
+  .editToggleLine a { color: var(--main-dark); }
+  .formCard { text-align: left; }
+  .formCard .panelTitle { font-size: 16px; font-weight: bold; margin: 0 0 14px; }
+  .formCard label { display: block; font-weight: bold; font-size: 14px; margin: 16px 0 6px; }
+  .formCard label .req { color: #dc2626; font-size: 12px; margin-left: 4px; }
+  .formCard input[type=text], .formCard input[type=email], .formCard input[type=tel],
+  .formCard select, .formCard textarea {
+    width: 100%;
+    padding: 11px 12px;
+    font-size: 15px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--text);
+  }
+  .formCard textarea { resize: vertical; min-height: 60px; }
+  .formCard .radio-group { display: flex; gap: 16px; margin-top: 6px; }
+  .formCard .radio-group label { display: flex; align-items: center; gap: 6px; font-weight: normal; margin: 0; }
+  .formCard .errorMsg {
+    display: none;
+    color: #dc2626;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+    margin-top: 14px;
+    line-height: 1.7;
+  }
+  .formCard .okMsg {
+    background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0;
+    border-radius: 8px; padding: 12px; font-size: 14px; line-height: 1.7; text-align: center;
+  }
+  .formCard .btn {
+    width: 100%; padding: 13px; margin-top: 14px;
+    font-size: 15px; font-weight: bold; border-radius: 9px; cursor: pointer;
+    border: none; color: #fff; background: var(--main-dark);
+  }
+  .formCard .btn:disabled { opacity: .5; }
+  .formCard .btnQuiet {
+    background: #fff; color: #888; border: 1px solid var(--border); font-weight: normal;
+  }
 </style>
 </head>
 <body>
@@ -91,6 +136,66 @@
       <div id="warnText"></div>
       <button class="reloadBtn" id="reloadBtn">もう一度読み込む</button>
     </div>
+
+    <!-- 🆕 L1-e: 内容を取得できた場合のみ表示（プリフィルする値が無いと編集できないため） -->
+    <div class="editToggleLine" id="editToggleLine" style="display:none;">
+      <a href="#" id="editToggleLink">お申し込み内容を変更する</a>
+    </div>
+  </div>
+
+  <!-- 🆕 L1-e: お申し込み内容の変更フォーム（§4 L1-e・updateApplicationのみを呼ぶ） -->
+  <div class="card formCard" id="editPanel" style="display:none;">
+    <p class="panelTitle">お申し込み内容の変更</p>
+    <form id="editForm">
+      <label>サロン様名<span class="req">必須</span></label>
+      <input type="text" id="e_salon_name" required>
+
+      <label>お名前（フルネーム）<span class="req">必須</span></label>
+      <input type="text" id="e_staff_name" required>
+
+      <label>メールアドレス<span class="req">必須</span></label>
+      <input type="email" id="e_email" required>
+
+      <label>お電話番号<span class="req">必須</span></label>
+      <input type="tel" id="e_phone" required>
+
+      <!-- 🔴 index.htmlと選択肢を1文字も違えないこと（LINEフォーム実物準拠） -->
+      <label>業態<span class="req">必須</span></label>
+      <select id="e_business_type" required>
+        <option value="">選択してください</option>
+        <option>美容室</option>
+        <option>理容室</option>
+        <option>エステサロン</option>
+        <option>ネイルサロン</option>
+        <option>アイサロン</option>
+        <option>その他</option>
+      </select>
+
+      <label>ビューフィールドとお取引はありますか？<span class="req">必須</span></label>
+      <div class="radio-group">
+        <label><input type="radio" name="e_has_transaction" value="yes"> あり</label>
+        <label><input type="radio" name="e_has_transaction" value="no"> なし（初めて）</label>
+      </div>
+
+      <label>サロンのご住所</label>
+      <input type="text" id="e_address">
+
+      <label>ご紹介サロン名・お名前（あれば）</label>
+      <input type="text" id="e_referrer">
+
+      <label>備考（あれば）</label>
+      <textarea id="e_note"></textarea>
+
+      <div class="errorMsg" id="editError"></div>
+
+      <button type="submit" class="btn" id="editSaveBtn">この内容で保存する</button>
+      <button type="button" class="btn btnQuiet" id="editCancelBtn">キャンセル</button>
+    </form>
+
+    <div id="editDone" style="display:none;">
+      <div class="okMsg">保存しました。</div>
+      <button type="button" class="btn btnQuiet" id="editCloseBtn">閉じる</button>
+    </div>
   </div>
 
   <div class="card errorCard" id="errorCard" style="display:none;">
@@ -105,7 +210,7 @@
 
 <script src="lib/qrcode.min.js"></script>
 <script>
-const APP_VERSION = '0.5.0';
+const APP_VERSION = '0.6.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
@@ -152,7 +257,12 @@ function localPassUrl(token) {
 // ------------------------------------------------------------
 // 表示用データの反映
 // ------------------------------------------------------------
+// 🆕 L1-e: 最後に反映した内容（編集フォームのプリフィルに使う）
+let lastDetail = null;
+
 function renderDetail(d) {
+  lastDetail = d;
+
   el('salonName').textContent = d.salon_name || '';
   el('staffName').textContent = (d.staff_name || '') + ' 様';
 
@@ -169,6 +279,9 @@ function renderDetail(d) {
     el('checkedInBox').innerHTML =
       '<div class="checkedIn">✅ ' + d.checked_in_at + ' に入場済みです</div>';
   }
+
+  // 🆕 内容を取得できてから「変更する」リンクを出す（プリフィルする値が無いと編集できないため）
+  el('editToggleLine').style.display = 'block';
 }
 
 // ------------------------------------------------------------
@@ -254,6 +367,13 @@ function showWarn(text) {
   el('warnBox').style.display = 'block';
 }
 
+function showError(id, msg) {
+  const e = el(id);
+  e.innerHTML = msg;
+  e.style.display = 'block';
+}
+function hideError(id) { el(id).style.display = 'none'; }
+
 // ------------------------------------------------------------
 // メイン
 // ------------------------------------------------------------
@@ -311,6 +431,127 @@ async function init() {
 
 el('reloadBtn').addEventListener('click', function () {
   location.reload();
+});
+
+// ------------------------------------------------------------
+// 🆕 L1-e: お申し込み内容の変更（doPost: action=updateApplication）
+// GASへのPOSTはindex.htmlと同じくリトライ付き（§2-6）。
+// ------------------------------------------------------------
+async function postOnce(params) {
+  const ctrl  = new AbortController();
+  const timer = setTimeout(function () { ctrl.abort(); }, FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      body: new URLSearchParams(params),
+      redirect: 'follow',
+      signal: ctrl.signal
+    });
+    if (!res.ok) throw new Error('HTTP_' + res.status);
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new Error('NON_JSON');
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function postWithRetry(params) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) await sleep(RETRY_WAIT_MS[attempt - 1] || 2000);
+    try {
+      return await postOnce(params);
+    } catch (e) {
+      lastErr = e && e.message ? e.message : String(e);
+    }
+  }
+  throw new Error(lastErr || 'UNKNOWN');
+}
+
+// getPassが返した現在値をフォームに反映する
+function populateEditForm(d) {
+  el('e_salon_name').value    = d.salon_name || '';
+  el('e_staff_name').value    = d.staff_name || '';
+  el('e_email').value         = d.email || '';
+  el('e_phone').value         = d.phone || '';
+  el('e_business_type').value = d.business_type || '';
+  el('e_address').value       = d.address || '';
+  el('e_referrer').value      = d.referrer || '';
+  el('e_note').value          = d.note || '';
+
+  const hasTx = d.has_transaction || 'yes';
+  document.querySelectorAll('input[name=e_has_transaction]').forEach(function (r) {
+    r.checked = (r.value === hasTx);
+  });
+}
+
+el('editToggleLink').addEventListener('click', function (ev) {
+  ev.preventDefault();
+  if (!lastDetail) return; // プリフィルする値が無い＝表示できていない状態では開かせない
+  populateEditForm(lastDetail);
+  hideError('editError');
+  el('editForm').style.display = 'block';
+  el('editDone').style.display = 'none';
+  el('editPanel').style.display = 'block';
+  el('editPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+
+el('editCancelBtn').addEventListener('click', function () {
+  el('editPanel').style.display = 'none';
+});
+el('editCloseBtn').addEventListener('click', function () {
+  el('editPanel').style.display = 'none';
+});
+
+el('editForm').addEventListener('submit', async function (ev) {
+  ev.preventDefault();
+  hideError('editError');
+
+  const token = qs('t');
+  const payload = {
+    ticket_token:    token,
+    salon_name:      el('e_salon_name').value.trim(),
+    staff_name:      el('e_staff_name').value.trim(),
+    email:           el('e_email').value.trim(),
+    phone:           el('e_phone').value.trim(),
+    business_type:   el('e_business_type').value,
+    has_transaction: (document.querySelector('input[name=e_has_transaction]:checked') || {}).value || '',
+    address:         el('e_address').value.trim(),
+    referrer:        el('e_referrer').value.trim(),
+    note:            el('e_note').value.trim()
+  };
+
+  el('editSaveBtn').disabled   = true;
+  el('editCancelBtn').disabled = true;
+
+  try {
+    const json = await postWithRetry({ action: 'updateApplication', data: JSON.stringify(payload) });
+    el('editSaveBtn').disabled   = false;
+    el('editCancelBtn').disabled = false;
+
+    if (!json.success) {
+      showError('editError', json.error === 'NOT_FOUND'
+        ? 'このリンクは無効です。お申し込み時のメールに記載のリンクをご確認ください。'
+        : (json.error || '保存に失敗しました。時間をおいて再度お試しください。'));
+      return;
+    }
+
+    // 表示・キャッシュを更新する。ticket_tokenは変わらないのでQRはそのまま。
+    const updated = Object.assign({}, lastDetail, payload);
+    renderDetail(updated);
+    saveCache(token, updated);
+
+    el('editForm').style.display = 'none';
+    el('editDone').style.display = 'block';
+  } catch (e) {
+    el('editSaveBtn').disabled   = false;
+    el('editCancelBtn').disabled = false;
+    showError('editError', '保存結果を確認できませんでした。お手数ですが、もう一度お試しください。');
+  }
 });
 
 init();
