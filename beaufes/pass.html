@@ -214,13 +214,13 @@
 
 <script src="lib/qrcode.min.js"></script>
 <script>
-const APP_VERSION = '0.6.1';
+const APP_VERSION = '0.6.2';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
 // 通信の設定（GASの結果配信は逐次でも約7%失敗するため、リトライは必須。
 // 失敗時は16〜47秒かかってから返ることがあるので、1回あたりの待ち時間も切る）
-const FETCH_TIMEOUT_MS = 10000;
+const FETCH_TIMEOUT_MS = 20000; // 🆕 v0.6.2: GASの応答が遅い日は20〜60秒かかることがあるため10秒→20秒に延長
 const MAX_ATTEMPTS     = 3;
 const RETRY_WAIT_MS    = [800, 2000];
 

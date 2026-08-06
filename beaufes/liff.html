@@ -129,6 +129,9 @@
     <div><b>申込締切</b>：2026年10月20日（火）</div>
   </div>
 
+  <!-- 🆕 自動入力の取得中だけ表示（何も起きていないように見えて不安にならないように） -->
+  <div class="linkLine" id="prefillStatus" style="display:none;color:#888;">自動入力を試しています…</div>
+
   <!-- ============ 申込フォーム ============ -->
   <div id="formWrap" style="display:none;">
     <form class="card" id="applyForm">
@@ -196,13 +199,13 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.1.1';
 const GAS_URL  = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const LIFF_ID  = '2010404613-cwHA5B0U';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
 // GASの結果配信は逐次でも約7%失敗する（実測）。リトライ前提で組む（§2-6）。
-const FETCH_TIMEOUT_MS = 15000;
+const FETCH_TIMEOUT_MS = 20000; // GASの応答が遅い日は20〜60秒かかることがあるため15秒→20秒に延長
 const MAX_ATTEMPTS     = 3;
 const RETRY_WAIT_MS    = [800, 2000];
 
@@ -398,6 +401,8 @@ async function boot() {
   el('eventInfo').style.display = 'block';
   el('formWrap').style.display  = 'block';
 
+  // 🆕 取得中であることが分かるようにする（通信が遅い日に「何も起きていない」ように見えないため）
+  el('prefillStatus').style.display = 'block';
   try {
     const json = await postWithRetry({ action: 'liffPrefill', data: JSON.stringify({ id_token: idToken }) });
     if (json && json.success) {
@@ -411,6 +416,8 @@ async function boot() {
     // 🔴 見つからない・取得失敗でもエラーにしない。空のフォームのまま使ってもらう（§2-9）
   } catch (e) {
     // プリフィル取得に失敗しても、フォーム自体は使える状態のまま何もしない
+  } finally {
+    el('prefillStatus').style.display = 'none';
   }
 
   el('applyForm').addEventListener('submit', function (ev) {
