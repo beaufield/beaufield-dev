@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.22.0';
+const VERSION = 'v2.24.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -4171,7 +4171,11 @@ function weeklyCheck() {
 //   - CSVの在庫数がマイナスの場合は0として送信する。
 //   - コード突合は calcDiffs() と同じロジック（先頭ゼロを parseInt で吸収）を用いる。
 function nightlyStockSync(dryRun) {
-  const isDry = !!dryRun;
+  // ⚠️ GASの時間主導トリガーは関数を「引数なし」ではなく実行イベントオブジェクトを
+  //    第1引数に渡して呼び出す。`!!dryRun` だとそのオブジェクトがtruthyになり
+  //    トリガー実行が常にdry-run扱いになってしまう（2026-07-20発覚・実際に7/16〜7/20の
+  //    毎日の自動実行が全てdry-runになっていた）。dryRun===trueの明示チェックに変更。
+  const isDry = dryRun === true;
   try {
     const csvData = loadCsvFromDrive();
     if (!csvData.ok) {
@@ -4353,6 +4357,14 @@ function notifyStockSyncAlert_(msg) {
   }
 }
 
+// 日次トリガーはこの関数を対象に設定する（nightlyStockSyncを直接トリガー登録しないこと）。
+// トリガーから渡される実行イベントオブジェクトを握りつぶし、確実に本番実行(dryRun=false)を呼ぶ。
+function trigger_nightlyStockSync() {
+  const result = nightlyStockSync(false);
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
 // GASエディタの「▶実行」は選択した関数を引数なしで呼ぶため、nightlyStockSync()を直接実行すると
 // dryRun=undefined→本番更新になってしまう。安全にdry-run確認するにはこちらを選んで実行すること。
 function test_dryRunStockSync() {
@@ -4366,6 +4378,64 @@ function test_dryRunStockSync() {
 function test_notifyStockSync() {
   notifyStockSyncAlert_('【テスト通知】在庫夜間同期のLINE WORKS疎通確認です。これが表示されれば設定OKです。');
   Logger.log('送信しました（LINEWORKS_WEBHOOK未設定の場合は何も起きません）');
+}
+
+// ===================== 無制限解除プレビュー（2026-07-20・仕様確認用の調査スクリプト） =====================
+// ⚠️読み取り専用。BCARTへのPATCH送信は一切行わない。トリガー・Webアプリのボタンにも紐付いていない
+// （GASエディタから手動で1回実行する想定）。「無制限(stock_flag:1)」の商品セットを全件取得し、
+// 商品.CSVの在庫数と突き合わせて「無制限解除＋在庫流し込み」を実施した場合に何が起きるかを
+// シート「無制限解除_プレビュー」に書き出すだけの調査用関数。まだ機能化の可否は未確定（Takashi判断待ち）。
+function previewUnlimitedRelease() {
+  const csvData = loadCsvFromDrive();
+  if (!csvData.ok) {
+    Logger.log('CSV読み込み失敗: ' + csvData.error);
+    return { ok: false, error: csvData.error };
+  }
+
+  // nightlyStockSyncと同じ正規化ロジック（先頭ゼロをparseIntで吸収）
+  const csvMap = {};
+  csvData.rows.forEach(row => {
+    const code = row['コード'];
+    if (!code) return;
+    const codeKey = String(parseInt(code, 10) || code);
+    const rawStock = String(row['在庫数'] || '').replace(/,/g, '').trim();
+    if (rawStock === '') return;
+    const num = parseInt(rawStock, 10);
+    if (isNaN(num)) return;
+    csvMap[codeKey] = { stock: Math.max(0, num), name: row['商品名'] || '', haihan: row['廃番'] || '' };
+  });
+
+  const stockRes = bcartGetAll('/product_stock', { stock_flag: 1 });
+  if (!stockRes.ok) {
+    Logger.log('BCART在庫取得失敗: ' + stockRes.error);
+    return { ok: false, error: stockRes.error };
+  }
+
+  const rows = [];
+  let withCsv = 0, withoutCsv = 0;
+  stockRes.data.forEach(s => {
+    const productNo = s.product_no;
+    if (!productNo) return;
+    const hit = csvMap[productNo];
+    if (hit) {
+      withCsv++;
+      rows.push([productNo, s.name || '', 'CSVあり→流し込み予定', hit.stock, hit.haihan]);
+    } else {
+      withoutCsv++;
+      rows.push([productNo, s.name || '', 'CSVなし→対象外(要判断)', '', '']);
+    }
+  });
+
+  const sheet = getOrCreateSheet('無制限解除_プレビュー');
+  sheet.clear();
+  sheet.appendRow(['品番', '商品名(BCART)', '判定', '流し込み予定の在庫数(CSV)', 'CSV廃番フラグ']);
+  if (rows.length > 0) {
+    sheet.getRange(2, 1, rows.length, 5).setValues(rows);
+  }
+
+  const summary = { ok: true, total: stockRes.data.length, withCsv: withCsv, withoutCsv: withoutCsv };
+  Logger.log('無制限解除プレビュー結果: ' + JSON.stringify(summary, null, 2));
+  return summary;
 }
 
 // ===================== 機能D: 特集管理 =====================
