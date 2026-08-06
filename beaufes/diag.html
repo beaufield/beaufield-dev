@@ -60,6 +60,12 @@
   <label>1回あたりの待ち時間（秒）</label>
   <input type="number" id="timeout" value="20" min="3" max="60">
 
+  <label>次のリクエストまで空ける間隔（秒）</label>
+  <input type="number" id="interval" value="0" min="0" max="60">
+  <div style="font-size:11px;color:#999;margin-top:4px;">
+    0＝間髪入れず連続送信。実際の利用に近い条件で測るなら5などにする。
+  </div>
+
   <button id="startBtn">テスト開始</button>
   <div id="progress"></div>
 </div>
@@ -119,9 +125,10 @@ async function sendOnce(action, seq, timeoutMs) {
 }
 
 el('startBtn').addEventListener('click', async function () {
-  const action    = el('mode').value;
-  const trials    = Math.max(1, Math.min(100, parseInt(el('trials').value, 10) || 20));
-  const timeoutMs = (Math.max(3, Math.min(60, parseInt(el('timeout').value, 10) || 20))) * 1000;
+  const action     = el('mode').value;
+  const trials     = Math.max(1, Math.min(100, parseInt(el('trials').value, 10) || 20));
+  const timeoutMs  = (Math.max(3, Math.min(60, parseInt(el('timeout').value, 10) || 20))) * 1000;
+  const intervalMs = (Math.max(0, Math.min(60, parseInt(el('interval').value, 10) || 0))) * 1000;
 
   el('startBtn').disabled = true;
   el('summaryCard').style.display = 'none';
@@ -133,6 +140,13 @@ el('startBtn').addEventListener('click', async function () {
   const msList = [];
 
   for (let i = 1; i <= trials; i++) {
+    // 2回目以降は指定された間隔だけ空ける（連射が失敗率を押し上げているかの切り分け用）
+    if (i > 1 && intervalMs > 0) {
+      for (let left = Math.round(intervalMs / 1000); left > 0; left--) {
+        el('progress').textContent = i + ' / ' + trials + ' 回目まで あと' + left + '秒…';
+        await new Promise(function (r) { setTimeout(r, 1000); });
+      }
+    }
     el('progress').textContent = i + ' / ' + trials + ' 回目を実行中…';
     const at = clockNow();
     const r  = await sendOnce(action, String(i), timeoutMs);
@@ -159,8 +173,8 @@ el('startBtn').addEventListener('click', async function () {
     '<span class="big ngc">' + ngCount + '</span> 失敗　（' + trials + '回中）</div>' +
     '<div><b>失敗率: ' + rate + '%</b></div>' +
     '<div>成功時の平均応答: ' + avg + '秒</div>' +
-    '<div style="color:#888;font-size:12px;">テスト種別: ' + (action === 'ping' ? '軽い' : '重い') + '／' +
-    startedAt + ' 〜 ' + endedAt + '</div>';
+    '<div style="color:#888;font-size:12px;">テスト種別: ' + (action === 'ping' ? '軽い' : '重い') +
+    '／間隔: ' + (intervalMs / 1000) + '秒／' + startedAt + ' 〜 ' + endedAt + '</div>';
   el('compareHint').innerHTML =
     '📋 <b>次にこれを確認してください</b><br>' +
     'GASエディタの「実行数」画面を開き、<b>' + startedAt + '〜' + endedAt + '</b> の実行が<b>' + trials + '件</b>あるか数えてください。<br><br>' +
