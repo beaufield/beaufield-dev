@@ -1,6 +1,6 @@
 // ============================================================
 // ビューフェス申込アプリ - Google Apps Script
-// Version: 0.11.0
+// Version: 0.12.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -107,9 +107,16 @@
 //      判定はキャッシュではなく`_lhGetFriend`で取得した最新値を使う（stale判定での誤上書き事故を防ぐ）
 //   🔴 いずれも失敗しても申込自体は失敗させない。各ステップを個別にtry/catchし、
 //   失敗は新設の`line_sync_log`シートに記録して後から手動で復旧できるようにした。
+//
+// 🆕 v0.12.0（2026-08-06・診断）: 通信失敗の実測用に `ping` / `pingHeavy` アクションを追加（読み取りのみ）。
+//   背景: 実行ログの実測で「全実行が0.3〜3.1秒で完了・エラーゼロなのに、その結果がブラウザに
+//   一度も届かず、クライアントが15秒でタイムアウト→3回リトライして諦める」パターンを確認した
+//   （2026-08-06 17:20台の3連続実行と、直後の空欄プリフィル画面が一致）。
+//   → スクリプトの遅さではなく**結果の配送層**が疑わしいため、`diag.html` から連続実行して
+//   実際の失敗率を数える。pingLightはシート無し・pingHeavyはliffPrefill同等の全行読み込み。
 // ============================================================
 
-const VERSION  = '0.11.0';
+const VERSION  = '0.12.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -172,8 +179,11 @@ function doGet(e) {
 
   try {
     switch (action) {
-      case 'getPass': return _jsonResponse(getPass(data));
-      default:         return _jsonResponse(_err('不明なアクション: ' + action));
+      case 'getPass':   return _jsonResponse(getPass(data));
+      // 🆕 診断用（diag.html）。読み取りのみ・データを一切変更しない
+      case 'ping':      return _jsonResponse(pingLight(data));
+      case 'pingHeavy': return _jsonResponse(pingHeavy(data));
+      default:          return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
     Logger.log('doGet error: ' + err);
@@ -201,6 +211,9 @@ function doPost(e) {
       case 'updateApplication': return _jsonResponse(updateApplication(data));
       case 'liffPrefill':       return _jsonResponse(liffPrefill(data));
       case 'applyLiff':         return _jsonResponse(applyLiff(data));
+      // 🆕 診断用（diag.html）。読み取りのみ・データを一切変更しない
+      case 'ping':              return _jsonResponse(pingLight(data));
+      case 'pingHeavy':         return _jsonResponse(pingHeavy(data));
       default:                  return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
@@ -1316,4 +1329,39 @@ function migrateFixPhoneColumn() {
 // ============================================================
 function checkMailQuota() {
   Logger.log('本日の残りメール送信可能数: ' + MailApp.getRemainingDailyQuota());
+}
+
+// ============================================================
+// 🆕 診断用アクション（diag.html から呼ぶ・v0.12.0）
+//
+// 目的: 2026-08-06に判明した「GASの実行ログは完了(1〜3秒)なのに、その結果が
+// ブラウザに一度も届かない」現象の**実測**。実行ログ(実行数画面)の記録と、
+// クライアント側で受け取れた件数を突き合わせて、配送層の失敗率を数える。
+//
+// 🔴 いずれも読み取りのみ。データを一切変更しない。
+//   pingLight : スプレッドシートに触らず即座に返す → 配送層そのものの失敗率
+//   pingHeavy : applicationsシートを読んでから返す（liffPrefillと同等の処理量）
+//               → 処理時間が失敗率の引き金になっているかの切り分け
+// ============================================================
+function pingLight(data) {
+  return _ok({
+    mode: 'light',
+    version: VERSION,
+    seq: String((data && data.seq) || ''), // クライアント側の試行番号をそのまま返す（対応付け用）
+    server_time: _now()
+  });
+}
+
+function pingHeavy(data) {
+  _checkProps();
+  const ss   = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh   = _getSheet(ss, SHEET_APPLICATIONS);
+  const rows = sh.getDataRange().getValues(); // liffPrefillと同じ「全行読み込み」を再現
+  return _ok({
+    mode: 'heavy',
+    version: VERSION,
+    seq: String((data && data.seq) || ''),
+    row_count: rows.length - 1,
+    server_time: _now()
+  });
 }
