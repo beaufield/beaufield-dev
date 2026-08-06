@@ -199,7 +199,7 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.2.0';
+const APP_VERSION = '0.3.0';
 const GAS_URL  = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const LIFF_ID  = '2010404613-cwHA5B0U';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
@@ -207,8 +207,10 @@ document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 // GASの結果配信は逐次でも約7%失敗する（実測）。リトライ前提で組む（§2-6）。
 // 🆕 v0.2.0: 2026-08-06の実測（80回）に基づき再設計。詳細は index.html の同じ箇所を参照。
 // GASの結果配送は約32%失われる。応答は「数秒で返る」か「返らない」かの二択なので、
-// 長く待たず手数を増やす。20秒×3回=2.7%失敗 → 10秒×6回=0.12%失敗。
+// 長く待たず手数を増やす。20秒×3回=2.7%失敗 → 10秒×6回=約0.66%失敗
+//（誤記訂正・v0.3.0: 以前「0.12%」としていたが計算誤り。詳細はindex.htmlの同じ箇所を参照）。
 // 失敗は連続する傾向があるため、再試行の間隔を徐々に広げる。
+// applyLiff/liffPrefillはline_user_idで冪等なため、applyのようなrequest_idは不要。
 const FETCH_TIMEOUT_MS = 10000;
 const MAX_ATTEMPTS     = 6;
 const RETRY_WAIT_MS    = [1000, 2000, 3000, 5000, 8000];
@@ -276,6 +278,11 @@ async function postOnce(params) {
   }
 }
 
+// 🆕 v0.3.0: 「不明なアクション」「INVALID_REQUEST」は輸送路でパラメータが壊れて
+// 届いた場合のみ返る（サーバーには常にaction/dataを送っているため）。一時障害として
+// リトライする。詳細はindex.htmlの同じ箇所を参照。
+const TRANSPORT_ERROR_PATTERN = /^(不明なアクション|INVALID_REQUEST)/;
+
 // onProgress: 再試行に入ったことを画面に出すためのコールバック（省略可）。
 // 手数が増えた分、無言で待たせると固まったように見えるため。
 async function postWithRetry(params, onProgress) {
@@ -286,7 +293,13 @@ async function postWithRetry(params, onProgress) {
       await sleep(RETRY_WAIT_MS[attempt - 1] || 8000);
     }
     try {
-      return await postOnce(params);
+      const attemptParams = Object.assign({}, params, { client_attempt: String(attempt + 1) });
+      const json = await postOnce(attemptParams);
+      if (json && json.success === false && TRANSPORT_ERROR_PATTERN.test(String(json.error || ''))) {
+        lastErr = json.error;
+        continue;
+      }
+      return json;
     } catch (e) {
       lastErr = e && e.message ? e.message : String(e);
     }

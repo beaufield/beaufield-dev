@@ -225,7 +225,7 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.9.0';
+const APP_VERSION = '0.10.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
@@ -235,12 +235,23 @@ document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 // かつ応答は「数秒で返る」か「永遠に返らない」かの二択で、中間がほとんどない
 // （GETの成功20件は全て4.3秒以内・失敗は全てタイムアウト）。よって長く待つのは無駄。
 // 短いタイムアウトで手数を増やす方が、同じ待ち時間でも成功率が桁違いに上がる。
-//   20秒×3回 → 最終失敗率 2.7% ／ 10秒×6回 → 0.12%
+//   20秒×3回 → 最終失敗率 2.7% ／ 10秒×6回 → 約0.66%
+// 🔴 訂正（v0.10.0）: 以前このコメントに「0.12%（約20分の1）」と書いていたが誤り。
+// 0.12%は10秒×8回（最大115秒）の数字で、タイムアウト短縮により1回あたりの失敗率が
+// 30%→43%に上がることを計算に入れていなかった。正しくは約0.66%
+//（GAS配送障害_調査レポート.md §5-2。失敗は独立でない可能性があるため保証値ではない）。
 // 🔴 失敗は連続して起きる傾向があるため（同じ不調な時間帯に固まる）、
 // 再試行の間隔を徐々に広げて別の時間帯に当てる。
 const FETCH_TIMEOUT_MS = 10000;
 const MAX_ATTEMPTS     = 6;
 const RETRY_WAIT_MS    = [1000, 2000, 3000, 5000, 8000];
+
+// 🆕 v0.10.0（配送障害対策P1）: 冪等キー。ページ読み込みごとに1つ生成し、
+// このページ内での全ての送信・全てのリトライで同じ値を使い続ける（送信成功後は変えない）。
+// サーバー(Code.gs v0.13.0)が同じrequest_idの行を見つけたら「配送失敗による再試行」と
+// 判断し、二重登録にも「すでにお申し込みをお預かりしています」表示にもならない。
+const REQUEST_ID = (crypto && crypto.randomUUID) ? crypto.randomUUID()
+  : (Date.now().toString(36) + Math.random().toString(36).slice(2));
 
 function el(id) { return document.getElementById(id); }
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
@@ -290,10 +301,19 @@ async function postOnce(params) {
   }
 }
 
+// 🆕 v0.10.0: サーバーには毎回action/dataを送っているので、「不明なアクション」や
+// INVALID_REQUESTが返るのは輸送路の途中でパラメータが壊れて届いた場合のみ
+//（実測で1/80観測。GAS配送障害_調査レポート.md §3-3）。サーバーの確定回答ではなく
+// 一時障害として扱い、リトライ対象にする。それ以外のsuccess:false（バリデーションエラー等）は
+// 従来どおり即座に呼び出し元へ返す。
+const TRANSPORT_ERROR_PATTERN = /^(不明なアクション|INVALID_REQUEST)/;
+
 // リトライ付きPOST。
-// 🔴 リトライしても二重登録にならない理由: 1回目が実は成功していた場合、同じメール＋
-// 同じお名前で再送信すると、サーバー側は行を作らず existing_notified を返すだけ（Code.gs v0.8.0）。
-// メールが変わらない・お名前も同じ表記のつもりで送っている限り、再送信は安全。
+// 🔴 リトライしても二重登録にならない理由（v0.10.0で冪等キー方式に変更）:
+// 全てのリトライで同じ REQUEST_ID を送るため、1回目が実は成功していた場合は
+// サーバー(Code.gs v0.13.0)がその行を見つけて同じapp_id/pass_urlを返すだけになる
+// （existing_notified経路には入らない。旧HTMLキャッシュとの互換のため、
+// request_idが空でも動く従来の「メール＋お名前一致」判定はサーバー側に残っている）。
 // onProgress: 再試行に入ったことを画面に出すためのコールバック（省略可）。
 // 手数が増えた分、無言で待たせると固まったように見えるため。
 async function postWithRetry(params, onProgress) {
@@ -304,7 +324,13 @@ async function postWithRetry(params, onProgress) {
       await sleep(RETRY_WAIT_MS[attempt - 1] || 8000);
     }
     try {
-      return await postOnce(params);
+      const attemptParams = Object.assign({}, params, { client_attempt: String(attempt + 1) });
+      const json = await postOnce(attemptParams);
+      if (json && json.success === false && TRANSPORT_ERROR_PATTERN.test(String(json.error || ''))) {
+        lastErr = json.error;
+        continue; // 輸送路の破損とみなしリトライ
+      }
+      return json;
     } catch (e) {
       lastErr = e && e.message ? e.message : String(e);
     }
@@ -336,7 +362,8 @@ function buildPayload() {
     address:          el('address').value.trim(),
     referrer:         el('referrer').value.trim(),
     note:             el('note').value.trim(),
-    agree_capability: el('agree_capability').checked
+    agree_capability: el('agree_capability').checked,
+    request_id:       REQUEST_ID // 🆕 v0.10.0（冪等キー）
   };
 }
 
@@ -379,7 +406,8 @@ async function sendApply() {
     showError('errorMsg',
       '送信結果を確認できませんでした。<br>' +
       'お手数ですが、もう一度「この内容で申し込む」を押してください。<br>' +
-      '<span style="color:#888;">※二重にお申し込みが登録されることはありません。</span>');
+      '<span style="color:#888;">※二重にお申し込みが登録されることはありません。' +
+      '確認メールが届いている場合は、お申し込みは完了しています。</span>');
   }
 }
 

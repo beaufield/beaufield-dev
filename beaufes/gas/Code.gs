@@ -1,6 +1,6 @@
 // ============================================================
 // ビューフェス申込アプリ - Google Apps Script
-// Version: 0.12.0
+// Version: 0.13.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -114,9 +114,24 @@
 //   （2026-08-06 17:20台の3連続実行と、直後の空欄プリフィル画面が一致）。
 //   → スクリプトの遅さではなく**結果の配送層**が疑わしいため、`diag.html` から連続実行して
 //   実際の失敗率を数える。pingLightはシート無し・pingHeavyはliffPrefill同等の全行読み込み。
+//
+// 🆕 v0.13.0（2026-08-06・配送障害対策P1/P2）: `GAS配送障害_対策計画.md` に基づく対症療法。
+// 根本原因（Google側の結果配送層）は直せないため、「リトライしても壊れない」構造にする。
+//   P1: `apply`（Web申込）に冪等キー(`request_id`)を導入。
+//     クライアントはページ読み込み時に1つUUIDを生成し、全リトライで同じ値を送る。
+//     applications シートにV列(22列目)=`request_id`を追加。
+//     同じrequest_idの行が既に存在すれば「配送失敗による再試行」と判断し、
+//     新規登録・重複通知(existing_notified)のどちらの経路にも入れず、
+//     その行のapp_id/pass_urlをそのまま返す（メールは送らない・行も書き換えない）。
+//     判定はemail+氏名判定より必ず先に行う。request_id が空（旧HTMLキャッシュ）なら
+//     従来どおりの動作にフォールバックする。既存シートには migrateAddRequestIdColumn() が必要。
+//   P2: `resendPass` の重複メール抑止。配送失敗が続くとクライアントが最大6回再試行し、
+//     同一内容のパス再送メールが何通も届いていた。mail_logの直近10分以内に同じ宛先への
+//     resend_pass送信成功記録があれば送信をスキップする（CacheServiceは使わず
+//     シート参照のみ。project_gas_cache_lessonの教訓）。
 // ============================================================
 
-const VERSION  = '0.12.0';
+const VERSION  = '0.13.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -206,7 +221,7 @@ function doPost(e) {
 
   try {
     switch (action) {
-      case 'apply':             return _jsonResponse(applyApplication(data));
+      case 'apply':             return _jsonResponse(applyApplication(data, params.client_attempt));
       case 'resendPass':        return _jsonResponse(resendPass(data));
       case 'updateApplication': return _jsonResponse(updateApplication(data));
       case 'liffPrefill':       return _jsonResponse(liffPrefill(data));
@@ -324,8 +339,10 @@ function _validateApplicationFields(data, opts) {
 }
 
 // 新規行を追加する。source: 'web' | 'liff'。lineFriendId/lineUserId はWeb版では常に''。
+// requestId は冪等キー（v0.13.0・§2-2）。applyLiffからは渡されない（LIFFはline_user_idで
+// 既に冪等なため不要）→ その場合は省略され''になる。
 // 戻り値: { appId, ticketToken }
-function _appendApplicationRow(sh, rows, f, source, lineFriendId, lineUserId) {
+function _appendApplicationRow(sh, rows, f, source, lineFriendId, lineUserId, requestId) {
   const appId       = _nextAppId(rows);
   const ticketToken = _genToken();
   const now         = _now();
@@ -337,7 +354,8 @@ function _appendApplicationRow(sh, rows, f, source, lineFriendId, lineUserId) {
     f.hasTransaction, f.address, f.referrer, f.agree,
     lineFriendId || '', lineUserId || '',
     ticketToken, 'confirmed', '', f.note,
-    f.businessType // U列（§4-1-2）
+    f.businessType, // U列（§4-1-2）
+    requestId || '' // 🆕 V列（v0.13.0・§2-2 冪等キー）
   ];
   // 🔴 電話番号列(I列=9列目)は書き込み前に必ずPlain Text指定する（migrateFixPhoneColumnと同じ理由）。
   // appendRowだと書式を挟めないため、行番号を自分で計算してsetValuesに置き換えている。
@@ -371,17 +389,33 @@ function _updateApplicationRow(sh, row, f) {
 //                                        パスURLをメール再送するだけ（{existing_notified:true}）
 //      - メール一致 だが氏名が違う       → 別人として新規登録（代表メールでの複数名申込に対応）
 //    既存申込の内容を変更する経路は updateApplication（ticket_token方式）のみに一本化。
+//
+//    🆕 v0.13.0（配送障害対策P1・§2-2）: 冪等キー(`request_id`)による再試行の吸収。
+//    GAS結果配送層が失敗すると、クライアントは「サーバーに届いたかどうか分からない」まま
+//    自動リトライする。従来はこの再試行が上記の「メール一致・氏名一致」経路に落ちて
+//    existing_notified を返していた＝初めて申込んだお客様が「すでにお申し込みをお預かりして
+//    います」と言われる不具合があった（GAS配送障害_調査レポート.md §7-1）。
+//    request_id はクライアントがページ読み込み時に1つ生成し、全リトライで同じ値を送る。
+//    同じrequest_idの行が既にあれば「配送失敗による再試行」と確定できるので、
+//    email+氏名判定より必ず先に見て、新規登録もexisting_notifiedもどちらにも入らせず
+//    その場でapp_id/pass_urlを返す（メール再送はしない・行も書き換えない）。
 // ============================================================
-function applyApplication(data) {
+function applyApplication(data, clientAttempt) {
   _checkProps();
 
   const v = _validateApplicationFields(data, { requireAgree: true });
   if (v.error) return _err(v.error);
   const f = v.fields;
-  const nameKey = _normalizeName(f.staffName);
+  const nameKey    = _normalizeName(f.staffName);
+  const requestId  = String(data.request_id || '').trim().slice(0, 64);
+
+  if (clientAttempt && Number(clientAttempt) >= 2) {
+    Logger.log('apply: リトライ経由の到達 client_attempt=' + clientAttempt + ' request_id=' + requestId);
+  }
 
   let appId, ticketToken;
-  let existingNotified = false;
+  let replayed          = false; // 🆕 request_id一致＝配送失敗による再試行と確定した場合
+  let existingNotified  = false;
   let resendList        = null; // メール一致・氏名一致が見つかった場合の再送先（ロック解放後に送信）
 
   const lock = LockService.getScriptLock();
@@ -391,30 +425,48 @@ function applyApplication(data) {
     const sh  = _getSheet(ss, SHEET_APPLICATIONS);
     const rows = sh.getDataRange().getValues();
 
-    // 同じメール＋同じ氏名（正規化）の既存申込を探す。見つかっても内容は一切書き換えない・
-    // 一切返さない（他人のメールで氏名・サロン名が引ける経路を作らないため・§2-2）。
-    for (let i = 1; i < rows.length; i++) {
-      if (String(rows[i][7]).toLowerCase() !== f.emailNorm) continue;
-      if (String(rows[i][17]) === 'cancelled') continue; // 取消済みは既存として扱わない
-      if (_normalizeName(rows[i][5]) !== nameKey) continue;
-
-      existingNotified = true;
-      resendList = [{
-        salonName: String(rows[i][4]),
-        staffName: String(rows[i][5]),
-        passUrl:   SITE_BASE_URL + 'pass.html?t=' + String(rows[i][16])
-      }];
-      break;
+    // 🆕 request_id が一致する既存行を最優先で探す（空文字同士は誤マッチしないよう対象外）。
+    if (requestId) {
+      for (let i = 1; i < rows.length; i++) {
+        if (String(rows[i][21]) !== requestId) continue;
+        replayed    = true;
+        appId       = rows[i][0];
+        ticketToken = rows[i][16];
+        break;
+      }
     }
 
-    if (!existingNotified) {
-      // 新規登録（メールが一致しても氏名が違えば別人として登録＝同一サロン複数名の代表メール申込に対応）
-      const created = _appendApplicationRow(sh, rows, f, 'web', '', '');
-      appId       = created.appId;
-      ticketToken = created.ticketToken;
+    if (!replayed) {
+      // 同じメール＋同じ氏名（正規化）の既存申込を探す。見つかっても内容は一切書き換えない・
+      // 一切返さない（他人のメールで氏名・サロン名が引ける経路を作らないため・§2-2）。
+      for (let i = 1; i < rows.length; i++) {
+        if (String(rows[i][7]).toLowerCase() !== f.emailNorm) continue;
+        if (String(rows[i][17]) === 'cancelled') continue; // 取消済みは既存として扱わない
+        if (_normalizeName(rows[i][5]) !== nameKey) continue;
+
+        existingNotified = true;
+        resendList = [{
+          salonName: String(rows[i][4]),
+          staffName: String(rows[i][5]),
+          passUrl:   SITE_BASE_URL + 'pass.html?t=' + String(rows[i][16])
+        }];
+        break;
+      }
+
+      if (!existingNotified) {
+        // 新規登録（メールが一致しても氏名が違えば別人として登録＝同一サロン複数名の代表メール申込に対応）
+        const created = _appendApplicationRow(sh, rows, f, 'web', '', '', requestId);
+        appId       = created.appId;
+        ticketToken = created.ticketToken;
+      }
     }
   } finally {
     lock.releaseLock();
+  }
+
+  if (replayed) {
+    // 配送失敗による再試行と確定済み。1回目の実行で確認メールは送信済みのため再送しない。
+    return _ok({ app_id: appId, pass_url: SITE_BASE_URL + 'pass.html?t=' + ticketToken, is_update: false, replayed: true });
   }
 
   if (existingNotified) {
@@ -787,9 +839,45 @@ function resendPass(data) {
   }
 
   // 該当があるときだけ送る。応答は該当の有無にかかわらず同じ（列挙攻撃の防止）
-  if (list.length > 0) _sendPassResendMail(email, list);
+  // 🆕 v0.13.0（配送障害対策P2・§7-2）: 配送失敗が続くとクライアントが最大6回再試行し、
+  // 同じ宛先に同一内容のメールが何通も届いていた。直近10分以内に送信成功済みなら送らない。
+  if (list.length > 0 && !_recentResendMailSent(email)) {
+    _sendPassResendMail(email, list);
+  }
 
   return _ok({ requested: true });
+}
+
+// mail_logの末尾を見て、直近10分以内に同じ宛先へtype=resend_pass の送信成功
+// （status='ok'または'fallback'。'error'は送れていないので除外）が記録済みならtrueを返す。
+// 🔴 CacheServiceは使わない（project_gas_cache_lessonの教訓）。末尾50行を見るだけで十分軽い。
+function _recentResendMailSent(email) {
+  const emailNorm = email.toLowerCase();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh = ss.getSheetByName(SHEET_MAIL_LOG);
+  if (!sh) return false;
+
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return false;
+
+  const scanRows  = Math.min(50, lastRow - 1);
+  const startRow  = lastRow - scanRows + 1;
+  const values    = sh.getRange(startRow, 1, scanRows, 4).getValues(); // sent_at, to, type, status
+  const cutoffMs  = Date.now() - 10 * 60 * 1000;
+
+  for (let i = 0; i < values.length; i++) {
+    const sentAt = values[i][0];
+    const to     = values[i][1];
+    const type   = values[i][2];
+    const status = values[i][3];
+    if (type !== 'resend_pass') continue;
+    if (String(to).toLowerCase() !== emailNorm) continue;
+    if (status !== 'ok' && status !== 'fallback') continue;
+    // sent_atは_now()の'yyyy-MM-dd HH:mm:ss'（Asia/Tokyo）文字列
+    const sentDate = new Date(String(sentAt).replace(' ', 'T') + '+09:00');
+    if (!isNaN(sentDate.getTime()) && sentDate.getTime() >= cutoffMs) return true;
+  }
+  return false;
 }
 
 // ============================================================
@@ -1157,13 +1245,14 @@ function setupSheets() {
   let appSh = ss.getSheetByName(SHEET_APPLICATIONS);
   if (!appSh) {
     appSh = ss.insertSheet(SHEET_APPLICATIONS);
-    appSh.getRange(1, 1, 1, 21).setValues([[
+    appSh.getRange(1, 1, 1, 22).setValues([[
       'app_id', 'created_at', 'updated_at', 'source',
       'salon_name', 'staff_name', 'email', 'email_norm', 'phone', 'area', // areaは2026-08-06にフォームから削除・列は維持（空文字のみ）
       'has_transaction', 'address', 'referrer', 'agree_capability',
       'line_friend_id', 'line_user_id',
       'ticket_token', 'status', 'checked_in_at', 'note',
-      'business_type'          // 🆕 U列（§4-1-2・v0.5.0で追加）
+      'business_type',          // 🆕 U列（§4-1-2・v0.5.0で追加）
+      'request_id'              // 🆕 V列（v0.13.0・§2-2 冪等キー）
     ]]);
     appSh.setFrozenRows(1);
     appSh.setColumnWidth(1, 110);
@@ -1287,6 +1376,30 @@ function migrateAddBusinessType() {
   }
   sh.getRange(1, 21).setValue('business_type');
   Logger.log('business_type列をU1に追加しました。');
+}
+
+// ============================================================
+// 🆕 マイグレーション: 既存の applications シートに request_id 列（V列）を追加する
+// 2026-08-06・配送障害対策P1（GAS配送障害_対策計画.md §2-P1・§2-2）対応。
+// 【本番シートに対して一度だけ手動実行すること】GASエディタの関数選択で
+// migrateAddRequestIdColumn を選び、▷実行する。setupSheetsとは別に必要（既存シートには
+// 自動で列が増えないため）。新規にsetupSheetsでシートを作る場合はヘッダーに
+// 最初から含まれるため実行不要。2回実行しても冪等（既にV1にあれば何もしない）。
+// ============================================================
+function migrateAddRequestIdColumn() {
+  _checkProps();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh = _getSheet(ss, SHEET_APPLICATIONS);
+  const header = sh.getRange(1, 22).getValue();
+  if (header === 'request_id') {
+    Logger.log('request_id列は既にV1に存在します。何もしませんでした。');
+    return;
+  }
+  if (header) {
+    throw new Error('V1に想定外の値が入っています（"' + header + '"）。手動で確認してください。');
+  }
+  sh.getRange(1, 22).setValue('request_id');
+  Logger.log('request_id列をV1に追加しました。');
 }
 
 // ============================================================
