@@ -1,6 +1,6 @@
 // ============================================================
 // ビューフェス申込アプリ - Google Apps Script
-// Version: 0.8.1
+// Version: 0.9.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -75,6 +75,14 @@
 //   数値型に変換し先頭の0が失われる。applyApplication・updateApplicationとも、電話番号セルを
 //   書き込み直前にPlain Text指定するよう修正。既存データの復旧は migrateFixPhoneColumn() で行う
 //  （本番シートに対して一度だけ手動実行すること）。
+//
+// 🆕 v0.9.0（2026-08-06・L1-a）: LINE Harness連携の土台（UIなし・doGet/doPostからはまだ呼ばれない）。
+//   新設: `_lhReq` / `_lhFetchAllFriends` / `syncLineFriends` / `_findFriendByLineUserId` / `probeLineHarness`。
+//   友だちは `line_user_id` での直接検索手段がAPIに無いため、全件を `line_friends_cache` シートに
+//   キャッシュし、時間トリガー（6時間ごと・GASエディタで手動設定）で同期する方式にした（§2-1）。
+//   Script Propertiesに `LINE_HARNESS_API_URL` / `LINE_HARNESS_API_KEY` / `BEAUFES_TAG_ID` が必要
+//  （2026-08-06 Takashiさんが登録済み）。
+//   詳細: 開発・自動化/beaufes/LINE連携_実装プラン.md §1・§2-1・§4 L1-a
 // ============================================================
 
 const VERSION  = '0.8.1';
@@ -85,12 +93,13 @@ const _PROPS         = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID = _PROPS.getProperty('SPREADSHEET_ID');
 
 // シート名定数
-const SHEET_APPLICATIONS = 'applications';
-const SHEET_SESSIONS     = 'sessions';
-const SHEET_RESERVATIONS = 'reservations';
-const SHEET_CHECKINS     = 'checkins';
-const SHEET_MAIL_LOG     = 'mail_log';
-const SHEET_CONFIG       = 'config';
+const SHEET_APPLICATIONS       = 'applications';
+const SHEET_SESSIONS           = 'sessions';
+const SHEET_RESERVATIONS       = 'reservations';
+const SHEET_CHECKINS           = 'checkins';
+const SHEET_MAIL_LOG           = 'mail_log';
+const SHEET_CONFIG             = 'config';
+const SHEET_LINE_FRIENDS_CACHE = 'line_friends_cache'; // 🆕 L1-a（LINE Harness友だちのキャッシュ）
 
 // メール送信元（機密ではないため直書きでよい。§7-0-2で確定）
 const MAIL_FROM_ADDR = 'beaufes@gmail.com';
@@ -99,11 +108,23 @@ const MAIL_FROM_NAME = '株式会社ビューフィールド ビューフェス�
 // GitHub Pagesの公開URL（QRコード・メール内のパスリンク生成に使用）
 const SITE_BASE_URL = 'https://beaufield.github.io/beaufield-dev/beaufes/';
 
+// 🆕 L1-a: LINE Harness連携用（機密値はScript Propertiesから取得。コードへの直書き禁止）
+const LINE_HARNESS_API_URL = _PROPS.getProperty('LINE_HARNESS_API_URL');
+const LINE_HARNESS_API_KEY = _PROPS.getProperty('LINE_HARNESS_API_KEY');
+const BEAUFES_TAG_ID       = _PROPS.getProperty('BEAUFES_TAG_ID'); // タグ「ビューフェス2026申込」のtagId（秘密情報ではない）
+
 // ============================================================
 // 起動時チェック（プロパティ未設定を早期検知）
 // ============================================================
 function _checkProps() {
   if (!SPREADSHEET_ID) throw new Error('スクリプトプロパティ SPREADSHEET_ID が未設定です');
+}
+
+// 🆕 L1-a: LINE Harness関連の関数だけが呼ぶ（apply/getPass等の基本機能はLINE連携が
+// 未設定でも動き続けてほしいため、_checkPropsとは分離している）
+function _checkLineHarnessProps() {
+  if (!LINE_HARNESS_API_URL) throw new Error('スクリプトプロパティ LINE_HARNESS_API_URL が未設定です');
+  if (!LINE_HARNESS_API_KEY) throw new Error('スクリプトプロパティ LINE_HARNESS_API_KEY が未設定です');
 }
 
 // ============================================================
@@ -580,6 +601,181 @@ function _logMail(to, type, status, error) {
 }
 
 // ============================================================
+// 🆕 LINE Harness連携（L1-a・UIなし。doGet/doPostからはまだ呼ばれない）
+//
+// 実装前提（LINE連携_実装プラン.md §1・§2で実測済み。設計書やbcart-approvalの
+// TypeScript型と食い違う場合はそちらを疑う）:
+//   - friendオブジェクトのキーは lineUserId（キャメルケース）。line_user_idは誤り（§1-2）
+//   - ?line_user_id= と ?page= は完全に無視される。ページングは ?limit=&offset= のみ有効（§1-3）
+//   - デフォルトlimitは50・友だちは102名いる → 素直に呼ぶと半分しか返らない（§1-3 地雷2）
+//   - lineUserIdで直接検索する手段がAPIに無い → 全件キャッシュ方式にする（§2-1）
+//   - CacheServiceは使わない（project_gas_cache_lessonの教訓）。シートに持つ
+// ============================================================
+
+// Bearer認証つきUrlFetchApp。非2xx・非JSONはどちらも例外にする（無言で握りつぶさない）
+function _lhReq(method, path, payload) {
+  _checkLineHarnessProps();
+
+  const options = {
+    method: method,
+    headers: { Authorization: 'Bearer ' + LINE_HARNESS_API_KEY },
+    muteHttpExceptions: true
+  };
+  if (payload) {
+    options.contentType = 'application/json';
+    options.payload = JSON.stringify(payload);
+  }
+
+  const res  = UrlFetchApp.fetch(LINE_HARNESS_API_URL + path, options);
+  const code = res.getResponseCode();
+  const text = res.getContentText();
+
+  if (code < 200 || code >= 300) {
+    throw new Error('LINE Harness API エラー: HTTP_' + code + ' ' + method + ' ' + path + ' / ' + text.substring(0, 300));
+  }
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    throw new Error('LINE Harness API 非JSON応答: ' + method + ' ' + path + ' / ' + text.substring(0, 300));
+  }
+}
+
+// 全友だちを limit=100 + offset ループで取得する。
+// 🔴 page は完全に無視されるため使わない（§1-3）。offset>=total または空配列で終了。
+// 安全弁として最大50ループ（1ページ100件なので5000件まで対応・102件なら1〜2ループで終わる）
+function _lhFetchAllFriends() {
+  const LIMIT     = 100;
+  const MAX_LOOPS = 50;
+  let offset = 0;
+  let total  = null;
+  const items = [];
+
+  for (let loop = 0; loop < MAX_LOOPS; loop++) {
+    const json = _lhReq('GET', '/api/friends?limit=' + LIMIT + '&offset=' + offset, null);
+    if (!json || json.success !== true || !json.data) {
+      throw new Error('LINE Harness友だち一覧の取得に失敗しました: ' + JSON.stringify(json).substring(0, 300));
+    }
+    const pageItems = json.data.items || [];
+    if (total === null) total = json.data.total;
+
+    Array.prototype.push.apply(items, pageItems);
+
+    if (pageItems.length === 0) break;
+    offset += pageItems.length;
+    if (typeof total === 'number' && offset >= total) break;
+  }
+
+  return items;
+}
+
+// line_friends_cache シートが無ければヘッダー付きで作成する
+function _ensureLineFriendsCacheSheet(ss) {
+  let sh = ss.getSheetByName(SHEET_LINE_FRIENDS_CACHE);
+  if (!sh) {
+    sh = ss.insertSheet(SHEET_LINE_FRIENDS_CACHE);
+    sh.getRange(1, 1, 1, 9).setValues([[
+      'line_user_id', 'friend_id', 'salon_name', 'staff_name', 'phone',
+      'business_type', 'email', 'ext_id', 'synced_at'
+    ]]);
+    sh.setFrozenRows(1);
+    Logger.log('line_friends_cacheシート作成完了');
+  }
+  return sh;
+}
+
+// LINE Harnessから全友だちを取得し、line_friends_cacheシートを全書き換えする。
+// 時間トリガーで6時間ごとに実行する想定（GASエディタのトリガー画面から手動設定。§4 L1-a）。
+function syncLineFriends() {
+  _checkProps();
+  const friends = _lhFetchAllFriends();
+
+  const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh  = _ensureLineFriendsCacheSheet(ss);
+  const now = _now();
+
+  // 既存データを消してから書き直す（ヘッダーは残す）
+  const lastRow = sh.getLastRow();
+  if (lastRow > 1) {
+    sh.getRange(2, 1, lastRow - 1, 9).clearContent();
+  }
+
+  if (friends.length > 0) {
+    const rows = friends.map(function (f) {
+      const meta = f.metadata || {};
+      return [
+        f.lineUserId || f.line_user_id || '', // 🔴 両対応（§1-2の地雷。実際はlineUserIdのみ存在）
+        f.id || '',
+        meta.salon_name     || '',
+        meta.staff_name     || '',
+        meta.phone          || '',
+        meta.business_type  || '',
+        meta.email          || '',
+        meta.ext_id         || '',
+        now
+      ];
+    });
+    // 🔴 電話番号(E列)・ext_id(H列)はPlain Text指定してから書き込む。
+    // 全て数字の文字列を書き込むと列の書式がAutomaticのままだと数値型に変換され、
+    // 先頭の0が消える（applications.phoneで実際に発生した不具合と同じ原因。§migrateFixPhoneColumn参照）
+    sh.getRange(2, 5, rows.length, 1).setNumberFormat('@');
+    sh.getRange(2, 8, rows.length, 1).setNumberFormat('@');
+    sh.getRange(2, 1, rows.length, 9).setValues(rows);
+  }
+
+  Logger.log('syncLineFriends完了: ' + friends.length + '件を同期しました（friends.total想定: 102件前後）。');
+  return friends.length;
+}
+
+// キャッシュシートから line_user_id で1件検索する（内部ヘルパー）
+function _searchLineFriendsCache(sh, lineUserId) {
+  const rows = sh.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === lineUserId) {
+      return {
+        lineUserId:   String(rows[i][0]),
+        friendId:     String(rows[i][1]),
+        salonName:    String(rows[i][2]),
+        staffName:    String(rows[i][3]),
+        phone:        String(rows[i][4]),
+        businessType: String(rows[i][5]),
+        email:        String(rows[i][6]),
+        extId:        String(rows[i][7])
+      };
+    }
+  }
+  return null;
+}
+
+// line_user_id（IDトークンのsub）から友だちを引く。キャッシュミス時は1回だけ
+// syncLineFriends()を実行して再検索する（新規友だち対応・§2-1）。
+// それでも見つからなければnullを返す（呼び出し側は空のフォームを出す。エラーにしない）
+function _findFriendByLineUserId(lineUserId) {
+  _checkProps();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh = _ensureLineFriendsCacheSheet(ss);
+
+  const found = _searchLineFriendsCache(sh, lineUserId);
+  if (found) return found;
+
+  syncLineFriends();
+  return _searchLineFriendsCache(_ensureLineFriendsCacheSheet(ss), lineUserId);
+}
+
+// 診断用（GASエディタから手動実行）。1ページ目だけ取得し、件数・キー名・lineUserIdの
+// 有無をログ出力する。L0-1（GAS→LINE Harness疎通）の完了条件確認に使う。
+function probeLineHarness() {
+  const json  = _lhReq('GET', '/api/friends?limit=1&offset=0', null);
+  const data  = (json && json.data) ? json.data : {};
+  const items = data.items || [];
+  const first = items[0] || {};
+
+  Logger.log('total: ' + data.total);
+  Logger.log('1件目のキー: ' + Object.keys(first).join(', '));
+  Logger.log('lineUserIdあり: ' + (first.lineUserId !== undefined));
+  Logger.log('line_user_idあり（誤表記チェック・falseが正常）: ' + (first.line_user_id !== undefined));
+}
+
+// ============================================================
 // スプレッドシート初期セットアップ
 // GASエディタから手動で一度だけ実行すること
 // ============================================================
@@ -677,6 +873,15 @@ function setupSheets() {
     Logger.log('configシート作成完了（初期値を投入済み）');
   } else {
     Logger.log('configシートは既に存在します');
+  }
+
+  // --- line_friends_cache シート（🆕 L1-a。LINE Harness友だちのキャッシュ）---
+  // 本番の既存シートには_ensureLineFriendsCacheSheet()が初回syncLineFriends()実行時に
+  // 自動作成するため、setupSheetsでの作成は「新規シートを最初から作る場合」の網羅目的
+  if (!ss.getSheetByName(SHEET_LINE_FRIENDS_CACHE)) {
+    _ensureLineFriendsCacheSheet(ss);
+  } else {
+    Logger.log('line_friends_cacheシートは既に存在します');
   }
 
   Logger.log('setupSheets完了');
