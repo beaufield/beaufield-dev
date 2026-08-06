@@ -1,6 +1,6 @@
 // ============================================================
 // ビューフェス申込アプリ - Google Apps Script
-// Version: 0.10.0
+// Version: 0.11.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -99,9 +99,17 @@
 //   6択に無い業態（旧表記「エステ」等）は省略する（§1-4 地雷5）。
 //   applyLiff: line_user_idで既存申込が引ければ更新（メール送信・確認画面なし。§2-10）、
 //   引けなければsource='liff'で新規登録。まだ呼び出し元（liff.html）は無い（L1-dで新規作成）。
+//
+// 🆕 v0.11.0（2026-08-06・L2）: LINE側の仕上げ（`_syncApplicationToLine`）を新設し、applyLiffに接続。
+//   ① 新規登録時のみ入場パスURL付きでLINEプッシュ（更新時は送らない。メールと同じ考え方）
+//   ② 「ビューフェス2026申込」タグ付与（新規・更新とも試す）
+//   ⑤ friendのmetadataの**空欄だけ**書き戻す（§2-4。既に値がある項目は絶対に送らない）。
+//      判定はキャッシュではなく`_lhGetFriend`で取得した最新値を使う（stale判定での誤上書き事故を防ぐ）
+//   🔴 いずれも失敗しても申込自体は失敗させない。各ステップを個別にtry/catchし、
+//   失敗は新設の`line_sync_log`シートに記録して後から手動で復旧できるようにした。
 // ============================================================
 
-const VERSION  = '0.10.0';
+const VERSION  = '0.11.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -116,6 +124,7 @@ const SHEET_CHECKINS           = 'checkins';
 const SHEET_MAIL_LOG           = 'mail_log';
 const SHEET_CONFIG             = 'config';
 const SHEET_LINE_FRIENDS_CACHE = 'line_friends_cache'; // 🆕 L1-a（LINE Harness友だちのキャッシュ）
+const SHEET_LINE_SYNC_LOG      = 'line_sync_log';       // 🆕 L2（プッシュ・タグ付与・metadata書き戻しの失敗ログ）
 
 // メール送信元（機密ではないため直書きでよい。§7-0-2で確定）
 const MAIL_FROM_ADDR = 'beaufes@gmail.com';
@@ -555,7 +564,135 @@ function applyLiff(data) {
     _sendConfirmationMail(f.email, f.salonName, f.staffName, passUrl, false);
   }
 
+  // 🆕 L2: LINEプッシュ・タグ付与・metadata書き戻し。
+  // 🔴 ここで何が起きても申込自体は既に成立済み（スプレッドシートには書けている）なので、
+  // 予期せぬ例外もここで握りつぶす（各ステップ内部でも個別にtry/catchしている・§2 L2冒頭）。
+  try {
+    _syncApplicationToLine(appId, lineFriendId, isUpdate, f, passUrl);
+  } catch (e) {
+    Logger.log('_syncApplicationToLine予期せぬ失敗: ' + e);
+  }
+
   return _ok({ app_id: appId, pass_url: passUrl, is_update: isUpdate });
+}
+
+// ============================================================
+// 🆕 L2: LINE側の仕上げ（申込完了プッシュ・タグ付与・metadata書き戻し）
+//
+// 🔴 これらが失敗しても申込自体を失敗させない。スプレッドシートに書けた時点で申込は
+// 成立している。各ステップはtry/catchで独立させ、失敗は line_sync_log に記録して
+// 後から手動で復旧できるようにする。
+// ============================================================
+
+function _ensureLineSyncLogSheet(ss) {
+  let sh = ss.getSheetByName(SHEET_LINE_SYNC_LOG);
+  if (!sh) {
+    sh = ss.insertSheet(SHEET_LINE_SYNC_LOG);
+    sh.getRange(1, 1, 1, 6).setValues([[
+      'logged_at', 'app_id', 'friend_id', 'step', 'status', 'error'
+    ]]);
+    sh.setFrozenRows(1);
+    Logger.log('line_sync_logシート作成完了');
+  }
+  return sh;
+}
+
+function _logLineSync(appId, friendId, step, status, error) {
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sh = _ensureLineSyncLogSheet(ss);
+    sh.appendRow([_now(), appId, friendId, step, status, error || '']);
+  } catch (e) {
+    Logger.log('line_sync_log書き込み失敗: ' + e);
+  }
+}
+
+// friendIdで1件取得。キャッシュではなく最新値（metadata書き戻しの空欄判定に使う・§2-4の
+// 「既に値が入っているキーは絶対に送らない」を守るため、数時間古いキャッシュに頼らない）。
+function _lhGetFriend(friendId) {
+  const json = _lhReq('GET', '/api/friends/' + encodeURIComponent(friendId), null);
+  if (!json || json.success !== true || !json.data) {
+    throw new Error('friend取得に失敗しました: ' + JSON.stringify(json).substring(0, 300));
+  }
+  return json.data;
+}
+
+function _lhAddTag(friendId, tagId) {
+  const json = _lhReq('POST', '/api/friends/' + encodeURIComponent(friendId) + '/tags', { tagId: tagId });
+  if (!json || json.success !== true) {
+    throw new Error('タグ付与に失敗しました: ' + JSON.stringify(json).substring(0, 300));
+  }
+}
+
+function _lhPutMetadata(friendId, patch) {
+  const json = _lhReq('PUT', '/api/friends/' + encodeURIComponent(friendId) + '/metadata', patch);
+  if (!json || json.success !== true) {
+    throw new Error('metadata更新に失敗しました: ' + JSON.stringify(json).substring(0, 300));
+  }
+}
+
+function _lhSendMessage(friendId, content) {
+  const json = _lhReq('POST', '/api/friends/' + encodeURIComponent(friendId) + '/messages',
+    { messageType: 'text', content: content });
+  if (!json || json.success !== true) {
+    throw new Error('メッセージ送信に失敗しました: ' + JSON.stringify(json).substring(0, 300));
+  }
+}
+
+// 申込確定後のLINE側の仕上げ本体。friendIdが無い（友だちでない・キャッシュに未登録）場合は
+// 何もしない（§2-9。エラーにしない）。各ステップは独立して失敗を許容する。
+function _syncApplicationToLine(appId, friendId, isUpdate, f, passUrl) {
+  if (!friendId) return;
+
+  // ① 申込完了をLINEプッシュ（新規登録時のみ。更新時はメールと同じく送らない）
+  if (!isUpdate) {
+    try {
+      const cfg       = _getConfig();
+      const eventDate = cfg.event_date || '2026年10月26日（月）';
+      const eventTime = cfg.event_time || '10:00〜16:00';
+      const venueName = cfg.venue_name || '青島屋（AOSHIMAYA）';
+      const venueAddr = cfg.venue_addr || '宮崎市青島2丁目12-11';
+      const content =
+        'ビューフェス2026へのお申し込みを受付いたしました。\n\n' +
+        '日時: ' + eventDate + ' ' + eventTime + '\n' +
+        '会場: ' + venueName + ' ' + venueAddr + '\n\n' +
+        '▼入場パス\n' + passUrl;
+      _lhSendMessage(friendId, content);
+      _logLineSync(appId, friendId, 'push', 'ok', '');
+    } catch (e) {
+      _logLineSync(appId, friendId, 'push', 'error', String(e));
+    }
+  }
+
+  // ② 「ビューフェス2026申込」タグ付与（新規・更新とも試す。既に付与済みでも害はない前提）
+  try {
+    if (!BEAUFES_TAG_ID) throw new Error('スクリプトプロパティ BEAUFES_TAG_ID が未設定です');
+    _lhAddTag(friendId, BEAUFES_TAG_ID);
+    _logLineSync(appId, friendId, 'tag', 'ok', '');
+  } catch (e) {
+    _logLineSync(appId, friendId, 'tag', 'error', String(e));
+  }
+
+  // ⑤ metadataの空欄だけ書き戻す（§2-4）。🔴 既に値がある項目は絶対に送らない。
+  try {
+    const current = _lhGetFriend(friendId); // 最新値。キャッシュのstale判定に頼らない
+    const meta    = current.metadata || {};
+    const patch   = {};
+    if (!meta.salon_name    && f.salonName)    patch.salon_name    = f.salonName;
+    if (!meta.staff_name    && f.staffName)    patch.staff_name    = f.staffName;
+    if (!meta.email         && f.email)        patch.email         = f.email;
+    if (!meta.phone         && f.phone)        patch.phone         = f.phone;
+    if (!meta.business_type && f.businessType) patch.business_type = f.businessType;
+
+    if (Object.keys(patch).length > 0) {
+      _lhPutMetadata(friendId, patch);
+      _logLineSync(appId, friendId, 'metadata', 'ok', JSON.stringify(patch));
+    } else {
+      _logLineSync(appId, friendId, 'metadata', 'skipped', '埋める空欄なし');
+    }
+  } catch (e) {
+    _logLineSync(appId, friendId, 'metadata', 'error', String(e));
+  }
 }
 
 // ============================================================
@@ -1102,6 +1239,14 @@ function setupSheets() {
     _ensureLineFriendsCacheSheet(ss);
   } else {
     Logger.log('line_friends_cacheシートは既に存在します');
+  }
+
+  // --- line_sync_log シート（🆕 L2。プッシュ・タグ付与・metadata書き戻しの失敗ログ）---
+  // 本番の既存シートには_ensureLineSyncLogSheet()が初回_logLineSync()実行時に自動作成される
+  if (!ss.getSheetByName(SHEET_LINE_SYNC_LOG)) {
+    _ensureLineSyncLogSheet(ss);
+  } else {
+    Logger.log('line_sync_logシートは既に存在します');
   }
 
   Logger.log('setupSheets完了');
