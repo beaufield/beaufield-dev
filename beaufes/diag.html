@@ -54,6 +54,15 @@
     <option value="pingHeavy">重い（申込シートを読む＝実際の処理と同等）</option>
   </select>
 
+  <label>送信方法</label>
+  <select id="method">
+    <option value="POST">POST（申込・プリフィルで使用中）</option>
+    <option value="GET">GET（入場パス表示で使用中）</option>
+  </select>
+  <div style="font-size:11px;color:#999;margin-top:4px;">
+    GASはPOSTとGETで結果の返り方が違う。どちらが安定するかを比べる。
+  </div>
+
   <label>回数</label>
   <input type="number" id="trials" value="20" min="1" max="100">
 
@@ -94,17 +103,21 @@ function clockNow() {
 }
 
 // 1回だけ送る。🔴 リトライしない（素の失敗率を測るため）
-async function sendOnce(action, seq, timeoutMs) {
+async function sendOnce(action, seq, timeoutMs, method) {
   const ctrl  = new AbortController();
   const timer = setTimeout(function () { ctrl.abort(); }, timeoutMs);
   const t0    = Date.now();
+  const params = { action: action, data: JSON.stringify({ seq: seq }) };
   try {
-    const res = await fetch(GAS_URL, {
-      method: 'POST',
-      body: new URLSearchParams({ action: action, data: JSON.stringify({ seq: seq }) }),
-      redirect: 'follow',
-      signal: ctrl.signal
-    });
+    // GETはクエリ文字列、POSTはボディで送る（GASの結果の返り方が変わる）
+    const opts = { method: method, redirect: 'follow', signal: ctrl.signal };
+    let url = GAS_URL;
+    if (method === 'GET') {
+      url += '?' + new URLSearchParams(params);
+    } else {
+      opts.body = new URLSearchParams(params);
+    }
+    const res = await fetch(url, opts);
     if (!res.ok) return { outcome: 'HTTP_' + res.status, ms: Date.now() - t0 };
     const text = await res.text();
     let json;
@@ -126,6 +139,7 @@ async function sendOnce(action, seq, timeoutMs) {
 
 el('startBtn').addEventListener('click', async function () {
   const action     = el('mode').value;
+  const method     = el('method').value;
   const trials     = Math.max(1, Math.min(100, parseInt(el('trials').value, 10) || 20));
   const timeoutMs  = (Math.max(3, Math.min(60, parseInt(el('timeout').value, 10) || 20))) * 1000;
   const intervalMs = (Math.max(0, Math.min(60, parseInt(el('interval').value, 10) || 0))) * 1000;
@@ -149,7 +163,7 @@ el('startBtn').addEventListener('click', async function () {
     }
     el('progress').textContent = i + ' / ' + trials + ' 回目を実行中…';
     const at = clockNow();
-    const r  = await sendOnce(action, String(i), timeoutMs);
+    const r  = await sendOnce(action, String(i), timeoutMs, method);
     if (r.outcome === 'ok') { okCount++; msList.push(r.ms); }
 
     const tr = document.createElement('tr');
@@ -174,7 +188,7 @@ el('startBtn').addEventListener('click', async function () {
     '<div><b>失敗率: ' + rate + '%</b></div>' +
     '<div>成功時の平均応答: ' + avg + '秒</div>' +
     '<div style="color:#888;font-size:12px;">テスト種別: ' + (action === 'ping' ? '軽い' : '重い') +
-    '／間隔: ' + (intervalMs / 1000) + '秒／' + startedAt + ' 〜 ' + endedAt + '</div>';
+    '／<b>' + method + '</b>／間隔: ' + (intervalMs / 1000) + '秒／' + startedAt + ' 〜 ' + endedAt + '</div>';
   el('compareHint').innerHTML =
     '📋 <b>次にこれを確認してください</b><br>' +
     'GASエディタの「実行数」画面を開き、<b>' + startedAt + '〜' + endedAt + '</b> の実行が<b>' + trials + '件</b>あるか数えてください。<br><br>' +
