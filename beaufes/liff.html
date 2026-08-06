@@ -199,15 +199,19 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.1.1';
+const APP_VERSION = '0.2.0';
 const GAS_URL  = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const LIFF_ID  = '2010404613-cwHA5B0U';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
 // GASの結果配信は逐次でも約7%失敗する（実測）。リトライ前提で組む（§2-6）。
-const FETCH_TIMEOUT_MS = 20000; // GASの応答が遅い日は20〜60秒かかることがあるため15秒→20秒に延長
-const MAX_ATTEMPTS     = 3;
-const RETRY_WAIT_MS    = [800, 2000];
+// 🆕 v0.2.0: 2026-08-06の実測（80回）に基づき再設計。詳細は index.html の同じ箇所を参照。
+// GASの結果配送は約32%失われる。応答は「数秒で返る」か「返らない」かの二択なので、
+// 長く待たず手数を増やす。20秒×3回=2.7%失敗 → 10秒×6回=0.12%失敗。
+// 失敗は連続する傾向があるため、再試行の間隔を徐々に広げる。
+const FETCH_TIMEOUT_MS = 10000;
+const MAX_ATTEMPTS     = 6;
+const RETRY_WAIT_MS    = [1000, 2000, 3000, 5000, 8000];
 
 function el(id) { return document.getElementById(id); }
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
@@ -218,7 +222,11 @@ function showError(id, msg) {
   e.style.display = 'block';
 }
 function hideError(id) { el(id).style.display = 'none'; }
-function overlay(on) { el('loadingOverlay').style.display = on ? 'flex' : 'none'; }
+function overlay(on) {
+  // 表示するたびに文言を初期化する（前回の再試行表示が残らないように）
+  if (on) el('loadingOverlay').textContent = '送信中…';
+  el('loadingOverlay').style.display = on ? 'flex' : 'none';
+}
 
 function showBoot(html) {
   el('bootCard').style.display = 'block';
@@ -268,10 +276,15 @@ async function postOnce(params) {
   }
 }
 
-async function postWithRetry(params) {
+// onProgress: 再試行に入ったことを画面に出すためのコールバック（省略可）。
+// 手数が増えた分、無言で待たせると固まったように見えるため。
+async function postWithRetry(params, onProgress) {
   let lastErr = null;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    if (attempt > 0) await sleep(RETRY_WAIT_MS[attempt - 1] || 2000);
+    if (attempt > 0) {
+      if (onProgress) onProgress(attempt + 1, MAX_ATTEMPTS);
+      await sleep(RETRY_WAIT_MS[attempt - 1] || 8000);
+    }
     try {
       return await postOnce(params);
     } catch (e) {
@@ -284,18 +297,38 @@ async function postWithRetry(params) {
 // ------------------------------------------------------------
 // プリフィルの反映
 // ------------------------------------------------------------
+// 🔴 お客様が自分で入力した項目は絶対に上書きしない（v0.2.0）。
+// プリフィルの取得は最大約80秒かかりうる（10秒×6回＋間隔）。その間フォームは
+// 使える状態で表示されているので、遅れて届いたプリフィルが入力済みの内容を
+// 消してしまう事故が起こりうる。触られた項目を記録しておき、そこは触らない。
+const touchedFields = {};
+['salon_name', 'staff_name', 'email', 'phone', 'business_type', 'address', 'referrer', 'note'].forEach(function (id) {
+  el(id).addEventListener('input',  function () { touchedFields[id] = true; });
+  el(id).addEventListener('change', function () { touchedFields[id] = true; });
+});
+document.querySelectorAll('input[name=has_transaction]').forEach(function (r) {
+  r.addEventListener('change', function () { touchedFields.has_transaction = true; });
+});
+
+function setIfUntouched(id, value) {
+  if (!value) return;
+  if (touchedFields[id]) return; // お客様が既に入力済み → 触らない
+  el(id).value = value;
+}
+
 function applyPrefill(prefill) {
   if (!prefill) return;
-  if (prefill.salon_name)    el('salon_name').value = prefill.salon_name;
-  if (prefill.staff_name)    el('staff_name').value = prefill.staff_name;
-  if (prefill.email)         el('email').value = prefill.email;
-  if (prefill.phone)         el('phone').value = prefill.phone;
-  if (prefill.business_type) el('business_type').value = prefill.business_type;
+  setIfUntouched('salon_name',    prefill.salon_name);
+  setIfUntouched('staff_name',    prefill.staff_name);
+  setIfUntouched('email',         prefill.email);
+  setIfUntouched('phone',         prefill.phone);
+  setIfUntouched('business_type', prefill.business_type);
   // 🔴 agree_capabilityは本人の意思表示なのでプリフィルしない（必ず未チェックのまま）
 }
 
 function applyHasTransaction(hasTransaction) {
   if (!hasTransaction) return;
+  if (touchedFields.has_transaction) return; // お客様が既に選び直している → 触らない
   document.querySelectorAll('input[name=has_transaction]').forEach(function (r) {
     r.checked = (r.value === hasTransaction);
   });
@@ -328,7 +361,9 @@ async function sendApplyLiff(idToken) {
   el('submitBtn').disabled = true;
 
   try {
-    const json = await postWithRetry({ action: 'applyLiff', data: JSON.stringify(payload) });
+    const json = await postWithRetry({ action: 'applyLiff', data: JSON.stringify(payload) }, function (n, max) {
+      el('loadingOverlay').textContent = '送信中…（確認しています ' + n + '/' + max + '）';
+    });
 
     if (!json.success) {
       overlay(false);
