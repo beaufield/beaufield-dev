@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ビューフェス 通信テスト（診断用）</title>
+<style>
+  :root { --main-dark: #2fa8cc; --border: #e0e6ea; --ok: #059669; --ng: #dc2626; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px 14px 60px;
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    background: #f7fafc; color: #333;
+  }
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  .lead { font-size: 12px; color: #888; margin: 0 0 16px; line-height: 1.7; }
+  .card { background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+  label { display: block; font-size: 13px; font-weight: bold; margin: 10px 0 5px; }
+  select, input[type=number] {
+    width: 100%; padding: 10px; font-size: 15px;
+    border: 1px solid var(--border); border-radius: 7px; background: #fff; color: #333;
+  }
+  button {
+    width: 100%; padding: 14px; margin-top: 14px;
+    font-size: 15px; font-weight: bold; color: #fff; background: var(--main-dark);
+    border: none; border-radius: 9px; cursor: pointer;
+  }
+  button:disabled { opacity: .5; }
+  #progress { font-size: 13px; color: #666; margin-top: 12px; text-align: center; min-height: 20px; }
+  .summary { font-size: 14px; line-height: 2; }
+  .summary .big { font-size: 26px; font-weight: bold; }
+  .summary .okc { color: var(--ok); }
+  .summary .ngc { color: var(--ng); }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+  th, td { border-bottom: 1px solid var(--border); padding: 5px 4px; text-align: left; }
+  th { color: #888; font-weight: normal; }
+  td.ok { color: var(--ok); }
+  td.ng { color: var(--ng); font-weight: bold; }
+  .hint { font-size: 11px; color: #999; margin-top: 10px; line-height: 1.7; }
+</style>
+</head>
+<body>
+
+<h1>通信テスト（診断用）</h1>
+<p class="lead">
+  GASへ同じリクエストを連続で送り、<b>結果が返ってきた回数</b>を数えます。<br>
+  データは一切変更しません（読み取りのみ）。
+</p>
+
+<div class="card">
+  <label>テストの種類</label>
+  <select id="mode">
+    <option value="ping">軽い（スプレッドシートに触らない）</option>
+    <option value="pingHeavy">重い（申込シートを読む＝実際の処理と同等）</option>
+  </select>
+
+  <label>回数</label>
+  <input type="number" id="trials" value="20" min="1" max="100">
+
+  <label>1回あたりの待ち時間（秒）</label>
+  <input type="number" id="timeout" value="20" min="3" max="60">
+
+  <button id="startBtn">テスト開始</button>
+  <div id="progress"></div>
+</div>
+
+<div class="card" id="summaryCard" style="display:none;">
+  <div class="summary" id="summary"></div>
+  <div class="hint" id="compareHint"></div>
+</div>
+
+<div class="card" id="detailCard" style="display:none;">
+  <div style="font-size:13px;font-weight:bold;">明細</div>
+  <table id="detail">
+    <thead><tr><th>#</th><th>開始時刻</th><th>所要</th><th>結果</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<script>
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
+
+function el(id) { return document.getElementById(id); }
+function pad(n) { return ('0' + n).slice(-2); }
+function clockNow() {
+  const d = new Date();
+  return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
+
+// 1回だけ送る。🔴 リトライしない（素の失敗率を測るため）
+async function sendOnce(action, seq, timeoutMs) {
+  const ctrl  = new AbortController();
+  const timer = setTimeout(function () { ctrl.abort(); }, timeoutMs);
+  const t0    = Date.now();
+  try {
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      body: new URLSearchParams({ action: action, data: JSON.stringify({ seq: seq }) }),
+      redirect: 'follow',
+      signal: ctrl.signal
+    });
+    if (!res.ok) return { outcome: 'HTTP_' + res.status, ms: Date.now() - t0 };
+    const text = await res.text();
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch (e) {
+      // GASの配送失敗は「404のHTML」が返るのが典型
+      return { outcome: '非JSON(' + text.length + '文字)', ms: Date.now() - t0 };
+    }
+    if (!json.success) return { outcome: 'エラー応答: ' + json.error, ms: Date.now() - t0 };
+    return { outcome: 'ok', ms: Date.now() - t0 };
+  } catch (e) {
+    const aborted = (e && e.name === 'AbortError');
+    return { outcome: aborted ? 'タイムアウト' : '通信失敗', ms: Date.now() - t0 };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+el('startBtn').addEventListener('click', async function () {
+  const action    = el('mode').value;
+  const trials    = Math.max(1, Math.min(100, parseInt(el('trials').value, 10) || 20));
+  const timeoutMs = (Math.max(3, Math.min(60, parseInt(el('timeout').value, 10) || 20))) * 1000;
+
+  el('startBtn').disabled = true;
+  el('summaryCard').style.display = 'none';
+  el('detailCard').style.display  = 'block';
+  el('detail').querySelector('tbody').innerHTML = '';
+
+  const startedAt = clockNow();
+  let okCount = 0;
+  const msList = [];
+
+  for (let i = 1; i <= trials; i++) {
+    el('progress').textContent = i + ' / ' + trials + ' 回目を実行中…';
+    const at = clockNow();
+    const r  = await sendOnce(action, String(i), timeoutMs);
+    if (r.outcome === 'ok') { okCount++; msList.push(r.ms); }
+
+    const tr = document.createElement('tr');
+    const isOk = (r.outcome === 'ok');
+    tr.innerHTML =
+      '<td>' + i + '</td>' +
+      '<td>' + at + '</td>' +
+      '<td>' + (r.ms / 1000).toFixed(1) + '秒</td>' +
+      '<td class="' + (isOk ? 'ok' : 'ng') + '">' + (isOk ? '成功' : r.outcome) + '</td>';
+    el('detail').querySelector('tbody').appendChild(tr);
+  }
+
+  const endedAt = clockNow();
+  const ngCount = trials - okCount;
+  const rate    = ((ngCount / trials) * 100).toFixed(1);
+  const avg     = msList.length ? (msList.reduce(function (a, b) { return a + b; }, 0) / msList.length / 1000).toFixed(1) : '—';
+
+  el('progress').textContent = '完了';
+  el('summary').innerHTML =
+    '<div><span class="big okc">' + okCount + '</span> 成功　' +
+    '<span class="big ngc">' + ngCount + '</span> 失敗　（' + trials + '回中）</div>' +
+    '<div><b>失敗率: ' + rate + '%</b></div>' +
+    '<div>成功時の平均応答: ' + avg + '秒</div>' +
+    '<div style="color:#888;font-size:12px;">テスト種別: ' + (action === 'ping' ? '軽い' : '重い') + '／' +
+    startedAt + ' 〜 ' + endedAt + '</div>';
+  el('compareHint').innerHTML =
+    '📋 <b>次にこれを確認してください</b><br>' +
+    'GASエディタの「実行数」画面を開き、<b>' + startedAt + '〜' + endedAt + '</b> の実行が<b>' + trials + '件</b>あるか数えてください。<br><br>' +
+    '・実行が' + trials + '件あって全て「完了」なのに、上の失敗が' + ngCount + '件 → <b>結果の配送だけが失われている</b>（サーバーは正常）<br>' +
+    '・実行が' + trials + '件より少ない → <b>リクエスト自体が届いていない</b><br>' +
+    '・実行に「失敗」がある → <b>スクリプト側のエラー</b>';
+  el('summaryCard').style.display = 'block';
+  el('startBtn').disabled = false;
+});
+</script>
+
+</body>
+</html>
