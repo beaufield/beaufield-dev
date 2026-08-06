@@ -225,14 +225,22 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.8.0';
+const APP_VERSION = '0.9.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
 // GASの結果配信は逐次でも約7%失敗する（実測）。リトライ前提で組む。
-const FETCH_TIMEOUT_MS = 20000; // 🆕 v0.8.0: GASの応答が遅い日は20〜60秒かかることがあるため15秒→20秒に延長
-const MAX_ATTEMPTS     = 3;
-const RETRY_WAIT_MS    = [800, 2000];
+// 🆕 v0.9.0: 2026-08-06の実測（80回）に基づき再設計。
+// GASの結果配送は約32%の確率で失われる（サーバー側は毎回0.4〜3秒で正常完了している）。
+// かつ応答は「数秒で返る」か「永遠に返らない」かの二択で、中間がほとんどない
+// （GETの成功20件は全て4.3秒以内・失敗は全てタイムアウト）。よって長く待つのは無駄。
+// 短いタイムアウトで手数を増やす方が、同じ待ち時間でも成功率が桁違いに上がる。
+//   20秒×3回 → 最終失敗率 2.7% ／ 10秒×6回 → 0.12%
+// 🔴 失敗は連続して起きる傾向があるため（同じ不調な時間帯に固まる）、
+// 再試行の間隔を徐々に広げて別の時間帯に当てる。
+const FETCH_TIMEOUT_MS = 10000;
+const MAX_ATTEMPTS     = 6;
+const RETRY_WAIT_MS    = [1000, 2000, 3000, 5000, 8000];
 
 function el(id) { return document.getElementById(id); }
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
@@ -250,7 +258,11 @@ function showError(id, msg) {
   e.style.display = 'block';
 }
 function hideError(id) { el(id).style.display = 'none'; }
-function overlay(on) { el('loadingOverlay').style.display = on ? 'flex' : 'none'; }
+function overlay(on) {
+  // 表示するたびに文言を初期化する（前回の再試行表示が残らないように）
+  if (on) el('loadingOverlay').textContent = '送信中…';
+  el('loadingOverlay').style.display = on ? 'flex' : 'none';
+}
 
 // ------------------------------------------------------------
 // GASへのPOST（1回ぶん）
@@ -282,10 +294,15 @@ async function postOnce(params) {
 // 🔴 リトライしても二重登録にならない理由: 1回目が実は成功していた場合、同じメール＋
 // 同じお名前で再送信すると、サーバー側は行を作らず existing_notified を返すだけ（Code.gs v0.8.0）。
 // メールが変わらない・お名前も同じ表記のつもりで送っている限り、再送信は安全。
-async function postWithRetry(params) {
+// onProgress: 再試行に入ったことを画面に出すためのコールバック（省略可）。
+// 手数が増えた分、無言で待たせると固まったように見えるため。
+async function postWithRetry(params, onProgress) {
   let lastErr = null;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    if (attempt > 0) await sleep(RETRY_WAIT_MS[attempt - 1] || 2000);
+    if (attempt > 0) {
+      if (onProgress) onProgress(attempt + 1, MAX_ATTEMPTS);
+      await sleep(RETRY_WAIT_MS[attempt - 1] || 8000);
+    }
     try {
       return await postOnce(params);
     } catch (e) {
@@ -331,7 +348,9 @@ async function sendApply() {
   el('submitBtn').disabled = true;
 
   try {
-    const json = await postWithRetry({ action: 'apply', data: JSON.stringify(payload) });
+    const json = await postWithRetry({ action: 'apply', data: JSON.stringify(payload) }, function (n, max) {
+      el('loadingOverlay').textContent = '送信中…（確認しています ' + n + '/' + max + '）';
+    });
 
     if (!json.success) {
       overlay(false);

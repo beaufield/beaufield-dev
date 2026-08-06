@@ -214,15 +214,19 @@
 
 <script src="lib/qrcode.min.js"></script>
 <script>
-const APP_VERSION = '0.6.2';
+const APP_VERSION = '0.7.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
 // 通信の設定（GASの結果配信は逐次でも約7%失敗するため、リトライは必須。
 // 失敗時は16〜47秒かかってから返ることがあるので、1回あたりの待ち時間も切る）
-const FETCH_TIMEOUT_MS = 20000; // 🆕 v0.6.2: GASの応答が遅い日は20〜60秒かかることがあるため10秒→20秒に延長
-const MAX_ATTEMPTS     = 3;
-const RETRY_WAIT_MS    = [800, 2000];
+// 🆕 v0.7.0: 2026-08-06の実測（80回）に基づき再設計。詳細は index.html の同じ箇所を参照。
+// GASの結果配送は約32%失われる。応答は「数秒で返る」か「返らない」かの二択なので、
+// 長く待たず手数を増やす。20秒×3回=2.7%失敗 → 10秒×6回=0.12%失敗。
+// 失敗は連続する傾向があるため、再試行の間隔を徐々に広げる。
+const FETCH_TIMEOUT_MS = 10000;
+const MAX_ATTEMPTS     = 6;
+const RETRY_WAIT_MS    = [1000, 2000, 3000, 5000, 8000];
 
 function qs(name) {
   return new URLSearchParams(location.search).get(name);
@@ -463,10 +467,15 @@ async function postOnce(params) {
   }
 }
 
-async function postWithRetry(params) {
+// onProgress: 再試行に入ったことを画面に出すためのコールバック（省略可）。
+// 手数が増えた分、無言で待たせると固まったように見えるため。
+async function postWithRetry(params, onProgress) {
   let lastErr = null;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    if (attempt > 0) await sleep(RETRY_WAIT_MS[attempt - 1] || 2000);
+    if (attempt > 0) {
+      if (onProgress) onProgress(attempt + 1, MAX_ATTEMPTS);
+      await sleep(RETRY_WAIT_MS[attempt - 1] || 8000);
+    }
     try {
       return await postOnce(params);
     } catch (e) {
@@ -538,13 +547,22 @@ el('editForm').addEventListener('submit', async function (ev) {
     note:            el('e_note').value.trim()
   };
 
-  el('editSaveBtn').disabled   = true;
-  el('editCancelBtn').disabled = true;
+  el('editSaveBtn').disabled    = true;
+  el('editCancelBtn').disabled  = true;
+  el('editSaveBtn').textContent = '保存中…';
+
+  // 成否どちらでもボタンを元に戻す（再試行の表示が残らないように）
+  function restoreSaveBtn() {
+    el('editSaveBtn').disabled    = false;
+    el('editCancelBtn').disabled  = false;
+    el('editSaveBtn').textContent = 'この内容で保存する';
+  }
 
   try {
-    const json = await postWithRetry({ action: 'updateApplication', data: JSON.stringify(payload) });
-    el('editSaveBtn').disabled   = false;
-    el('editCancelBtn').disabled = false;
+    const json = await postWithRetry({ action: 'updateApplication', data: JSON.stringify(payload) }, function (n, max) {
+      el('editSaveBtn').textContent = '保存中…（確認しています ' + n + '/' + max + '）';
+    });
+    restoreSaveBtn();
 
     if (!json.success) {
       showError('editError', json.error === 'NOT_FOUND'
@@ -561,8 +579,7 @@ el('editForm').addEventListener('submit', async function (ev) {
     el('editForm').style.display = 'none';
     el('editDone').style.display = 'block';
   } catch (e) {
-    el('editSaveBtn').disabled   = false;
-    el('editCancelBtn').disabled = false;
+    restoreSaveBtn();
     showError('editError', '保存結果を確認できませんでした。お手数ですが、もう一度お試しください。');
   }
 });
