@@ -85,6 +85,7 @@
   .formCard textarea { resize: vertical; min-height: 60px; }
   .formCard .radio-group { display: flex; gap: 16px; margin-top: 6px; }
   .formCard .radio-group label { display: flex; align-items: center; gap: 6px; font-weight: normal; margin: 0; }
+  #e_newFields { display: none; margin-top: 6px; }
   .formCard .errorMsg {
     display: none;
     color: #dc2626;
@@ -177,11 +178,14 @@
         <label><input type="radio" name="e_has_transaction" value="no"> なし（初めて）</label>
       </div>
 
-      <label>サロンのご住所</label>
-      <input type="text" id="e_address">
+      <!-- index.htmlと同じく「なし（初めて）」選択時のみ表示（新規客向け項目） -->
+      <div id="e_newFields">
+        <label>サロンのご住所</label>
+        <input type="text" id="e_address">
 
-      <label>ご紹介サロン名・お名前（あれば）</label>
-      <input type="text" id="e_referrer">
+        <label>ご紹介サロン名・お名前（あれば）</label>
+        <input type="text" id="e_referrer">
+      </div>
 
       <label>備考（あれば）</label>
       <textarea id="e_note"></textarea>
@@ -210,7 +214,7 @@
 
 <script src="lib/qrcode.min.js"></script>
 <script>
-const APP_VERSION = '0.6.0';
+const APP_VERSION = '0.6.1';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
@@ -487,7 +491,16 @@ function populateEditForm(d) {
   document.querySelectorAll('input[name=e_has_transaction]').forEach(function (r) {
     r.checked = (r.value === hasTx);
   });
+  // index.htmlと同じ表示制御。フォームを開いた時点の値を即座に反映する（changeイベント任せにしない）
+  el('e_newFields').style.display = (hasTx === 'no') ? 'block' : 'none';
 }
+
+document.querySelectorAll('input[name=e_has_transaction]').forEach(function (r) {
+  r.addEventListener('change', function () {
+    el('e_newFields').style.display =
+      document.querySelector('input[name=e_has_transaction]:checked').value === 'no' ? 'block' : 'none';
+  });
+});
 
 el('editToggleLink').addEventListener('click', function (ev) {
   ev.preventDefault();
