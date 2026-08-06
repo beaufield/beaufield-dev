@@ -1,6 +1,6 @@
 // ============================================================
 // ビューフェス申込アプリ - Google Apps Script
-// Version: 0.9.1
+// Version: 0.10.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -89,9 +89,19 @@
 //   `liff.getProfile()` の結果をそのまま信用せず、`POST https://api.line.me/oauth2/v2.1/verify` の
 //   応答（aud/exp/iss）を自分で検証してから `sub`（=lineUserId）を使う（§2-3）。まだ呼び出し元は無い。
 //   診断用に `testVerifyBadIdToken()` を追加（不正なトークンで確実に例外になることをGASエディタから確認できる）。
+//   実機確認済み: 不正なトークンはLINE側からHTTP_400（JWS format error）で拒否され、正しく例外化される。
+//
+// 🆕 v0.10.0（2026-08-06・L1-c）: LIFF申込アクション `liffPrefill` / `applyLiff` を新設。
+//   applyApplication・updateApplicationのバリデーション・書き込みロジックを共通関数
+//  （`_validateApplicationFields` / `_appendApplicationRow` / `_updateApplicationRow`）に切り出し、
+//   Web版・LIFF版で二重管理しないようにリファクタリング（挙動は変えていない）。
+//   liffPrefill: IDトークン検証→line_friends_cacheと既存申込(line_user_id)からプリフィル値を返す。
+//   6択に無い業態（旧表記「エステ」等）は省略する（§1-4 地雷5）。
+//   applyLiff: line_user_idで既存申込が引ければ更新（メール送信・確認画面なし。§2-10）、
+//   引けなければsource='liff'で新規登録。まだ呼び出し元（liff.html）は無い（L1-dで新規作成）。
 // ============================================================
 
-const VERSION  = '0.9.1';
+const VERSION  = '0.10.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -121,6 +131,9 @@ const BEAUFES_TAG_ID       = _PROPS.getProperty('BEAUFES_TAG_ID'); // タグ「�
 
 // 🆕 L1-b: LIFF/LINEログインチャネルID（秘密情報ではないため直書きでよい。§0で発行済み）
 const LIFF_CHANNEL_ID = '2010404613';
+
+// 🆕 L1-c: 業態6択。index.html/pass.html/liff.htmlと1文字も違えないこと（LINEフォーム実物準拠）
+const BUSINESS_TYPE_OPTIONS = ['美容室', '理容室', 'エステサロン', 'ネイルサロン', 'アイサロン', 'その他'];
 
 // ============================================================
 // 起動時チェック（プロパティ未設定を早期検知）
@@ -174,10 +187,12 @@ function doPost(e) {
 
   try {
     switch (action) {
-      case 'apply':            return _jsonResponse(applyApplication(data));
-      case 'resendPass':       return _jsonResponse(resendPass(data));
+      case 'apply':             return _jsonResponse(applyApplication(data));
+      case 'resendPass':        return _jsonResponse(resendPass(data));
       case 'updateApplication': return _jsonResponse(updateApplication(data));
-      default:                 return _jsonResponse(_err('不明なアクション: ' + action));
+      case 'liffPrefill':       return _jsonResponse(liffPrefill(data));
+      case 'applyLiff':         return _jsonResponse(applyLiff(data));
+      default:                  return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
     Logger.log('doPost error: ' + err);
@@ -253,6 +268,78 @@ function _getConfig() {
 }
 
 // ============================================================
+// 申込フォームの共通処理（applyApplication / updateApplication / applyLiff で共用）
+// 🆕 L1-c: Web版とLIFF版でバリデーション・書き込みロジックを二重管理しないための切り出し
+// ============================================================
+
+// 入力値のバリデーション。opts.requireAgree=false のときはagree_capability必須チェックを省く
+// （updateApplicationは編集画面に同意チェックボックスが無いため）。
+// 戻り値: 成功時 { fields }／失敗時 { error }
+function _validateApplicationFields(data, opts) {
+  opts = opts || {};
+  const f = {
+    salonName:      String(data.salon_name || '').trim(),
+    staffName:      String(data.staff_name || '').trim(),
+    email:          String(data.email || '').trim(),
+    phone:          String(data.phone || '').trim(),
+    businessType:   String(data.business_type || '').trim(), // U列。名札の色分けに使用（§4-1-2）
+    hasTransaction: String(data.has_transaction || '').trim(), // 'yes' / 'no'
+    address:        String(data.address || '').trim(),        // 新規客のみ
+    referrer:       String(data.referrer || '').trim(),       // 新規客のみ
+    note:           String(data.note || '').trim(),
+    agree:          !!data.agree_capability
+  };
+
+  if (!f.salonName) return { error: 'サロン名を入力してください' };
+  if (!f.staffName) return { error: 'お名前を入力してください' };
+  if (!f.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email)) return { error: 'メールアドレスの形式が正しくありません' };
+  if (!f.phone) return { error: 'お電話番号を入力してください' };
+  if (!f.businessType) return { error: '業態を選択してください' };
+  if (opts.requireAgree && !f.agree) return { error: '美容従事者であることの確認にチェックしてください' };
+
+  f.emailNorm = f.email.toLowerCase();
+  return { fields: f };
+}
+
+// 新規行を追加する。source: 'web' | 'liff'。lineFriendId/lineUserId はWeb版では常に''。
+// 戻り値: { appId, ticketToken }
+function _appendApplicationRow(sh, rows, f, source, lineFriendId, lineUserId) {
+  const appId       = _nextAppId(rows);
+  const ticketToken = _genToken();
+  const now         = _now();
+  const newRow      = rows.length + 1;
+
+  const values = [
+    appId, now, now, source,
+    f.salonName, f.staffName, f.email, f.emailNorm, f.phone, '', // J列(area)はフォームから削除済み（2026-08-06）
+    f.hasTransaction, f.address, f.referrer, f.agree,
+    lineFriendId || '', lineUserId || '',
+    ticketToken, 'confirmed', '', f.note,
+    f.businessType // U列（§4-1-2）
+  ];
+  // 🔴 電話番号列(I列=9列目)は書き込み前に必ずPlain Text指定する（migrateFixPhoneColumnと同じ理由）。
+  // appendRowだと書式を挟めないため、行番号を自分で計算してsetValuesに置き換えている。
+  sh.getRange(newRow, 9, 1, 1).setNumberFormat('@');
+  sh.getRange(newRow, 1, 1, values.length).setValues([values]);
+
+  return { appId: appId, ticketToken: ticketToken };
+}
+
+// 既存行を更新する。app_id・ticket_token・statusは書き換えない。
+function _updateApplicationRow(sh, row, f) {
+  const now = _now();
+  // 🔴 電話番号列(I列=9列目)は書き込み前に必ずPlain Text指定する（migrateFixPhoneColumnと同じ理由）
+  sh.getRange(row, 9, 1, 1).setNumberFormat('@');
+  sh.getRange(row, 3, 1, 1).setValue(now); // updated_at
+  sh.getRange(row, 5, 1, 9).setValues([[
+    // J列(area)はフォームから削除済み（2026-08-06）。列位置を保つため空文字を書き続ける
+    f.salonName, f.staffName, f.email, f.emailNorm, f.phone, '', f.hasTransaction, f.address, f.referrer
+  ]]);
+  sh.getRange(row, 20, 1, 1).setValue(f.note);
+  sh.getRange(row, 21, 1, 1).setValue(f.businessType); // U列（§4-1-2）
+}
+
+// ============================================================
 // ① 申込受付（doPost: action=apply）
 //    キーは email_norm + 正規化した staff_name（§4-3）
 //
@@ -266,26 +353,10 @@ function _getConfig() {
 function applyApplication(data) {
   _checkProps();
 
-  const salonName      = String(data.salon_name || '').trim();
-  const staffName      = String(data.staff_name || '').trim();
-  const email          = String(data.email || '').trim();
-  const phone          = String(data.phone || '').trim();
-  const businessType   = String(data.business_type || '').trim(); // U列。名札の色分けに使用（§4-1-2）
-  const hasTransaction = String(data.has_transaction || '').trim(); // 'yes' / 'no'
-  const address        = String(data.address || '').trim();        // 新規客のみ
-  const referrer       = String(data.referrer || '').trim();       // 新規客のみ
-  const agree          = !!data.agree_capability;
-  const note           = String(data.note || '').trim();
-
-  if (!salonName) return _err('サロン名を入力してください');
-  if (!staffName) return _err('お名前を入力してください');
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return _err('メールアドレスの形式が正しくありません');
-  if (!phone) return _err('お電話番号を入力してください');
-  if (!businessType) return _err('業態を選択してください');
-  if (!agree) return _err('美容従事者であることの確認にチェックしてください');
-
-  const emailNorm = email.toLowerCase();
-  const nameKey   = _normalizeName(staffName);
+  const v = _validateApplicationFields(data, { requireAgree: true });
+  if (v.error) return _err(v.error);
+  const f = v.fields;
+  const nameKey = _normalizeName(f.staffName);
 
   let appId, ticketToken;
   let existingNotified = false;
@@ -297,12 +368,11 @@ function applyApplication(data) {
     const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
     const sh  = _getSheet(ss, SHEET_APPLICATIONS);
     const rows = sh.getDataRange().getValues();
-    const now  = _now();
 
     // 同じメール＋同じ氏名（正規化）の既存申込を探す。見つかっても内容は一切書き換えない・
     // 一切返さない（他人のメールで氏名・サロン名が引ける経路を作らないため・§2-2）。
     for (let i = 1; i < rows.length; i++) {
-      if (String(rows[i][7]).toLowerCase() !== emailNorm) continue;
+      if (String(rows[i][7]).toLowerCase() !== f.emailNorm) continue;
       if (String(rows[i][17]) === 'cancelled') continue; // 取消済みは既存として扱わない
       if (_normalizeName(rows[i][5]) !== nameKey) continue;
 
@@ -317,34 +387,21 @@ function applyApplication(data) {
 
     if (!existingNotified) {
       // 新規登録（メールが一致しても氏名が違えば別人として登録＝同一サロン複数名の代表メール申込に対応）
-      appId       = _nextAppId(rows);
-      ticketToken = _genToken();
-      const newRow = rows.length + 1;
-
-      const values = [
-        appId, now, now, 'web',
-        salonName, staffName, email, emailNorm, phone, '', // J列(area)はフォームから削除済み（2026-08-06）
-        hasTransaction, address, referrer, agree,
-        '', '',                 // line_friend_id / line_user_id（LIFF連動はL1で使用）
-        ticketToken, 'confirmed', '', note,
-        businessType             // U列（§4-1-2）
-      ];
-      // 🔴 電話番号列(I列=9列目)は書き込み前に必ずPlain Text指定する（下記_fixPhoneColumnFormatと同じ理由）。
-      // appendRowだと書式を挟めないため、行番号を自分で計算してsetValuesに置き換えている。
-      sh.getRange(newRow, 9, 1, 1).setNumberFormat('@');
-      sh.getRange(newRow, 1, 1, values.length).setValues([values]);
+      const created = _appendApplicationRow(sh, rows, f, 'web', '', '');
+      appId       = created.appId;
+      ticketToken = created.ticketToken;
     }
   } finally {
     lock.releaseLock();
   }
 
   if (existingNotified) {
-    _sendPassResendMail(email, resendList);
+    _sendPassResendMail(f.email, resendList);
     return _ok({ existing_notified: true });
   }
 
   const passUrl = SITE_BASE_URL + 'pass.html?t=' + ticketToken;
-  _sendConfirmationMail(email, salonName, staffName, passUrl, false);
+  _sendConfirmationMail(f.email, f.salonName, f.staffName, passUrl, false);
 
   return _ok({ app_id: appId, pass_url: passUrl, is_update: false });
 }
@@ -352,7 +409,7 @@ function applyApplication(data) {
 // ============================================================
 // 🆕 ④ 申込内容の変更（doPost: action=updateApplication）―― v0.8.0（L0-X・§2-2）
 //    ticket_token を知っている本人だけが自分の申込を編集できる（capability URL方式）。
-//    pass.html の編集UI（L1-e）から呼ばれる。既存内容を変更する唯一の経路。
+//    pass.html の編集UI（L1-e）から呼ばれる。Web版の変更経路はこれのみ。
 //
 //    🔴 ticket_token（列17）・app_id（列1）・status（列18）は絶対に書き換えない。
 //    🔴 重複判定は行わない（token を持っている時点で本人の編集と確定しているため）。
@@ -363,23 +420,10 @@ function updateApplication(data) {
   const token = String(data.ticket_token || '').trim();
   if (!token) return _err('INVALID_TOKEN');
 
-  const salonName      = String(data.salon_name || '').trim();
-  const staffName      = String(data.staff_name || '').trim();
-  const email          = String(data.email || '').trim();
-  const phone          = String(data.phone || '').trim();
-  const businessType   = String(data.business_type || '').trim();
-  const hasTransaction = String(data.has_transaction || '').trim();
-  const address        = String(data.address || '').trim();
-  const referrer       = String(data.referrer || '').trim();
-  const note           = String(data.note || '').trim();
+  const v = _validateApplicationFields(data, { requireAgree: false });
+  if (v.error) return _err(v.error);
+  const f = v.fields;
 
-  if (!salonName) return _err('サロン名を入力してください');
-  if (!staffName) return _err('お名前を入力してください');
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return _err('メールアドレスの形式が正しくありません');
-  if (!phone) return _err('お電話番号を入力してください');
-  if (!businessType) return _err('業態を選択してください');
-
-  const emailNorm = email.toLowerCase();
   let appId;
 
   const lock = LockService.getScriptLock();
@@ -388,7 +432,6 @@ function updateApplication(data) {
     const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
     const sh  = _getSheet(ss, SHEET_APPLICATIONS);
     const rows = sh.getDataRange().getValues();
-    const now  = _now();
 
     let foundRow = -1;
     for (let i = 1; i < rows.length; i++) {
@@ -397,21 +440,122 @@ function updateApplication(data) {
     if (foundRow < 0) return _err('NOT_FOUND');
 
     appId = rows[foundRow - 1][0];
-
-    // 🔴 電話番号列(I列=9列目)は書き込み前に必ずPlain Text指定する（下記_fixPhoneColumnFormatと同じ理由）
-    sh.getRange(foundRow, 9, 1, 1).setNumberFormat('@');
-    sh.getRange(foundRow, 3, 1, 1).setValue(now); // updated_at
-    sh.getRange(foundRow, 5, 1, 9).setValues([[
-      // J列(area)はフォームから削除済み（2026-08-06）。列位置を保つため空文字を書き続ける
-      salonName, staffName, email, emailNorm, phone, '', hasTransaction, address, referrer
-    ]]);
-    sh.getRange(foundRow, 20, 1, 1).setValue(note);
-    sh.getRange(foundRow, 21, 1, 1).setValue(businessType); // U列（§4-1-2）
+    _updateApplicationRow(sh, foundRow, f);
   } finally {
     lock.releaseLock();
   }
 
   return _ok({ app_id: appId, pass_url: SITE_BASE_URL + 'pass.html?t=' + token });
+}
+
+// ============================================================
+// 🆕 L1-c: LIFF申込のプリフィル取得（doPost: action=liffPrefill）
+//    IDトークンを検証し、line_friends_cacheと既存申込（line_user_id）から埋められる項目を返す。
+//    友だちが見つからなくても success:true（空のフォームを出す。エラーにしない・§2-9）。
+// ============================================================
+function liffPrefill(data) {
+  _checkProps();
+
+  const idToken = String(data.id_token || '').trim();
+  let lineUserId;
+  try {
+    lineUserId = _verifyLineIdToken(idToken);
+  } catch (e) {
+    return _err('INVALID_ID_TOKEN');
+  }
+
+  const friend = _findFriendByLineUserId(lineUserId);
+  const result = { found: !!friend };
+
+  if (friend) {
+    result.friend_id = friend.friendId;
+
+    const prefill = {};
+    if (friend.salonName) prefill.salon_name = friend.salonName;
+    if (friend.staffName) prefill.staff_name = friend.staffName;
+    if (friend.phone)     prefill.phone = friend.phone;
+    if (friend.email)     prefill.email = friend.email;
+    if (friend.businessType && BUSINESS_TYPE_OPTIONS.indexOf(friend.businessType) >= 0) {
+      prefill.business_type = friend.businessType; // 🔴 6択に無い値(旧表記「エステ」等)は省略（§1-4 地雷5）
+    }
+    result.prefill = prefill;
+    result.has_transaction = friend.extId ? 'yes' : 'no';
+  }
+
+  const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh  = _getSheet(ss, SHEET_APPLICATIONS);
+  const rows = sh.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][15]) === lineUserId && String(rows[i][17]) !== 'cancelled') {
+      result.existing_application = { app_id: String(rows[i][0]), ticket_token: String(rows[i][16]) };
+      break;
+    }
+  }
+
+  return _ok(result);
+}
+
+// ============================================================
+// 🆕 L1-c: LIFF申込の確定（doPost: action=applyLiff）―― §2-10
+//    line_user_id で既存申込が引ければそのまま更新（本人確定なのでメール送信・確認画面なし）。
+//    引けなければ新規登録（source='liff'・line_user_id/line_friend_idを保存）。
+//    duplicate_found / mode / target_app_id は存在しない（L0-Xで廃止済み。Web版と同じ）。
+//    🔴 §2-2のメール＋氏名一致ロジックはLIFFでは使わない（line_user_idが本人確認そのものなので不要）。
+// ============================================================
+function applyLiff(data) {
+  _checkProps();
+
+  const idToken = String(data.id_token || '').trim();
+  let lineUserId;
+  try {
+    lineUserId = _verifyLineIdToken(idToken);
+  } catch (e) {
+    return _err('INVALID_ID_TOKEN');
+  }
+
+  const v = _validateApplicationFields(data, { requireAgree: true });
+  if (v.error) return _err(v.error);
+  const f = v.fields;
+
+  const friend       = _findFriendByLineUserId(lineUserId);
+  const lineFriendId = friend ? friend.friendId : '';
+
+  let appId, ticketToken, isUpdate;
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sh  = _getSheet(ss, SHEET_APPLICATIONS);
+    const rows = sh.getDataRange().getValues();
+
+    let foundRow = -1;
+    for (let i = 1; i < rows.length; i++) {
+      if (String(rows[i][15]) === lineUserId && String(rows[i][17]) !== 'cancelled') { foundRow = i + 1; break; }
+    }
+
+    if (foundRow > 0) {
+      isUpdate    = true;
+      appId       = rows[foundRow - 1][0];
+      ticketToken = rows[foundRow - 1][16];
+      _updateApplicationRow(sh, foundRow, f);
+    } else {
+      isUpdate = false;
+      const created = _appendApplicationRow(sh, rows, f, 'liff', lineFriendId, lineUserId);
+      appId       = created.appId;
+      ticketToken = created.ticketToken;
+    }
+  } finally {
+    lock.releaseLock();
+  }
+
+  const passUrl = SITE_BASE_URL + 'pass.html?t=' + ticketToken;
+  // 更新時はメールを送らない（本人が画面上でパスURLをそのまま受け取れるため。updateApplicationと同じ考え方）
+  if (!isUpdate) {
+    _sendConfirmationMail(f.email, f.salonName, f.staffName, passUrl, false);
+  }
+
+  return _ok({ app_id: appId, pass_url: passUrl, is_update: isUpdate });
 }
 
 // ============================================================
