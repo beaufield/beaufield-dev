@@ -1,6 +1,6 @@
 // ============================================================
 // ビューフェス申込アプリ - Google Apps Script
-// Version: 0.8.0
+// Version: 0.8.1
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -69,9 +69,15 @@
 //   受容したリスク: QR提示時に第三者が撮影するとticket_tokenを入手でき、内容を閲覧・編集できてしまう。
 //   イベント規模・性質から実害は小さいと判断し受容（Takashiさん了解済み・token は16桁の乱数で総当たり不可能）。
 //   詳細: 開発・自動化/beaufes/LINE連携_実装プラン.md §2-2・§4 L0-X
+//
+// 🆕 v0.8.1（2026-08-06）: 電話番号の先頭「0」が消える不具合を修正（pass.htmlの編集フォームで発覚）。
+//   原因: 全て数字の文字列を書き込むと、列の書式がAutomaticのままだとGoogle Sheetsが
+//   数値型に変換し先頭の0が失われる。applyApplication・updateApplicationとも、電話番号セルを
+//   書き込み直前にPlain Text指定するよう修正。既存データの復旧は migrateFixPhoneColumn() で行う
+//  （本番シートに対して一度だけ手動実行すること）。
 // ============================================================
 
-const VERSION  = '0.8.0';
+const VERSION  = '0.8.1';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -283,15 +289,20 @@ function applyApplication(data) {
       // 新規登録（メールが一致しても氏名が違えば別人として登録＝同一サロン複数名の代表メール申込に対応）
       appId       = _nextAppId(rows);
       ticketToken = _genToken();
+      const newRow = rows.length + 1;
 
-      sh.appendRow([
+      const values = [
         appId, now, now, 'web',
         salonName, staffName, email, emailNorm, phone, '', // J列(area)はフォームから削除済み（2026-08-06）
         hasTransaction, address, referrer, agree,
         '', '',                 // line_friend_id / line_user_id（LIFF連動はL1で使用）
         ticketToken, 'confirmed', '', note,
         businessType             // U列（§4-1-2）
-      ]);
+      ];
+      // 🔴 電話番号列(I列=9列目)は書き込み前に必ずPlain Text指定する（下記_fixPhoneColumnFormatと同じ理由）。
+      // appendRowだと書式を挟めないため、行番号を自分で計算してsetValuesに置き換えている。
+      sh.getRange(newRow, 9, 1, 1).setNumberFormat('@');
+      sh.getRange(newRow, 1, 1, values.length).setValues([values]);
     }
   } finally {
     lock.releaseLock();
@@ -357,6 +368,8 @@ function updateApplication(data) {
 
     appId = rows[foundRow - 1][0];
 
+    // 🔴 電話番号列(I列=9列目)は書き込み前に必ずPlain Text指定する（下記_fixPhoneColumnFormatと同じ理由）
+    sh.getRange(foundRow, 9, 1, 1).setNumberFormat('@');
     sh.getRange(foundRow, 3, 1, 1).setValue(now); // updated_at
     sh.getRange(foundRow, 5, 1, 9).setValues([[
       // J列(area)はフォームから削除済み（2026-08-06）。列位置を保つため空文字を書き続ける
@@ -691,6 +704,39 @@ function migrateAddBusinessType() {
   }
   sh.getRange(1, 21).setValue('business_type');
   Logger.log('business_type列をU1に追加しました。');
+}
+
+// ============================================================
+// 🆕 マイグレーション: applications シートの電話番号列（I列=9列目）の先頭「0」落ちを修正する
+// 2026-08-06発覚（pass.htmlの編集フォームで初めて可視化された）。
+//
+// 原因: 全て数字の文字列をAutomatic書式の列に書き込むと、Google Sheetsが数値型に
+// 変換してしまい先頭の0が消える（appendRow・setValuesとも、UIでの手入力と同じ挙動）。
+// applyApplication/updateApplication は本マイグレーション以降、書き込み直前に対象セルを
+// Plain Text指定するよう修正済み（v0.8.1）。既存行の復旧はこの関数が担う。
+//
+// 【本番シートに対して一度だけ手動実行すること】GASエディタの関数選択で
+// migrateFixPhoneColumn を選び、▷実行する。
+// ============================================================
+function migrateFixPhoneColumn() {
+  _checkProps();
+  const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh  = _getSheet(ss, SHEET_APPLICATIONS);
+  const rows = sh.getDataRange().getValues();
+
+  // 列全体をPlain Textにしておく（今後、手入力や別経路で書き込まれても先頭0が消えなくなる）
+  sh.getRange(2, 9, Math.max(sh.getMaxRows() - 1, 1), 1).setNumberFormat('@');
+
+  let fixed = 0;
+  for (let i = 1; i < rows.length; i++) {
+    const v = rows[i][8];
+    // セルの実体が数値型＝先頭の0が消えている状態（日本の電話番号は必ず0始まりなので復元できる）
+    if (typeof v === 'number') {
+      sh.getRange(i + 1, 9, 1, 1).setValue('0' + String(v));
+      fixed++;
+    }
+  }
+  Logger.log('電話番号列の書式修正が完了しました。復元した行数: ' + fixed + '（列全体もPlain Text化済み）');
 }
 
 // ============================================================
