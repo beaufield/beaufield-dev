@@ -5,7 +5,9 @@
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
 // GASエディタ → 「プロジェクトの設定」→「スクリプトプロパティ」→「プロパティを追加」
-//   SPREADSHEET_ID  : ビューフェス申込データのスプレッドシートID（新規に「beaufes2026」という名前で作成する）
+//   SPREADSHEET_ID    : ビューフェス申込データのスプレッドシートID（新規に「beaufes2026」という名前で作成する）
+//   LINEWORKS_WEBHOOK : （任意・v0.14.0）新規申込のLINE WORKS通知先Incoming Webhook URL。
+//                        未設定でも動作する（通知が飛ばないだけ）。発行手順は_handoff.md参照。
 //
 // 初回セットアップ手順:
 //   1. 新規Googleスプレッドシートを作成（名前: beaufes2026）
@@ -129,9 +131,16 @@
 //     同一内容のパス再送メールが何通も届いていた。mail_logの直近10分以内に同じ宛先への
 //     resend_pass送信成功記録があれば送信をスキップする（CacheServiceは使わず
 //     シート参照のみ。project_gas_cache_lessonの教訓）。
+//
+// 🆕 v0.14.0（2026-08-07）: 新規申込のLINE WORKS通知を追加。
+//   Incoming Webhook方式（認証不要・`{body:{text}}`形式。ref_lineworks_two_notify_paths）。
+//   スクリプトプロパティ `LINEWORKS_WEBHOOK`（任意）にビューフェス専用ルーム宛のURLを
+//   設定すると、新規申込（apply/applyLiffの新規登録時のみ・更新時は送らない）のたびに
+//   サロン名・お名前・業態・電話を通知する。未設定なら何もしない（既存の運用に影響なし）。
+//   失敗しても申込自体は成立済みのため、呼び出し側でtry/catchして握りつぶす。
 // ============================================================
 
-const VERSION  = '0.13.0';
+const VERSION  = '0.14.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -165,6 +174,11 @@ const LIFF_CHANNEL_ID = '2010404613';
 
 // 🆕 L1-c: 業態6択。index.html/pass.html/liff.htmlと1文字も違えないこと（LINEフォーム実物準拠）
 const BUSINESS_TYPE_OPTIONS = ['美容室', '理容室', 'エステサロン', 'ネイルサロン', 'アイサロン', 'その他'];
+
+// 🆕 v0.14.0: 新規申込のLINE WORKS通知（任意・未設定なら何もしない）。
+// Incoming Webhook方式（[[ref_lineworks_two_notify_paths]]・認証不要・{body:{text}}形式）。
+// ビューフェス専用ルーム宛に新規発行したURLをここに設定する。
+const LINEWORKS_WEBHOOK = _PROPS.getProperty('LINEWORKS_WEBHOOK');
 
 // ============================================================
 // 起動時チェック（プロパティ未設定を早期検知）
@@ -476,6 +490,11 @@ function applyApplication(data, clientAttempt) {
 
   const passUrl = SITE_BASE_URL + 'pass.html?t=' + ticketToken;
   _sendConfirmationMail(f.email, f.salonName, f.staffName, passUrl, false);
+  try {
+    _notifyNewApplicationLineWorks(appId, f, 'web');
+  } catch (e) {
+    Logger.log('LINE WORKS通知に失敗（申込自体は成立済み）: ' + e);
+  }
 
   return _ok({ app_id: appId, pass_url: passUrl, is_update: false });
 }
@@ -627,6 +646,11 @@ function applyLiff(data) {
   // 更新時はメールを送らない（本人が画面上でパスURLをそのまま受け取れるため。updateApplicationと同じ考え方）
   if (!isUpdate) {
     _sendConfirmationMail(f.email, f.salonName, f.staffName, passUrl, false);
+    try {
+      _notifyNewApplicationLineWorks(appId, f, 'liff');
+    } catch (e) {
+      Logger.log('LINE WORKS通知に失敗（申込自体は成立済み）: ' + e);
+    }
   }
 
   // 🆕 L2: LINEプッシュ・タグ付与・metadata書き戻し。
@@ -878,6 +902,29 @@ function _recentResendMailSent(email) {
     if (!isNaN(sentDate.getTime()) && sentDate.getTime() >= cutoffMs) return true;
   }
   return false;
+}
+
+// ============================================================
+// 🆕 v0.14.0: 新規申込のLINE WORKS通知
+//    LINEWORKS_WEBHOOK未設定なら何もしない（任意機能）。失敗しても申込自体は
+//    既に成立済みのため、呼び出し側でtry/catchして握りつぶす（他の通知系と同じ方針）。
+// ============================================================
+function _notifyNewApplicationLineWorks(appId, f, source) {
+  if (!LINEWORKS_WEBHOOK) return;
+  const sourceLabel = source === 'liff' ? 'LINE' : 'Web';
+  const text =
+    '🎪 ビューフェス2026 新規申込\n' +
+    'app_id: ' + appId + '（' + sourceLabel + '経由）\n' +
+    'サロン名: ' + f.salonName + '\n' +
+    'お名前: ' + f.staffName + '\n' +
+    '業態: ' + f.businessType + '\n' +
+    '電話: ' + f.phone;
+  UrlFetchApp.fetch(LINEWORKS_WEBHOOK, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify({ body: { text: text } }),
+    muteHttpExceptions: true
+  });
 }
 
 // ============================================================
