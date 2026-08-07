@@ -1269,7 +1269,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.55.0'; // テキスト/CSV出力がGAS保存待ちで固まる不具合を修正（出力を先に完了させ保存はバックグラウンド化）＋fetchタイムアウトの保険を強化
+const APP_VERSION    = 'v1.56.0'; // 提案タブ: 最低発注数を設定すると他行の手入力済み発注数が消える不具合を修正（数量欄の編集をデータモデルに反映し、再描画で失われないように）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -5046,6 +5046,14 @@ function handlePropItemInputChange(e) {
     c.classList.toggle('active', parseInt(c.textContent, 10) === qty);
   });
   updatePropGroupSummary(group);
+
+  // 数量欄を手で編集した値をデータモデルにも反映しておく。ここを更新しないと、
+  // 他の操作（最低発注数の保存・除外・終売など）がrenderProposalList()で全体再描画した際に
+  // 未反映のDOM上の入力値だけが失われ、「入力していた数字がリフレッシュで消える」原因になる
+  if (e.target.matches('.prop-qty')) {
+    const p = proposalsData.proposals.find(x => x.code === code);
+    if (p) p.proposedQty = qty;
+  }
 }
 function updatePropGroupSummary(group) {
   const summaryEl = group.querySelector('.prop-group-summary');
