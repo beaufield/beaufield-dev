@@ -1,6 +1,6 @@
 // ============================================================
 // Beaufield ポータル - Google Apps Script
-// Version: v1.3.3
+// Version: v1.7.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -11,7 +11,7 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.6.0';
+const VERSION       = 'v1.7.0';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
 
 // ロックアウト設定
@@ -73,6 +73,12 @@ const APP_MASTER = [
     label:   'プロジェクトダッシュボード',
     icon:    '📊',
     url:     'https://beaufield.github.io/beaufield-dev/project-dashboard/'
+  },
+  {
+    appName: 'line-progress',
+    label:   'LINE登録進捗',
+    icon:    '📈',
+    url:     'https://beaufield.github.io/beaufield-dev/line-progress/'
   }
 ];
 
@@ -448,4 +454,45 @@ function _json(data) {
 // ============================================================
 function keepWarm() {
   // 何もしない（トリガーによる定期呼び出しでインスタンスをウォームアップするだけ）
+}
+
+// ============================================================
+// マイグレーション（v1.7.0・GASエディタから一度だけ手動実行する）
+// line-progress（友だち登録進捗ダッシュボード）はGAS側で権限判定をせず全社員閲覧可の
+// 方針だが、ポータルのホームにタイルを出すには user_app_roles に行が必要
+// （getUserApps() が role!='none' のアプリしか返さないため）。
+// active な全ユーザーに 'line-progress'/'user' 行を冪等に追加する。
+// 既に行がある場合はスキップするので、何度実行しても安全。
+// 参照: LINEHarness/友だち登録進捗ダッシュボード_設計.md §5
+// ============================================================
+function migrateAddLineProgressRoles() {
+  const APP_NAME = 'line-progress';
+  const ss = SpreadsheetApp.openById(AUTH_SHEET_ID);
+
+  const usersSh = ss.getSheetByName('users');
+  const users = usersSh.getDataRange().getValues();
+  const activeUserIds = [];
+  for (let i = 1; i < users.length; i++) {
+    const active = users[i][3];
+    if (active === true || active === 'TRUE') {
+      activeUserIds.push(String(users[i][0]));
+    }
+  }
+
+  const rolesSh = ss.getSheetByName('user_app_roles');
+  const roles = rolesSh.getDataRange().getValues();
+  const existing = new Set();
+  for (let i = 1; i < roles.length; i++) {
+    if (String(roles[i][1]) === APP_NAME) existing.add(String(roles[i][0]));
+  }
+
+  let added = 0;
+  activeUserIds.forEach(function (userId) {
+    if (existing.has(userId)) return; // 既に行がある→スキップ（冪等性）
+    rolesSh.appendRow([userId, APP_NAME, 'user']);
+    added++;
+  });
+
+  Logger.log('migrateAddLineProgressRoles 完了: 対象active ' + activeUserIds.length +
+    '名中、新規追加 ' + added + '件（既存 ' + (activeUserIds.length - added) + '件はスキップ）');
 }
