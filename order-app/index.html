@@ -702,7 +702,7 @@
     .prop-badge.stuck-long { background: #ffebee; color: #c62828; }  /* 30日以上滞留 */
     .prop-badge.out        { background: #ffebee; color: #c62828; }  /* 在庫0以下（要対応セクション用） */
     .prop-urgent-card      { border: 2px solid #ef9a9a; margin-bottom: 10px; }
-    .prop-urgent-head      { font-size: 15px; font-weight: 700; color: #c62828; }
+    .prop-urgent-card .prop-group-name { color: #c62828; }
     .prop-urgent-sub       { font-size: 12px; color: var(--text-light); margin: 2px 0 4px; }
     .prop-urgent-body .prop-item:first-child { border-top: none; }
     .prop-urgent-jump      { width: 100%; margin-top: 8px; font-weight: 700; }
@@ -1281,7 +1281,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.59.0'; // 提案タブ: 「要対応」を編集不可の簡易カード＋仕入先へ移動導線に変更（チェック状態が反映されない不具合を修正）
+const APP_VERSION    = 'v1.60.0'; // 提案タブ: 「要対応」セクションを開閉可能に・各行に除外/終売ボタンを追加
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -4480,8 +4480,14 @@ function renderUrgentItemCard(p, delayedByCode) {
   const recentDemand = (parseFloat(p.recentDemandMonthly) || 0).toFixed(1);
   return `
   <div class="prop-item prop-urgent-item">
-    <div class="prop-item-name">${escHtml(p.name)}
-      <div class="prop-item-code">${escHtml(p.code)}<span class="prop-badge ${badgeCls}">${escHtml(p.pattern)}</span>${abcBadge}${outBadge}${stuckBadge}${refBadge}</div>
+    <div class="prop-item-top">
+      <div class="prop-item-name">${escHtml(p.name)}
+        <div class="prop-item-code">${escHtml(p.code)}<span class="prop-badge ${badgeCls}">${escHtml(p.pattern)}</span>${abcBadge}${outBadge}${stuckBadge}${refBadge}</div>
+      </div>
+      <div class="prop-item-actions">
+        <button class="prop-excl-btn" onclick="excludeProposal('${escAttr(p.code)}','${escAttr(p.name)}')">🚫 除外</button>
+        <button class="prop-eol-btn" onclick="markEol('${escAttr(p.code)}','${escAttr(p.name)}')">🔚 終売</button>
+      </div>
     </div>
     <div class="prop-item-stats">
       <span>在庫 <b style="${stock < 0 ? 'color:var(--danger)' : ''}">${p.stock}</b> → 推奨 <b>${p.recommended}</b></span>
@@ -4535,11 +4541,18 @@ function renderProposalUrgent() {
   if (items.length === 0) { wrap.innerHTML = ''; return; }
   items.sort((a, b) => b.lossPerMonth - a.lossPerMonth);
   const rows = items.map(({ p }) => renderUrgentItemCard(p, delayedByCode)).join('');
+  // 仕入先アコーディオンと同じ開閉の見た目・仕組み（.prop-group/.prop-group-body）を流用する
   wrap.innerHTML = `
-    <div class="card prop-urgent-card">
-      <div class="prop-urgent-head">🚨 要対応（${items.length}件）</div>
-      <div class="prop-urgent-sub">在庫切れ・14日以上未処理・入荷遅延のいずれかに該当する商品を、仕入先をまたいで金額が大きい順に表示しています。ここでは編集できません。「発注へ移動」で該当仕入先のカードを開いて操作してください</div>
-      <div class="prop-urgent-body">${rows}</div>
+    <div class="card prop-group prop-urgent-card${propUrgentOpen ? ' open' : ''}" id="prop-urgent-card">
+      <div class="prop-group-head" onclick="toggleProposalUrgent()">
+        <span class="prop-group-chev">▶</span>
+        <span class="prop-group-name">🚨 要対応</span>
+        <span class="prop-group-count">${items.length}件</span>
+      </div>
+      <div class="prop-group-body">
+        <div class="prop-urgent-sub">在庫切れ・14日以上未処理・入荷遅延のいずれかに該当する商品を、仕入先をまたいで金額が大きい順に表示しています。ここでは編集できません。「発注へ移動」で該当仕入先のカードを開いて操作してください</div>
+        <div class="prop-urgent-body">${rows}</div>
+      </div>
     </div>`;
 }
 
@@ -5211,6 +5224,15 @@ function toggleProposalGroup(code) {
     propOpenGroups.add(code);
     el.classList.add('open');
   }
+}
+
+// 「要対応」セクションの開閉状態（Phase M, v1.60.0）。既定は開く。
+// 再描画（renderProposalUrgent）のたびにこの値を見て開閉を復元する
+let propUrgentOpen = true;
+function toggleProposalUrgent() {
+  propUrgentOpen = !propUrgentOpen;
+  const el = document.getElementById('prop-urgent-card');
+  if (el) el.classList.toggle('open', propUrgentOpen);
 }
 
 /* ===================================================
