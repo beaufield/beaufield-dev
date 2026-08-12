@@ -1,6 +1,5 @@
 // ============================================================
 // Beaufield ポータル - Google Apps Script
-// Version: v1.7.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -11,15 +10,15 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.7.0';
+const VERSION       = 'v1.9.0';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
 
 // ロックアウト設定
 const MAX_ATTEMPTS = 5;
 const LOCK_MINUTES = 10;
 
-// セッション有効期間（日）
-const SESSION_DAYS = 30;
+// セッション有効期間。共有端末でのトークン残存を抑えるため業務日内に限定する。
+const SESSION_HOURS = 12;
 
 // ============================================================
 // アプリマスター
@@ -63,6 +62,12 @@ const APP_MASTER = [
     url:     'https://beaufield.github.io/beaufield-dev/bcart-integration/master-tool/'
   },
   {
+    appName: 'bcart-orders',
+    label:   'Bカート受注確認',
+    icon:    '🧾',
+    url:     'https://beaufield.github.io/beaufield-dev/bcart-integration/order-viewer/'
+  },
+  {
     appName: 'expense-approval',
     label:   '経費事前申請',
     icon:    '💰',
@@ -92,7 +97,7 @@ function doGet(e) {
   try {
     switch (action) {
       case 'getUsers':    return _json(getUsers());
-      case 'getUserApps': return _json(getUserApps(token));
+      case 'getUserApps': return _json({ success: false, error: 'USE_POST' });
       default:            return _json({ success: false, error: '不明なアクション: ' + action });
     }
   } catch (err) {
@@ -132,6 +137,7 @@ function doPost(e) {
       case 'resetPin':        return _json(resetPin(data));
       case 'changePin':       return _json(changePin(data));
       case 'validateSession': return _json(validateSession(data));
+      case 'getUserApps':     return _json(getUserApps(data.session_token || ''));
       default:                return _json({ success: false, error: '不明なアクション: ' + action });
     }
   } catch (err) {
@@ -197,7 +203,7 @@ function login(data) {
 
         // ── セッショントークン発行 ────────────────────────────
         const token     = Utilities.getUuid();
-        const expiresAt = now + SESSION_DAYS * 24 * 60 * 60 * 1000;
+        const expiresAt = now + SESSION_HOURS * 60 * 60 * 1000;
         _saveSession(ss, token, String(row[0]), expiresAt);
         // ────────────────────────────────────────────────────
 
@@ -356,23 +362,44 @@ function getUserApps(token) {
 // ============================================================
 function validateSession(data) {
   const token = data.token || '';
+  const appName = String(data.app_name || '').trim();
   if (!token) return { ok: false };
 
   const ss     = SpreadsheetApp.openById(AUTH_SHEET_ID);
   const userId = _getSessionUser(ss, token);
   if (!userId) return { ok: false };
 
-  // ユーザー名を users シートから取得して返す
+  // ユーザー名・有効状態・管理者状態を users シートから取得する。
+  // セッション発行後に利用停止されたユーザーも、ここで必ず拒否する。
   const rows = ss.getSheetByName('users').getDataRange().getValues();
   let userName = userId;
+  let isAdmin = false;
+  let activeUser = false;
   for (let i = 1; i < rows.length; i++) {
     if (String(rows[i][0]) === userId) {
       userName = String(rows[i][1]) || userId;
+      activeUser = rows[i][3] === true || rows[i][3] === 'TRUE';
+      isAdmin = rows[i][5] === true || rows[i][5] === 'TRUE';
       break;
     }
   }
+  if (!activeUser) return { ok: false };
 
-  return { ok: true, user_id: userId, name: userName };
+  // 呼び出し側がアプリ名を指定した場合は、ポータル表示だけでなくAPI側でも
+  // user_app_rolesを検証する。未登録・noneは明示的に拒否する。
+  let role = '';
+  if (appName) {
+    const roleRows = ss.getSheetByName('user_app_roles').getDataRange().getValues();
+    for (let i = 1; i < roleRows.length; i++) {
+      if (String(roleRows[i][0]) === userId && String(roleRows[i][1]) === appName) {
+        role = String(roleRows[i][2] || '');
+        break;
+      }
+    }
+    if (!role || role === 'none') return { ok: false };
+  }
+
+  return { ok: true, user_id: userId, name: userName, is_admin: isAdmin, role: role };
 }
 
 // ============================================================

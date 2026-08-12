@@ -471,7 +471,7 @@
       <div class="no-apps">読み込み中...</div>
     </div>
   </div>
-  <div class="home-footer">Beaufield Portal v1.2.1</div>
+  <div class="home-footer" id="portalVersion"></div>
 </div>
 
 <!-- ── ユーザー管理モーダル ── -->
@@ -536,8 +536,9 @@
 
 <script>
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzNVW7AaPUTuwneE-M40DTN1clO5VT2yLCHq7cjYvaHqfMfXgVi38UAOsDZQbmmN3wOzw/exec';
+  const APP_VERSION  = 'v1.3.0';
   const SESSION_KEY  = 'bf_session';
-  const SESSION_DAYS = 30;
+  const SESSION_HOURS = 12;
 
   let selectedUserId     = null;
   let manageSelectedId   = null;
@@ -545,6 +546,7 @@
 
   // ── 初期化 ────────────────────────────────────────────────────
   window.addEventListener('DOMContentLoaded', async () => {
+    document.getElementById('portalVersion').textContent = 'Beaufield Portal ' + APP_VERSION;
     const session = getSession();
     if (session) {
       await showHome(session.user_id, session.name, session.is_admin);
@@ -588,7 +590,7 @@
   }
 
   function saveSession(user_id, name, token, is_admin) {
-    const expires = Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000;
+    const expires = Date.now() + SESSION_HOURS * 60 * 60 * 1000;
     localStorage.setItem(SESSION_KEY, JSON.stringify({
       user_id, name, token: token || '', expires, is_admin: !!is_admin
     }));
@@ -660,7 +662,9 @@
     setLoading(true);
     try {
       const session = getSession();
-      const res  = await gasGet('getUserApps', {}, session ? session.token : '');
+      const res  = await gasPost('getUserApps', {
+        session_token: session ? session.token : ''
+      });
       const grid = document.getElementById('appGrid');
       if (!res.success || !res.apps || !res.apps.length) {
         grid.innerHTML = '<div class="no-apps">利用可能なアプリがありません<br><small style="font-size:11px;margin-top:4px;display:block">管理者にお問い合わせください</small></div>';
@@ -850,9 +854,8 @@
   }
 
   // ── GAS 通信 ──────────────────────────────────────────────────
-  async function gasGet(action, data, token) {
+  async function gasGet(action, data) {
     let qs = 'action=' + action + '&data=' + encodeURIComponent(JSON.stringify(data));
-    if (token) qs += '&session_token=' + encodeURIComponent(token);
     const res = await fetch(GAS_URL + '?' + qs);
     return res.json();
   }
