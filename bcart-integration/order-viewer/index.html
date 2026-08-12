@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Bカート受注確認</title>
+  <style>
+    :root {
+      --navy: #17324d;
+      --navy-2: #244a6b;
+      --blue: #1976d2;
+      --blue-soft: #eaf4ff;
+      --green: #18794e;
+      --green-soft: #e9f7ef;
+      --amber: #9a6700;
+      --amber-soft: #fff5d6;
+      --red: #b42318;
+      --red-soft: #fff0ee;
+      --ink: #1f2937;
+      --muted: #64748b;
+      --line: #d9e2ec;
+      --surface: #ffffff;
+      --background: #f4f7fa;
+      --shadow: 0 8px 24px rgba(23, 50, 77, 0.08);
+      --radius: 14px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--background);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Yu Gothic UI", "Yu Gothic", Meiryo, sans-serif;
+      line-height: 1.5;
+    }
+
+    button, input, select { font: inherit; }
+
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    a:focus-visible {
+      outline: 3px solid rgba(25, 118, 210, 0.3);
+      outline-offset: 2px;
+    }
+
+    .app-header {
+      color: #fff;
+      background: linear-gradient(135deg, var(--navy), var(--navy-2));
+      box-shadow: var(--shadow);
+    }
+
+    .header-inner {
+      width: min(1400px, calc(100% - 32px));
+      margin: 0 auto;
+      min-height: 76px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-icon { font-size: 30px; }
+    .brand h1 { margin: 0; font-size: 21px; letter-spacing: 0.02em; }
+    .brand-meta { display: flex; gap: 8px; align-items: center; color: #d9e7f2; font-size: 12px; }
+
+    .header-actions { display: flex; align-items: center; gap: 10px; }
+    .user-name { color: #e7f0f7; font-size: 13px; }
+
+    main {
+      width: min(1400px, calc(100% - 32px));
+      margin: 24px auto 48px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .filter-card { padding: 18px; margin-bottom: 18px; }
+    .filter-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(150px, 1fr));
+      gap: 14px;
+      align-items: end;
+    }
+
+    label { display: block; color: #334155; font-size: 12px; font-weight: 700; margin-bottom: 5px; }
+
+    input, select {
+      width: 100%;
+      min-height: 42px;
+      padding: 8px 10px;
+      color: var(--ink);
+      background: #fff;
+      border: 1px solid #b9c7d5;
+      border-radius: 9px;
+    }
+
+    .filter-actions { display: flex; gap: 8px; }
+
+    .btn {
+      min-height: 40px;
+      padding: 8px 14px;
+      border: 1px solid transparent;
+      border-radius: 9px;
+      cursor: pointer;
+      font-weight: 700;
+      transition: transform 0.12s ease, opacity 0.12s ease, background 0.12s ease;
+    }
+
+    .btn:hover:not(:disabled) { transform: translateY(-1px); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary { color: #fff; background: var(--blue); }
+    .btn-secondary { color: var(--navy); background: #fff; border-color: #b7c7d6; }
+    .btn-dark { color: #fff; background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.32); }
+    .btn-small { min-height: 34px; padding: 5px 10px; font-size: 12px; }
+
+    .notice {
+      display: none;
+      margin-bottom: 16px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1px solid;
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+
+    .notice.show { display: block; }
+    .notice-info { color: #124e78; background: var(--blue-soft); border-color: #b8dcff; }
+    .notice-error { color: var(--red); background: var(--red-soft); border-color: #ffc9c3; }
+    .notice-warning { color: var(--amber); background: var(--amber-soft); border-color: #efd27f; }
+
+    .list-card { overflow: hidden; }
+    .card-heading {
+      min-height: 64px;
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .card-heading h2 { margin: 0; font-size: 18px; }
+    .subtext { color: var(--muted); font-size: 12px; }
+    .table-wrap { width: 100%; overflow-x: auto; }
+
+    table { width: 100%; border-collapse: collapse; min-width: 820px; }
+    th, td { padding: 12px 14px; text-align: left; border-bottom: 1px solid #e8eef3; vertical-align: middle; }
+    th { color: #475569; background: #f8fafc; font-size: 12px; white-space: nowrap; }
+    td { font-size: 13px; }
+    tbody tr:hover { background: #f8fbff; }
+    tbody tr:last-child td { border-bottom: 0; }
+    .numeric { text-align: right; font-variant-numeric: tabular-nums; }
+    .mono { font-family: Consolas, "SFMono-Regular", monospace; font-variant-numeric: tabular-nums; }
+    .order-code { font-weight: 800; color: var(--navy); }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+      color: #34465a;
+      background: #edf2f7;
+    }
+
+    .badge-good { color: var(--green); background: var(--green-soft); }
+    .badge-warn { color: var(--amber); background: var(--amber-soft); }
+    .badge-moved { color: #6b3fa0; background: #f4ebff; }
+
+    .empty, .loading {
+      min-height: 220px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      color: var(--muted);
+      text-align: center;
+      padding: 30px;
+    }
+
+    .spinner {
+      width: 34px;
+      height: 34px;
+      border: 4px solid #dce8f2;
+      border-top-color: var(--blue);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .pager {
+      min-height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 10px 16px;
+      border-top: 1px solid var(--line);
+    }
+
+    .detail-view { display: none; }
+    .detail-view.show { display: block; }
+    .list-view.hidden { display: none; }
+
+    .detail-topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .detail-summary { padding: 18px; margin-bottom: 16px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: 14px; }
+    .summary-label { color: var(--muted); font-size: 11px; font-weight: 700; }
+    .summary-value { margin-top: 3px; font-size: 14px; font-weight: 700; overflow-wrap: anywhere; }
+
+    .verification-panel { padding: 16px 18px; margin-bottom: 16px; border-left: 5px solid var(--blue); }
+    .verification-panel.warning { border-left-color: #d99a00; }
+    .verification-panel.danger { border-left-color: var(--red); }
+    .verify-title { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 10px; }
+    .verify-title h3 { margin: 0; font-size: 16px; }
+    .verify-grid { display: grid; grid-template-columns: repeat(5, minmax(130px, 1fr)); gap: 12px; }
+    .verify-item { padding: 10px; background: #f7fafc; border-radius: 9px; }
+    .verify-item strong { display: block; margin-top: 2px; font-size: 14px; }
+    .rule { margin-top: 10px; color: #41566b; font-family: Consolas, monospace; font-size: 12px; }
+
+    .switch-label { display: inline-flex; align-items: center; gap: 7px; margin: 0; cursor: pointer; }
+    .switch-label input { width: 18px; min-height: 18px; margin: 0; }
+
+    .detail-card { overflow: hidden; margin-bottom: 16px; }
+    .verification-only { display: none; }
+    body.verify-mode .verification-only { display: table-cell; }
+    body.verify-mode .moved-row { background: #fbf7ff; }
+    .missing-id { color: var(--red); font-weight: 700; }
+
+    footer { margin-top: 28px; text-align: center; color: #7b8998; font-size: 11px; }
+
+    @media (max-width: 1000px) {
+      .filter-grid { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
+      .summary-grid, .verify-grid { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
+    }
+
+    @media (max-width: 640px) {
+      .header-inner, main { width: min(100% - 20px, 1400px); }
+      .header-inner { min-height: 68px; }
+      .brand h1 { font-size: 17px; }
+      .brand-icon { font-size: 24px; }
+      .user-name { display: none; }
+      main { margin-top: 14px; }
+      .filter-grid, .summary-grid, .verify-grid { grid-template-columns: 1fr; }
+      .filter-actions { grid-column: 1; }
+      .filter-actions .btn { flex: 1; }
+      .card-heading, .detail-topbar, .verify-title { align-items: flex-start; flex-direction: column; }
+      .header-actions .btn { padding: 6px 8px; font-size: 11px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand">
+        <div class="brand-icon" aria-hidden="true">🧾</div>
+        <div>
+          <h1>Bカート受注確認</h1>
+          <div class="brand-meta"><span id="versionLabel"></span><span>参照専用</span></div>
+        </div>
+      </div>
+      <div class="header-actions">
+        <span class="user-name" id="userName"></span>
+        <button class="btn btn-dark btn-small" id="portalButton" type="button">ポータルへ</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="notice notice-info" id="mockNotice">匿名モックデータで表示しています。BカートAPIには接続していません。</div>
+    <div class="notice notice-error" id="errorNotice" role="alert"></div>
+    <div class="notice notice-warning" id="configNotice"></div>
+
+    <section class="list-view" id="listView">
+      <div class="card filter-card">
+        <form id="searchForm">
+          <div class="filter-grid">
+            <div>
+              <label for="dateFrom">受注日（開始）</label>
+              <input id="dateFrom" type="date" required>
+            </div>
+            <div>
+              <label for="dateTo">受注日（終了）</label>
+              <input id="dateTo" type="date" required>
+            </div>
+            <div>
+              <label for="orderCode">受注番号</label>
+              <input id="orderCode" type="text" inputmode="numeric" maxlength="255" placeholder="完全一致">
+            </div>
+            <div>
+              <label for="orderStatus">対応状況</label>
+              <input id="orderStatus" type="text" maxlength="255" placeholder="例：完了">
+            </div>
+            <div class="filter-actions">
+              <button class="btn btn-primary" type="submit">検索</button>
+              <button class="btn btn-secondary" id="resetButton" type="button">リセット</button>
+            </div>
+          </div>
+        </form>
+      </div>
+
+      <div class="card list-card">
+        <div class="card-heading">
+          <div>
+            <h2>受注一覧</h2>
+            <div class="subtext" id="listSummary">検索条件を指定してください。</div>
+          </div>
+          <button class="btn btn-secondary btn-small" id="refreshButton" type="button">最新情報へ更新</button>
+        </div>
+        <div id="ordersArea">
+          <div class="empty"><div>検索すると受注一覧が表示されます。</div></div>
+        </div>
+        <div class="pager" id="pager" hidden>
+          <button class="btn btn-secondary btn-small" id="prevButton" type="button">前のページ</button>
+          <span class="subtext" id="pageLabel"></span>
+          <button class="btn btn-secondary btn-small" id="nextButton" type="button">次のページ</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="detail-view" id="detailView">
+      <div class="detail-topbar">
+        <button class="btn btn-secondary" id="backButton" type="button">← 受注一覧へ戻る</button>
+        <div class="subtext" id="detailFetchedAt"></div>
+      </div>
+
+      <div class="card detail-summary">
+        <div class="summary-grid" id="summaryGrid"></div>
+      </div>
+
+      <div class="card verification-panel" id="verificationPanel">
+        <div class="verify-title">
+          <h3>並び順検証</h3>
+          <label class="switch-label" for="verifyToggle">
+            <input id="verifyToggle" type="checkbox">
+            API順・IDを表示
+          </label>
+        </div>
+        <div class="verify-grid" id="verifyGrid"></div>
+        <div class="rule" id="sortRule"></div>
+      </div>
+
+      <div class="card detail-card">
+        <div class="card-heading">
+          <div>
+            <h2>商品明細</h2>
+            <div class="subtext">Bカート画面再現順で表示</div>
+          </div>
+          <a class="btn btn-primary btn-small" id="bcartLink" href="#" target="_blank" rel="noopener noreferrer">Bカート管理画面で開く</a>
+        </div>
+        <div class="table-wrap" id="productsArea"></div>
+      </div>
+
+      <div class="card detail-card" id="nonProductsCard" hidden>
+        <div class="card-heading">
+          <div>
+            <h2>商品以外の明細</h2>
+            <div class="subtext">送料・決済手数料・ポイント等は商品ソートから分離</div>
+          </div>
+        </div>
+        <div class="table-wrap" id="nonProductsArea"></div>
+      </div>
+    </section>
+
+    <footer id="footerText"></footer>
+  </main>
+
+  <script>
+    const APP_VERSION = 'v0.1.2';
+    const GAS_URL = 'https://script.google.com/macros/s/AKfycbx8QyX08wL41c4vDMxwvrpGzHd920lijiD9QTvqcEcFc8mNu6P6av01ET4B2N_BCNLV/exec';
+    const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
+    const PAGE_SIZE = 50;
+
+    const state = {
+      session: null,
+      offset: 0,
+      total: 0,
+      lastListResponse: null,
+      loading: false,
+      sessionInvalidStreak: 0,
+      mock: new URLSearchParams(location.search).get('mock') === '1'
+    };
+
+    const mockOrders = [
+      { id: 9002, code: 'MOCK-9002', customer_comp_name: '検証用サロンB', ordered_at: '2026-08-12 11:10:00', status: '対応中', final_price: 63800 },
+      { id: 9001, code: 'MOCK-9001', customer_comp_name: '検証用サロンA', ordered_at: '2026-08-11 15:30:00', status: '完了', final_price: 15400 }
+    ];
+
+    document.addEventListener('DOMContentLoaded', init);
+
+    function init() {
+      setText('versionLabel', APP_VERSION);
+      setText('footerText', 'Bカート受注確認 ' + APP_VERSION + ' | Beaufield（社内限定・参照専用）');
+      setDefaultDates();
+      bindEvents();
+
+      if (state.mock) {
+        state.session = { token: 'mock', name: 'モック確認者', expires: Date.now() + 3600000 };
+        setText('userName', state.session.name);
+        showNotice('mockNotice');
+        loadOrders(true);
+        return;
+      }
+
+      try {
+        state.session = JSON.parse(localStorage.getItem('bf_session') || 'null');
+      } catch (error) {
+        state.session = null;
+      }
+
+      if (!state.session || !state.session.token || !state.session.expires || Date.now() > Number(state.session.expires)) {
+        location.href = PORTAL_URL;
+        return;
+      }
+      setText('userName', state.session.name || state.session.user_id || '');
+
+      if (!GAS_URL) {
+        showNotice('configNotice', 'GAS WebアプリURLが未設定です。READMEの手順でGASをデプロイし、index.htmlのGAS_URLを設定してください。');
+        return;
+      }
+
+      loadOrders(true);
+    }
+
+    function bindEvents() {
+      document.getElementById('searchForm').addEventListener('submit', function (event) {
+        event.preventDefault();
+        state.offset = 0;
+        loadOrders(true);
+      });
+      document.getElementById('resetButton').addEventListener('click', function () {
+        setDefaultDates();
+        document.getElementById('orderCode').value = '';
+        document.getElementById('orderStatus').value = '';
+        state.offset = 0;
+        loadOrders(true);
+      });
+      document.getElementById('refreshButton').addEventListener('click', function () { loadOrders(true); });
+      document.getElementById('prevButton').addEventListener('click', function () {
+        state.offset = Math.max(0, state.offset - PAGE_SIZE);
+        loadOrders(false);
+      });
+      document.getElementById('nextButton').addEventListener('click', function () {
+        if (state.offset + PAGE_SIZE < state.total) {
+          state.offset += PAGE_SIZE;
+          loadOrders(false);
+        }
+      });
+      document.getElementById('backButton').addEventListener('click', showListView);
+      document.getElementById('portalButton').addEventListener('click', function () { location.href = PORTAL_URL; });
+      document.getElementById('verifyToggle').addEventListener('change', function (event) {
+        document.body.classList.toggle('verify-mode', event.target.checked);
+      });
+    }
+
+    function setDefaultDates() {
+      const today = new Date();
+      const from = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6);
+      document.getElementById('dateFrom').value = formatDateInput(from);
+      document.getElementById('dateTo').value = formatDateInput(today);
+    }
+
+    function formatDateInput(date) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return year + '-' + month + '-' + day;
+    }
+
+    async function loadOrders(resetScroll) {
+      if (state.loading) return;
+      clearError();
+      state.loading = true;
+      setOrdersLoading();
+
+      const payload = {
+        action: 'listOrders',
+        session_token: state.session ? state.session.token : '',
+        filters: {
+          ordered_at_min: document.getElementById('dateFrom').value + ' 00:00:00',
+          ordered_at_max: document.getElementById('dateTo').value + ' 23:59:59',
+          code: document.getElementById('orderCode').value.trim(),
+          status: document.getElementById('orderStatus').value.trim()
+        },
+        paging: { limit: PAGE_SIZE, offset: state.offset }
+      };
+
+      try {
+        const response = state.mock ? mockListOrders(payload) : await apiCall(payload);
+        state.lastListResponse = response;
+        state.total = Number(response.paging.total || 0);
+        state.offset = Number(response.paging.offset || 0);
+        renderOrders(response);
+        if (resetScroll) window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch (error) {
+        renderOrdersFailure();
+        handleError(error);
+      } finally {
+        state.loading = false;
+      }
+    }
+
+    function mockListOrders(payload) {
+      let rows = mockOrders.slice();
+      if (payload.filters.code) rows = rows.filter(function (row) { return row.code === payload.filters.code; });
+      if (payload.filters.status) rows = rows.filter(function (row) { return row.status === payload.filters.status; });
+      return {
+        success: true,
+        version: APP_VERSION,
+        request_id: 'mock-list',
+        fetched_at: new Date().toISOString(),
+        orders: rows,
+        paging: { limit: PAGE_SIZE, offset: 0, returned: rows.length, total: rows.length, has_next: false }
+      };
+    }
+
+    function renderOrders(response) {
+      const area = document.getElementById('ordersArea');
+      area.replaceChildren();
+      const rows = Array.isArray(response.orders) ? response.orders : [];
+      setText('listSummary', '全' + formatNumber(response.paging.total) + '件 / ' + (response.paging.offset + 1) + '件目から' + rows.length + '件 ・ 取得 ' + formatDateTime(response.fetched_at));
+
+      if (rows.length === 0) {
+        area.appendChild(makeEmpty('条件に一致する受注はありません。'));
+        document.getElementById('pager').hidden = true;
+        return;
+      }
+
+      const wrap = createElement('div', 'table-wrap');
+      const table = document.createElement('table');
+      const thead = document.createElement('thead');
+      const headRow = document.createElement('tr');
+      ['受注日時', '受注番号', '会社名', '対応状況', '受注総額', ''].forEach(function (label) {
+        headRow.appendChild(createElement('th', '', label));
+      });
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement('tbody');
+      rows.forEach(function (order) {
+        const tr = document.createElement('tr');
+        tr.appendChild(createElement('td', '', order.ordered_at || ''));
+        tr.appendChild(createElement('td', 'order-code mono', order.code || ''));
+        tr.appendChild(createElement('td', '', order.customer_comp_name || '（会社名なし）'));
+        const statusTd = document.createElement('td');
+        statusTd.appendChild(createElement('span', 'badge', order.status || '未設定'));
+        tr.appendChild(statusTd);
+        tr.appendChild(createElement('td', 'numeric', formatMoney(order.final_price)));
+        const actionTd = document.createElement('td');
+        const button = createElement('button', 'btn btn-primary btn-small', '明細を見る');
+        button.type = 'button';
+        button.addEventListener('click', function () { loadOrderDetail(order.id); });
+        actionTd.appendChild(button);
+        tr.appendChild(actionTd);
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      wrap.appendChild(table);
+      area.appendChild(wrap);
+
+      const pager = document.getElementById('pager');
+      pager.hidden = false;
+      document.getElementById('prevButton').disabled = response.paging.offset <= 0;
+      document.getElementById('nextButton').disabled = !response.paging.has_next;
+      const first = response.paging.offset + 1;
+      const last = response.paging.offset + rows.length;
+      setText('pageLabel', first + '〜' + last + ' / ' + formatNumber(response.paging.total));
+    }
+
+    async function loadOrderDetail(orderId) {
+      if (state.loading) return;
+      clearError();
+      state.loading = true;
+      showDetailLoading();
+
+      try {
+        const payload = {
+          action: 'getOrderDetail',
+          session_token: state.session ? state.session.token : '',
+          order_id: Number(orderId)
+        };
+        const response = state.mock ? mockOrderDetail(Number(orderId)) : await apiCall(payload);
+        renderOrderDetail(response);
+      } catch (error) {
+        showListView();
+        handleError(error);
+      } finally {
+        state.loading = false;
+      }
+    }
+
+    function mockOrderDetail(orderId) {
+      const order = mockOrders.find(function (row) { return row.id === orderId; }) || mockOrders[0];
+      const products = [
+        makeMockProduct(1, 2, 12, 300, 30, '検証用シャンプー', '1000mL', 1200, 1, 2, true),
+        makeMockProduct(2, 1, 10, 100, 10, '検証用トリートメント', '500g', 1600, 1, 1, true),
+        makeMockProduct(3, 3, 13, 100, 12, '検証用トリートメント', '詰替', 900, 2, 3, false),
+        makeMockProduct(4, 4, 14, null, null, '過去商品（商品IDなし）', '', 500, 1, 1, false)
+      ];
+      return {
+        success: true,
+        version: APP_VERSION,
+        request_id: 'mock-detail',
+        fetched_at: new Date().toISOString(),
+        order: order,
+        sort: {
+          mode: 'product_id_desc',
+          label: 'Bカート商品ID降順',
+          rule: 'product_id DESC, order_product.id ASC, null product_id last',
+          confirmed_at: '2026-08-12',
+          confirmation_status: 'current',
+          confirmation_message: 'Bカートの並び順設定を確認済みです。',
+          api_row_count: 5,
+          product_row_count: 4,
+          non_product_row_count: 1,
+          moved_product_count: 2
+        },
+        products: products,
+        non_products: [{ source_index: 3, id: 11, order_id: order.id, item_type: 'shipping', product_name: '送料', unit_price: 800, order_pro_count: 1, line_amount: 800 }],
+        bcart_admin_url: '#'
+      };
+    }
+
+    function makeMockProduct(displayIndex, sourceProductIndex, id, productId, setId, name, setName, price, setQuantity, count, moved) {
+      return {
+        display_index: displayIndex,
+        source_index: sourceProductIndex === 2 ? 3 : sourceProductIndex === 3 ? 4 : sourceProductIndex === 4 ? 5 : 1,
+        source_product_index: sourceProductIndex,
+        id: id,
+        order_id: 9002,
+        product_id: productId,
+        main_no: productId ? 'MAIN-' + productId : '',
+        product_no: productId ? 'SKU-' + productId : '',
+        jan_code: productId ? '4900000000' + String(productId).padStart(3, '0') : '',
+        product_name: name,
+        product_set_id: setId,
+        set_name: setName,
+        unit_price: price,
+        set_quantity: setQuantity,
+        set_unit: '個',
+        order_pro_count: count,
+        tax_rate: '0.1',
+        tax_incl: 0,
+        item_type: 'product',
+        line_amount: price * setQuantity * count,
+        moved: moved
+      };
+    }
+
+    function renderOrderDetail(response) {
+      showDetailView();
+      setText('detailFetchedAt', '取得 ' + formatDateTime(response.fetched_at) + ' / request_id: ' + (response.request_id || ''));
+      renderSummary(response.order);
+      renderVerification(response.sort);
+      renderProducts(response.products || []);
+      renderNonProducts(response.non_products || []);
+
+      const link = document.getElementById('bcartLink');
+      link.href = response.bcart_admin_url || '#';
+      if (state.mock) {
+        link.addEventListener('click', preventMockLink, { once: true });
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function preventMockLink(event) {
+      event.preventDefault();
+      showNotice('mockNotice', 'モック表示のため、Bカート管理画面は開きません。');
+    }
+
+    function renderSummary(order) {
+      const grid = document.getElementById('summaryGrid');
+      grid.replaceChildren();
+      [
+        ['受注番号', order.code || ''],
+        ['受注ID', String(order.id || '')],
+        ['受注日時', order.ordered_at || ''],
+        ['会社名', order.customer_comp_name || '（会社名なし）'],
+        ['対応状況', order.status || '未設定'],
+        ['受注総額', formatMoney(order.final_price)]
+      ].forEach(function (item) {
+        const box = document.createElement('div');
+        box.appendChild(createElement('div', 'summary-label', item[0]));
+        box.appendChild(createElement('div', 'summary-value', item[1]));
+        grid.appendChild(box);
+      });
+    }
+
+    function renderVerification(sort) {
+      const panel = document.getElementById('verificationPanel');
+      panel.classList.remove('warning', 'danger');
+      if (sort.confirmation_status === 'stale') panel.classList.add('warning');
+      if (sort.confirmation_status === 'missing' || sort.confirmation_status === 'invalid') panel.classList.add('danger');
+
+      const grid = document.getElementById('verifyGrid');
+      grid.replaceChildren();
+      [
+        ['再現モード', sort.label || ''],
+        ['設定確認日', sort.confirmed_at || '未設定'],
+        ['API全明細', formatNumber(sort.api_row_count) + '行'],
+        ['商品明細', formatNumber(sort.product_row_count) + '行'],
+        ['位置が変わった商品', formatNumber(sort.moved_product_count) + '行']
+      ].forEach(function (item) {
+        const box = createElement('div', 'verify-item');
+        box.appendChild(createElement('span', 'summary-label', item[0]));
+        box.appendChild(createElement('strong', '', item[1]));
+        grid.appendChild(box);
+      });
+
+      setText('sortRule', (sort.rule || '') + ' / ' + (sort.confirmation_message || ''));
+    }
+
+    function renderProducts(products) {
+      const area = document.getElementById('productsArea');
+      area.replaceChildren();
+      if (!products.length) {
+        area.appendChild(makeEmpty('商品明細はありません。'));
+        return;
+      }
+
+      const table = document.createElement('table');
+      table.style.minWidth = '1240px';
+      const thead = document.createElement('thead');
+      const trh = document.createElement('tr');
+      [
+        ['表示順', ''], ['API全体順', 'verification-only'], ['API商品順', 'verification-only'],
+        ['商品ID', 'verification-only'], ['受注商品ID', 'verification-only'], ['移動', 'verification-only'],
+        ['品番', ''], ['商品名', ''], ['商品セット', ''], ['単価', 'numeric'],
+        ['入数', 'numeric'], ['注文数', 'numeric'], ['金額', 'numeric']
+      ].forEach(function (head) {
+        trh.appendChild(createElement('th', head[1], head[0]));
+      });
+      thead.appendChild(trh);
+      table.appendChild(thead);
+
+      const tbody = document.createElement('tbody');
+      products.forEach(function (row) {
+        const tr = document.createElement('tr');
+        if (row.moved) tr.classList.add('moved-row');
+        tr.appendChild(createElement('td', 'numeric mono', String(row.display_index)));
+        tr.appendChild(createElement('td', 'numeric mono verification-only', String(row.source_index)));
+        tr.appendChild(createElement('td', 'numeric mono verification-only', String(row.source_product_index)));
+        tr.appendChild(createElement('td', 'numeric mono verification-only ' + (row.product_id === null ? 'missing-id' : ''), row.product_id === null ? '空' : String(row.product_id)));
+        tr.appendChild(createElement('td', 'numeric mono verification-only', String(row.id)));
+        const movedTd = createElement('td', 'verification-only');
+        movedTd.appendChild(createElement('span', row.moved ? 'badge badge-moved' : 'badge', row.moved ? '移動' : '同位置'));
+        tr.appendChild(movedTd);
+        tr.appendChild(createElement('td', 'mono', row.product_no || ''));
+        tr.appendChild(createElement('td', '', row.product_name || ''));
+        tr.appendChild(createElement('td', '', row.set_name || ''));
+        tr.appendChild(createElement('td', 'numeric', formatMoney(row.unit_price)));
+        tr.appendChild(createElement('td', 'numeric', formatQuantity(row.set_quantity, row.set_unit)));
+        tr.appendChild(createElement('td', 'numeric', formatNumber(row.order_pro_count)));
+        tr.appendChild(createElement('td', 'numeric', formatMoney(row.line_amount)));
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      area.appendChild(table);
+    }
+
+    function renderNonProducts(rows) {
+      const card = document.getElementById('nonProductsCard');
+      const area = document.getElementById('nonProductsArea');
+      area.replaceChildren();
+      card.hidden = rows.length === 0;
+      if (!rows.length) return;
+
+      const table = document.createElement('table');
+      const thead = document.createElement('thead');
+      const trh = document.createElement('tr');
+      ['API順', '区分', '名称', '金額'].forEach(function (label) { trh.appendChild(createElement('th', '', label)); });
+      thead.appendChild(trh);
+      table.appendChild(thead);
+      const tbody = document.createElement('tbody');
+      rows.forEach(function (row) {
+        const tr = document.createElement('tr');
+        tr.appendChild(createElement('td', 'numeric mono', String(row.source_index || '')));
+        tr.appendChild(createElement('td', '', itemTypeLabel(row.item_type)));
+        tr.appendChild(createElement('td', '', row.product_name || itemTypeLabel(row.item_type)));
+        tr.appendChild(createElement('td', 'numeric', formatMoney(row.line_amount)));
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      area.appendChild(table);
+    }
+
+    async function apiCall(payload) {
+      let lastError = null;
+
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const response = await fetch(GAS_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify(payload),
+            cache: 'no-store',
+            redirect: 'follow'
+          });
+          const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+          const text = await response.text();
+          if (!response.ok) throw new Error('HTTP ' + response.status);
+          if (contentType.indexOf('json') === -1 && text.trim().charAt(0) !== '{') {
+            throw new Error('JSONではない応答です。');
+          }
+          const data = JSON.parse(text);
+          if (!data || typeof data !== 'object') throw new Error('応答形式が不正です。');
+          if (!data.success) {
+            const apiError = new Error(data.message || 'データ取得に失敗しました。');
+            apiError.code = data.error || 'API_ERROR';
+            apiError.requestId = data.request_id || '';
+            throw apiError;
+          }
+          state.sessionInvalidStreak = 0;
+          return data;
+        } catch (error) {
+          lastError = error;
+          if (error.code === 'SESSION_INVALID') {
+            state.sessionInvalidStreak++;
+            if (state.sessionInvalidStreak >= 2) {
+              location.href = PORTAL_URL;
+              return new Promise(function () {});
+            }
+          }
+          if (error.code === 'APP_ACCESS_DENIED' || error.code === 'BCART_AUTH_ERROR' || error.code === 'INVALID_REQUEST') break;
+          if (attempt === 0) await wait(700);
+        }
+      }
+      throw lastError || new Error('通信に失敗しました。');
+    }
+
+    function wait(milliseconds) {
+      return new Promise(function (resolve) { setTimeout(resolve, milliseconds); });
+    }
+
+    function showDetailLoading() {
+      showDetailView();
+      const summary = document.getElementById('summaryGrid');
+      summary.replaceChildren(makeLoading('受注明細を取得しています。'));
+      document.getElementById('productsArea').replaceChildren(makeLoading('商品明細を取得しています。'));
+      document.getElementById('verifyGrid').replaceChildren();
+      setText('sortRule', '');
+      document.getElementById('nonProductsCard').hidden = true;
+    }
+
+    function setOrdersLoading() {
+      document.getElementById('ordersArea').replaceChildren(makeLoading('受注一覧を取得しています。'));
+      document.getElementById('pager').hidden = true;
+      setText('listSummary', '取得中...');
+    }
+
+    function renderOrdersFailure() {
+      document.getElementById('ordersArea').replaceChildren(makeEmpty('受注一覧を取得できませんでした。'));
+      document.getElementById('pager').hidden = true;
+      setText('listSummary', '取得失敗');
+    }
+
+    function showListView() {
+      document.getElementById('listView').classList.remove('hidden');
+      document.getElementById('detailView').classList.remove('show');
+      document.body.classList.remove('verify-mode');
+      document.getElementById('verifyToggle').checked = false;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function showDetailView() {
+      document.getElementById('listView').classList.add('hidden');
+      document.getElementById('detailView').classList.add('show');
+    }
+
+    function handleError(error) {
+      const code = error && error.code ? error.code : '';
+      let message = error && error.message ? error.message : 'エラーが発生しました。';
+      if (code === 'APP_ACCESS_DENIED') message = 'このアプリの閲覧権限がありません。管理者へ連絡してください。';
+      if (error && error.requestId) message += '\nrequest_id: ' + error.requestId;
+      showNotice('errorNotice', message);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function clearError() {
+      const notice = document.getElementById('errorNotice');
+      notice.classList.remove('show');
+      notice.textContent = '';
+    }
+
+    function showNotice(id, message) {
+      const element = document.getElementById(id);
+      if (message !== undefined) element.textContent = message;
+      element.classList.add('show');
+    }
+
+    function makeLoading(message) {
+      const box = createElement('div', 'loading');
+      box.appendChild(createElement('div', 'spinner'));
+      box.appendChild(createElement('div', '', message));
+      return box;
+    }
+
+    function makeEmpty(message) {
+      return createElement('div', 'empty', message);
+    }
+
+    function createElement(tag, className, text) {
+      const element = document.createElement(tag);
+      if (className) element.className = className;
+      if (text !== undefined) element.textContent = String(text);
+      return element;
+    }
+
+    function setText(id, value) {
+      document.getElementById(id).textContent = String(value === undefined || value === null ? '' : value);
+    }
+
+    function formatNumber(value) {
+      const number = Number(value);
+      return Number.isFinite(number) ? number.toLocaleString('ja-JP') : '0';
+    }
+
+    function formatMoney(value) {
+      return '¥' + formatNumber(value);
+    }
+
+    function formatQuantity(value, unit) {
+      return formatNumber(value) + (unit ? ' ' + unit : '');
+    }
+
+    function formatDateTime(value) {
+      if (!value) return '';
+      const date = new Date(value);
+      return isNaN(date.getTime()) ? String(value) : date.toLocaleString('ja-JP');
+    }
+
+    function itemTypeLabel(type) {
+      const labels = {
+        shipping: '送料',
+        payment_fees: '決済手数料',
+        point: 'ポイント',
+        unknown: '未分類'
+      };
+      return labels[type] || '未分類（' + String(type || '') + '）';
+    }
+  </script>
+</body>
+</html>
