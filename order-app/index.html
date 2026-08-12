@@ -747,7 +747,7 @@
 <body>
 
 <header class="app-header">
-  <div class="version-label" id="version-label">v1.25.0</div>
+  <div class="version-label" id="version-label">—</div>
   <h1>📦 ビューフィールド 発注アプリ</h1>
   <div class="header-sub" id="header-sub">発注先を選んでください</div>
 </header>
@@ -960,6 +960,18 @@
       ※この端末だけの候補一覧です。
     </p>
     <button class="btn btn-danger" onclick="clearMemoHistory()">🗑️ 備考履歴を削除</button>
+  </div>
+  <div class="card">
+    <div class="card-label">通信診断・未確定発注</div>
+    <p style="font-size:13px;color:var(--text-light);margin-bottom:8px;line-height:1.6">
+      通信が途中で切れた発注は、この端末で自動的に状態確認・復旧します。
+      通常は操作不要です。不具合調査を依頼された場合だけ診断結果をコピーしてください。
+    </p>
+    <div id="order-outbox-status" style="font-size:13px;margin-bottom:8px">未確定発注: 0件</div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" onclick="recoverPendingOrders(true)">🔄 未確定を再確認</button>
+      <button class="btn btn-outline" onclick="copyGasDiagnostics()">📋 診断結果をコピー</button>
+    </div>
   </div>
   <div class="card">
     <div class="card-label">アカウント</div>
@@ -1281,7 +1293,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.60.0'; // 提案タブ: 「要対応」セクションを開閉可能に・各行に除外/終売ボタンを追加
+const APP_VERSION    = 'v1.61.0'; // GAS通信deadline・書込結果照会・未確定発注の自動復旧
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1290,6 +1302,8 @@ const LS_MASTER_GAS_DATE = 'bf_pm_gas_date_v2';
 const LS_PROD_HIST   = 'bf_prod_hist'; // 商品別直近注文（localStorage永続）
 const SS_CART        = 'bf_cart';
 const LS_MEMO_HIST   = 'bf_memo_h';
+const LS_ORDER_OUTBOX = 'bf_order_outbox_v1';
+const LS_GAS_DIAG     = 'bf_gas_diag_v1';
 const SESSION_KEY    = 'bf_session';
 const SESSION_HOURS  = 12;
 
@@ -1343,6 +1357,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
   currentUser = { user_id: session.user_id, name: session.name, is_admin: session.is_admin === true };
+  _gasMarkAbandonedDiagnostics();
+  updateOrderOutboxStatus();
   const nameEl = document.getElementById('settings-user-name');
   if (nameEl) nameEl.textContent = 'ログイン中: ' + session.name;
   // ────────────────────────────────────────────────────────────
@@ -1385,6 +1401,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadProductMasterFromGAS();
   }
   loadHistory(false);
+  // 起動処理と競合しないよう少し遅らせ、同じ利用者の未確定発注を1件ずつ確認する。
+  setTimeout(() => recoverPendingOrders(false), 1500);
 });
 
 /* ===================================================
@@ -1396,33 +1414,227 @@ document.addEventListener('DOMContentLoaded', async () => {
    詳細・実測データ: 通信エラー対策_設計プラン.md
 =================================================== */
 
-// 同時リクエスト数を制限する軽量セマフォ。完全直列（同時1本）にはしない
-// ——リトライとの掛け算で待ち時間が膨張することが実測済み（3本同時が全部
-// リトライすると71秒かかった）。同時2本までに留めて悪化要因（8本同時で
-// 失敗率50%）だけを緩和する
+// 通信1操作の絶対deadline。queue・fetch・backoff・認証前再送の全経路で共有する。
 const GAS_MAX_CONCURRENCY = 2;
+const GAS_MAX_ATTEMPTS = 3;
+const GAS_QUEUE_TIMEOUT_MS = 5000;
+const GAS_MIN_ATTEMPT_MS = 1500;
+const GAS_DIAG_LIMIT = 200;
+const _GAS_PROFILES = {
+  light:  { attemptMs:  8000, totalMs: 20000 },
+  normal: { attemptMs: 15000, totalMs: 30000 },
+  heavy:  { attemptMs: 30000, totalMs: 60000 }
+};
+const _GAS_LIGHT_ACTIONS = new Set(['getOrderDetail', 'checkOrderByRequestId']);
+const _GAS_HEAVY_ACTIONS = new Set(['getOrderProposals', 'getProductMaster', 'getOrders', 'getMasters', 'getOrderTemplate']);
+// 読み取りは名前から推定しない。ここに明示したものだけ通信失敗時に自動再試行する。
+const _GAS_READ_RETRYABLE_ACTIONS = new Set([
+  'getMasters', 'getProductMaster', 'getOrders', 'getOrderDetail',
+  'getOrderTemplate', 'getOrderProposals', 'checkOrderByRequestId'
+]);
+
 let _gasActive = 0;
+let _gasSemaphoreBroken = false;
 const _gasWaiters = [];
-function _gasAcquire() {
-  if (_gasActive < GAS_MAX_CONCURRENCY) { _gasActive++; return Promise.resolve(); }
-  return new Promise(resolve => _gasWaiters.push(resolve));
-}
-function _gasRelease() {
-  const next = _gasWaiters.shift();
-  if (next) next();      // 枠をそのまま次の待機者へ引き継ぐ（_gasActiveは据え置き）
-  else _gasActive--;     // 待機者が居ないときだけ枠を返す
-}
+const _activeGasOps = new Map();
 
 class GasTransientError extends Error {
   constructor(detail) { super('GAS_TRANSIENT: ' + detail); this.name = 'GasTransientError'; }
 }
+class GasQueueTimeoutError extends Error {
+  constructor() { super('GAS queue timeout'); this.name = 'GasQueueTimeoutError'; }
+}
+class GasDeadlineError extends Error {
+  constructor(detail = 'deadline') { super(detail); this.name = 'GasDeadlineError'; }
+}
+class GasOutcomeUnknownError extends Error {
+  constructor(cause) {
+    super('登録処理の結果を確認できませんでした');
+    this.name = 'GasOutcomeUnknownError';
+    this.cause = cause;
+  }
+}
+class GasSemaphoreError extends Error {
+  constructor() { super('GAS semaphore invariant violation'); this.name = 'GasSemaphoreError'; }
+}
 
-// 読み込みが重いアクションはタイムアウトを長めに取る
-// （実測: getReorderConfig相当の重い呼び出しは負荷時22〜28秒かかる。
-//   失敗時は16〜47秒かかってから404が返る）
-const _GAS_HEAVY_ACTIONS = new Set(['getOrderProposals', 'getProductMaster', 'getOrders', 'getMasters', 'getOrderTemplate']);
-function _gasTimeoutFor(action) {
-  return _GAS_HEAVY_ACTIONS.has(action) ? 60000 : 30000;
+function _gasCheckInvariant() {
+  if (_gasActive < 0 || _gasActive > GAS_MAX_CONCURRENCY) {
+    _gasSemaphoreBroken = true; // 数値を丸めて隠さず、新規取得を止めてfail-closedにする
+    console.error('[GAS semaphore] invariant violated: active=' + _gasActive);
+    return false;
+  }
+  return true;
+}
+
+function _makeGasLease() {
+  let released = false;
+  return {
+    release() {
+      if (released) return;
+      released = true;
+      _gasRelease();
+    }
+  };
+}
+
+function _gasAcquire(queueWaitMs, signal) {
+  if (_gasSemaphoreBroken) return Promise.reject(new GasSemaphoreError());
+  if (queueWaitMs <= 0 || (signal && signal.aborted)) return Promise.reject(new GasDeadlineError());
+  if (_gasActive < GAS_MAX_CONCURRENCY) {
+    _gasActive++;
+    if (!_gasCheckInvariant()) return Promise.reject(new GasSemaphoreError());
+    return Promise.resolve(_makeGasLease());
+  }
+
+  return new Promise((resolve, reject) => {
+    const ticket = { state: 'waiting', timer: null, onAbort: null, grant: null };
+    const cancel = err => {
+      if (ticket.state !== 'waiting') return;
+      ticket.state = 'cancelled';
+      clearTimeout(ticket.timer);
+      if (signal && ticket.onAbort) signal.removeEventListener('abort', ticket.onAbort);
+      reject(err);
+    };
+    ticket.grant = () => {
+      if (ticket.state !== 'waiting') return false;
+      ticket.state = 'granted';
+      clearTimeout(ticket.timer);
+      if (signal && ticket.onAbort) signal.removeEventListener('abort', ticket.onAbort);
+      resolve(_makeGasLease());
+      return true;
+    };
+    ticket.timer = setTimeout(() => cancel(new GasQueueTimeoutError()), queueWaitMs);
+    ticket.onAbort = () => cancel(new GasDeadlineError('operation cancelled while queued'));
+    if (signal) signal.addEventListener('abort', ticket.onAbort, { once: true });
+    _gasWaiters.push(ticket);
+  });
+}
+
+function _gasRelease() {
+  while (_gasWaiters.length) {
+    const ticket = _gasWaiters.shift();
+    if (ticket.state !== 'waiting') continue;
+    if (ticket.grant()) return; // 枠を引き継ぐためactiveは据え置き
+  }
+  _gasActive--;
+  _gasCheckInvariant();
+}
+
+function _gasDebugSnapshot() {
+  const counts = { waiting: 0, cancelled: 0, granted: 0 };
+  _gasWaiters.forEach(t => { if (counts[t.state] !== undefined) counts[t.state]++; });
+  return { active: _gasActive, broken: _gasSemaphoreBroken, ...counts };
+}
+
+function _gasProfileFor(action, options = {}) {
+  const kind = options.kind || (_GAS_HEAVY_ACTIONS.has(action) ? 'heavy' : (_GAS_LIGHT_ACTIONS.has(action) ? 'light' : 'normal'));
+  const base = _GAS_PROFILES[kind] || _GAS_PROFILES.normal;
+  return {
+    kind,
+    attemptMs: options.attemptTimeoutMs || base.attemptMs,
+    totalMs: options.totalDeadlineMs || base.totalMs,
+    maxAttempts: Math.max(1, Math.min(GAS_MAX_ATTEMPTS, options.maxAttempts || GAS_MAX_ATTEMPTS))
+  };
+}
+
+function _gasGenerateId() {
+  return _generateRequestId();
+}
+
+function _gasReadDiagnostics() {
+  try {
+    const data = JSON.parse(localStorage.getItem(LS_GAS_DIAG) || '[]');
+    return Array.isArray(data) ? data : [];
+  } catch(e) { return []; }
+}
+
+function _gasWriteDiagnostics(rows) {
+  try { localStorage.setItem(LS_GAS_DIAG, JSON.stringify(rows.slice(-GAS_DIAG_LIMIT))); } catch(e) {}
+}
+
+function _gasDiagStart(op) {
+  const rows = _gasReadDiagnostics();
+  rows.push({
+    opId: op.id, action: op.action, kind: op.kind, version: APP_VERSION,
+    startedAt: op.startedAt, deadlineAt: op.deadlineAt, state: 'START', attempts: 0
+  });
+  _gasWriteDiagnostics(rows);
+}
+
+function _gasDiagEnd(op, outcome) {
+  const rows = _gasReadDiagnostics();
+  const row = rows.find(x => x.opId === op.id);
+  if (row && row.state === 'START') {
+    row.state = 'END';
+    row.outcome = outcome;
+    row.attempts = op.attempts;
+    row.elapsedMs = Date.now() - op.startedAt;
+    row.endedAt = Date.now();
+    row.semaphore = _gasDebugSnapshot();
+  }
+  _gasWriteDiagnostics(rows);
+}
+
+function _gasMarkAbandonedDiagnostics() {
+  const rows = _gasReadDiagnostics();
+  let changed = false;
+  rows.forEach(row => {
+    if (row.state === 'START' && row.deadlineAt < Date.now()) {
+      // ブラウザ強制終了・端末電源断も含むため、deadline違反とは分けて記録する。
+      row.state = 'END'; row.outcome = 'abandoned'; row.endedAt = Date.now(); changed = true;
+    }
+  });
+  if (changed) _gasWriteDiagnostics(rows);
+}
+
+function _gasCreateOperation(action, options = {}) {
+  const profile = _gasProfileFor(action, options);
+  const ac = new AbortController();
+  const op = {
+    id: _gasGenerateId(), action, kind: profile.kind,
+    attemptMs: profile.attemptMs, maxAttempts: profile.maxAttempts,
+    startedAt: Date.now(), deadlineAt: Date.now() + profile.totalMs,
+    attempts: 0, state: 'ACTIVE', signal: ac.signal, cancelReason: null, timer: null,
+    remaining() { return this.deadlineAt - Date.now(); },
+    cancel(reason = new GasDeadlineError()) {
+      if (this.state !== 'ACTIVE') return;
+      this.state = 'CANCELLED';
+      this.cancelReason = reason;
+      clearTimeout(this.timer);
+      ac.abort();
+      _activeGasOps.delete(this.id);
+      _gasDiagEnd(this, reason.name === 'GasDeadlineError' ? 'deadline' : 'cancelled');
+    },
+    finish(outcome) {
+      if (this.state === 'ACTIVE') {
+        this.state = 'COMPLETED';
+        clearTimeout(this.timer);
+        _activeGasOps.delete(this.id);
+        _gasDiagEnd(this, outcome);
+      }
+    }
+  };
+  op.timer = setTimeout(() => op.cancel(new GasDeadlineError()), profile.totalMs);
+  _activeGasOps.set(op.id, op);
+  _gasDiagStart(op);
+  return op;
+}
+
+function _gasAbortableDelay(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (ms <= 0 || (signal && signal.aborted)) return reject(new GasDeadlineError());
+    let timer = null;
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new GasDeadlineError('operation cancelled during backoff'));
+    };
+    timer = setTimeout(() => {
+      if (signal) signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 // 通信中オーバーレイが開いていれば、再試行中であることをメッセージで知らせる
@@ -1441,75 +1653,115 @@ function _gasNotifyRetry(attemptNumber) {
 // 「ネットワークを確認してください」という誤誘導を避ける。
 // TypeError（fetch自体が失敗＝オフライン等の真の通信断）のときだけ従来の文言にする
 function _gasErrorMessage(e) {
+  if (e && e.name === 'GasOutcomeUnknownError') return '処理結果を確認できませんでした。同じ操作をすぐ繰り返さず、画面の状態を確認してください。';
+  if (e && e.name === 'GasDeadlineError') return '処理時間の上限に達しました。画面を戻しました。';
+  if (e && e.name === 'GasQueueTimeoutError') return '通信が混み合っているため開始できませんでした。少し待ってからお試しください。';
   if (e && e.name === 'TypeError') return '通信エラー。ネットワークを確認してください。';
   return 'Google側が一時的に混み合っています。もう一度お試しください。';
 }
 
-// 1回分のfetch。404等の非JSON応答・タイムアウトをGasTransientErrorとして検出する
-// 注意: ac.abort()はSafari等で「タイマー発火後もfetchのPromiseが解決も拒否もされないまま
-// 固まる」不具合が確認されている（バックグラウンド遷移中の中断などで発生）。abort()自体に
-// 頼らず、素のsetTimeoutによる強制タイムアウトをPromise.raceで併用し、このawaitが
-// 必ずtimeoutMs+3秒以内に決着することを保証する（＝呼び出し元の画面が無期限に固まらない）
-async function _gasFetchOnce(url, init, timeoutMs) {
-  const ac    = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
-  await _gasAcquire();
+async function _gasFetchOnce(url, init, operation) {
+  const queueWaitMs = Math.min(GAS_QUEUE_TIMEOUT_MS, operation.remaining());
+  const lease = await _gasAcquire(queueWaitMs, operation.signal);
+  const attemptAc = new AbortController();
+  let timeoutTimer = null;
+  let onOperationAbort = null;
   try {
+    const budget = Math.min(operation.attemptMs, operation.remaining());
+    if (budget <= 0 || operation.signal.aborted) throw operation.cancelReason || new GasDeadlineError();
+
     const doFetch = (async () => {
-      const res  = await fetch(url, { ...init, signal: ac.signal });
+      const res  = await fetch(url, { ...init, signal: attemptAc.signal });
       const text = await res.text(); // res.json()ではなくtext()。404のHTMLをここで検出するため
       if (!res.ok) throw new GasTransientError('HTTP ' + res.status);
       try { return JSON.parse(text); }
       catch (e) { throw new GasTransientError('non-JSON response'); }
     })();
-    const hardTimeout = new Promise((_, reject) => {
-      setTimeout(() => reject(new GasTransientError('client timeout (hard)')), timeoutMs + 3000);
+
+    // Safariでabort後もfetchが決着しない場合に備え、abortと同時にrace側もrejectする。
+    const attemptTimeout = new Promise((_, reject) => {
+      timeoutTimer = setTimeout(() => {
+        attemptAc.abort();
+        reject(new GasTransientError('client timeout'));
+      }, budget);
     });
-    return await Promise.race([doFetch, hardTimeout]);
+    const operationCancelled = new Promise((_, reject) => {
+      onOperationAbort = () => {
+        attemptAc.abort();
+        reject(operation.cancelReason || new GasDeadlineError('operation cancelled'));
+      };
+      operation.signal.addEventListener('abort', onOperationAbort, { once: true });
+    });
+    return await Promise.race([doFetch, attemptTimeout, operationCancelled]);
   } finally {
-    clearTimeout(timer);
-    _gasRelease();
+    clearTimeout(timeoutTimer);
+    if (onOperationAbort) operation.signal.removeEventListener('abort', onOperationAbort);
+    lease.release();
   }
 }
 
-// 通信エラー（404・タイムアウト・通信断）を最大2回まで自動リトライする（計3試行）。
-// 増やすと同時実行との掛け算で待ち時間が膨張するためこれ以上は増やさないこと。
-// GAS側の冪等化（add/delete系はそのまま安全・saveOrderはrequestIdで重複防止）と
-// セットで運用する前提
-async function _gasCall(url, init, timeoutMs) {
-  const retries = 2;
+function _gasIsTransient(e) {
+  return !!e && ['GasTransientError', 'GasQueueTimeoutError', 'GasDeadlineError', 'AbortError', 'TypeError'].includes(e.name);
+}
+
+async function _gasCall(url, init, operation, policy) {
   let lastErr;
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  while (operation.attempts < operation.maxAttempts) {
+    if (operation.state !== 'ACTIVE' || operation.remaining() <= 0) {
+      throw operation.cancelReason || new GasDeadlineError();
+    }
+    operation.attempts++;
     try {
-      return await _gasFetchOnce(url, init, timeoutMs);
+      return await _gasFetchOnce(url, init, operation);
     } catch (e) {
       lastErr = e;
-      const transient = e.name === 'GasTransientError' || e.name === 'AbortError' || e.name === 'TypeError';
-      if (!transient || attempt === retries) break;
-      _gasNotifyRetry(attempt + 1);
-      await new Promise(r => setTimeout(r, attempt === 0 ? 1000 : 3000));
+      const canRetry = policy === 'READ_RETRYABLE' && _gasIsTransient(e) && operation.attempts < operation.maxAttempts;
+      if (!canRetry) break;
+      const plannedBackoff = operation.attempts === 1 ? 1000 : 3000;
+      const delayMs = Math.min(plannedBackoff, operation.remaining());
+      if (delayMs <= 0 || operation.remaining() < GAS_MIN_ATTEMPT_MS) throw new GasDeadlineError();
+      _gasNotifyRetry(operation.attempts + 1);
+      await _gasAbortableDelay(delayMs, operation.signal);
     }
   }
   throw lastErr;
 }
 
-// gasGet/gasPost共通処理: 通信レベルのリトライ(_gasCall)に加え、
-// AUTH_UNAVAILABLE（GAS側の認証シート一時読み込み失敗）とSESSION_INVALID
-// （POSTボディ喪失の疑いを含む）を区別して扱う
-async function _gasRequest(url, init, timeoutMs, hasToken) {
-  const data = await _gasCall(url, init, timeoutMs);
+async function _gasPredispatchRetry(url, init, operation, policy) {
+  if (operation.attempts >= operation.maxAttempts || operation.remaining() < GAS_MIN_ATTEMPT_MS) {
+    throw new GasDeadlineError('pre-dispatch retry budget exhausted');
+  }
+  _gasNotifyRetry(operation.attempts + 1);
+  await _gasAbortableDelay(Math.min(500, operation.remaining()), operation.signal);
+  return _gasCall(url, init, operation, policy);
+}
 
-  // 認証確認そのものが一時的に失敗しただけ。ログアウトさせず1回だけ全再送する
-  if (data && data.error === 'AUTH_UNAVAILABLE') {
-    _gasNotifyRetry(1);
-    return await _gasCall(url, init, timeoutMs);
+async function _gasRequest(url, init, hasToken, action, operation) {
+  const policy = _GAS_READ_RETRYABLE_ACTIONS.has(action) ? 'READ_RETRYABLE' : 'WRITE_NO_RETRY';
+  let data;
+  try {
+    data = await _gasCall(url, init, operation, policy);
+  } catch(e) {
+    if (policy === 'WRITE_NO_RETRY' && _gasIsTransient(e)) throw new GasOutcomeUnknownError(e);
+    throw e;
   }
 
-  // トークンを送っているのにSESSION_INVALID＝POSTボディ喪失の可能性があるので
-  // 1回だけ全再送する。2連続でSESSION_INVALIDのときだけ本当に無効とみなす
+  // action分岐より前に返る応答だけは、書き込みでも「未実行」が確定しているため再送できる。
+  if (data && data.error === 'AUTH_UNAVAILABLE') {
+    try { return await _gasPredispatchRetry(url, init, operation, policy); }
+    catch(e) {
+      if (policy === 'WRITE_NO_RETRY' && _gasIsTransient(e)) throw new GasOutcomeUnknownError(e);
+      throw e;
+    }
+  }
+
   if (data && data.error === 'SESSION_INVALID' && hasToken) {
-    _gasNotifyRetry(1);
-    const retryData = await _gasCall(url, init, timeoutMs);
+    let retryData;
+    try { retryData = await _gasPredispatchRetry(url, init, operation, policy); }
+    catch(e) {
+      if (policy === 'WRITE_NO_RETRY' && _gasIsTransient(e)) throw new GasOutcomeUnknownError(e);
+      throw e;
+    }
     if (retryData && retryData.error === 'SESSION_INVALID') {
       localStorage.removeItem(SESSION_KEY);
       location.replace(PORTAL_URL);
@@ -1531,20 +1783,43 @@ async function gasGet(params) {
   return gasPost(params);
 }
 
-async function gasPost(params) {
-  // セッショントークンを自動付与
+async function gasPost(params, options = {}) {
+  const action = String(params.action || '');
+  const operation = _gasCreateOperation(action, options);
   const session  = getAuthSession();
   const hasToken = !!(session && session.token);
-  if (hasToken) params.session_token = session.token;
-  const body = Object.keys(params)
-    .map(k => encodeURIComponent(k) + '=' + encodeURIComponent(params[k]))
+  const requestParams = { ...params };
+  if (hasToken) requestParams.session_token = session.token;
+  const body = Object.keys(requestParams)
+    .map(k => encodeURIComponent(k) + '=' + encodeURIComponent(requestParams[k]))
     .join('&');
-  return _gasRequest(GAS_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body
-  }, _gasTimeoutFor(params.action), hasToken);
+  let outcome = 'error';
+  try {
+    const data = await _gasRequest(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body
+    }, hasToken, action, operation);
+    outcome = data && data.success ? 'success' : 'response_error';
+    return data;
+  } catch(e) {
+    outcome = e && e.name === 'GasOutcomeUnknownError' ? 'outcome_unknown' :
+      (e && e.name === 'GasDeadlineError' ? 'deadline' : 'error');
+    throw e;
+  } finally {
+    operation.finish(outcome);
+  }
 }
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  for (const op of _activeGasOps.values()) {
+    if (op.remaining() <= 0) op.cancel(new GasDeadlineError('deadline elapsed while backgrounded'));
+  }
+});
+window.addEventListener('beforeunload', () => {
+  for (const op of _activeGasOps.values()) op.cancel(new GasDeadlineError('page unloaded'));
+});
 
 /* ===================================================
    メーカー発注書テンプレート取得（GAS Drive配信）
@@ -2555,44 +2830,247 @@ function _generateRequestId() {
   return `${hex.slice(0,4).join('')}-${hex.slice(4,6).join('')}-${hex.slice(6,8).join('')}-${hex.slice(8,10).join('')}-${hex.slice(10,16).join('')}`;
 }
 
-async function saveOrderToGAS(outputType) {
-  if (savedOrderNo) return savedOrderNo;
-  if (!orderRequestId) orderRequestId = _generateRequestId();
-  // GAS応答を待つ間（最悪1分超）にユーザーが「新しい発注」へ進んでいる可能性があるため、
-  // このカートを識別する値をこの時点で固定しておく。await後にグローバル状態
-  // （orderRequestId/revisionBaseOrderNo）を直接読むと、既に次の発注のものに
-  // 書き換わっていて、古い呼び出しが新しい発注の状態を汚染しうる（テキスト/CSV出力を
-  // GAS保存と切り離してバックグラウンド実行できるようにするための対策）
-  const myRequestId    = orderRequestId;
-  const myRevisionBase = revisionBaseOrderNo;
+const ORDER_OUTBOX_LIMIT = 5;
+const ORDER_OUTBOX_AUTO_RECOVER_MS = 7 * 24 * 60 * 60 * 1000;
+const _orderOutboxInFlight = new Map();
+
+function _readOrderOutbox() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(LS_ORDER_OUTBOX) || '[]');
+    return Array.isArray(rows) ? rows : [];
+  } catch(e) { return []; }
+}
+
+function _writeOrderOutbox(rows) {
+  localStorage.setItem(LS_ORDER_OUTBOX, JSON.stringify(rows));
+  updateOrderOutboxStatus();
+}
+
+function _upsertOrderOutbox(entry) {
+  const rows = _readOrderOutbox();
+  const idx = rows.findIndex(x => x.requestId === entry.requestId);
+  if (idx >= 0) rows[idx] = entry;
+  else rows.push(entry);
+  _writeOrderOutbox(rows);
+}
+
+function _removeOrderOutbox(requestId) {
+  try { _writeOrderOutbox(_readOrderOutbox().filter(x => x.requestId !== requestId)); }
+  catch(e) { console.warn('[order outbox] completed entry could not be removed:', e); }
+}
+
+function updateOrderOutboxStatus() {
+  const el = document.getElementById('order-outbox-status');
+  if (!el) return;
+  const userId = currentUser ? String(currentUser.user_id || '') : '';
+  const rows = _readOrderOutbox().filter(x => !userId || String(x.userId || '') === userId);
+  const needsReview = rows.filter(x => x.status === 'CONFLICT' || x.status === 'STALE' || Date.now() - x.createdAt > ORDER_OUTBOX_AUTO_RECOVER_MS).length;
+  el.textContent = `未確定発注: ${rows.length}件` + (needsReview ? `（要確認 ${needsReview}件）` : '');
+  el.style.color = rows.length ? 'var(--danger)' : 'var(--text-light)';
+}
+
+function _newOrderOutboxEntry(outputType) {
+  if (!currentUser) throw new Error('ログイン情報がありません');
+  let rows = _readOrderOutbox();
+  if (orderRequestId) {
+    const existing = rows.find(x => x.requestId === orderRequestId);
+    if (existing) return existing; // 出力形式を変えても最初に固定したpayloadを再利用する
+  }
+  const currentUserRows = rows.filter(x => String(x.userId || '') === String(currentUser.user_id || ''));
+  if (currentUserRows.length >= ORDER_OUTBOX_LIMIT) {
+    throw new Error('未確定の発注が5件あります。設定画面の「未確定を再確認」を実行してください。');
+  }
+  orderRequestId = _generateRequestId();
+  const itemsSnapshot = cartItems.map(item => ({
+    janCode: item.janCode || '', code: item.code || '', name: item.name || '',
+    qty: item.qty || 0, unit: item.unit || '', memo: item.memo || '',
+    isHandwritten: item.isHandwritten === true
+  }));
   const params = {
     action: 'saveOrder', date: currentOrder.date,
     supplierCode: currentOrder.supplierCode, supplierName: currentOrder.supplierName,
     fax: currentOrder.fax, staff: currentOrder.staff, outputType,
-    items: JSON.stringify(cartItems),
-    requestId: myRequestId
+    items: JSON.stringify(itemsSnapshot), requestId: orderRequestId
   };
-  // 修正発注の場合は元の発注Noを渡す（GAS側で新規保存後に削除する）
-  if (myRevisionBase) params.revisionBaseOrderNo = myRevisionBase;
+  if (revisionBaseOrderNo) params.revisionBaseOrderNo = revisionBaseOrderNo;
+  const entry = {
+    requestId: orderRequestId,
+    userId: String(currentUser.user_id || ''),
+    createdAt: Date.now(), updatedAt: Date.now(), status: 'READY',
+    params
+  };
+  _upsertOrderOutbox(entry); // ネットワークへ出す前に永続化する
+  return entry;
+}
 
-  const res = await gasPost(params);
-  if (res.success) {
-    // 呼び出し後にorderRequestIdが変わっていたら、このカートは既に「新しい発注」に
-    // 置き換わっている（＝savedOrderNo等はもう別カートのもの）。反映せずスキップする
-    if (orderRequestId === myRequestId) {
-      savedOrderNo = res.orderNo;
-      // 修正前の発注をローカルキャッシュからも除去
-      if (myRevisionBase) {
-        allHistoryOrders = allHistoryOrders.filter(o => o.orderNo !== myRevisionBase);
-        delete historyDetailCache[myRevisionBase];
-        sessionStorage.removeItem(SS_HIST_CACHE);
-        revisionBaseOrderNo = null;
-      }
+function _markOrderEntry(entry, status, detail = '') {
+  entry.status = status;
+  entry.detail = String(detail || '').slice(0, 160);
+  entry.updatedAt = Date.now();
+  try { _upsertOrderOutbox(entry); }
+  catch(e) { console.warn('[order outbox] status update failed:', e); }
+}
+
+function _completeOrderEntry(entry, orderNo) {
+  _removeOrderOutbox(entry.requestId);
+  // 新規・修正どちらも次回の履歴表示ではGASから取り直し、古い20件キャッシュを使わない。
+  sessionStorage.removeItem(SS_HIST_CACHE);
+  if (orderRequestId === entry.requestId) {
+    savedOrderNo = orderNo;
+    const revisionBase = entry.params.revisionBaseOrderNo || '';
+    if (revisionBase) {
+      allHistoryOrders = allHistoryOrders.filter(o => o.orderNo !== revisionBase);
+      delete historyDetailCache[revisionBase];
+      revisionBaseOrderNo = null;
     }
-    return res.orderNo;
-  } else {
-    throw new Error(res.error || 'GAS保存に失敗しました');
   }
+  return orderNo;
+}
+
+function _serverOrderError(res) {
+  const err = new Error((res && (res.message || res.error)) || 'GAS保存に失敗しました');
+  err.code = res && res.error;
+  return err;
+}
+
+function _isTerminalOrderError(code) {
+  return [
+    'REQUEST_ID_REQUIRED', 'REQUEST_ID_INVALID', 'ITEMS_INVALID',
+    'REQUIRED_FIELDS_MISSING', 'REQUEST_ID_CONFLICT', 'ORDER_STATE_INVALID'
+  ].includes(String(code || ''));
+}
+
+async function _checkOrderEntry(entry) {
+  return gasPost(
+    { action: 'checkOrderByRequestId', requestId: entry.requestId },
+    { kind: 'light', totalDeadlineMs: 10000, attemptTimeoutMs: 8000, maxAttempts: 1 }
+  );
+}
+
+async function _recoverOrderEntry(entry) {
+  _markOrderEntry(entry, 'CHECKING');
+  let check;
+  try {
+    check = await _checkOrderEntry(entry);
+  } catch(e) {
+    _markOrderEntry(entry, 'UNKNOWN', e.name || e.message);
+    throw new GasOutcomeUnknownError(e);
+  }
+
+  if (check && check.state === 'COMPLETE') return _completeOrderEntry(entry, check.orderNo);
+  if (check && check.state === 'CONFLICT') {
+    _markOrderEntry(entry, 'CONFLICT', 'requestId conflict');
+    throw new Error('同じ送信IDの発注が複数見つかりました。管理者に連絡してください。');
+  }
+  if (!check || !['PARTIAL', 'NOT_FOUND_NOW'].includes(check.state)) {
+    _markOrderEntry(entry, 'UNKNOWN', check && (check.state || check.error));
+    throw new GasOutcomeUnknownError(new Error('status unknown'));
+  }
+
+  // 未検出は未登録の確定ではない。同じrequestId・同じ固定payloadで1回だけ収束再送する。
+  _markOrderEntry(entry, 'RECOVERING');
+  try {
+    const saved = await gasPost({ ...entry.params });
+    if (saved && saved.success) return _completeOrderEntry(entry, saved.orderNo);
+    if (saved && _isTerminalOrderError(saved.error)) {
+      _markOrderEntry(entry, saved.error === 'REQUEST_ID_CONFLICT' ? 'CONFLICT' : 'ERROR', saved.message || saved.error);
+      const terminal = _serverOrderError(saved);
+      terminal.terminalOrderError = true;
+      throw terminal;
+    }
+  } catch(e) {
+    if (e && e.terminalOrderError) throw e;
+    // 応答喪失の可能性があるため、この時点では新しいrequestIdを発行しない。
+  }
+
+  try {
+    check = await _checkOrderEntry(entry);
+  } catch(e) {
+    _markOrderEntry(entry, 'UNKNOWN', e.name || e.message);
+    throw new GasOutcomeUnknownError(e);
+  }
+  if (check && check.state === 'COMPLETE') return _completeOrderEntry(entry, check.orderNo);
+  if (check && check.state === 'CONFLICT') {
+    _markOrderEntry(entry, 'CONFLICT', 'requestId conflict');
+    throw new Error('同じ送信IDの発注が複数見つかりました。管理者に連絡してください。');
+  }
+  _markOrderEntry(entry, 'UNKNOWN', check && (check.state || check.error));
+  throw new GasOutcomeUnknownError(new Error('recovery incomplete'));
+}
+
+async function _processOrderEntry(entry, initialSend) {
+  if (_orderOutboxInFlight.has(entry.requestId)) return _orderOutboxInFlight.get(entry.requestId);
+  const task = (async () => {
+    if (!initialSend) return _recoverOrderEntry(entry);
+    _markOrderEntry(entry, 'SENDING');
+    try {
+      const res = await gasPost({ ...entry.params });
+      if (res && res.success) return _completeOrderEntry(entry, res.orderNo);
+      if (res && _isTerminalOrderError(res.error)) {
+        _markOrderEntry(entry, res.error === 'REQUEST_ID_CONFLICT' ? 'CONFLICT' : 'ERROR', res.message || res.error);
+        throw _serverOrderError(res);
+      }
+      // LOCK_BUSY / INTERNAL_ERROR 等は未実行または部分保存の可能性があるため照会へ進む。
+      _markOrderEntry(entry, 'UNKNOWN', res && (res.message || res.error));
+      return _recoverOrderEntry(entry);
+    } catch(e) {
+      if (e && e.name !== 'GasOutcomeUnknownError') throw e;
+      return _recoverOrderEntry(entry);
+    }
+  })().finally(() => _orderOutboxInFlight.delete(entry.requestId));
+  _orderOutboxInFlight.set(entry.requestId, task);
+  return task;
+}
+
+async function recoverPendingOrders(manual = false) {
+  if (!currentUser) return;
+  const userId = String(currentUser.user_id || '');
+  const rows = _readOrderOutbox().filter(x => String(x.userId || '') === userId && x.status !== 'CONFLICT');
+  if (rows.length === 0) {
+    if (manual) showToast('未確定の発注はありません', 'success');
+    updateOrderOutboxStatus();
+    return;
+  }
+  let completed = 0;
+  for (const entry of rows) {
+    if (Date.now() - entry.createdAt > ORDER_OUTBOX_AUTO_RECOVER_MS) {
+      // 古いNOT_FOUNDを自動再送すると、忘れた頃に発注を新規作成しうる。照会だけに留める。
+      try {
+        const check = await _checkOrderEntry(entry);
+        if (check && check.state === 'COMPLETE') {
+          _completeOrderEntry(entry, check.orderNo); completed++; continue;
+        }
+      } catch(e) {}
+      _markOrderEntry(entry, 'STALE', '7日以上未確定のため自動再送停止');
+      continue;
+    }
+    try { await _processOrderEntry(entry, entry.status === 'READY'); completed++; }
+    catch(e) { console.warn('[order outbox] recovery pending:', e); }
+  }
+  updateOrderOutboxStatus();
+  if (manual || completed > 0) {
+    const remaining = _readOrderOutbox().filter(x => String(x.userId || '') === userId).length;
+    showToast(remaining === 0 ? `未確定の発注${completed}件を確認しました` : `確認完了: 登録済み${completed}件・未確定${remaining}件`, remaining ? 'error' : 'success');
+  }
+}
+
+async function copyGasDiagnostics() {
+  const outbox = _readOrderOutbox().map(x => ({
+    status: x.status, createdAt: x.createdAt, updatedAt: x.updatedAt,
+    ageMs: Date.now() - x.createdAt, userMatches: !!currentUser && String(x.userId || '') === String(currentUser.user_id || '')
+  }));
+  const text = JSON.stringify({
+    appVersion: APP_VERSION, generatedAt: new Date().toISOString(),
+    semaphore: _gasDebugSnapshot(), outbox, operations: _gasReadDiagnostics()
+  }, null, 2);
+  const copied = await copyToClipboard(text);
+  showToast(copied ? '通信診断をコピーしました' : '通信診断をコピーできませんでした', copied ? 'success' : 'error');
+}
+
+async function saveOrderToGAS(outputType) {
+  if (savedOrderNo) return savedOrderNo;
+  const entry = _newOrderOutboxEntry(outputType);
+  return _processOrderEntry(entry, entry.status === 'READY');
 }
 
 // クリップボードコピー共通ヘルパー
@@ -2650,7 +3128,7 @@ async function outputText() {
 
   // 発注履歴への保存はテキスト出力完了後にバックグラウンドで実行
   saveOrderToGAS('テキスト').catch(e => {
-    showToast('発注履歴への保存に失敗しました（テキストは出力済みです）。時間をおいて画面を再読み込みし、履歴タブで保存されているかご確認ください。', 'error');
+    showToast('テキストは出力済みです。発注履歴は未確定として保持し、次回起動時にも自動確認します。', 'error');
   });
 }
 
@@ -2696,7 +3174,7 @@ async function outputCSV() {
 
   // 発注履歴への保存はCSV出力完了後にバックグラウンドで実行
   saveOrderToGAS('CSV').catch(e => {
-    showToast('発注履歴への保存に失敗しました（CSVは出力済みです）。時間をおいて画面を再読み込みし、履歴タブで保存されているかご確認ください。', 'error');
+    showToast('CSVは出力済みです。発注履歴は未確定として保持し、次回起動時にも自動確認します。', 'error');
   });
 }
 
