@@ -705,6 +705,7 @@
     .prop-urgent-head      { font-size: 15px; font-weight: 700; color: #c62828; }
     .prop-urgent-sub       { font-size: 12px; color: var(--text-light); margin: 2px 0 4px; }
     .prop-urgent-body .prop-item:first-child { border-top: none; }
+    .prop-urgent-jump      { width: 100%; margin-top: 8px; font-weight: 700; }
     .prop-group-stuck-note { color: #e65100; font-weight: 700; }
     .excess-item      { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
     .excess-item-name { font-size: 13px; font-weight: 600; }
@@ -1280,7 +1281,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.58.0'; // 提案タブ: 「要対応」セクション・滞留可視化を追加（Phase M）
+const APP_VERSION    = 'v1.59.0'; // 提案タブ: 「要対応」を編集不可の簡易カード＋仕入先へ移動導線に変更（チェック状態が反映されない不具合を修正）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -4455,6 +4456,59 @@ function renderPropItem(p, code, delayedByCode) {
 //   ②滞留日数が14日以上 かつ 不足あり
 //   ③入荷遅延の警告が出ている
 // まとめ発注グループの行は専用ブロックで発注時期を扱っているため対象外
+// 「要対応」の1商品ぶんの行HTML。あえて renderPropItem（チェックボックス・数量編集つき）を
+// 再利用せず、専用の簡易カードにしている。理由: 発注の実行は仕入先アコーディオンの
+// カード単位でしか行えない（🛒ボタンがそこにしか無い）ため、renderPropItemをそのまま出すと
+// 「同じ商品のチェック状態を持つDOMが2箇所（要対応・仕入先アコーディオン）に生まれ、
+// 片方だけ操作すると見た目が食い違う」問題が起きる。ここは編集させず、常に
+// 「対応する仕入先アコーディオンへ移動して、そこで操作する」導線に統一する
+function renderUrgentItemCard(p, delayedByCode) {
+  const badgeCls = PROP_PATTERN_CLASS[p.pattern] || 'sporadic';
+  const abcBadge = p.abcRank ? `<span class="abc-badge ${ABC_BADGE_CLASS[p.abcRank] || ''}">${escHtml(p.abcRank)}</span>` : '';
+  const stock = parseFloat(p.stock) || 0;
+  const stuckDays = p.stuckDays || 0;
+  const stuckBadge = stuckDays >= PROP_STUCK_BADGE_MIN_DAYS
+    ? `<span class="prop-badge ${stuckDays >= 30 ? 'stuck-long' : 'stuck'}">⏳ 滞留${stuckDays}日</span>` : '';
+  const outBadge = stock <= 0 ? '<span class="prop-badge out">🔴 欠品中</span>' : '';
+  const refBadge = p.refOnly ? '<span class="prop-badge ref">📎 参考</span>' : '';
+  const supplierName = resolveSupplierName(p.supplierCode, p.supplierName);
+  const note = p.aiNote || p.note || '';
+  const delayed = (delayedByCode || {})[p.code];
+  const delayWarn = delayed
+    ? `<div class="prop-pending-warn">⚠️ ${delayed.orderDate.slice(5)}に${delayed.qty}個発注済み（仕入計上の見込み日を${delayed.overdueDays}日超過・未入荷の可能性）</div>`
+    : '';
+  const recentDemand = (parseFloat(p.recentDemandMonthly) || 0).toFixed(1);
+  return `
+  <div class="prop-item prop-urgent-item">
+    <div class="prop-item-name">${escHtml(p.name)}
+      <div class="prop-item-code">${escHtml(p.code)}<span class="prop-badge ${badgeCls}">${escHtml(p.pattern)}</span>${abcBadge}${outBadge}${stuckBadge}${refBadge}</div>
+    </div>
+    <div class="prop-item-stats">
+      <span>在庫 <b style="${stock < 0 ? 'color:var(--danger)' : ''}">${p.stock}</b> → 推奨 <b>${p.recommended}</b></span>
+      <span>直近実需要 <b>${recentDemand}</b>個/月</span>
+    </div>
+    ${note ? `<div class="prop-note">${escHtml(note)}</div>` : ''}
+    ${delayWarn}
+    <button type="button" class="btn btn-outline btn-sm prop-urgent-jump" onclick="jumpToSupplierGroup('${escAttr(p.supplierCode)}')">🛒 ${escHtml(supplierName)}のカードへ移動して発注</button>
+  </div>`;
+}
+
+// アコーディオンを開いてスクロールし、そのまま発注操作に入れるようにする（Phase M）
+function jumpToSupplierGroup(supplierCode) {
+  const filterSel = document.getElementById('prop-filter-supplier');
+  if ((filterSel.value && filterSel.value !== supplierCode) || propWebFilter !== 'all') {
+    filterSel.value = '';
+    propWebFilter = 'all';
+    renderProposalList();
+  }
+  propOpenGroups.add(supplierCode);
+  const el = document.getElementById('prop-group-' + supplierCode);
+  if (el) {
+    el.classList.add('open');
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
 function renderProposalUrgent() {
   const wrap = document.getElementById('prop-urgent');
   if (!wrap) return;
@@ -4476,15 +4530,15 @@ function renderProposalUrgent() {
     const key = (p.supplierCode || '') + '|' + p.code;
     if (seen.has(key)) return;
     seen.add(key);
-    items.push({ p, code: p.supplierCode, lossPerMonth: recentDemand * (parseFloat(p.unitCost) || 0) });
+    items.push({ p, lossPerMonth: recentDemand * (parseFloat(p.unitCost) || 0) });
   });
   if (items.length === 0) { wrap.innerHTML = ''; return; }
   items.sort((a, b) => b.lossPerMonth - a.lossPerMonth);
-  const rows = items.map(({ p, code }) => renderPropItem(p, code, delayedByCode)).join('');
+  const rows = items.map(({ p }) => renderUrgentItemCard(p, delayedByCode)).join('');
   wrap.innerHTML = `
     <div class="card prop-urgent-card">
       <div class="prop-urgent-head">🚨 要対応（${items.length}件）</div>
-      <div class="prop-urgent-sub">在庫切れ・14日以上未処理・入荷遅延のいずれかに該当する商品を、仕入先をまたいで金額が大きい順に表示しています</div>
+      <div class="prop-urgent-sub">在庫切れ・14日以上未処理・入荷遅延のいずれかに該当する商品を、仕入先をまたいで金額が大きい順に表示しています。ここでは編集できません。「発注へ移動」で該当仕入先のカードを開いて操作してください</div>
       <div class="prop-urgent-body">${rows}</div>
     </div>`;
 }
