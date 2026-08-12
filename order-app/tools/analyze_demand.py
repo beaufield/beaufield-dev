@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.17.0
+# Version: v1.19.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -96,6 +96,22 @@
 #   そのため減少トレンド商品は「まとまり注文フロア(P95)」を適用せず、代わりに
 #   月平均×CAP_MONTHS_DECLINEヶ月分を上限キャップとして推奨在庫を頭打ちにする。
 #
+# 増加トレンド判定（v1.18.0で追加。設計原本: 発注提案精度改善_設計プラン.md N-1）:
+#   減少トレンドと対称に、直近12ヶ月平均が1年前の12ヶ月平均のGROWTH_RATIO_THRESHOLD倍
+#   以上の商品は「増加トレンド」とみなし、統計を直近12ヶ月ベースに切り替える。
+#   （24ヶ月平均のままだと伸びている商品ほど推奨在庫が構造的に低く出るため。実測:
+#   　前年比1.5倍以上の商品で24ヶ月平均が直近実力の71%＝推奨在庫が中央値29%目減り）
+#   減少トレンドと異なり、まとまり注文フロア(P95)・月数キャップは通常のランク別ロジック
+#   （Aランク=フル適用等）をそのまま使う。旧体制の大口注文に歪められる懸念が無いため。
+#
+# MTO（受注発注推奨）判定の直近実績救済（v1.18.0で追加。同上 N-2）:
+#   Cランクの散発型・まとめ買い型は24ヶ月統計だけでMTO（受注発注推奨・提案対象外）と
+#   判定されるため、最近伸びた商品が「動かない商品」に固定される問題があった
+#   （実測: 分析上の月平均0.3個・直近90日実績8.3個/月で在庫-27という欠品例）。
+#   直近90日の実需要（recent_demand_monthly）がMTO_RESCUE_MIN_MONTHLY以上なら
+#   MTO判定を解除し通常提案に戻す。あわせて「在庫マイナス」の強制救済（下記）を
+#   「在庫ちょうど0」にも広げる（直近90日で動いている場合に限る）。
+#
 # 終売フラグ（v1.6.0で追加）:
 #   在庫はあるが再発注できない商品（キャンペーン終了等）は「終売商品設定」で
 #   個別に指定でき、以後は提案対象から外れる（提案除外設定とは別枠で管理）
@@ -126,6 +142,19 @@
 #   従来通り on_order で相殺される（この項目はあくまで純粋な在庫マイナスのみを救済する）。
 #   ただし手動の「🚫除外」「🔚終売」設定は従来通り最優先で常に非表示のまま
 #   （在庫マイナスでも意図的に提案不要と判断された商品を強制的に出さないため）。
+#   v1.18.0〜: 「在庫ちょうど0」も、直近90日の実需要がMTO_RESCUE_MIN_MONTHLY以上なら
+#   同様に強制救済する（従来は在庫<0のみで、在庫0はCランク間欠需要等の条件次第では
+#   参考表示にすら回らず埋もれていた）。
+#
+# 季節性の反映（v1.19.0で追加。設計原本: 発注提案精度改善_設計プラン.md N-3）:
+#   全社の月別売上を過去SEASON_INDEX_YEARS年で集計し、月別指数（年平均=1.0）を算出。
+#   実績: 12月は1.22〜1.40倍・1月は0.73〜0.85倍で5年連続して安定した季節がある。
+#   推奨在庫のうち「保護期間の平均需要」の項にだけ指数を掛ける（推奨在庫まるごとに
+#   掛けると、季節と無関係な安全在庫・実績フロアまで膨らみ過大になるため。実測では
+#   　まるごと適用に対し需要項のみ適用は影響額が約1/5程度に収まることを確認済み）。
+#   指数が±SEASON_INDEX_MIN_DEV以内の月（ノイズ）は補正しない。暴走防止に
+#   SEASON_INDEX_CLAMPでクランプする。ENABLE_SEASON_ADJUSTでこの補正全体を無効化できる
+#   （最初はN-1・N-2だけ先に運用し、11月頃に季節性を有効化する段階導入を想定）。
 #
 # まとめ発注グループ（Phase J・v1.14.0で追加。設計原本: まとめ発注グループ_設計プラン.md）:
 #   一部のメーカーは「系列合計が○本の倍数」でないと発注できず、1商品あたりも○本単位。
@@ -167,6 +196,7 @@ import argparse
 import json
 import logging
 import math
+import os
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -176,7 +206,12 @@ import pandas as pd
 import requests
 
 SCRIPT_DIR  = Path(__file__).parent
-CONFIG_PATH = SCRIPT_DIR / 'config.json'
+SECRET_ROOT = Path(os.environ.get(
+    'BEAUFIELD_SECRETS_DIR',
+    Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
+    / 'Beaufield' / 'secrets',
+))
+CONFIG_PATH = SECRET_ROOT / 'order-app' / 'config.json'
 OUTPUT_DIR  = SCRIPT_DIR / 'output'
 LOG_DIR     = SCRIPT_DIR / 'logs'
 
@@ -214,6 +249,25 @@ HOLDING_COST_RATE = 0.20   # 年間保有コスト率（資金・場所・廃番
 DECLINE_TREND_MONTHS    = 12    # 比較に使う月数（1年）
 DECLINE_RATIO_THRESHOLD = 0.4   # 直近12ヶ月平均が1年前の12ヶ月平均のこの比率以下なら「減少トレンド」
 CAP_MONTHS_DECLINING    = 2.0   # 減少トレンド商品の推奨在庫上限（月平均の何ヶ月分まで許すか。P95フロアの代わり）
+
+# ---- 増加トレンド判定パラメータ（v1.18.0） ----
+# 減少トレンドと対称の仕組み。伸びている商品の推奨在庫が24ヶ月平均に引っ張られて
+# 過小にならないよう、直近12ヶ月平均を使う。詳細: 発注提案精度改善_設計プラン.md N-1
+GROWTH_RATIO_THRESHOLD  = 1.5   # 直近12ヶ月平均が1年前の12ヶ月平均のこの倍率以上なら「増加トレンド」
+
+# ---- 直近実需要の把握・MTO判定の直近実績救済（v1.18.0） ----
+# 24ヶ月/12ヶ月の月次統計とは別に「今どれだけ動いているか」を持つための短期窓。
+# アプリの提案タブ（要対応セクション）・MTO救済・在庫0救済で共通利用する。
+# 詳細: 発注提案精度改善_設計プラン.md N-0 / N-2
+RECENT_DEMAND_DAYS      = 90    # 直近実需要の集計窓（日）
+MTO_RESCUE_MIN_MONTHLY  = 0.5   # 直近90日換算でこれ以上動いていればMTO扱い・在庫0の対象外扱いを解除
+
+# ---- 季節性の反映パラメータ（v1.19.0） ----
+# 詳細: 発注提案精度改善_設計プラン.md N-3
+ENABLE_SEASON_ADJUST  = True    # False にすると季節性補正だけを無効化できる（N-1/N-2は影響しない）
+SEASON_INDEX_YEARS    = 5       # 月別指数の算出に使う年数（分析窓24ヶ月とは別に全社売上を集計）
+SEASON_INDEX_MIN_DEV  = 0.10    # 指数が1.0±この比率以内の月はノイズとみなし補正しない
+SEASON_INDEX_CLAMP    = (0.75, 1.35)   # 指数のクランプ範囲（極端な値による暴走を防ぐ）
 
 # ---- 実績ベースの安全在庫フロア（v1.16.0） ----
 # 「安定型」でも月内の受注バースト（1回の受注が月間需要の大半を占めるケース）を
@@ -320,13 +374,16 @@ def normalize_supplier_code(c):
         return None
 
 
-def load_sales(csv_path, start_str, end_str):
+def load_sales(csv_path, start_str, end_str, season_years=None):
     """売上明細CSVを読み込み、期間フィルタ・型変換して返す
     列: 0=売上日, 1=売上№(取引単位のキー), 24=商品コード, 26=数量
     ※33列目の「伝票No」はほぼ空欄のため使わない
 
-    戻り値: (期間フィルタ後のDataFrame, 商品コード別の全期間・最終売上日dict)
+    戻り値: (期間フィルタ後のDataFrame, 商品コード別の全期間・最終売上日dict, 季節指数用の月別合計Series)
     最終売上日は死蔵在庫検出（v1.10.0）用に、分析期間(24ヶ月)に絞る前の全履歴から取る。
+    季節指数用の月別合計（v1.19.0）も同様に、分析期間(24ヶ月)より長い season_years 年分を
+    全社合計（商品コードに関わらず）で集計する。24ヶ月では季節を1〜2サンプルしか取れず
+    ノイズと区別できないため、season_years=None なら計算しない（呼び出し側で省略可）。
     CSVは1回しか読まない（同じ954,122行を2回読むと+5秒かかるため、期間フィルタ前に集計する）
     """
     logging.info(f'売上CSV読み込み開始: {csv_path}')
@@ -354,12 +411,24 @@ def load_sales(csv_path, start_str, end_str):
     # （返品のみの行を最終売上日にしないよう qty>0 に絞る）
     last_sale_by_code = df[df['qty'] > 0].groupby('code')['date'].max().to_dict()
 
+    # 季節指数用（v1.19.0）: 分析期間(24ヶ月)とは別に season_years 年分の全社月別合計を取る。
+    # 進行中の当月は日数が揃わず必ず過小になるため除外する（例: 当月が12日分しか無い状態で
+    # 5年分の平均に混ぜると、その月の指数だけ不自然に低く出る）
+    season_monthly_totals = None
+    if season_years:
+        season_start_str = (date.today() - timedelta(days=366 * season_years)).strftime('%Y%m%d')
+        current_ym = date.today().strftime('%Y%m')
+        df_season = df[(df['date'] >= season_start_str) & (df['qty'] > 0)]
+        df_season = df_season.assign(ym=df_season['date'].str[:6])
+        df_season = df_season[df_season['ym'] != current_ym]
+        season_monthly_totals = df_season.groupby('ym')['qty'].sum()
+
     df = df[(df['date'] >= start_str) & (df['date'] <= end_str)]
 
     df['slip'] = df['slip'].fillna('').str.strip()
     df['ym'] = df['date'].str[:6]
     logging.info(f'期間内の有効行数: {len(df):,}行  商品数: {df["code"].nunique():,}件')
-    return df, last_sale_by_code
+    return df, last_sale_by_code, season_monthly_totals
 
 
 def load_products(csv_path):
@@ -873,6 +942,7 @@ def build_group_proposals(groups, members_by_group, results_by_code, products):
                     'mm': mm, 'daily': (mm / DAYS_PER_MONTH) if mm > 0 else 1e-9,
                     'lot': int(r['lot']), 'p95': float(r['p95_order_size']),
                     'maxOrder': float(r['max_order_size']),
+                    'recentMM': float(r.get('recent_demand_monthly', 0.0)),
                 })
             else:
                 # 分析期間(24ヶ月)に売上が1件も無い商品（廃番ではなく現行品として残っているケース）。
@@ -887,6 +957,7 @@ def build_group_proposals(groups, members_by_group, results_by_code, products):
                     'stock': float(prod['stock']), 'onOrder': 0.0,
                     'pos': float(prod['stock']), 'rec': 0.0, 'cost': float(prod['cost']),
                     'mm': 0.0, 'daily': 1e-9, 'lot': int(g['itemUnit']), 'p95': 0.0, 'maxOrder': 0.0,
+                    'recentMM': 0.0,
                 })
 
         active = [m for m in members if m['mm'] >= g['minMean']]
@@ -935,6 +1006,7 @@ def build_group_proposals(groups, members_by_group, results_by_code, products):
                 'p95Order': m['p95'],
                 'maxOrder': m['maxOrder'],
                 'refOnly': ref_only,
+                'recentDemandMonthly': m['recentMM'],
                 'groupId': g['groupId'],
                 'allocTier': m['tier'],
                 'note': build_group_note(g, m, due, shortage, threshold),
@@ -1056,6 +1128,56 @@ def compute_recommended(stat, protect_days, service_z, p95_mode='full', p95_cap_
     return recommended
 
 
+def compute_recent_demand_monthly(daily_arr, days=RECENT_DEMAND_DAYS):
+    """直近days日の日次実績配列から、月換算した「今どれだけ動いているか」を返す（v1.18.0, N-0）。
+    24ヶ月/12ヶ月の月次統計とは別の短期窓。存在しない商品（daily_arrがNone）は0.0を返す。
+    daily_arr は日付の古い順に並んだ配列を想定し、末尾がRECENT_DEMAND_DAYS分＝直近になる"""
+    if daily_arr is None or len(daily_arr) == 0:
+        return 0.0
+    window = daily_arr[-days:] if len(daily_arr) >= days else daily_arr
+    actual_days = len(window)
+    if actual_days <= 0:
+        return 0.0
+    return round(float(window.sum()) / actual_days * DAYS_PER_MONTH, 1)
+
+
+def compute_season_index(monthly_totals, min_dev=SEASON_INDEX_MIN_DEV, clamp=SEASON_INDEX_CLAMP):
+    """全社の月別合計Series（インデックス='YYYYMM'文字列）から月別指数（'01'〜'12' -> 倍率）を
+    計算する（v1.19.0, N-3）。年ごとに年平均=1.0へ正規化してから月で平均するため、年による
+    総量の増減（既存客の減少・新規取引先の増加等）の影響を受けにくい。
+    指数が1.0±min_dev以内の月はノイズとみなし1.0に戻す。clampで極端な値を抑える。
+    データが無ければ空dict（＝呼び出し側は季節性補正なしとして扱う）"""
+    if monthly_totals is None or monthly_totals.empty:
+        return {}
+    df = monthly_totals.rename('qty').reset_index()
+    df.columns = ['ym', 'qty']
+    df['year'] = df['ym'].str[:4]
+    df['mo'] = df['ym'].str[4:6]
+    year_mean = df.groupby('year')['qty'].transform('mean')
+    df = df[year_mean > 0].copy()
+    if df.empty:
+        return {}
+    df['norm'] = df['qty'] / year_mean[df.index]
+    idx = df.groupby('mo')['norm'].mean().clip(lower=clamp[0], upper=clamp[1])
+    idx = idx.where((idx - 1.0).abs() >= min_dev, 1.0)
+    return idx.round(3).to_dict()
+
+
+def seasonal_factor_for_period(base_date, period_days, season_idx):
+    """base_date から period_days 日間にかかる月の加重平均指数を返す（月をまたぐ保護期間に対応）。
+    season_idx が空（データ不足等）なら常に1.0（＝補正なし）"""
+    if not season_idx:
+        return 1.0
+    period_days = max(1, int(round(period_days)))
+    total = 0.0
+    d = base_date
+    one_day = timedelta(days=1)
+    for _ in range(period_days):
+        total += season_idx.get(f'{d.month:02d}', 1.0)
+        d += one_day
+    return total / period_days
+
+
 def wilson_hilferty_quantile(mu, sd, z):
     """平均・標準偏差からガンマ分布近似で分位点を返す（Wilson-Hilferty近似）。
     平均に対して標準偏差が大きすぎる（歪度の仮定が崩れる）場合は正規近似にフォールバックする"""
@@ -1125,20 +1247,29 @@ def estimate_lot(lot_stats_entry, lot_override=None):
     return gcd_qty if gcd_qty >= 2 else 1
 
 
-def build_note(stat, protect_days, lot, on_order=0, abc='A', is_declining=False, older_mean=None,
-                forced_by_negative_stock=False, ref_reason='', floor_source=''):
+def build_note(stat, protect_days, lot, on_order=0, abc='A', is_declining=False, is_growing=False,
+                older_mean=None, forced_by_negative_stock=False, stock=None, ref_reason='',
+                floor_source='', season_factor=None):
     """提案根拠の短い説明文（ルールベース）"""
     parts = []
     pattern = stat['pattern']
-    window_months = DECLINE_TREND_MONTHS if is_declining else WINDOW_MONTHS
+    window_months = DECLINE_TREND_MONTHS if (is_declining or is_growing) else WINDOW_MONTHS
     if ref_reason:
         parts.append(f"📎参考表示（{ref_reason}のため自動提案の対象外。在庫が推奨を下回ったのでお知らせのみ）")
     if forced_by_negative_stock:
-        parts.append("⚠️在庫マイナスのため通常の対象外条件を無視して表示")
+        if stock is not None and stock < 0:
+            parts.append("⚠️在庫マイナスのため通常の対象外条件を無視して表示")
+        else:
+            parts.append("⚠️在庫ゼロ・直近実績ありのため通常の対象外条件を無視して表示")
     if on_order > 0:
         parts.append(f"発注済み（仕入未計上）{on_order:.0f}個を在庫に加算済み")
     if is_declining and older_mean is not None:
         parts.append(f"直近{DECLINE_TREND_MONTHS}ヶ月の実績を優先（1年前は月平均{older_mean:.0f}個→直近は月平均{stat['mean_monthly']:.0f}個に減少）")
+    if is_growing and older_mean is not None:
+        parts.append(f"直近{DECLINE_TREND_MONTHS}ヶ月の実績を優先（1年前は月平均{older_mean:.0f}個→直近は月平均{stat['mean_monthly']:.0f}個に増加）")
+    if season_factor is not None and abs(season_factor - 1.0) >= SEASON_INDEX_MIN_DEV:
+        pct = round((season_factor - 1.0) * 100)
+        parts.append(f"季節指数{season_factor:.2f}倍（例年比{'+' if pct >= 0 else ''}{pct}%）を保護期間の需要に反映")
     if pattern == 'まとめ買い型':
         if stat['adi']:
             parts.append(f"約{stat['adi']:.1f}ヶ月間隔で、1回あたり最大{stat['max_order_size']:.0f}個のまとまり注文あり")
@@ -1348,8 +1479,19 @@ def main():
     months = month_range(start_date, end_date)
     logging.info(f'分析期間: {start_date} 〜 {end_date}（{len(months)}ヶ月 / {window_days}日）')
 
-    sales, last_sale_by_code = load_sales(sales_path, start_str, end_str)
+    sales, last_sale_by_code, season_monthly_totals = load_sales(
+        sales_path, start_str, end_str,
+        season_years=SEASON_INDEX_YEARS if ENABLE_SEASON_ADJUST else None)
     products = load_products(products_path)
+
+    # ---- 季節指数（v1.19.0, N-3） ----
+    season_idx = compute_season_index(season_monthly_totals) if ENABLE_SEASON_ADJUST else {}
+    if season_idx:
+        idx_str = ' '.join(f'{mo}月{season_idx.get(mo, 1.0):.2f}' for mo in
+                           [f'{m:02d}' for m in range(1, 13)])
+        logging.info(f'季節指数（過去{SEASON_INDEX_YEARS}年・年平均=1.0）: {idx_str}')
+    elif ENABLE_SEASON_ADJUST:
+        logging.info('季節指数: データ不足のため今回は補正なし')
 
     # ---- まとめ発注グループの所属判定（Phase J, v1.14.0） ----
     # 商品名ベースなので新色が追加されても自動で系列に入る（マスター保守が不要）。
@@ -1464,7 +1606,13 @@ def main():
         stat_recent = compute_stats(g_month_recent, sizes_recent, recent_months, window_days_recent)
         is_declining = (older_mean_monthly >= MIN_MEAN_MONTHLY and
                         stat_recent['mean_monthly'] <= older_mean_monthly * DECLINE_RATIO_THRESHOLD)
-        stat = stat_recent if is_declining else stat_full
+        # 増加トレンド判定（v1.18.0, N-1）: 減少トレンドと対称。大きく伸びていたら
+        # 24ヶ月平均ではなく直近12ヶ月ベースに切り替える（is_decliningとは排他）
+        is_growing = (not is_declining and
+                      stat_recent['mean_monthly'] >= MIN_MEAN_MONTHLY and
+                      older_mean_monthly > 0 and
+                      stat_recent['mean_monthly'] >= older_mean_monthly * GROWTH_RATIO_THRESHOLD)
+        stat = stat_recent if (is_declining or is_growing) else stat_full
 
         months_of_history = len([ym for ym in months if ym >= first_ym.get(code, months[0])])
         insufficient = months_of_history < MIN_MONTHS_DATA
@@ -1495,7 +1643,8 @@ def main():
 
         analyzed.append({
             'code': code, 'prod': prod, 'supp_key': supp_key, 'protect_days': protect_days,
-            'stat': stat, 'is_declining': is_declining, 'stat_full_mean': stat_full['mean_monthly'],
+            'stat': stat, 'is_declining': is_declining, 'is_growing': is_growing,
+            'stat_full_mean': stat_full['mean_monthly'],
             'older_mean': round(older_mean_monthly, 1),
             'insufficient': insufficient, 'stock': stock, 'unit_cost': unit_cost,
             'lot': lot, 'on_order': on_order, 'excluded': excluded, 'eol_flagged': eol_flagged,
@@ -1517,32 +1666,63 @@ def main():
         insufficient, stock, unit_cost = item['insufficient'], item['stock'], item['unit_cost']
         lot, on_order, excluded = item['lot'], item['on_order'], item['excluded']
         eol_flagged, is_declining = item['eol_flagged'], item['is_declining']
+        is_growing = item['is_growing']
         older_mean = item['older_mean']
+
+        # 直近実需要（v1.18.0, N-0）: 24ヶ月/12ヶ月の月次統計とは別に「今どれだけ動いているか」
+        # を持つ。MTO判定の直近実績救済（N-2）・季節性補正の対象判定（N-3）・アプリの
+        # 「要対応」表示（Phase M）で共通利用する
+        daily_arr = daily_arr_by_code.get(code)
+        recent_demand_monthly = compute_recent_demand_monthly(daily_arr)
+
+        # Cランクの間欠需要（散発型・まとめ買い型）は提案を出さず受注発注推奨とする。
+        # ただし直近90日で実際に動いている商品はMTO扱いを解除する（v1.18.0, N-2）
+        mto_recommended = ((abc == 'C') and (stat['pattern'] in ('まとめ買い型', '散発型'))
+                           and recent_demand_monthly < MTO_RESCUE_MIN_MONTHLY)
 
         z = SERVICE_Z_BY_CLASS[abc]
         if is_declining:
             # 減少トレンド商品はランクに関わらずP95フロアを適用しない（旧体制最後の
             # 大口注文1件がP95・stdを歪めるため）。代わりに専用の月数キャップで頭打ちにする
+            cap_months = CAP_MONTHS_DECLINING
             recommended = compute_recommended(stat, protect_days, z,
-                                               p95_mode='none', global_cap_months=CAP_MONTHS_DECLINING)
+                                               p95_mode='none', global_cap_months=cap_months)
         elif abc == 'A':
+            cap_months = CAP_MONTHS_GLOBAL
             recommended = compute_recommended(stat, protect_days, z,
-                                               p95_mode='full', global_cap_months=CAP_MONTHS_GLOBAL)
+                                               p95_mode='full', global_cap_months=cap_months)
         elif abc == 'B':
+            cap_months = CAP_MONTHS_GLOBAL
             recommended = compute_recommended(stat, protect_days, z,
                                                p95_mode='capped', p95_cap_months=CAP_MONTHS_B,
-                                               global_cap_months=CAP_MONTHS_GLOBAL)
+                                               global_cap_months=cap_months)
         else:
+            cap_months = CAP_MONTHS_GLOBAL
             recommended = compute_recommended(stat, protect_days, z,
-                                               p95_mode='none', global_cap_months=CAP_MONTHS_GLOBAL)
+                                               p95_mode='none', global_cap_months=cap_months)
+
+        # ---- 季節性の反映（v1.19.0, N-3） ----
+        # 推奨在庫のうち「保護期間の平均需要」の項にだけ指数を掛ける（推奨在庫まるごとに
+        # 掛けると季節と無関係な安全在庫・実績フロアまで膨らみ過大になるため）。
+        # MTO対象（受注発注推奨）は自動提案の対象外なので補正しない。
+        # 指数を掛けた後、同じ月数キャップを再適用する（暴走防止。実測ではキャップに
+        # 引っかかる商品はほぼ無く、効果を大きく削ることはない）
+        season_f = None   # build_note・stats_json用に常に定義しておく（未適用ならNoneのまま）
+        if ENABLE_SEASON_ADJUST and season_idx and not mto_recommended:
+            season_f = seasonal_factor_for_period(date.today(), protect_days, season_idx)
+            if abs(season_f - 1.0) >= SEASON_INDEX_MIN_DEV:
+                demand_term = stat['daily_mean'] * protect_days
+                recommended = max(0, round(recommended + demand_term * (season_f - 1.0)))
+                cap_val = math.ceil(stat['mean_monthly'] * cap_months) if stat['mean_monthly'] > 0 else 0
+                if cap_val > 0:
+                    recommended = min(recommended, cap_val)
 
         # ---- 実績ベースの安全在庫フロア（v1.16.0） ----
         # 「安定型」は月次標準偏差だけでは受注バーストを拾えないため、保護日数の
         # ローリング窓の実績分布（ガンマ近似・実績分位数）と現行推奨の大きい方を採用する
-        # （フロアなので下げない）。減少トレンド商品は窓も直近12ヶ月に限定する
-        cap_months = CAP_MONTHS_DECLINING if is_declining else CAP_MONTHS_GLOBAL
-        daily_arr = daily_arr_by_code.get(code)
-        window_arr = daily_arr[recent_offset:] if (is_declining and daily_arr is not None) else daily_arr
+        # （フロアなので下げない）。減少・増加トレンド商品は窓も直近12ヶ月に限定する
+        window_arr = (daily_arr[recent_offset:]
+                      if ((is_declining or is_growing) and daily_arr is not None) else daily_arr)
         floor_val, floor_source = compute_window_floor(
             window_arr, protect_days, z, QUANTILE_BY_CLASS[abc], stat['mean_monthly'], cap_months)
         if floor_val > recommended:
@@ -1550,16 +1730,17 @@ def main():
         else:
             floor_source = ''
 
-        # Cランクの間欠需要（散発型・まとめ買い型）は提案を出さず受注発注推奨とする
-        mto_recommended = (abc == 'C') and (stat['pattern'] in ('まとめ買い型', '散発型'))
-
         shortage = recommended - (stock + on_order)
-        stock_negative = stock < 0
+        # 在庫マイナスは従来どおり無条件で救済。在庫ちょうど0は直近90日で動いていれば
+        # 救済する（v1.18.0, N-2。従来は在庫0がCランク間欠需要等の条件次第で参考表示にすら
+        # 回らず埋もれていた）
+        stock_negative = (stock < 0) or (stock <= 0 and recent_demand_monthly >= MTO_RESCUE_MIN_MONTHLY)
         # 通常の対象条件（データ十分・Cランク間欠需要でない・月平均が閾値以上）
         normally_eligible = (not insufficient) and (not mto_recommended) and stat['mean_monthly'] >= min_mean
         # 手動の「🚫除外」「🔚終売」は最優先。提案にも参考表示にも一切出さない
         manually_hidden = excluded or eol_flagged
-        # 在庫マイナスの商品は上記の自動除外条件を無視して救済表示する（手動の除外・終売のみ優先）
+        # 在庫マイナス・在庫ゼロ(直近実需要あり)の商品は上記の自動除外条件を無視して
+        # 救済表示する（手動の除外・終売のみ優先）
         eligible = (not manually_hidden) and (stock_negative or normally_eligible)
         forced_by_negative_stock = stock_negative and not normally_eligible
         # 参考表示（v1.13.0）: 自動条件で提案対象外だが在庫が推奨を下回っている商品。
@@ -1597,7 +1778,10 @@ def main():
             'excluded': excluded,
             'eol_flagged': eol_flagged,
             'is_declining': is_declining,
+            'is_growing': is_growing,
             'older_12mo_mean': older_mean,
+            'recent_demand_monthly': recent_demand_monthly,
+            'season_factor': round(season_f, 3) if season_f is not None else None,
             'floor_source': floor_source,
             'stock': stock,
             'on_order': on_order,
@@ -1619,9 +1803,9 @@ def main():
             'max_order_size': stat['max_order_size'],
         }
         results.append(row)
-        # stat['monthly'] は減少トレンド商品なら直近12ヶ月分、そうでなければ24ヶ月分
-        # なので、対応する月ラベルもそれに合わせないとズレる（v1.7.0で修正）
-        stat_months = recent_months if is_declining else months
+        # stat['monthly'] は減少・増加トレンド商品なら直近12ヶ月分、そうでなければ24ヶ月分
+        # なので、対応する月ラベルもそれに合わせないとズレる（v1.7.0で修正、v1.18.0で増加側も対応）
+        stat_months = recent_months if (is_declining or is_growing) else months
         stats_json[code] = {**row, 'monthly': dict(zip(stat_months, stat['monthly']))}
 
         # 過剰在庫: 現在庫が推奨在庫のEXCESS_RATIO倍を超え、超過数量がEXCESS_MIN_QTY以上
@@ -1664,8 +1848,13 @@ def main():
                 'p95Order': stat['p95_order_size'],
                 'maxOrder': stat['max_order_size'],
                 'refOnly': ref_only,
-                'note': build_note(stat, protect_days, lot, on_order, abc, is_declining, older_mean,
-                                   forced_by_negative_stock, ref_reason, floor_source),
+                # 直近90日実需要の月換算（v1.18.0, N-0）。アプリの「要対応」表示（Phase M）用
+                'recentDemandMonthly': recent_demand_monthly,
+                'note': build_note(stat, protect_days, lot, on_order=on_order, abc=abc,
+                                   is_declining=is_declining, is_growing=is_growing,
+                                   older_mean=older_mean, forced_by_negative_stock=forced_by_negative_stock,
+                                   stock=stock, ref_reason=ref_reason, floor_source=floor_source,
+                                   season_factor=season_f),
             })
 
         if args.dry_run:
@@ -1816,6 +2005,10 @@ def main():
                        'default_order_cycle_days': DEFAULT_ORDER_CYCLE_DAYS,
                        'cap_months_b': CAP_MONTHS_B, 'cap_months_global': CAP_MONTHS_GLOBAL,
                        'cap_months_declining': CAP_MONTHS_DECLINING,
+                       'growth_ratio_threshold': GROWTH_RATIO_THRESHOLD,
+                       'mto_rescue_min_monthly': MTO_RESCUE_MIN_MONTHLY,
+                       'recent_demand_days': RECENT_DEMAND_DAYS,
+                       'season_adjust_enabled': ENABLE_SEASON_ADJUST, 'season_index': season_idx,
                        'abc_a_cum': ABC_A_CUM, 'abc_b_cum': ABC_B_CUM},
             'items': stats_json,
         }, f, ensure_ascii=False, indent=1)
@@ -1833,6 +2026,9 @@ def main():
     declining_count = int(df_out['is_declining'].sum())
     if declining_count:
         logging.info(f'  うち直近{DECLINE_TREND_MONTHS}ヶ月ベースに切り替え（減少トレンド検出）: {declining_count:,}件')
+    growing_count = int(df_out['is_growing'].sum())
+    if growing_count:
+        logging.info(f'  うち直近{DECLINE_TREND_MONTHS}ヶ月ベースに切り替え（増加トレンド検出・v1.18.0）: {growing_count:,}件')
     eol_count = int(df_out['eol_flagged'].sum())
     total_amount = sum(p['amount'] for p in real_proposals)
     logging.info(f'発注提案: {len(real_proposals):,}件 / 合計 {total_amount:,.0f}円'

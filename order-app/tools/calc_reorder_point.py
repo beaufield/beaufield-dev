@@ -46,7 +46,12 @@ import requests
 # 設定読み込み
 # ============================================================
 SCRIPT_DIR  = Path(__file__).parent
-CONFIG_PATH = SCRIPT_DIR / 'config.json'
+SECRET_ROOT = Path(os.environ.get(
+    'BEAUFIELD_SECRETS_DIR',
+    Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
+    / 'Beaufield' / 'secrets',
+))
+CONFIG_PATH = SECRET_ROOT / 'order-app' / 'config.json'
 LOG_DIR     = SCRIPT_DIR / 'logs'
 
 def load_config():

@@ -21,8 +21,9 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.29.0';
+const VERSION         = 'v1.31.0';
 const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
+const PROP_STUCK_NOTIFY_DAYS = 14; // 提案滞留の通知・「要対応」表示の閾値（日）。Phase M, v1.31.0〜
 
 // Google Drive上の商品マスターCSVファイル名
 // ※ 同名ファイルが複数ある場合はファイルIDで指定（下記コメント参照）
@@ -52,6 +53,7 @@ const SHEET_RECEIPT_AUTO = '入荷実績（自動）'; // analyze_demand.pyが�
 const SHEET_POSTING_LAG  = '計上ラグ（自動）'; // 仕入先ごとの「仕入日→仕入入力日」の実績中央値（Phase G, v1.25.0〜）
 const SHEET_ORDER_GROUPS = '発注グループ設定'; // 系列合計が一定本数の倍数でしか発注できないメーカーの設定（Phase J, v1.27.0〜）
 const SHEET_GROUP_STATUS = '発注グループ状況'; // analyze_demand.py がグループ別の発注時期判定を毎回全面書き換え（Phase J, v1.27.0〜）
+const SHEET_PROP_STUCK   = '提案滞留';       // 「いつから不足しているか」を持つ滞留トラッキング（Phase M, v1.31.0〜）
 
 // 入荷待ち判定パラメータ（Phase F, v1.24.0〜）
 // 提案の抑制（on_order加算）はリードタイムまでで変更しない。入荷待ちリストへの表示だけ
@@ -137,35 +139,7 @@ function validateSession(token) {
 // エントリーポイント（GET）
 // ============================================================
 function doGet(e) {
-  const p      = (e && e.parameter) ? e.parameter : {};
-  const action = p.action || '';
-  const token  = p.session_token || '';
-
-  // セッション検証
-  const auth = validateSession(token);
-  if (!auth.valid) {
-    // 認証シートを一時的に読めなかっただけの場合はSESSION_INVALIDにしない。
-    // クライアント側はこれを見てログアウトさせず、リトライ対象として扱う
-    if (auth.transient) {
-      return jsonResponse({ success: false, error: 'AUTH_UNAVAILABLE', message: '認証確認に失敗しました。もう一度お試しください。' });
-    }
-    return jsonResponse({ success: false, error: 'SESSION_INVALID', message: '認証が必要です。ポータルからログインし直してください。' });
-  }
-
-  try {
-    switch (action) {
-      case 'getMasters':        return jsonResponse(getMasters());
-      case 'getProductMaster':  return jsonResponse(getProductMaster());
-      case 'getOrders':         return jsonResponse(getOrders(p.supplierCode || ''));
-      case 'getOrderDetail':    return jsonResponse(getOrderDetail(p.orderNo));
-      case 'getOrderTemplate':  return jsonResponse(getOrderTemplate(p.makerKey || ''));
-      case 'getOrderProposals': return jsonResponse(getOrderProposals());
-      default:                  return jsonResponse({ success: false, error: '不明なアクション: ' + action });
-    }
-  } catch(err) {
-    Logger.log('doGet error: ' + err);
-    return jsonResponse({ success: false, error: 'INTERNAL_ERROR' });
-  }
+  return jsonResponse({ success: false, error: 'USE_POST' });
 }
 
 // ============================================================
@@ -249,6 +223,12 @@ function doPost(e) {
       case 'saveReceived': return jsonResponse(saveReceived(p, auth.user_id));
       case 'saveEolFlag': return jsonResponse(saveEolFlag(p, auth.user_id));
       case 'saveLotOverride': return jsonResponse(saveLotOverride(p, auth.user_id));
+      case 'getMasters':        return jsonResponse(getMasters());
+      case 'getProductMaster':  return jsonResponse(getProductMaster());
+      case 'getOrders':         return jsonResponse(getOrders(p.supplierCode || ''));
+      case 'getOrderDetail':    return jsonResponse(getOrderDetail(p.orderNo));
+      case 'getOrderTemplate':  return jsonResponse(getOrderTemplate(p.makerKey || ''));
+      case 'getOrderProposals': return jsonResponse(getOrderProposals());
       default:             return jsonResponse({ success: false, error: '不明なアクション: ' + action });
     }
   } catch(err) {
@@ -1011,10 +991,16 @@ function saveSupplier(p, user_id) {
 // 区分列は v1.26.0 で追加。'提案'=通常の発注提案 / '参考'=自動条件では提案対象外だが
 // 在庫が推奨在庫を下回っている商品（アプリではチェックOFF・グレー表示で金額合計に入れない）
 // グループID・配分枠は v1.27.0（Phase J）で追加。まとめ発注グループに属する商品の行に入る
+// 直近90日実需要は v1.31.0（Phase M）で追加。アプリの「要対応」表示の掲載判定に使う
 const PROPOSAL_HEADERS = ['商品コード','商品名','仕入先コード','仕入先名','パターン',
                           '現在庫','発注済','推奨在庫','提案数量','最低発注数','月平均',
                           '注文P95','最大注文','根拠メモ','AI説明','分析日時','仕入単価','提案金額','ABCランク',
-                          '区分','グループID','配分枠'];
+                          '区分','グループID','配分枠','直近90日実需要'];
+
+// 提案滞留シートの列定義（updateOrderProposals / getOrderProposals で共有。Phase M, v1.31.0〜）
+// 「いつから不足しているか」を持つ。発注提案シートは毎回全面書き換えなので、この情報だけは
+// 別シートで前回との差分を追跡する必要がある（詳細: 発注提案精度改善_設計プラン.md M-1）
+const PROP_STUCK_HEADERS = ['商品コード','商品名','初回不足日','最終確認日','直近在庫','直近不足数','区分'];
 
 // 過剰在庫シートの列定義（updateOrderProposals / getOrderProposals で共有）
 const EXCESS_HEADERS = ['商品コード','商品名','仕入先コード','仕入先名','現在庫','推奨在庫',
@@ -1440,6 +1426,67 @@ function formatManYen(yen) {
   return (yen / 10000).toFixed(1) + '万円';
 }
 
+// 'YYYY-MM-DD' 文字列同士の日数差（UTC正午基準で計算しタイムゾーンの影響を避ける）
+function daysBetweenIso_(fromIso, toIso) {
+  const toMs = s => new Date(s + 'T12:00:00Z').getTime();
+  return Math.round((toMs(toIso) - toMs(fromIso)) / 86400000);
+}
+
+// 提案滞留の更新（Phase M, v1.31.0。設計原本: 発注提案精度改善_設計プラン.md M-1）。
+// 「発注提案」シートは毎回全面書き換えなので前回との差分が消える。ここだけ別シートで
+// 「いつから不足しているか」を追跡する。滞留日数は「今日−初回不足日」の日数差で持つ
+// （連続実行回数ではない）ため、分析バッチが飛んだ日があってもズレない。
+// まとめ発注グループ所属商品（groupId有り）は「発注グループ状況」シートで発注時期を
+// 別管理しているため対象外（refOnly=trueが「まだ発注時期でない」正常な待機状態であり、
+// 個別商品の「見落とし」とは意味が異なるため）
+function updateProposalStuckTracking_(ss, proposals, analyzedAt) {
+  const today = (String(analyzedAt || '').match(/^\d{4}-\d{2}-\d{2}/) || [])[0]
+                || Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+
+  // 今回時点で「不足」している商品（推奨在庫 − 在庫 − 発注済 > 0）を code をキーに集約
+  const shortNow = {};
+  proposals.forEach(x => {
+    if (x.groupId) return;
+    const code = String(x.code || '').trim();
+    if (!code) return;
+    const stock = parseFloat(x.stock) || 0;
+    const onOrder = parseFloat(x.onOrder) || 0;
+    const recommended = parseFloat(x.recommended) || 0;
+    const shortQty = recommended - stock - onOrder;
+    if (shortQty <= 0) return;
+    shortNow[code] = {
+      name: String(x.name || ''), stock: stock, shortQty: shortQty,
+      kubun: x.refOnly ? '参考' : '提案',
+    };
+  });
+
+  let sh = ss.getSheetByName(SHEET_PROP_STUCK);
+  if (!sh) sh = ss.insertSheet(SHEET_PROP_STUCK);
+
+  const prevShortSince = {};
+  if (sh.getLastRow() > 1) {
+    sh.getDataRange().getValues().slice(1).forEach(r => {
+      const code = String(r[0] || '').trim();
+      if (code) prevShortSince[code] = String(r[2] || '');
+    });
+  }
+
+  const entries = Object.keys(shortNow).map(code => {
+    const s = shortNow[code];
+    const shortSince = prevShortSince[code] || today;   // 既存レコードがあれば初回不足日を据え置き
+    return { code: code, name: s.name, shortSince: shortSince, stock: s.stock,
+             shortQty: s.shortQty, kubun: s.kubun, stuckDays: daysBetweenIso_(shortSince, today) };
+  });
+
+  sh.clearContents();
+  sh.getRange(1, 1, 1, PROP_STUCK_HEADERS.length).setValues([PROP_STUCK_HEADERS]);
+  if (entries.length > 0) {
+    const rows = entries.map(e => [e.code, e.name, e.shortSince, today, e.stock, e.shortQty, e.kubun]);
+    sh.getRange(2, 1, rows.length, PROP_STUCK_HEADERS.length).setValues(rows);
+  }
+  return entries;   // 通知（updateOrderProposals）で滞留日数の集計に使う
+}
+
 // POST(APIキー): 発注提案・過剰在庫・死蔵在庫シートを全面書き換え、在庫KPI履歴に1行記録
 // リクエスト: { proposals: [{code,name,supplierCode,supplierName,pattern,stock,recommended,
 //              proposedQty,lot,meanMonthly,p95Order,maxOrder,note,refOnly}],
@@ -1459,6 +1506,11 @@ function updateOrderProposals(p) {
   const analyzedAt = String(p.analyzedAt || '');
 
   const ss = getSS();
+
+  // 提案滞留の更新（Phase M, v1.31.0）。「発注提案」シートを上書きする前に、
+  // 今回の proposals から不足状態を判定して前回との差分を取る必要がある
+  const stuckEntries = updateProposalStuckTracking_(ss, proposals, analyzedAt);
+
   let sh = ss.getSheetByName(SHEET_PROPOSALS);
   if (!sh) sh = ss.insertSheet(SHEET_PROPOSALS);
 
@@ -1488,7 +1540,8 @@ function updateOrderProposals(p) {
       String(x.abcRank || ''),
       x.refOnly ? '参考' : '提案',
       String(x.groupId   || ''),
-      String(x.allocTier || '')
+      String(x.allocTier || ''),
+      parseFloat(x.recentDemandMonthly) || 0
     ]);
     sh.getRange(2, 1, rows.length, PROPOSAL_HEADERS.length).setValues(rows);
   }
@@ -1609,10 +1662,18 @@ function updateOrderProposals(p) {
           x.groupName + ' ' + (parseFloat(x.proposedQty) || 0) + '本（' +
           (parseFloat(x.groupUnit) || 0) + '本単位）').join(' / '))
       : '';
+    // 提案滞留（Phase M, v1.31.0）: 何度も分析が回っているのに手つかずの提案を知らせる。
+    // 同じ提案が出続けていても件数だけ見ると「今日もN件」としか分からないため、
+    // 「減っていない」ことに気づけるよう滞留件数・欠品中件数を別枠で出す
+    const stuckLong = stuckEntries.filter(e => e.stuckDays >= PROP_STUCK_NOTIFY_DAYS);
+    const stuckOut = stuckLong.filter(e => e.stock <= 0).length;
+    const stuckLine = stuckLong.length > 0
+      ? ('\n⏳ ' + PROP_STUCK_NOTIFY_DAYS + '日以上未処理の提案: ' + stuckLong.length + '件（うち欠品中 ' + stuckOut + '件）')
+      : '';
     notifyLineWorks(
       '📋 発注提案の分析が完了しました（' + analyzedAt + '）\n' +
       '提案: ' + realProposals.length + '件・合計' + formatManYen(totalAmount) + '\n' + lines.join('\n') + more +
-      excessLine + deadLine + groupLine + refLine + '\n' +
+      excessLine + deadLine + groupLine + refLine + stuckLine + '\n' +
       '発注アプリの「発注提案」タブで確認してください。'
     );
   }
@@ -1774,10 +1835,34 @@ function getOrderProposals() {
         refOnly:      String(r[19] || '').trim() === '参考',
         // まとめ発注グループ（v1.27.0〜）。列が無い旧データは空文字＝グループ外の通常商品
         groupId:      String(r[20] || '').trim(),
-        allocTier:    String(r[21] || '').trim()
+        allocTier:    String(r[21] || '').trim(),
+        // 直近90日実需要（v1.31.0〜）。列が無い旧データは0（アプリの「要対応」判定で使う）
+        recentDemandMonthly: parseFloat(r[22]) || 0
       }));
     analyzedAt = cellToStr(data[1][15], 'yyyy-MM-dd HH:mm');
   }
+
+  // 提案滞留（Phase M, v1.31.0）: 「いつから不足しているか」を各提案行にマージする。
+  // 発注提案シートには持たせず別シートで追跡しているため、ここで突き合わせる
+  const stuckByCode = {};
+  const stuckSh = ss.getSheetByName(SHEET_PROP_STUCK);
+  if (stuckSh && stuckSh.getLastRow() > 1) {
+    const todayIso = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+    stuckSh.getDataRange().getValues().slice(1).forEach(r => {
+      const code = String(r[0] || '').trim();
+      const shortSince = String(r[2] || '');
+      if (!code || !shortSince) return;
+      stuckByCode[code] = {
+        shortSince: shortSince,
+        stuckDays: Math.max(0, daysBetweenIso_(shortSince, todayIso)),
+      };
+    });
+  }
+  proposals.forEach(x => {
+    const s = stuckByCode[x.code];
+    x.shortSince = s ? s.shortSince : '';
+    x.stuckDays  = s ? s.stuckDays  : 0;
+  });
 
   // 除外リスト（除外管理UIでの表示・解除用）
   let exclusions = [];
