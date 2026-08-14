@@ -1,7 +1,5 @@
 // =========================================
 // 経費承認フロー GAS バックエンド
-// Version: 1.5.1
-//
 // --- スクリプトプロパティに設定する値 ---
 // LW_CLIENT_ID       : LINE WORKS Client ID
 // LW_CLIENT_SECRET   : Client Secret
@@ -14,7 +12,8 @@
 // AUTH_SHEET_ID      : beaufield-auth スプレッドシートID（portal と共有）
 // =========================================
 
-const VERSION = '1.7.0';
+const VERSION = '1.8.0';
+const APP_NAME = 'expense-approval';
 
 // --- シート名 ---
 const SHEET_REQUESTS  = '申請一覧';
@@ -504,7 +503,25 @@ function validateSession_(token) {
           if (String(users[j][0]) !== userId) continue;
           const active = users[j][3] === true || users[j][3] === 'TRUE';
           if (!active) return { valid: false };
-          return { valid: true, user_id: userId, name: String(users[j][1] || userId) };
+
+          const rolesSh = authSs.getSheetByName('user_app_roles');
+          if (!rolesSh) return { valid: false };
+          const roles = rolesSh.getDataRange().getValues();
+          let role = '';
+          for (let k = 1; k < roles.length; k++) {
+            if (String(roles[k][0]) === userId && String(roles[k][1]) === APP_NAME) {
+              role = String(roles[k][2] || '').trim().toLowerCase();
+              break;
+            }
+          }
+          if (!role || role === 'none') return { valid: false };
+          return {
+            valid: true,
+            user_id: userId,
+            name: String(users[j][1] || userId),
+            is_admin: users[j][5] === true || users[j][5] === 'TRUE',
+            role: role
+          };
         }
         return { valid: false };
       }

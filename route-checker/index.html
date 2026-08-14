@@ -801,10 +801,11 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.21.0';
+const APP_VERSION = 'v1.22.0';
 const START_MONTH = '2026-04'; // 運用開始月（これより前は選択肢に表示しない）
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
+const PORTAL_API_URL = 'https://script.google.com/macros/s/AKfycbzNVW7AaPUTuwneE-M40DTN1clO5VT2yLCHq7cjYvaHqfMfXgVi38UAOsDZQbmmN3wOzw/exec';
 
 // ============================================================
 // State
@@ -1154,21 +1155,19 @@ function resetTo(viewName, data) {
 // API
 // ============================================================
 async function apiGet(action, params) {
-  const publicActions = ['login', 'getPublicUsers'];
-  if (!publicActions.includes(action)) return apiPost(action, params);
-  const url = new URL(GAS_URL);
-  url.searchParams.set('action', action);
-  if (params && Object.keys(params).length > 0) {
-    url.searchParams.set('data', JSON.stringify(params));
+  if (action !== 'getPublicUsers') return apiPost(action, params);
+  try {
+    return await apiPost(action, params);
+  } catch (postErr) {
+    // GAS v1.13.0の反映前だけ旧GETへフォールバックする。
+    // 新GAS反映後はPOSTが成功するため、この経路は自動的に使われなくなる。
+    const url = new URL(GAS_URL);
+    url.searchParams.set('action', 'getPublicUsers');
+    const res = await fetch(url.toString());
+    const json = await res.json();
+    if (json.status !== 'ok') throw postErr;
+    return json.result;
   }
-  // 認証不要アクション以外はセッショントークンを付与
-  const res  = await fetch(url.toString());
-  const json = await res.json();
-  if (json.status !== 'ok') {
-    if (json.message === 'SESSION_INVALID') { location.replace(PORTAL_URL); return; }
-    throw new Error(json.message || 'エラーが発生しました');
-  }
-  return json.result;
 }
 
 async function apiPost(action, params) {
@@ -2085,7 +2084,9 @@ async function processChangePinStep() {
         new_pin:     newPin
       });
       closeChangePinModal();
-      showToast('PINを変更しました ✅');
+      showToast('PINを変更しました。再ログインしてください ✅');
+      clearSession();
+      setTimeout(function() { location.replace(PORTAL_URL); }, 1200);
     } catch(e) {
       changePinValue = '';
       changePinStep  = 0;
@@ -2933,10 +2934,24 @@ async function submitLogin() {
   }
 }
 
-function logout() {
-  clearSession();    // bf_sessionを削除（全アプリ共通ログアウト）
+async function logout() {
+  const session = _getBfSession();
+  try {
+    if (session && session.token) {
+      const body = new URLSearchParams({
+        action: 'logout',
+        data: JSON.stringify({ session_token: session.token })
+      });
+      await fetch(PORTAL_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString()
+      });
+    }
+  } catch(e) {}
+  clearSession();
   clearSalonCache();
-  location.replace(PORTAL_URL); // ポータルへリダイレクト
+  location.replace(PORTAL_URL);
 }
 
 // ============================================================

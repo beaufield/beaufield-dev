@@ -367,7 +367,7 @@
   // ============================================================
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzkuWEqpJLhERoYlosHIeazlVjl3ipIq8u3x0rp4tCU7BaqPuYt4kP78Ha5Vu4ayNWDCg/exec';
   const PORTAL_URL   = 'https://beaufield.github.io/beaufield-dev/';
-  const APP_VERSION  = '1.11.0';
+  const APP_VERSION  = '1.12.0';
   const USE_MOCK     = false; // ← 開発中は true にして data/dashboard_data.json を見る
 
   document.getElementById('header-version').textContent = 'v' + APP_VERSION;
@@ -692,7 +692,7 @@
       '<div class="pcard-row1">' +
         '<span class="pcard-name">' + esc(a.name) + '</span>' +
         '<span class="badge badge-kind">' + esc(KIND_LABELS[a.kind] || a.kind) + '</span>' +
-        '<button class="edit-toggle-btn" title="扱い・メモを編集" onclick="event.stopPropagation(); toggleMetaEdit(\'' + a.id + '\')">⚙</button>' +
+        '<button class="edit-toggle-btn" title="扱い・メモを編集" onclick="event.stopPropagation(); toggleMetaEdit(\'' + jsArg(a.id) + '\')">⚙</button>' +
       '</div>' +
       triggerHtml +
       '<div class="pcard-row2">' +
@@ -715,12 +715,12 @@
     // 低頻度な資産（期次ブリーフィング等は年数回）を日数だけで死蔵扱いしないための逃げ道
     return '<div class="pcard-expand">' +
       '<div class="exp-field"><label>扱い（日数だけで判断できないものを手動で上書き）</label>' +
-      '<select id="disp-' + a.id + '">' + dispOptions + '</select></div>' +
+      '<select id="disp-' + esc(a.id) + '">' + dispOptions + '</select></div>' +
       '<div class="exp-field"><label>メモ</label>' +
-      '<textarea id="memo-' + a.id + '">' + esc(a.memo || '') + '</textarea></div>' +
+      '<textarea id="memo-' + esc(a.id) + '">' + esc(a.memo || '') + '</textarea></div>' +
       '<div class="exp-btns">' +
-        '<button class="btn-save" id="save-' + a.id + '" onclick="event.stopPropagation(); saveAssetMeta(\'' + a.id + '\')">保存</button>' +
-        '<button class="btn-cancel" onclick="event.stopPropagation(); toggleMetaEdit(\'' + a.id + '\')">閉じる</button>' +
+        '<button class="btn-save" id="save-' + esc(a.id) + '" onclick="event.stopPropagation(); saveAssetMeta(\'' + jsArg(a.id) + '\')">保存</button>' +
+        '<button class="btn-cancel" onclick="event.stopPropagation(); toggleMetaEdit(\'' + jsArg(a.id) + '\')">閉じる</button>' +
       '</div>' +
       '<div class="exp-meta">最終使用: ' + esc(a.last_used || '記録なし') +
         '（判定元: ' + esc(a.evidence) + '）</div>' +
@@ -813,7 +813,7 @@
       '<div class="pcard-row1">' +
         '<span class="pcard-name">' + esc(j.name) + '</span>' +
         '<span class="stale-badge ' + health.cls + '">' + health.txt + '</span>' +
-        '<button class="edit-toggle-btn" title="扱い・メモを編集" onclick="event.stopPropagation(); toggleMetaEdit(\'' + j.id + '\')">⚙</button>' +
+        '<button class="edit-toggle-btn" title="扱い・メモを編集" onclick="event.stopPropagation(); toggleMetaEdit(\'' + jsArg(j.id) + '\')">⚙</button>' +
       '</div>' +
       '<div class="pcard-row2">' +
         '<span class="cat-tag">' + esc(j.category || '') + '</span>' +
@@ -834,12 +834,12 @@
 
     return '<div class="pcard-expand">' +
       '<div class="exp-field"><label>扱い</label>' +
-      '<select id="disp-' + j.id + '">' + dispOptions + '</select></div>' +
+      '<select id="disp-' + esc(j.id) + '">' + dispOptions + '</select></div>' +
       '<div class="exp-field"><label>メモ</label>' +
-      '<textarea id="memo-' + j.id + '">' + esc(j.memo || '') + '</textarea></div>' +
+      '<textarea id="memo-' + esc(j.id) + '">' + esc(j.memo || '') + '</textarea></div>' +
       '<div class="exp-btns">' +
-        '<button class="btn-save" id="save-' + j.id + '" onclick="event.stopPropagation(); saveJobMeta(\'' + j.id + '\')">保存</button>' +
-        '<button class="btn-cancel" onclick="event.stopPropagation(); toggleMetaEdit(\'' + j.id + '\')">閉じる</button>' +
+        '<button class="btn-save" id="save-' + esc(j.id) + '" onclick="event.stopPropagation(); saveJobMeta(\'' + jsArg(j.id) + '\')">保存</button>' +
+        '<button class="btn-cancel" onclick="event.stopPropagation(); toggleMetaEdit(\'' + jsArg(j.id) + '\')">閉じる</button>' +
       '</div>' +
       '<div class="exp-meta">' + esc(health.detail || '') + '</div>' +
       '<div class="exp-meta">最終メッセージ: ' + esc(j.last_message || '（なし）') + '</div>' +
@@ -892,7 +892,7 @@
         const target = allProjects.find(x => x.id === r.id);
         const name = target ? target.name : r.id;
         return '<span class="rel-chip" title="' + esc(r.reason || '') +
-          '" onclick="jumpTo(\'' + r.id + '\')">🔗 ' + esc(name) + '</span>';
+          '" onclick="jumpTo(\'' + jsArg(r.id) + '\')">🔗 ' + esc(name) + '</span>';
       }).join('') + '</div>';
     }
 
@@ -902,7 +902,7 @@
         '<span class="pcard-name">' + esc(p.name) + '</span>' +
         '<span class="badge ' + statusCls + '">' + esc(p.status_label || '?') + '</span>' +
         parseWarn +
-        '<button class="edit-toggle-btn" title="優先度・工数・メモを編集" onclick="event.stopPropagation(); toggleMetaEdit(\'' + p.id + '\')">⚙</button>' +
+        '<button class="edit-toggle-btn" title="優先度・工数・メモを編集" onclick="event.stopPropagation(); toggleMetaEdit(\'' + jsArg(p.id) + '\')">⚙</button>' +
       '</div>' +
       nextActionHtml +
       '<div class="pcard-row2">' +
@@ -930,16 +930,16 @@
 
     return '<div class="pcard-expand">' +
       '<div class="exp-field"><label>優先度（数値・大きいほど上）</label>' +
-      '<input type="number" id="pri-' + p.id + '" value="' + (p.priority != null ? p.priority : '') + '"></div>' +
+      '<input type="number" id="pri-' + esc(p.id) + '" value="' + (p.priority != null ? p.priority : '') + '"></div>' +
       '<div class="exp-field"><label>ボール（手動で上書き）</label>' +
-      '<select id="ball-' + p.id + '">' + ballOptions + '</select></div>' +
+      '<select id="ball-' + esc(p.id) + '">' + ballOptions + '</select></div>' +
       '<div class="exp-field"><label>工数感</label>' +
-      '<select id="effort-' + p.id + '">' + effortOptions + '</select></div>' +
+      '<select id="effort-' + esc(p.id) + '">' + effortOptions + '</select></div>' +
       '<div class="exp-field"><label>メモ</label>' +
-      '<textarea id="memo-' + p.id + '">' + esc(p.memo || '') + '</textarea></div>' +
+      '<textarea id="memo-' + esc(p.id) + '">' + esc(p.memo || '') + '</textarea></div>' +
       '<div class="exp-btns">' +
-        '<button class="btn-save" id="save-' + p.id + '" onclick="event.stopPropagation(); saveMeta(\'' + p.id + '\')">保存</button>' +
-        '<button class="btn-cancel" onclick="event.stopPropagation(); toggleMetaEdit(\'' + p.id + '\')">閉じる</button>' +
+        '<button class="btn-save" id="save-' + esc(p.id) + '" onclick="event.stopPropagation(); saveMeta(\'' + jsArg(p.id) + '\')">保存</button>' +
+        '<button class="btn-cancel" onclick="event.stopPropagation(); toggleMetaEdit(\'' + jsArg(p.id) + '\')">閉じる</button>' +
       '</div>' +
       (p.manual_ops ? '<div class="exp-meta">🔁 手動運用: ' + esc(p.manual_ops) + '</div>' : '') +
       '<div class="exp-meta">原本: ' + esc(p.path || '') + '</div>' +
@@ -1282,6 +1282,17 @@
     return String(str == null ? '' : str)
       .replace(/&/g,'&amp;').replace(/</g,'&lt;')
       .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // HTMLのonclick属性内に埋め込む単一引用符JS文字列用。
+  // HTML表示用esc()とは用途が異なるため、バックスラッシュと改行も無害化する。
+  function jsArg(str) {
+    return String(str == null ? '' : str)
+      .replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+      .replace(/\r/g, '\\r').replace(/\n/g, '\\n')
+      .replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
   function fmtDateTime(iso) {

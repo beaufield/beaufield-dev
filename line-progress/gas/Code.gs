@@ -2,9 +2,8 @@
  * 友だち登録進捗ダッシュボード — バックエンドAPI
  *
  * 構成: GitHub Pages（index.html）+ この GAS WebApp + LINE Harness REST API
- * 認証: beaufield-auth 共通セッション（sessions シート照合のみ。全社員閲覧可の方針
- *       のため is_admin / user_app_roles の role 判定はしない。有効なセッションが
- *       あれば閲覧可）
+ * 認証: beaufield-auth 共通セッション。全社員閲覧可だが、activeユーザーかつ
+ *       user_app_roles に line-progress が明示登録されていることを必須とする。
  * データ源: LINE Harness REST API（Bearer認証）。友だちデータはこの GAS の中だけで
  *           扱い、リポジトリにも公開HTMLのソースにも一切埋め込まない。
  *
@@ -25,8 +24,9 @@
  * 参照: LINEHarness/友だち登録進捗ダッシュボード_設計.md
  */
 
-const VERSION = '1.0.0';
-const CACHE_TTL_SESSION = 900; // セッション検証キャッシュ 15分（project-dashboardと同一パターン）
+const VERSION = '1.1.0';
+const APP_NAME = 'line-progress';
+const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 const CACHE_TTL_DATA = 90;     // 集計結果キャッシュ 90秒（§8-2「開くたび最新」の実務的な下限）
 
 // プロパティ取得（未設定なら明示的にエラー。project-dashboardと同一パターン）
@@ -38,13 +38,13 @@ function prop_(key) {
 
 // ============================================================
 // セッション検証（beaufield-auth sessions シート照合・15分キャッシュ）
-// 🆕 project-dashboardと違い is_admin は見ない（§8-1: 全社員閲覧可のため）
+// is_admin は要求しないが、active とアプリ明示ロールは必須。
 // ============================================================
 function validateSession_(token) {
   if (!token) return { valid: false };
 
   const cache = CacheService.getScriptCache();
-  const cacheKey = 'sess_' + token.slice(-32);
+  const cacheKey = 'sess_line_progress_v2_' + token.slice(-32);
   const cached = cache.get(cacheKey);
   if (cached !== null) {
     try { return JSON.parse(cached); } catch (e) {}
@@ -65,7 +65,30 @@ function validateSession_(token) {
           cache.put(cacheKey, JSON.stringify(r), 60);
           return r;
         }
-        const r = { valid: true, user_id: String(data[i][1]) };
+        const userId = String(data[i][1]);
+        const users = ss.getSheetByName('users').getDataRange().getValues();
+        let userRow = null;
+        for (let j = 1; j < users.length; j++) {
+          if (String(users[j][0]) === userId) { userRow = users[j]; break; }
+        }
+        if (!userRow || !(userRow[3] === true || userRow[3] === 'TRUE')) return { valid: false };
+
+        const roles = ss.getSheetByName('user_app_roles').getDataRange().getValues();
+        let role = '';
+        for (let j = 1; j < roles.length; j++) {
+          if (String(roles[j][0]) === userId && String(roles[j][1]) === APP_NAME) {
+            role = String(roles[j][2] || '').trim().toLowerCase();
+            break;
+          }
+        }
+        if (!role || role === 'none') return { valid: false };
+
+        const r = {
+          valid: true,
+          user_id: userId,
+          name: String(userRow[1] || userId),
+          role: role
+        };
         cache.put(cacheKey, JSON.stringify(r), CACHE_TTL_SESSION);
         return r;
       }

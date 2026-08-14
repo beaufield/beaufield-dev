@@ -12,9 +12,9 @@
  *   SYNC_TOKEN    … 同期スクリプト用の共有シークレット（ランダム長文字列）
  */
 
-const VERSION = '1.8.0';
+const VERSION = '1.9.0';
 const APP_NAME = 'project-dashboard';
-const CACHE_TTL_SESSION = 900; // セッション検証キャッシュ 15分（他アプリと同一パターン）
+const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 
 // プロパティ取得（未設定なら明示的にエラー）
 function prop_(key) {
@@ -147,7 +147,7 @@ function validateSession(token) {
   if (!token) return { valid: false };
 
   const cache = CacheService.getScriptCache();
-  const cacheKey = 'sess_' + token.slice(-32);
+  const cacheKey = 'sess_project_v2_' + token.slice(-32);
   const cached = cache.get(cacheKey);
   if (cached !== null) {
     try { return JSON.parse(cached); } catch (e) {}
@@ -170,7 +170,30 @@ function validateSession(token) {
           return r;
         }
         const userId = String(data[i][1]);
-        const r = { valid: true, user_id: userId, is_admin: isAdmin_(ss, userId) };
+        const users = ss.getSheetByName('users').getDataRange().getValues();
+        let userRow = null;
+        for (let j = 1; j < users.length; j++) {
+          if (String(users[j][0]) === userId) { userRow = users[j]; break; }
+        }
+        if (!userRow || !(userRow[3] === true || userRow[3] === 'TRUE')) return { valid: false };
+
+        const roles = ss.getSheetByName('user_app_roles').getDataRange().getValues();
+        let role = '';
+        for (let j = 1; j < roles.length; j++) {
+          if (String(roles[j][0]) === userId && String(roles[j][1]) === APP_NAME) {
+            role = String(roles[j][2] || '').trim().toLowerCase();
+            break;
+          }
+        }
+        if (!role || role === 'none') return { valid: false };
+
+        const r = {
+          valid: true,
+          user_id: userId,
+          name: String(userRow[1] || userId),
+          is_admin: userRow[5] === true || userRow[5] === 'TRUE',
+          role: role
+        };
         cache.put(cacheKey, JSON.stringify(r), CACHE_TTL_SESSION);
         return r;
       }

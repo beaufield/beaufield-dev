@@ -1,6 +1,5 @@
 // ============================================================
 // Beaufield 発注アプリ - Google Apps Script バックエンド
-// Version: v1.29.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -21,8 +20,9 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.31.0';
-const CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
+const VERSION         = 'v1.33.0';
+const APP_NAME        = 'order-app';
+const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 const PROP_STUCK_NOTIFY_DAYS = 14; // 提案滞留の通知・「要対応」表示の閾値（日）。Phase M, v1.31.0〜
 
 // Google Drive上の商品マスターCSVファイル名
@@ -89,7 +89,7 @@ function validateSession(token) {
   if (!token) return { valid: false };
 
   const cache    = CacheService.getScriptCache();
-  const cacheKey = 'sess_' + token.slice(-32);
+  const cacheKey = 'sess_order_v2_' + token.slice(-32);
   const cached   = cache.get(cacheKey);
   if (cached !== null) {
     try { return JSON.parse(cached); } catch(e) {}
@@ -119,7 +119,36 @@ function validateSession(token) {
           cache.put(cacheKey, JSON.stringify(r), 60);
           return r;
         }
-        const r = { valid: true, user_id: rowUserId };
+        const usersSh = ss.getSheetByName('users');
+        const rolesSh = ss.getSheetByName('user_app_roles');
+        if (!usersSh || !rolesSh) return { valid: false, transient: true };
+
+        const users = usersSh.getDataRange().getValues();
+        let userRow = null;
+        for (let j = 1; j < users.length; j++) {
+          if (String(users[j][0]) === rowUserId) { userRow = users[j]; break; }
+        }
+        if (!userRow || !(userRow[3] === true || userRow[3] === 'TRUE')) {
+          return { valid: false };
+        }
+
+        const roles = rolesSh.getDataRange().getValues();
+        let role = '';
+        for (let j = 1; j < roles.length; j++) {
+          if (String(roles[j][0]) === rowUserId && String(roles[j][1]) === APP_NAME) {
+            role = String(roles[j][2] || '').trim().toLowerCase();
+            break;
+          }
+        }
+        if (!role || role === 'none') return { valid: false };
+
+        const r = {
+          valid: true,
+          user_id: rowUserId,
+          name: String(userRow[1] || rowUserId),
+          is_admin: userRow[5] === true || userRow[5] === 'TRUE',
+          role: role
+        };
         cache.put(cacheKey, JSON.stringify(r), CACHE_TTL_SESSION);
         return r;
       }
@@ -215,6 +244,7 @@ function doPost(e) {
   try {
     switch (action) {
       case 'saveOrder':    return jsonResponse(saveOrder(p, auth.user_id));
+      case 'checkOrderByRequestId': return jsonResponse(checkOrderByRequestId(p, auth.user_id));
       case 'deleteOrder':  return jsonResponse(deleteOrder(p, auth.user_id));
       case 'saveSupplier': return jsonResponse(saveSupplier(p, auth.user_id));
       case 'saveProposalExclusion': return jsonResponse(saveProposalExclusion(p, auth.user_id));
@@ -626,12 +656,16 @@ function getOrders(filterSupplierCode) {
   filterSupplierCode = String(filterSupplierCode || '').trim();
 
   const sh = getSheet(SHEET_HISTORY);
-  const matchesFilter = r => r[0] !== '' && r[0] !== null &&
-    (!filterSupplierCode || String(r[2] || '').trim() === filterSupplierCode);
+  const matchesFilter = r => {
+    const state = String(r[13] || '').trim();
+    const visible = state === '' || state === 'COMPLETE'; // 移行前行は表示、保存途中は隠す
+    return visible && r[0] !== '' && r[0] !== null &&
+      (!filterSupplierCode || String(r[2] || '').trim() === filterSupplierCode);
+  };
 
-  // 発注No・日付・仕入先名等9列のみでよい（K列のrequestIdはここでは不要）。
+  // N列saveStateまで読み、PENDINGを通常履歴へ露出させない。
   // 「マッチする行が20件揃うまで」だけ末尾から遡って読む（対策1）
-  const histRows = readTailRowsUntil_(sh, 9, rows => {
+  const histRows = readTailRowsUntil_(sh, 14, rows => {
     let n = 0;
     for (const r of rows) { if (matchesFilter(r)) { n++; if (n >= 20) return true; } }
     return false;
@@ -724,98 +758,210 @@ function getOrderDetail(orderNo) {
 // POST: 発注保存
 // user_id: validateSession() から取得した実際のユーザーID（改ざん不可）
 // ============================================================
+const ORDER_HISTORY_HEADERS = ['発注No','発注日','発注先コード','発注先名','FAX番号','担当者','品目数','出力方法','登録日時','user_id','requestId','requestHash','revisionBaseOrderNo','saveState'];
+
+function ensureOrderHistorySchema_(histSh) {
+  const current = histSh.getRange(1, 1, 1, ORDER_HISTORY_HEADERS.length).getValues()[0];
+  let differs = false;
+  for (let i = 0; i < ORDER_HISTORY_HEADERS.length; i++) {
+    if (String(current[i] || '') !== ORDER_HISTORY_HEADERS[i]) { differs = true; break; }
+  }
+  if (differs) histSh.getRange(1, 1, 1, ORDER_HISTORY_HEADERS.length).setValues([ORDER_HISTORY_HEADERS]);
+}
+
+function findExactRows_(sheet, column, value) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return [];
+  return sheet.getRange(2, column, lastRow - 1, 1)
+    .createTextFinder(String(value))
+    .matchEntireCell(true)
+    .matchCase(true)
+    .useRegularExpression(false)
+    .findAll()
+    .map(r => r.getRow())
+    .sort((a, b) => a - b);
+}
+
+function normalizeOrderItem_(item) {
+  const qty = Number(item && item.qty);
+  return {
+    janCode: String(item && item.janCode || '').trim(),
+    code: String(item && item.code || '').trim(),
+    name: String(item && item.name || ''),
+    qty: Number.isFinite(qty) ? qty : 0,
+    unit: String(item && item.unit || ''),
+    memo: String(item && item.memo || ''),
+    isHandwritten: item && (item.isHandwritten === true || String(item.isHandwritten).toUpperCase() === 'TRUE')
+  };
+}
+
+function canonicalOrderPayload_(p, user_id, items) {
+  return JSON.stringify([
+    'order-v1', String(user_id || ''), String(p.date || '').trim(),
+    String(p.supplierCode || '').trim(), String(p.supplierName || '').trim(),
+    String(p.fax || '').trim(), String(p.staff || '').trim(), String(p.outputType || '').trim(),
+    String(p.revisionBaseOrderNo || '').trim(),
+    items.map(item => [item.janCode, item.code, item.name, item.qty, item.unit, item.memo, item.isHandwritten])
+  ]);
+}
+
+function sha256Hex_(text) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8)
+    .map(b => ((b + 256) % 256).toString(16).padStart(2, '0')).join('');
+}
+
+function deleteExactRows_(sheet, column, value) {
+  const rows = findExactRows_(sheet, column, value);
+  for (let i = rows.length - 1; i >= 0; i--) sheet.deleteRow(rows[i]);
+  return rows.length;
+}
+
+function replaceAndVerifyOrderItems_(itemsSh, orderNo, items, now) {
+  deleteExactRows_(itemsSh, 1, orderNo);
+  if (items.length > 0) {
+    const rows = items.map(item => [
+      orderNo, item.janCode, item.code, item.name, item.qty, item.unit, item.memo,
+      item.isHandwritten ? 'TRUE' : 'FALSE', now
+    ]);
+    const startRow = itemsSh.getLastRow() + 1;
+    // 自動数値変換で先頭ゼロのJANが欠落しないよう、文字列列だけを先にプレーンテキストへ固定する。
+    // 数量(E列)・手書きフラグ(H列)・登録日時(I列)の書式は変更しない。
+    itemsSh.getRange(startRow, 2, rows.length, 3).setNumberFormat('@');
+    itemsSh.getRange(startRow, 6, rows.length, 2).setNumberFormat('@');
+    itemsSh.getRange(startRow, 1, rows.length, 9).setValues(rows);
+  }
+  SpreadsheetApp.flush();
+  const itemRows = findExactRows_(itemsSh, 1, orderNo);
+  if (itemRows.length !== items.length) throw new Error('ITEM_WRITE_COUNT_MISMATCH');
+  for (let i = 1; i < itemRows.length; i++) {
+    if (itemRows[i] !== itemRows[0] + i) throw new Error('ITEM_WRITE_ROWS_NOT_CONTIGUOUS');
+  }
+  const values = items.length ? itemsSh.getRange(itemRows[0], 2, items.length, 7).getValues() : [];
+  const actual = values.map(r => normalizeOrderItem_({
+    janCode: r[0], code: r[1], name: r[2], qty: r[3], unit: r[4], memo: r[5], isHandwritten: r[6]
+  }));
+  if (JSON.stringify(actual) !== JSON.stringify(items)) throw new Error('ITEM_WRITE_CONTENT_MISMATCH');
+}
+
+function deleteOrderUnlocked_(orderNo, histSh, itemsSh) {
+  const histRows = findExactRows_(histSh, 1, orderNo);
+  // 通常の履歴取得が削除途中を完成済みとして読まないよう、先にPENDINGへ戻す。
+  histRows.forEach(row => histSh.getRange(row, 14).setValue('PENDING'));
+  const deletedItems = deleteExactRows_(itemsSh, 1, orderNo);
+  for (let i = histRows.length - 1; i >= 0; i--) histSh.deleteRow(histRows[i]);
+  return { deletedHist: histRows.length, deletedItems };
+}
+
 function saveOrder(p, user_id) {
-  const date                = p.date         || '';
-  const supplierCode        = p.supplierCode || '';
-  const supplierName        = p.supplierName || '';
-  const fax                 = p.fax          || '';
-  const staff               = p.staff        || '';
-  const outputType          = p.outputType   || '';
-  const items               = JSON.parse(p.items || '[]');
-  // クライアント側で発注1件ごとに発行される冪等キー（通信エラーによる再送の二重登録防止用）
-  const requestId           = String(p.requestId || '').trim();
-  // 修正発注の場合は元の発注Noが渡される（保存後に削除する）
+  const requestId = String(p.requestId || '').trim();
+  if (!requestId) return { success: false, error: 'REQUEST_ID_REQUIRED', message: 'requestIdが必要です' };
+  if (!/^[A-Za-z0-9-]{8,100}$/.test(requestId)) {
+    return { success: false, error: 'REQUEST_ID_INVALID', message: 'requestIdの形式が不正です' };
+  }
+
+  let rawItems;
+  try { rawItems = JSON.parse(p.items || '[]'); }
+  catch(e) { return { success: false, error: 'ITEMS_INVALID', message: '明細JSONを読み取れません' }; }
+  if (!Array.isArray(rawItems) || rawItems.length === 0 || rawItems.length > 500) {
+    return { success: false, error: 'ITEMS_INVALID', message: '明細は1〜500件で指定してください' };
+  }
+  const items = rawItems.map(normalizeOrderItem_);
+  const date = String(p.date || '').trim();
+  const supplierCode = String(p.supplierCode || '').trim();
+  const supplierName = String(p.supplierName || '').trim();
+  const fax = String(p.fax || '').trim();
+  const staff = String(p.staff || '').trim();
+  const outputType = String(p.outputType || '').trim();
   const revisionBaseOrderNo = String(p.revisionBaseOrderNo || '').trim();
-
   if (!date || !supplierCode || !supplierName || !staff) {
-    return { success: false, error: '必須項目が不足しています (date, supplierCode, supplierName, staff)' };
+    return { success: false, error: 'REQUIRED_FIELDS_MISSING', message: '必須項目が不足しています' };
   }
 
-  // 同時保存による発注No重複を防ぐため、採番〜履歴書き込みをロックで保護
+  const requestHash = sha256Hex_(canonicalOrderPayload_(p, user_id, items));
   const lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(10000);
-  } catch(e) {
-    return { success: false, error: '現在別の処理が実行中です。数秒後に再度お試しください。' };
-  }
+  try { lock.waitLock(10000); }
+  catch(e) { return { success: false, error: 'LOCK_BUSY', message: '現在別の保存処理が実行中です' }; }
 
   try {
     const histSh = getSheet(SHEET_HISTORY);
-
-    // K列（requestId）が無い既存シートにも後付けで対応する
-    if (histSh.getRange(1, 11).getValue() !== 'requestId') {
-      histSh.getRange(1, 11).setValue('requestId');
-    }
-
-    // 冪等チェック: 同じrequestIdの行が既にあれば、新規採番せずその発注Noを返す
-    // （「サーバーは保存できたがクライアントには404が返った」ケースの再送で二重登録を防ぐ）
-    // 同一リクエストの再送は必ずごく短時間内に起こるため、末尾の一定件数だけ確認すれば十分（対策1）
-    if (requestId) {
-      const histTail = readTailRowsUntil_(histSh, 11, () => true, 300);
-      for (let i = 0; i < histTail.length; i++) {
-        if (String(histTail[i][10] || '').trim() === requestId) {
-          return { success: true, orderNo: String(histTail[i][0]).trim() };
-        }
-      }
-    }
-
-    const orderNo = generateOrderNo(date);
-    const now     = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
-
-    // user_id をサーバー側から記録（フロントから渡されたstaffとは別に監査用として保持）
-    histSh.appendRow([orderNo, date, supplierCode, supplierName, fax, staff, items.length, outputType, now, user_id, requestId]);
-
     const itemsSh = getSheet(SHEET_ITEMS);
-    if (items.length > 0) {
-      const rows = items.map(item => [
-        orderNo,
-        item.janCode       || '',
-        item.code          || '',
-        item.name          || '',
-        item.qty           || 0,
-        item.unit          || '',
-        item.memo          || '',
-        item.isHandwritten ? 'TRUE' : 'FALSE',
-        now
-      ]);
-      itemsSh.getRange(itemsSh.getLastRow() + 1, 1, rows.length, 9).setValues(rows);
+    ensureOrderHistorySchema_(histSh);
+    const matches = findExactRows_(histSh, 11, requestId);
+    if (matches.length > 1) {
+      return { success: false, error: 'REQUEST_ID_CONFLICT', message: '同じrequestIdの履歴が複数あります' };
     }
 
-    // 修正発注の場合：新規保存が完了してから元の発注を削除する
-    // 対象は必ず「今まさに修正した直前の発注」＝ごく最近の行のため、末尾から探す（対策1）
-    if (revisionBaseOrderNo) {
-      try {
-        // 発注履歴から削除
-        const histTail = readRowsForKey_(histSh, revisionBaseOrderNo, 1);
-        for (let i = histTail.rows.length - 1; i >= 0; i--) {
-          if (String(histTail.rows[i][0]).trim() === revisionBaseOrderNo) {
-            histSh.deleteRow(histTail.startRow + i);
-            break;
-          }
-        }
-        // 発注明細から削除
-        const itemsTail = readRowsForKey_(itemsSh, revisionBaseOrderNo, 1);
-        for (let i = itemsTail.rows.length - 1; i >= 0; i--) {
-          if (String(itemsTail.rows[i][0]).trim() === revisionBaseOrderNo) {
-            itemsSh.deleteRow(itemsTail.startRow + i);
-          }
-        }
-      } catch(e) {
-        Logger.log('修正前履歴削除エラー（無視）: ' + e);
+    let histRow;
+    let orderNo;
+    if (matches.length === 1) {
+      histRow = matches[0];
+      const existing = histSh.getRange(histRow, 1, 1, 14).getValues()[0];
+      orderNo = String(existing[0] || '').trim();
+      const existingUser = String(existing[9] || '').trim();
+      const existingHash = String(existing[11] || '').trim();
+      const existingState = String(existing[13] || '').trim();
+      if (existingUser && existingUser !== String(user_id || '').trim()) {
+        return { success: false, error: 'REQUEST_ID_CONFLICT', message: 'requestIdの利用者が一致しません' };
       }
+      if (existingHash && existingHash !== requestHash) {
+        return { success: false, error: 'REQUEST_ID_CONFLICT', message: '同じrequestIdに異なる内容が送信されました' };
+      }
+      if (existingState === 'COMPLETE' && existingHash === requestHash) {
+        return { success: true, orderNo, alreadyComplete: true };
+      }
+      // 移行前行またはPENDINGは、存在確認だけで済ませず同じorderNoへ全明細を書き直す。
+    } else {
+      orderNo = generateOrderNo(date);
+      if (!orderNo || revisionBaseOrderNo === orderNo) {
+        return { success: false, error: 'ORDER_STATE_INVALID', message: '発注Noまたは修正元の状態が不正です' };
+      }
+      // 空行を先にappendせず、次のsetValues 1回でPENDING行を作る。
+      histRow = histSh.getLastRow() + 1;
+    }
+    if (!orderNo || revisionBaseOrderNo === orderNo) {
+      return { success: false, error: 'ORDER_STATE_INVALID', message: '発注Noまたは修正元の状態が不正です' };
     }
 
+    const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+    histSh.getRange(histRow, 1, 1, 14).setValues([[
+      orderNo, date, supplierCode, supplierName, fax, staff, items.length, outputType,
+      now, user_id, requestId, requestHash, revisionBaseOrderNo, 'PENDING'
+    ]]);
+    replaceAndVerifyOrderItems_(itemsSh, orderNo, items, now);
+    if (revisionBaseOrderNo) deleteOrderUnlocked_(revisionBaseOrderNo, histSh, itemsSh);
+    // 修正元行の削除で行番号が詰まるため、requestIdから現在行を取り直して完了にする。
+    const finalRows = findExactRows_(histSh, 11, requestId);
+    if (finalRows.length !== 1) throw new Error('REQUEST_ROW_LOST_DURING_SAVE');
+    histSh.getRange(finalRows[0], 14).setValue('COMPLETE');
+    SpreadsheetApp.flush();
     return { success: true, orderNo };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function checkOrderByRequestId(p, user_id) {
+  const requestId = String(p.requestId || '').trim();
+  if (!requestId) return { success: false, state: 'UNKNOWN', error: 'REQUEST_ID_REQUIRED' };
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) return { success: true, state: 'UNKNOWN', reason: 'BUSY' };
+  try {
+    const histSh = getSheet(SHEET_HISTORY);
+    ensureOrderHistorySchema_(histSh);
+    const matches = findExactRows_(histSh, 11, requestId);
+    if (matches.length === 0) return { success: true, state: 'NOT_FOUND_NOW' };
+    if (matches.length > 1) return { success: true, state: 'CONFLICT' };
+    const row = histSh.getRange(matches[0], 1, 1, 14).getValues()[0];
+    const owner = String(row[9] || '').trim();
+    if (owner && owner !== String(user_id || '').trim()) {
+      return { success: false, state: 'UNKNOWN', error: 'FORBIDDEN' };
+    }
+    const state = String(row[13] || '').trim();
+    return {
+      success: true,
+      state: state === 'COMPLETE' ? 'COMPLETE' : 'PARTIAL',
+      orderNo: String(row[0] || '').trim()
+    };
   } finally {
     lock.releaseLock();
   }
@@ -834,36 +980,19 @@ function deleteOrder(p, user_id) {
     return { success: false, error: '削除は管理者のみ実行できます' };
   }
 
-  // 発注履歴シートから削除（1行）
-  // 削除操作は履歴タブ（直近20件）からのみ行われるため、対象は必ず末尾付近にある（対策1）
-  const histSh   = getSheet(SHEET_HISTORY);
-  const histTail = readRowsForKey_(histSh, orderNo, 1);
-  let deletedHist = false;
-  for (let i = histTail.rows.length - 1; i >= 0; i--) {
-    if (String(histTail.rows[i][0]).trim() === orderNo) {
-      histSh.deleteRow(histTail.startRow + i);
-      deletedHist = true;
-      break; // 発注Noはユニーク
-    }
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(10000); }
+  catch(e) { return { success: false, error: 'LOCK_BUSY', message: '現在別の保存処理が実行中です' }; }
+  try {
+    const histSh = getSheet(SHEET_HISTORY);
+    const itemsSh = getSheet(SHEET_ITEMS);
+    ensureOrderHistorySchema_(histSh);
+    const result = deleteOrderUnlocked_(orderNo, histSh, itemsSh);
+    if (result.deletedHist === 0) return { success: true, notFound: true, deletedItems: result.deletedItems };
+    return { success: true, deletedItems: result.deletedItems };
+  } finally {
+    lock.releaseLock();
   }
-  if (!deletedHist) {
-    // 通信エラーによる再送で「既に削除済み」に来ることがある。冪等に成功扱いにする
-    return { success: true, notFound: true, deletedItems: 0 };
-  }
-
-  // 発注明細シートから削除（複数行）
-  const itemsSh   = getSheet(SHEET_ITEMS);
-  const itemsTail = readRowsForKey_(itemsSh, orderNo, 1);
-  let deletedCount = 0;
-  // 後ろから削除しないと行番号がズレる
-  for (let i = itemsTail.rows.length - 1; i >= 0; i--) {
-    if (String(itemsTail.rows[i][0]).trim() === orderNo) {
-      itemsSh.deleteRow(itemsTail.startRow + i);
-      deletedCount++;
-    }
-  }
-
-  return { success: true, deletedItems: deletedCount };
 }
 
 // ============================================================
@@ -1323,16 +1452,18 @@ function buildPendingOrders() {
     rows.length > 0 && String(rows[0][0] || '').trim() < cutoffKey
   );
 
-  // 発注No → 仕入先情報（発注履歴シートから。発注明細には仕入先が入っていないため）
-  // 発注No/日付/仕入先コード/仕入先名の4列で足りる
+  // 発注No → 仕入先情報（発注履歴シートから。PENDINGは入荷待ち集計へ含めない）
   const histSh = ss.getSheetByName(SHEET_HISTORY);
   const supplierByOrderNo = {};
   if (histSh && histSh.getLastRow() > 1) {
-    readTailRowsUntil_(histSh, 4, rows =>
+    readTailRowsUntil_(histSh, 14, rows =>
       rows.length > 0 && String(rows[0][0] || '').trim() < cutoffKey
     ).forEach(r => {
       const orderNo = String(r[0] || '').trim();
-      if (orderNo) supplierByOrderNo[orderNo] = { code: String(r[2] || '').trim(), name: String(r[3] || '') };
+      const state = String(r[13] || '').trim();
+      if (orderNo && (state === '' || state === 'COMPLETE')) {
+        supplierByOrderNo[orderNo] = { code: String(r[2] || '').trim(), name: String(r[3] || '') };
+      }
     });
   }
 
@@ -1354,7 +1485,8 @@ function buildPendingOrders() {
     const y = parseInt(dateKey.slice(0, 4), 10), m = parseInt(dateKey.slice(4, 6), 10), d = parseInt(dateKey.slice(6, 8), 10);
     const orderEpochDay = ymdToEpochDay(y, m, d);
 
-    const supp = supplierByOrderNo[orderNo] || { code: '', name: '' };
+    if (!supplierByOrderNo[orderNo]) return; // PENDINGや履歴削除済みの明細は集計しない
+    const supp = supplierByOrderNo[orderNo];
     const leadTimeDays = leadTimeByCode[supp.code] || DEFAULT_LEAD_TIME_DAYS;
     // 物理的な到着予定日（従来どおり）
     const expectedEpochDay = orderEpochDay + Math.round(leadTimeDays);
@@ -2378,7 +2510,7 @@ function initializeSheets() {
     return sh;
   }
 
-  ensureSheet(SHEET_HISTORY,  ['発注No','発注日','発注先コード','発注先名','FAX番号','担当者','品目数','出力方法','登録日時','user_id','requestId']);
+  ensureSheet(SHEET_HISTORY,  ['発注No','発注日','発注先コード','発注先名','FAX番号','担当者','品目数','出力方法','登録日時','user_id','requestId','requestHash','revisionBaseOrderNo','saveState']);
   ensureSheet(SHEET_ITEMS,    ['発注No','JANコード','Beaufieldコード','商品名','数量','単位','備考','手書きフラグ','登録日時']);
   ensureSheet(SHEET_REORDER,  ['商品コード','適正在庫','更新日時']);
   ensureSheet(SHEET_RECEIPT_AUTO, RECEIPT_AUTO_HEADERS);

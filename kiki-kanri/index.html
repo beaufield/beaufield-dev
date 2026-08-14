@@ -621,8 +621,9 @@
 
 <script>
 // ========== APP VERSION ==========
-const APP_VERSION = '1.11.0';
+const APP_VERSION = '1.12.0';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
+const PORTAL_API_URL = 'https://script.google.com/macros/s/AKfycbzNVW7AaPUTuwneE-M40DTN1clO5VT2yLCHq7cjYvaHqfMfXgVi38UAOsDZQbmmN3wOzw/exec';
 
 // ========== DATA STORE ==========
 const API_URL = 'https://script.google.com/macros/s/AKfycbzWQEPQ89DwT7n38vtLFf1COx0rz13-qKC7GM1dZBiEBYP5GV5H_3J-Olz_rR2ckr4o/exec';
@@ -673,12 +674,8 @@ async function apiPost(action, data) {
   params.append('action', action);
   params.append('data', JSON.stringify(data));
 
-  // login / getAuthUsers 以外はセッショントークンを付与
-  const PUBLIC_ACTIONS = ['login', 'getAuthUsers'];
-  if (!PUBLIC_ACTIONS.includes(action)) {
-    const s = _getBfSession();
-    params.append('session_token', (s && s.token) ? s.token : '');
-  }
+  const s = _getBfSession();
+  params.append('session_token', (s && s.token) ? s.token : '');
 
   const requestBody = params.toString();
 
@@ -768,9 +765,23 @@ function tryAutoLogin() {
   return true;
 }
 
-function logout() {
-  localStorage.removeItem(SESSION_KEY); // bf_session削除（全アプリ共通ログアウト）
-  location.replace(PORTAL_URL);         // ポータルへリダイレクト
+async function logout() {
+  const s = _getBfSession();
+  try {
+    if (s && s.token) {
+      const body = new URLSearchParams({
+        action: 'logout',
+        data: JSON.stringify({ session_token: s.token })
+      });
+      await fetch(PORTAL_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString()
+      });
+    }
+  } catch(e) {}
+  localStorage.removeItem(SESSION_KEY);
+  location.replace(PORTAL_URL);
 }
 
 async function loadAuthUsers() {
@@ -917,7 +928,9 @@ async function processChangePinStep() {
       });
       if (json.status === 'error') throw new Error(json.error);
       closeChangePinModal();
-      showToast('PINを変更しました ✅');
+      showToast('PINを変更しました。再ログインしてください ✅');
+      localStorage.removeItem(SESSION_KEY);
+      setTimeout(() => location.replace(PORTAL_URL), 1200);
     } catch(e) {
       changePinValue   = '';
       changePinStep    = 0;

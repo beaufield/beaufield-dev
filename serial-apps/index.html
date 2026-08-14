@@ -792,7 +792,7 @@ select:focus { border-color: #2a6acc; }
 const GAS_URL    = 'https://script.google.com/macros/s/AKfycbwwQVp9pRomDpUlb50CMkh6suHHCvu2gJnLkqnt-cftkudSQUWnFx13X60rh0hgINHKEw/exec';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 const SESSION_KEY = 'bf_session';
-const APP_VERSION = 'v2.16.0';
+const APP_VERSION = 'v2.17.0';
 document.getElementById('versionBar').textContent = 'HTML ' + APP_VERSION;
 document.getElementById('versionLabel').textContent = 'HTML ' + APP_VERSION;
 
@@ -1185,11 +1185,16 @@ function filterProducts(tab) {
 
   candidatesEl.innerHTML = filtered.map(function(p) {
     var sub = [p.code, p.maker].filter(Boolean).join(' / ');
-    return '<div class="product-candidate-item" onclick="selectProductFromList(\'' + tab + '\',\'' + esc(p.code) + '\')">' +
+    return '<div class="product-candidate-item" data-tab="' + esc(tab) + '" data-code="' + esc(p.code) + '">' +
       '<span class="prod-name">' + esc(p.name) + '</span>' +
       (sub ? '<span style="font-size:11px;color:#aaa;margin-left:8px;">' + esc(sub) + '</span>' : '') +
     '</div>';
   }).join('');
+  candidatesEl.querySelectorAll('.product-candidate-item').forEach(function(el) {
+    el.addEventListener('click', function() {
+      selectProductFromList(el.dataset.tab, el.dataset.code);
+    });
+  });
   candidatesEl.style.display = 'block';
 }
 

@@ -1,6 +1,5 @@
 // ============================================================
 // Beaufield ルート訪問チェッカー - Google Apps Script
-// Version: 1.11.1
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -13,7 +12,7 @@
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS         = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID = _PROPS.getProperty('SPREADSHEET_ID');
-const VERSION        = '1.12.0';
+const VERSION        = '1.13.0';
 
 // beaufield-auth 共通認証設定
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
@@ -29,7 +28,7 @@ const DAY_MAP   = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, 
 const DAY_NAMES = ['日', '月', '火', '水', '木', '金', '土'];
 
 // CacheService キャッシュ時間（秒）
-const CACHE_TTL_SESSION      = 900;  // セッション検証: 15分
+const CACHE_TTL_SESSION      = 60;   // 権限変更・ログアウトを最大1分で反映
 const CACHE_TTL_PUBLIC_USERS = 600;  // ユーザー一覧: 10分
 
 // ============================================================
@@ -66,7 +65,7 @@ function validateSession(token) {
 
   // ── キャッシュ確認（CacheService スクリプトキャッシュ・10分） ──
   const cache    = CacheService.getScriptCache();
-  const cacheKey = 'sess_' + token.slice(-32); // キー長制限対策で末尾32文字を使用
+  const cacheKey = 'sess_route_v2_' + token.slice(-32); // アプリ権限を含むキャッシュ
   const cached   = cache.get(cacheKey);
   if (cached !== null) {
     try {
@@ -95,7 +94,32 @@ function validateSession(token) {
           cache.put(cacheKey, JSON.stringify(result), 60);
           return result;
         }
-        const result = { valid: true, user_id: rowUserId };
+        const users = ss.getSheetByName('users').getDataRange().getValues();
+        let authUser = null;
+        for (let j = 1; j < users.length; j++) {
+          if (String(users[j][0]) === rowUserId) { authUser = users[j]; break; }
+        }
+        if (!authUser || !(authUser[3] === true || authUser[3] === 'TRUE')) {
+          return { valid: false };
+        }
+
+        const roles = ss.getSheetByName('user_app_roles').getDataRange().getValues();
+        let appRole = '';
+        for (let j = 1; j < roles.length; j++) {
+          if (String(roles[j][0]) === rowUserId && String(roles[j][1]) === APP_NAME) {
+            appRole = String(roles[j][2] || '').trim().toLowerCase();
+            break;
+          }
+        }
+        if (!appRole || appRole === 'none') return { valid: false };
+
+        const result = {
+          valid: true,
+          user_id: rowUserId,
+          name: String(authUser[1] || rowUserId),
+          is_admin: authUser[5] === true || authUser[5] === 'TRUE',
+          app_role: appRole
+        };
         cache.put(cacheKey, JSON.stringify(result), CACHE_TTL_SESSION); // 15分キャッシュ
         return result;
       }
@@ -113,39 +137,7 @@ function validateSession(token) {
 // エントリーポイント（GET）
 // ============================================================
 function doGet(e) {
-  const action = (e && e.parameter && e.parameter.action) ? e.parameter.action : '';
-  let data = {};
-  try {
-    if (e && e.parameter && e.parameter.data) data = JSON.parse(e.parameter.data);
-  } catch(jsonErr) {
-    return _jsonResponse(_err('INVALID_REQUEST'));
-  }
-  const token  = (e && e.parameter && e.parameter.session_token) ? e.parameter.session_token : '';
-
-  // login・getPublicUsers は認証不要（ログイン画面・ユーザー名表示用）
-  const publicActions = ['login', 'getPublicUsers'];
-  if (!publicActions.includes(action)) {
-    return _jsonResponse(_err('USE_POST'));
-  }
-
-  try {
-    switch (action) {
-      case 'login':           return _jsonResponse(login(data));
-      case 'getPublicUsers':  return _jsonResponse(getPublicUsers());
-      case 'getMyRoute':      return _jsonResponse(getMyRoute(data));
-      case 'getMySalons':     return _jsonResponse(getMySalons(data));
-      case 'getTodayLogs':        return _jsonResponse(getTodayLogs(data));
-      case 'getCheckScreenData':  return _jsonResponse(getCheckScreenData(data));
-      case 'getVisitHistory': return _jsonResponse(getVisitHistory(data));
-      case 'getSummary':     return _jsonResponse(getSummary(data));
-      case 'getUsers':        return _jsonResponse(getUsers(data));
-      case 'getAllSalons':    return _jsonResponse(getAllSalons(data));
-      default:                return _jsonResponse(_err('不明なアクション: ' + action));
-    }
-  } catch (err) {
-    Logger.log('doGet error: ' + err);
-    return _jsonResponse(_err('INTERNAL_ERROR'));
-  }
+  return _jsonResponse(_err('USE_POST'));
 }
 
 // ============================================================
@@ -194,6 +186,7 @@ function doPost(e) {
       case 'getSummary':       return _jsonResponse(getSummary(data));
       case 'getUsers':         return _jsonResponse(getUsers(data));
       case 'getAllSalons':     return _jsonResponse(getAllSalons(data));
+      case 'getPublicUsers':   return _jsonResponse(getPublicUsers());
       default:                 return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
@@ -1034,6 +1027,7 @@ function resetPin(data) {
   for (let i = 1; i < rows.length; i++) {
     if (String(rows[i][0]) === target_user_id) {
       sheet.getRange(i + 1, 3).setValue('0000'); // C列: pin
+      _deleteAuthSessions_(authSs, target_user_id);
       return _ok({ user_id: target_user_id });
     }
   }
@@ -1065,11 +1059,22 @@ function changePin(data) {
         return _err('現在のPINが正しくありません');
       }
       sheet.getRange(i + 1, 3).setValue(String(new_pin));
-      return _ok({ user_id: user_id });
+      _deleteAuthSessions_(authSs, user_id);
+      return _ok({ user_id: user_id, reauth_required: true });
     }
   }
 
   return _err('ユーザーが見つかりません');
+}
+
+// PIN変更・リセット時に対象ユーザーの既存セッションをすべて失効させる。
+function _deleteAuthSessions_(authSs, userId) {
+  const sessions = authSs.getSheetByName('sessions');
+  if (!sessions) return;
+  const rows = sessions.getDataRange().getValues();
+  for (let i = rows.length - 1; i >= 1; i--) {
+    if (String(rows[i][1]) === String(userId)) sessions.deleteRow(i + 1);
+  }
 }
 
 /**

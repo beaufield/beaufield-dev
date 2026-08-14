@@ -1,5 +1,5 @@
 // ============================================================
-// シリアルNo管理アプリ (SerialApps) - Code.gs v2.6.0
+// シリアルNo管理アプリ (SerialApps)
 // アーキテクチャ: GitHub Pages (front) + GAS WebApp (API)
 // ============================================================
 // [重要] コードに機密値を直書きしない。GASスクリプトプロパティに設定すること。
@@ -9,12 +9,13 @@
 //     EXPORT_API_KEY  : 月次CSV自動出力（exportShippingCsv）用のAPIキー（ローカルスクリプトと共有）
 // ============================================================
 
-var VERSION = 'v2.7.0';
+var VERSION = 'v2.8.0';
+var APP_NAME = 'serial-apps';
 
 var SHEET_ID       = PropertiesService.getScriptProperties().getProperty('SHEET_ID')       || '';
 var AUTH_SHEET_ID  = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID')  || '';
 var EXPORT_API_KEY = PropertiesService.getScriptProperties().getProperty('EXPORT_API_KEY') || '';
-var CACHE_TTL_SESSION = 900; // 15分（CacheService保持秒数・セッション検証の高速化用）
+var CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 
 // シート名
 var SH_PRODUCT  = 'ProductMaster';
@@ -113,6 +114,9 @@ function doPost(e) {
     return jsonResponse({ success: false, error: 'SESSION_INVALID', message: '認証が必要です' });
   }
 
+  // 登録者名はクライアント送信値を信用せず、認証済みユーザーから確定する。
+  p.registeredBy = auth.name || auth.userId;
+
   try {
     switch (action) {
       case 'registerShipping': return jsonResponse(registerShipping(p));
@@ -135,14 +139,15 @@ function validateSession(token) {
   if (!token) return { valid: false };
 
   var cache    = CacheService.getScriptCache();
-  var cacheKey = 'sess_' + token.slice(-32);
+  var cacheKey = 'sess_serial_v2_' + token.slice(-32);
   var cached   = cache.get(cacheKey);
   if (cached !== null) {
     try { return JSON.parse(cached); } catch (e) {}
   }
 
   try {
-    var sh = SpreadsheetApp.openById(AUTH_SHEET_ID).getSheetByName('sessions');
+    var authSs = SpreadsheetApp.openById(AUTH_SHEET_ID);
+    var sh = authSs.getSheetByName('sessions');
     // シート取得失敗は「セッション無効」ではなく一時障害。負キャッシュしない
     // （Google側の一時的な応答不良でも起こりうるため。負キャッシュすると
     //  有効なトークンがTTLの間ブロックされ続けてしまう）
@@ -158,7 +163,35 @@ function validateSession(token) {
           cache.put(cacheKey, JSON.stringify(invalid), 60);
           return invalid;
         }
-        var valid = { valid: true, userId: String(rows[i][1]) };
+        var userId = String(rows[i][1]);
+        var usersSh = authSs.getSheetByName('users');
+        var rolesSh = authSs.getSheetByName('user_app_roles');
+        if (!usersSh || !rolesSh) return { valid: false, transient: true };
+
+        var users = usersSh.getDataRange().getValues();
+        var userRow = null;
+        for (var j = 1; j < users.length; j++) {
+          if (String(users[j][0]) === userId) { userRow = users[j]; break; }
+        }
+        if (!userRow || !(userRow[3] === true || userRow[3] === 'TRUE')) return { valid: false };
+
+        var roles = rolesSh.getDataRange().getValues();
+        var role = '';
+        for (var k = 1; k < roles.length; k++) {
+          if (String(roles[k][0]) === userId && String(roles[k][1]) === APP_NAME) {
+            role = String(roles[k][2] || '').trim().toLowerCase();
+            break;
+          }
+        }
+        if (!role || role === 'none') return { valid: false };
+
+        var valid = {
+          valid: true,
+          userId: userId,
+          name: String(userRow[1] || userId),
+          isAdmin: userRow[5] === true || userRow[5] === 'TRUE',
+          role: role
+        };
         cache.put(cacheKey, JSON.stringify(valid), CACHE_TTL_SESSION);
         return valid;
       }
