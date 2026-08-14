@@ -10,7 +10,9 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.10.0';
+const VERSION       = 'v1.10.1';
+// ポータル画面（GitHub Pages）のURL。旧HTML向けの更新案内タイルのリンク先に使う。
+const PORTAL_URL    = 'https://beaufield.github.io/beaufield-dev/';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
 
 // ロックアウト設定
@@ -90,20 +92,54 @@ const APP_MASTER = [
 // ============================================================
 // エントリーポイント（GET）
 // ============================================================
+// getUsers    : ログイン画面のユーザー一覧。認証前に必要なため現行フロントもGETで呼ぶ。
+// getUserApps : 現行フロント（HTML v1.3.0以降）はPOSTで呼ぶ。ここへGETで来るのは
+//               v1.2.1以前のHTMLを開いたまま放置している端末だけ。
+//               アプリ一覧は返さず、更新案内タイルを返す（_legacyUpdateNotice 参照）。
 function doGet(e) {
   const action = e && e.parameter && e.parameter.action ? e.parameter.action : '';
-  const token  = e && e.parameter && e.parameter.session_token ? e.parameter.session_token : '';
 
   try {
     switch (action) {
       case 'getUsers':    return _json(getUsers());
-      case 'getUserApps': return _json(getUserApps(token));
+      case 'getUserApps': return _json(_legacyUpdateNotice());
       default:            return _json({ success: false, error: '不明なアクション: ' + action });
     }
   } catch (err) {
     Logger.log('doGet error: ' + err);
     return _json({ success: false, error: 'INTERNAL_ERROR' });
   }
+}
+
+// ============================================================
+// 旧HTML（v1.2.1以前）向けの更新案内タイル
+// ============================================================
+// 背景:
+//   2026-08-12にgetUserAppsをPOST専用化したところ、ポータルを開いたまま放置していた
+//   端末が古いJSでGETを呼び続け、画面に「利用可能なアプリがありません／管理者に
+//   お問い合わせください」とだけ出た（2026-08-13の障害）。旧HTMLはサーバーが返す
+//   error文字列を読まずに握りつぶすため、理由を伝える手段がない。
+// 対策:
+//   旧HTMLは apps の各要素をタイルとして描画する。そこで一覧の代わりに案内タイルを
+//   1枚返し、利用者がタップするだけで新しいHTMLを取得できるようにする。
+//   URLに ?v= を付けるのは、ブラウザキャッシュ（GitHub Pagesは max-age=600）を
+//   確実に回避して必ず最新HTMLを取りに行かせるため。
+// 撤去条件:
+//   全13名の端末がポータルv1.3.0以降になったことを確認したら、doGetの
+//   case 'getUserApps' ごと削除してよい（残っていても実害はない）。
+// ⚠️ 本番確認時の注意:
+//   GET getUserApps は `USE_POST` ではなく、この案内（success:true・タイル1枚）を
+//   返すのが正常。8/13以前のドキュメントには「USE_POSTが正常」と書かれているので注意。
+function _legacyUpdateNotice() {
+  return {
+    success: true,
+    apps: [{
+      appName: '_portal_update',
+      label:   '更新が必要です（タップしてください）',
+      icon:    '🔄',
+      url:     PORTAL_URL + '?v=' + VERSION.replace(/[^0-9]/g, '')
+    }]
+  };
 }
 
 // ============================================================
