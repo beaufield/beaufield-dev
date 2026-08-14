@@ -9,7 +9,7 @@
 //     EXPORT_API_KEY  : 月次CSV自動出力（exportShippingCsv）用のAPIキー（ローカルスクリプトと共有）
 // ============================================================
 
-var VERSION = 'v2.6.0';
+var VERSION = 'v2.7.0';
 
 var SHEET_ID       = PropertiesService.getScriptProperties().getProperty('SHEET_ID')       || '';
 var AUTH_SHEET_ID  = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID')  || '';
@@ -58,12 +58,11 @@ var PCOL = {
 
 // ============================================================
 // エントリーポイント（GET）
-// クエリ: ?action=xxx&session_token=xxx
+// GETは公開情報だけ。セッション/APIキーはURLへ載せずPOST本文で送る。
 // ============================================================
 function doGet(e) {
   var p      = (e && e.parameter) ? e.parameter : {};
   var action = p.action || '';
-  var token  = p.session_token || '';
 
   // バージョン確認（認証不要）
   if (action === 'getVersion') {
@@ -72,32 +71,9 @@ function doGet(e) {
 
   // メーカー別・月単位のCSV出力（ローカル自動化/スキル用。bf_sessionではなくAPIキーで認証）
   if (action === 'exportShippingCsv') {
-    if (!EXPORT_API_KEY || p.api_key !== EXPORT_API_KEY) {
-      return ContentService.createTextOutput('UNAUTHORIZED').setMimeType(ContentService.MimeType.TEXT);
-    }
-    return exportShippingCsv(p);
+    return ContentService.createTextOutput('USE_POST').setMimeType(ContentService.MimeType.TEXT);
   }
-
-  var auth = validateSession(token);
-  if (!auth.valid) {
-    // 認証シートを一時的に読めなかっただけの場合はSESSION_INVALIDにしない。
-    // クライアント側はこれを見てログアウトさせず、リトライ対象として扱う
-    if (auth.transient) {
-      return jsonResponse({ success: false, error: 'AUTH_UNAVAILABLE', message: '認証確認に失敗しました。もう一度お試しください。' });
-    }
-    return jsonResponse({ success: false, error: 'SESSION_INVALID', message: '認証が必要です' });
-  }
-
-  try {
-    switch (action) {
-      case 'getProductMaster': return jsonResponse(getProductMaster());
-      case 'search':           return jsonResponse(searchRecords(p));
-      default:                 return jsonResponse({ success: false, error: '不明なアクション: ' + action });
-    }
-  } catch (err) {
-    Logger.log('doGet error: ' + err);
-    return jsonResponse({ success: false, error: 'INTERNAL_ERROR' });
-  }
+  return jsonResponse({ success: false, error: 'USE_POST' });
 }
 
 // ============================================================
@@ -120,6 +96,13 @@ function doPost(e) {
     action = p.action || '';
   }
 
+  if (action === 'exportShippingCsv') {
+    if (!EXPORT_API_KEY || p.api_key !== EXPORT_API_KEY) {
+      return ContentService.createTextOutput('UNAUTHORIZED').setMimeType(ContentService.MimeType.TEXT);
+    }
+    return exportShippingCsv(p);
+  }
+
   var auth = validateSession(p.session_token || '');
   if (!auth.valid) {
     // 認証シートを一時的に読めなかっただけの場合はSESSION_INVALIDにしない。
@@ -134,6 +117,8 @@ function doPost(e) {
     switch (action) {
       case 'registerShipping': return jsonResponse(registerShipping(p));
       case 'registerReturn':   return jsonResponse(registerReturn(p));
+      case 'getProductMaster': return jsonResponse(getProductMaster());
+      case 'search':           return jsonResponse(searchRecords(p));
       default:                 return jsonResponse({ success: false, error: '不明なアクション: ' + action });
     }
   } catch (err) {

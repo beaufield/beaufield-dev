@@ -621,7 +621,7 @@
 
 <script>
 // ========== APP VERSION ==========
-const APP_VERSION = '1.10.0';
+const APP_VERSION = '1.11.0';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
 
 // ========== DATA STORE ==========
@@ -657,14 +657,8 @@ function hideLoading() {
 }
 
 async function apiGet() {
-  const s     = _getBfSession();
-  const token = (s && s.token) ? s.token : '';
-  const url   = API_URL + (API_URL.includes('?') ? '&' : '?') + 'session_token=' + encodeURIComponent(token);
-  const res   = await fetch(url);
-  if (!res.ok) throw new Error('API error');
-  const json = await res.json();
-  if (json && json.error === 'SESSION_INVALID') { _handleSessionInvalid(); throw new Error('SESSION_INVALID'); }
-  return json;
+  const json = await apiPost('getAllData', {});
+  return json.result;
 }
 
 function _handleSessionInvalid() {
@@ -735,7 +729,7 @@ function notifyAsync(text) {
 
 // ========== AUTH ==========
 const SESSION_KEY = 'bf_session'; // ポータルと共通キー
-const SESSION_MS  = 30 * 24 * 60 * 60 * 1000; // 30日
+const SESSION_MS  = 12 * 60 * 60 * 1000; // 12時間
 
 let currentUser = null;
 let authUsers   = [];

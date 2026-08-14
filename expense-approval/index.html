@@ -201,7 +201,7 @@
 
 <header>
   <h1>💰 経費事前申請</h1>
-  <span class="version">v1.6.0</span>
+  <span class="version" id="header-version"></span>
 </header>
 
 <div class="tab-bar">
@@ -347,11 +347,14 @@
   </div>
 </div>
 
-<footer>経費事前申請 v1.6.0 | Beaufield</footer>
+<footer id="footer-version"></footer>
 
 <script>
   const GAS_URL    = 'https://script.google.com/macros/s/AKfycbyi1oZ3MLdVflBnjkwzwTC9edeRRQM3TTqcw5zkMzpDZp9e5F1TwMH9ApyK_iuJDC1DDQ/exec';
   const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
+  const APP_VERSION = 'v1.7.0';
+  document.getElementById('header-version').textContent = APP_VERSION;
+  document.getElementById('footer-version').textContent = '経費事前申請 ' + APP_VERSION + ' | Beaufield';
 
   let session            = null;
   let formState          = 'form';
@@ -397,7 +400,11 @@
     document.getElementById('total-amount').textContent    = '—';
     document.getElementById('total-confirmed').textContent = '—';
 
-    fetch(GAS_URL + '?type=list&session_token=' + encodeURIComponent(session.token || ''))
+    fetch(GAS_URL + '?type=list', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ session_token: session.token || '' })
+    })
       .then(r => r.json())
       .then(data => {
         if (!data.ok) throw new Error(data.error || '取得失敗');
@@ -470,7 +477,7 @@
       tbody.innerHTML = '<tr><td colspan="11" class="list-empty">該当する申請がありません</td></tr>';
       return;
     }
-    tbody.innerHTML = list.map(r => {
+    tbody.innerHTML = list.map((r, rowIndex) => {
       const applyDate  = r.applyDate  ? r.applyDate.substring(0, 10) : '—';
       const amount     = r.amount     ? Number(r.amount).toLocaleString()          : '—';
       const confirmed  = r.confirmedAmount > 0 ? Number(r.confirmedAmount).toLocaleString() : '—';
@@ -480,14 +487,14 @@
       const canProcess = isAcctManager && r.status === '承認' && r.acctStatus !== '処理済';
       const acctCell   = canProcess
         ? `<span class="badge ${acctClass}">${esc(r.acctStatus)}</span>
-           <button class="btn-acct" onclick="openAcctModal('${esc(r.requestId)}','${esc(r.name)}',${r.amount})">処理済にする</button>`
+           <button class="btn-acct" type="button" data-row-index="${rowIndex}">処理済にする</button>`
         : `<span class="badge ${acctClass}">${esc(r.acctStatus || '未処理')}</span>`;
 
       return `<tr>
         <td style="white-space:nowrap">${esc(applyDate)}</td>
         <td style="white-space:nowrap">${esc(r.name || '—')}</td>
         <td style="white-space:nowrap">${esc(r.expenseType || '—')}</td>
-        <td class="purpose-cell" title="${esc(r.purpose || '')}" onclick="this.classList.toggle('expanded')">${esc(r.purpose || '—')}</td>
+        <td class="purpose-cell" title="${esc(r.purpose || '')}">${esc(r.purpose || '—')}</td>
         <td style="white-space:nowrap">${esc(r.useDate || '—')}</td>
         <td class="amount-cell">${amount}</td>
         <td><span class="badge ${statusClass}">${esc(r.status || '—')}</span></td>
@@ -497,6 +504,18 @@
         <td class="amount-cell">${confirmed}</td>
       </tr>`;
     }).join('');
+
+    // 値をインラインJavaScriptへ埋め込まない。DOM要素と元データを番号で関連付けることで、
+    // 申請者名などに引用符が含まれてもコードとして解釈されないようにする。
+    tbody.querySelectorAll('.btn-acct[data-row-index]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const row = list[Number(btn.dataset.rowIndex)];
+        if (row) openAcctModal(row.requestId, row.name, row.amount);
+      });
+    });
+    tbody.querySelectorAll('.purpose-cell').forEach(cell => {
+      cell.addEventListener('click', () => cell.classList.toggle('expanded'));
+    });
   }
 
   // ===== 経理処理モーダル =====

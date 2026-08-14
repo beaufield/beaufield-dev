@@ -505,7 +505,7 @@ select:focus { border-color: #2a6acc; }
   <!-- ユーザー情報バー -->
   <div class="user-bar">
     <span id="userNameBar">---</span>
-    <span id="versionBar" style="font-size:12px;opacity:0.7;">HTML v2.15.0</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;"></span>
   </div>
 
   <!-- タブバー -->
@@ -778,7 +778,7 @@ select:focus { border-color: #2a6acc; }
 </div>
 
 <!-- バージョン -->
-<div class="version-label">HTML v2.15.0</div>
+<div class="version-label" id="versionLabel"></div>
 
 <!-- ZXing バーコードスキャナー（CODE128/JAN用） -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+" crossorigin="anonymous"></script>
@@ -792,6 +792,9 @@ select:focus { border-color: #2a6acc; }
 const GAS_URL    = 'https://script.google.com/macros/s/AKfycbwwQVp9pRomDpUlb50CMkh6suHHCvu2gJnLkqnt-cftkudSQUWnFx13X60rh0hgINHKEw/exec';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 const SESSION_KEY = 'bf_session';
+const APP_VERSION = 'v2.16.0';
+document.getElementById('versionBar').textContent = 'HTML ' + APP_VERSION;
+document.getElementById('versionLabel').textContent = 'HTML ' + APP_VERSION;
 
 // ============================================================
 // アプリ状態
@@ -1013,13 +1016,7 @@ async function _gasRequest(url, init, timeoutMs, hasToken, meta) {
 }
 
 async function gasGet(params, meta) {
-  params.session_token = appState.token;
-  var qs = Object.keys(params).map(function(k) {
-    return encodeURIComponent(k) + '=' + encodeURIComponent(
-      Array.isArray(params[k]) ? JSON.stringify(params[k]) : params[k]
-    );
-  }).join('&');
-  return await _gasRequest(GAS_URL + '?' + qs, {}, _gasTimeoutFor(params.action), !!appState.token, meta);
+  return await gasPost(params, meta);
 }
 
 async function gasPost(params, meta) {

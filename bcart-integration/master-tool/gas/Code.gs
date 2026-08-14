@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.24.0';
+const VERSION = 'v2.25.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -50,15 +50,40 @@ function doPost(e) {
     const action = params.action;
 
     const noAuthActions = ['getVersion'];
-    const claudeActions = ['previewSuffixName', 'applySuffixName', 'previewHanbaiEnd', 'applyHanbaiEnd', 'previewSetDescription', 'applySetDescription', 'previewProductFields', 'applyProductFields', 'previewSetFields', 'applySetFields', 'previewProductSort', 'applyProductSort', 'getDraftSupplierSummary', 'getDraftCandidates', 'getRegisteredExamples', 'saveDrafts'];
+    // AI用キーはプレビューとドラフト作成だけに限定する。
+    // BCARTを変更するapply系は別キーを必要とし、漏えい時の被害範囲を分離する。
+    const claudeDraftActions = ['previewSuffixName', 'previewHanbaiEnd', 'previewSetDescription', 'previewProductFields', 'previewSetFields', 'previewProductSort', 'getDraftSupplierSummary', 'getDraftCandidates', 'getRegisteredExamples', 'saveDrafts'];
+    const claudeApplyActions = ['applySuffixName', 'applyHanbaiEnd', 'applySetDescription', 'applyProductFields', 'applySetFields', 'applyProductSort'];
+    // 明示した参照系以外はすべて更新系として扱う（未知のactionを誤って一般ユーザーへ開放しない）。
+    const sessionReadOnlyActions = [
+      'loadData', 'getIgnoreList', 'searchProducts', 'getSpecials', 'getHistory',
+      'getCategories', 'getFeatures', 'getSpecialPriceData', 'getProductSetsForFeature',
+      'searchProductSets', 'getSpecialPriceCurrent', 'getViewFilterCurrent', 'getMembers',
+      'auditSpecialPrices', 'getAuditExclusions', 'auditSalesVsBcart',
+      'getProductsForDescription', 'getSimilarProducts', 'getFeatureList',
+      'previewSuffixName', 'previewHanbaiEnd', 'previewSetDescription',
+      'previewProductFields', 'previewSetFields', 'previewProductSort',
+      'getDrafts', 'previewStockSync'
+    ];
     let userName = '不明';
-    if (claudeActions.includes(action)) {
+    if (claudeDraftActions.includes(action)) {
       const claudeKey = _BCART_PROPS.getProperty('CLAUDE_API_KEY');
       if (!claudeKey || params.apiKey !== claudeKey) return jsonResponse({ ok: false, error: 'UNAUTHORIZED' });
       userName = 'Claude(API)';
+    } else if (claudeApplyActions.includes(action)) {
+      const claudeApplyKey = _BCART_PROPS.getProperty('CLAUDE_APPLY_API_KEY');
+      if (!claudeApplyKey || params.apiKey !== claudeApplyKey) {
+        return jsonResponse({ ok: false, error: 'UNAUTHORIZED' });
+      }
+      userName = 'Claude(API-APPLY)';
     } else if (!noAuthActions.includes(action)) {
       const authResult = validateSession(params.session);
       if (!authResult.ok) return jsonResponse({ ok: false, error: 'UNAUTHORIZED' });
+      const role = String((authResult.user && authResult.user.role) || '').toLowerCase();
+      const canMutate = Boolean(authResult.user && authResult.user.is_admin) || ['admin', 'editor'].includes(role);
+      if (!sessionReadOnlyActions.includes(action) && !canMutate) {
+        return jsonResponse({ ok: false, error: 'FORBIDDEN' });
+      }
       if (authResult.user) {
         userName = authResult.user.name || authResult.user.user_id || '不明';
       }
@@ -194,12 +219,24 @@ function validateSession(session) {
     const res = UrlFetchApp.fetch(AUTH_GAS_URL, {
       method: 'post',
       contentType: 'application/json',
-      payload: JSON.stringify({ action: 'validateSession', token: session.token }),
+      payload: JSON.stringify({
+        action: 'validateSession',
+        token: session.token,
+        app_name: 'bcart-master'
+      }),
       muteHttpExceptions: true
     });
     const data = JSON.parse(res.getContentText());
     if (!data.ok) return { ok: false };
-    return { ok: true, user: { user_id: data.user_id, name: data.name || data.user_id || '不明' } };
+    return {
+      ok: true,
+      user: {
+        user_id: data.user_id,
+        name: data.name || data.user_id || '不明',
+        role: data.role || '',
+        is_admin: data.is_admin === true
+      }
+    };
   } catch (e) {
     return { ok: false };
   }
