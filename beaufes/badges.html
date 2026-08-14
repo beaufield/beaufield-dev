@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- 🔴 名簿画面なので検索エンジンに拾わせない（名札印刷_badges設計.md §4-7） -->
+<meta name="robots" content="noindex,nofollow">
+<title>ビューフェス2026 名札印刷（社員用）</title>
+<style>
+  :root {
+    --main: #5BC8E8;
+    --main-dark: #2fa8cc;
+    --text: #333;
+    --bg: #f7fafc;
+    --border: #e0e6ea;
+    --error: #dc2626;
+
+    /* 印刷用の可変値。プリセット選択でJSが書き換える（§4-3・§6） */
+    --badge-w: 105mm;
+    --badge-h: 74.25mm;
+    --cols: 2;
+    --rows: 4;
+    --qr-size: 30mm;
+    --band-w: 8mm;
+  }
+  * { box-sizing: border-box; }
+  /* 🔴 §6-0対策3: bodyの既定marginが空白ページの原因になりうるため明示的に0にする */
+  body {
+    margin: 0;
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  /* ------------------------------------------------------------
+     画面表示のみ（.noprint）― 操作パネル・注意書き
+     ------------------------------------------------------------ */
+  header.appHeader {
+    background: linear-gradient(135deg, var(--main), var(--main-dark));
+    color: #fff;
+    padding: 16px 20px;
+  }
+  header.appHeader h1 { margin: 0; font-size: 17px; }
+
+  .wrap { max-width: 900px; margin: 0 auto; padding: 16px 16px 60px; }
+
+  .noticeBar {
+    background: #fff7ed; color: #9a3412; border: 1px solid #fed7aa;
+    border-radius: 8px; padding: 10px 14px; font-size: 13px; line-height: 1.7; margin-bottom: 14px;
+  }
+
+  .mockBanner {
+    display: none;
+    background: #fee2e2; color: #991b1b; border: 1px solid #fecaca;
+    border-radius: 8px; padding: 10px 14px; font-size: 13px; font-weight: bold; margin-bottom: 14px;
+  }
+
+  .gateCard {
+    background: #fff; border-radius: 12px; padding: 28px 22px; max-width: 480px; margin: 40px auto;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08); line-height: 1.9; text-align: center;
+  }
+  .gateCard a { color: var(--main-dark); font-weight: bold; }
+  .gateCard .btn {
+    display: inline-block; margin-top: 14px; padding: 10px 20px;
+    font-size: 14px; font-weight: bold; color: #fff; background: var(--main-dark);
+    border: none; border-radius: 8px; cursor: pointer; text-decoration: none;
+  }
+
+  .panel {
+    background: #fff; border-radius: 12px; padding: 18px 20px; margin-bottom: 18px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  }
+  .panel .row { margin-bottom: 14px; }
+  .panel .row:last-child { margin-bottom: 0; }
+  .panel label.rowLabel { display: block; font-weight: bold; font-size: 13px; margin-bottom: 6px; color: #555; }
+  .panel .choices { display: flex; flex-wrap: wrap; gap: 10px 16px; font-size: 14px; }
+  .panel .choices label { display: flex; align-items: center; gap: 5px; }
+  .panel input[type=date] {
+    padding: 7px 8px; font-size: 14px; border: 1px solid var(--border); border-radius: 6px;
+  }
+  .panel .dateRange { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; }
+  .panel .btnRow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+  .panel button {
+    padding: 10px 18px; font-size: 14px; font-weight: bold; border-radius: 8px; cursor: pointer;
+    border: none; color: #fff; background: var(--main-dark);
+  }
+  .panel button:disabled { opacity: .5; cursor: default; }
+  .panel button.secondary { background: #fff; color: var(--main-dark); border: 1px solid var(--main-dark); }
+  .statusLine { font-size: 13px; color: #555; }
+  .warnLine {
+    display: none; margin-top: 8px; font-size: 13px; color: #92400e; background: #fffbeb;
+    border: 1px solid #fde68a; border-radius: 6px; padding: 8px 10px; line-height: 1.7;
+  }
+  .errLine {
+    display: none; margin-top: 8px; font-size: 13px; color: var(--error); background: #fef2f2;
+    border: 1px solid #fecaca; border-radius: 6px; padding: 8px 10px; line-height: 1.7;
+  }
+  .printHint {
+    font-size: 12px; color: #888; line-height: 1.8; margin-top: 10px; padding-top: 10px;
+    border-top: 1px dashed var(--border);
+  }
+  .versionLine { font-size: 11px; color: #ccc; text-align: center; margin-top: 20px; }
+
+  /* ------------------------------------------------------------
+     名札そのもの（画面プレビューにも印刷にも共通で使う）
+     ------------------------------------------------------------ */
+  @page { size: A4 portrait; margin: 0; }
+
+  .sheet {
+    width: 210mm;
+    height: 296.5mm;   /* 🔴 297mmちょうどにしない。空白ページの原因になる（§6-0） */
+    display: grid;
+    grid-template-columns: repeat(var(--cols), var(--badge-w));
+    grid-template-rows: repeat(var(--rows), var(--badge-h));
+    justify-content: center;
+    align-content: center;
+    margin: 0 auto;
+    background: #fff;
+  }
+  /* 画面プレビュー時だけ枚数を見分けやすいように余白を入れる（印刷時は@media printで消す） */
+  .sheetsContainer .sheet { margin-bottom: 10px; box-shadow: 0 0 0 1px #ddd; }
+
+  .badge {
+    width: var(--badge-w); height: var(--badge-h);
+    display: flex; overflow: hidden;
+    box-sizing: border-box;
+    border: 0.2mm dashed #ccc; /* 断裁の目安。「断裁ガイド枠を出す」チェックで消せる */
+  }
+  body.no-guide .badge { border-color: transparent; }
+
+  .badge .band {
+    width: var(--band-w); flex: 0 0 var(--band-w);
+    color: #fff; font-size: 8pt;
+    writing-mode: vertical-rl; text-align: center; padding-top: 3mm;
+    display: flex; align-items: flex-start; justify-content: center;
+  }
+
+  /* 🔴 min-width:0 が無いと、長いサロン名がflexアイテムを押し広げて名札の枠を突き破る
+     （flexアイテムの既定min-width:autoのため。名札印刷_badges設計.md §6 の定番落とし穴） */
+  .badge .body {
+    flex: 1 1 auto; min-width: 0;
+    padding: 3mm; display: flex; flex-direction: column; justify-content: space-between;
+  }
+
+  .badge .name {
+    font-weight: bold; word-break: break-word;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  } /* フォントサイズ・折り返し許可はJSが名前の長さに応じて設定する（§4-4） */
+
+  /* 🔴 -webkit-line-clamp は単体では効かない。この4行がセットで必要（§6） */
+  .badge .salon {
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    overflow: hidden; font-size: 11pt; color: #444; word-break: break-word; margin-top: 2mm;
+  }
+
+  .badge .bottomRow { display: flex; align-items: flex-end; gap: 2mm; margin-top: auto; }
+
+  /* padding はクワイエットゾーン。QR規格は「4モジュール以上」必要。
+     30mm/45モジュールで4モジュール=2.67mmなので3mmにしてある（§6）。
+     box-sizing:content-box にして「QRサイズ = QR本体の実寸」を保つ
+    （試し刷りで定規で測った値がそのまま使えるように）。*/
+  .qr {
+    box-sizing: content-box;
+    width: var(--qr-size); height: var(--qr-size);
+    background: #fff; padding: 3mm; flex: 0 0 auto;
+  }
+  .qr svg { width: 100%; height: 100%; display: block; }
+
+  .appIdLine {
+    font-size: 11pt; font-family: "Courier New", monospace; letter-spacing: .5px;
+    color: #333;
+  }
+
+  /* モックだと印刷物からも一目で分かるようにする（§8）。.sheet の中に入れるので全ページに出る */
+  .mockStripe {
+    display: none;
+    grid-column: 1 / -1; grid-row: 1;
+  }
+
+  @media print {
+    .noprint { display: none !important; }
+    .sheetsContainer .sheet { margin-bottom: 0; box-shadow: none; }
+    .sheet { page-break-after: always; }
+    .sheet:last-child { page-break-after: auto; }
+  }
+
+  /* 🔴 これが無いと色帯が印刷されない（ブラウザが背景色を落とす設定が既定のため） */
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+</style>
+</head>
+<body>
+
+<header class="appHeader noprint"><h1>ビューフェス2026 名札印刷（社員用）</h1></header>
+
+<div class="wrap noprint">
+
+  <div class="mockBanner" id="mockBanner">⚠ モック表示中（ダミーデータ・GAS未接続）</div>
+
+  <!-- 未ログイン・権限なしのときはこれだけを出し、下のUIは一切出さない（§4-7） -->
+  <div class="gateCard" id="gateCard" style="display:none;">
+    <div id="gateText"></div>
+    <a class="btn" href="https://beaufield.github.io/beaufield-dev/">ポータルを開く</a>
+  </div>
+
+  <div id="app" style="display:none;">
+    <div class="noticeBar">
+      🔒 この画面は来場者全員の入場トークンを含みます。印刷後は閉じてください。
+    </div>
+
+    <div class="panel">
+      <div class="row statusLine" id="loginStatusLine"></div>
+
+      <div class="row">
+        <label class="rowLabel">対象</label>
+        <div class="choices">
+          <label><input type="radio" name="target" value="visitor" checked> 来場者名札</label>
+          <label><input type="radio" name="target" value="spare"> 予備名札（P-01〜）</label>
+        </div>
+      </div>
+
+      <div class="row" id="businessTypeRow">
+        <label class="rowLabel">業態</label>
+        <div class="choices" id="businessTypeChoices"></div>
+      </div>
+
+      <div class="row" id="dateRangeRow">
+        <label class="rowLabel">期間（追い刷り用・空なら全期間）</label>
+        <div class="dateRange">
+          <label><input type="radio" name="dateField" value="created_at"> 申込日</label>
+          <label><input type="radio" name="dateField" value="updated_at" checked> 更新日</label>
+          <input type="date" id="dateFrom"> 〜 <input type="date" id="dateTo">
+        </div>
+      </div>
+
+      <div class="row" id="spareFilterRow" style="display:none;">
+        <label class="rowLabel">予備名札のとき</label>
+        <div class="choices">
+          <label><input type="radio" name="spareFilter" value="unassigned" checked> 未割当のみ</label>
+          <label><input type="radio" name="spareFilter" value="all"> すべて</label>
+        </div>
+      </div>
+
+      <div class="row">
+        <label class="rowLabel">名札サイズ</label>
+        <div class="choices">
+          <label><input type="radio" name="sizePreset" value="a7" checked> 105×74mm（A4を8等分）</label>
+          <label><input type="radio" name="sizePreset" value="c100x70"> 100×70mm</label>
+          <label><input type="radio" name="sizePreset" value="c91x55"> 91×55mm（10面付け）</label>
+        </div>
+      </div>
+
+      <div class="row">
+        <label class="rowLabel">QRサイズ</label>
+        <div class="choices">
+          <label><input type="radio" name="qrSize" value="25"> 25mm</label>
+          <label><input type="radio" name="qrSize" value="30" checked> 30mm</label>
+          <label><input type="radio" name="qrSize" value="35"> 35mm</label>
+        </div>
+      </div>
+
+      <div class="row">
+        <label class="rowLabel">氏名・印刷オプション</label>
+        <div class="choices">
+          <label><input type="checkbox" id="surnameOnly"> QRには姓のみ入れる</label>
+          <label><input type="checkbox" id="showGuide" checked> 断裁ガイド枠を出す</label>
+        </div>
+        <div class="statusLine" id="surnameNote" style="display:none;"></div>
+      </div>
+
+      <div class="row">
+        <div class="btnRow">
+          <button id="fetchBtn" type="button">名簿を取得</button>
+          <span class="statusLine" id="fetchStatusLine"></span>
+        </div>
+        <div class="warnLine" id="fetchWarning"></div>
+        <div class="errLine" id="fetchError"></div>
+      </div>
+
+      <div class="row">
+        <div class="btnRow">
+          <button id="printBtn" type="button" class="secondary" disabled>印刷する</button>
+        </div>
+        <div class="printHint">
+          🖨 印刷のまえに Chrome の印刷ダイアログで: 用紙=A4・向き=縦・<b>余白「なし」</b>・
+          <b>「背景のグラフィック」にチェック</b>（外れていると色帯が出ません）・
+          「ヘッダーとフッター」のチェックを外す。<br>
+          📌 追い刷りをするときは、今回の印刷日を控えておいてください（次回「更新日」の起点になります）。
+        </div>
+      </div>
+    </div>
+
+    <div class="versionLine" id="versionLine"></div>
+  </div>
+</div>
+
+<div class="sheetsContainer" id="sheetsContainer"></div>
+
+<script src="lib/qrcode.min.js"></script>
+<script>
+// ============================================================
+// badges.html（名札印刷・社員用） v0.1.0
+// 設計は 名札印刷_badges設計.md を正とする（本ファイルは実装のみ・設計は変更しない）
+// ============================================================
+const APP_VERSION = '0.1.0';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
+const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
+const SESSION_KEY = 'bf_session'; // ポータルと共通（§2-4）
+const BUSINESS_TYPE_OPTIONS = ['美容室', '理容室', 'エステサロン', 'ネイルサロン', 'アイサロン', 'その他'];
+
+// GAS通信ルール（§2-5をそのまま移植。REQUEST_ID/client_attemptは持ち込まない＝§7 S4）
+const FETCH_TIMEOUT_MS = 10000;
+const MAX_ATTEMPTS     = 6;
+const RETRY_WAIT_MS    = [1000, 2000, 3000, 5000, 8000];
+const TRANSPORT_ERROR_PATTERN = /^(不明なアクション|INVALID_REQUEST)/;
+
+// §5-6 seedBadgeConfig() の既定値と同じ値にする（ズレるとモックと本番で色が食い違う・§8）
+const MOCK_BANDS = {
+  A: { color: '#E8542F', label: '理美容' },
+  B: { color: '#2FA8CC', label: '美容サロン' },
+  C: { color: '#7A8B99', label: 'その他' }
+};
+
+function el(id) { return document.getElementById(id); }
+function qs(name) { return new URLSearchParams(location.search).get(name); }
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+function isMock() { return qs('mock') === '1'; }
+
+// ------------------------------------------------------------
+// セッション（beaufield-authの共通セッションを読むだけ。発行はポータル側の役目）
+// ------------------------------------------------------------
+function getSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    if (Date.now() > s.expires) { localStorage.removeItem(SESSION_KEY); return null; }
+    return s;
+  } catch (e) { return null; }
+}
+function clearSession() {
+  try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+}
+
+// ------------------------------------------------------------
+// GASへのPOST（§2-5をそのまま移植。読み取り専用なので冪等キーは持たない）
+// ------------------------------------------------------------
+async function postOnce(params) {
+  const ctrl  = new AbortController();
+  const timer = setTimeout(function () { ctrl.abort(); }, FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      body: new URLSearchParams(params),
+      redirect: 'follow',
+      signal: ctrl.signal
+    });
+    if (!res.ok) throw new Error('HTTP_' + res.status);
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new Error('NON_JSON');
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function postWithRetry(params, onProgress) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      if (onProgress) onProgress(attempt + 1, MAX_ATTEMPTS);
+      await sleep(RETRY_WAIT_MS[attempt - 1] || 8000);
+    }
+    try {
+      const json = await postOnce(params);
+      if (json && json.success === false && TRANSPORT_ERROR_PATTERN.test(String(json.error || ''))) {
+        lastErr = json.error;
+        continue; // 輸送路の破損とみなしリトライ
+      }
+      return json;
+    } catch (e) {
+      lastErr = e && e.message ? e.message : String(e);
+    }
+  }
+  throw new Error(lastErr || 'UNKNOWN');
+}
+
+// ------------------------------------------------------------
+// 画面の出し分け
+// ------------------------------------------------------------
+function showGate(html) {
+  el('gateText').innerHTML = html;
+  el('gateCard').style.display = 'block';
+  el('app').style.display = 'none';
+}
+function showApp() {
+  el('gateCard').style.display = 'none';
+  el('app').style.display = 'block';
+}
+
+const LOGIN_REQUIRED_HTML =
+  'ログインが必要です。ポータルからログインしてください。';
+// 🔴 SESSION_INVALIDは「未ログイン」と「権限なし」の両方で返る（サーバーは区別して返さない・§5-2）。
+// 当面user_app_rolesに登録されるのは前島さんだけなので、他の社員が開くと必ずこれに当たる。
+const SESSION_INVALID_HTML =
+  LOGIN_REQUIRED_HTML + '<br><br>' +
+  '<b>すでにログイン済みでこの表示が出る場合は、この画面を使う権限がありません</b>' +
+  '（前島さんに連絡してください）。';
+
+// ------------------------------------------------------------
+// 業態チェックボックスを組み立てる（6択＋「未設定」）
+// ------------------------------------------------------------
+function buildBusinessTypeChoices() {
+  const box = el('businessTypeChoices');
+  const frag = document.createDocumentFragment();
+  BUSINESS_TYPE_OPTIONS.concat(['未設定']).forEach(function (label, i) {
+    const value = (label === '未設定') ? '__empty__' : label;
+    const wrap = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'businessTypeCb';
+    cb.value = value;
+    cb.checked = true; // 既定は全業態（旧表記「エステ」・空欄も含めて全件表示）
+    wrap.appendChild(cb);
+    wrap.appendChild(document.createTextNode(' ' + label));
+    frag.appendChild(wrap);
+  });
+  box.appendChild(frag);
+}
+
+function selectedBusinessTypes() {
+  return Array.prototype.slice.call(document.querySelectorAll('.businessTypeCb:checked')).map(function (cb) { return cb.value; });
+}
+function currentTarget() {
+  return (document.querySelector('input[name=target]:checked') || {}).value || 'visitor';
+}
+function currentDateField() {
+  return (document.querySelector('input[name=dateField]:checked') || {}).value || 'updated_at';
+}
+function currentSpareFilter() {
+  return (document.querySelector('input[name=spareFilter]:checked') || {}).value || 'unassigned';
+}
+function currentSizePreset() {
+  return (document.querySelector('input[name=sizePreset]:checked') || {}).value || 'a7';
+}
+function currentQrSizeMm() {
+  return Number((document.querySelector('input[name=qrSize]:checked') || {}).value || 30);
+}
+
+const SIZE_PRESETS = {
+  a7:      { w: '105mm', h: '74.25mm', cols: 2, rows: 4 }, // A4を8等分（既定・断裁位置に迷わない）
+  c100x70: { w: '100mm', h: '70mm',    cols: 2, rows: 4 },
+  c91x55:  { w: '91mm',  h: '55mm',    cols: 2, rows: 5 }  // 名刺サイズ
+};
+
+function applySizePreset() {
+  const p = SIZE_PRESETS[currentSizePreset()];
+  const root = document.documentElement.style;
+  root.setProperty('--badge-w', p.w);
+  root.setProperty('--badge-h', p.h);
+  root.setProperty('--cols', p.cols);
+  root.setProperty('--rows', p.rows);
+}
+function badgesPerSheet() {
+  const p = SIZE_PRESETS[currentSizePreset()];
+  return p.cols * p.rows;
+}
+function currentCols() {
+  return SIZE_PRESETS[currentSizePreset()].cols;
+}
+function applyQrSize() {
+  document.documentElement.style.setProperty('--qr-size', currentQrSizeMm() + 'mm');
+}
+
+// ------------------------------------------------------------
+// 「QRには姓のみ」の判定（§4-5）。文字数で機械的に切らない。空白が無ければ短縮しない。
+// ------------------------------------------------------------
+function shortenForQr(name) {
+  // JSの \s は全角空白 U+3000 を含むが、意図を明示するため両方書く
+  const parts = String(name).split(/[\s　]+/).filter(Boolean);
+  return (parts.length >= 2) ? parts[0] : name;
+}
+function couldNotShorten(name) {
+  const parts = String(name).split(/[\s　]+/).filter(Boolean);
+  return parts.length < 2;
+}
+
+// ------------------------------------------------------------
+// 氏名の自動縮小（§4-4）。空白を除いた文字数で段階的にフォントサイズを落とす。
+// 11文字以上だけ折り返し（2行clamp）を許可する。
+// ------------------------------------------------------------
+function applyNameSizing(elm, name) {
+  const len = String(name).replace(/[\s　]+/g, '').length;
+  let size;
+  if (len <= 5)      size = '24pt';
+  else if (len <= 7) size = '20pt';
+  else if (len <= 10) size = '16pt';
+  else               size = '13pt';
+  elm.style.fontSize = size;
+
+  if (len >= 11) {
+    elm.style.whiteSpace = 'normal';
+    elm.style.display = '-webkit-box';
+    elm.style.webkitBoxOrient = 'vertical';
+    elm.style.webkitLineClamp = '2';
+    elm.style.overflow = 'hidden';
+    elm.style.textOverflow = 'clip';
+  } else {
+    elm.style.whiteSpace = 'nowrap';
+    elm.style.display = 'block';
+    elm.style.overflow = 'hidden';
+    elm.style.textOverflow = 'ellipsis';
+  }
+}
+
+// ------------------------------------------------------------
+// QRの描画（§6-2）。scalable:trueでwidth/height属性を持たせず、CSSのmm指定に任せる。
+// margin:0にして、クワイエットゾーンはCSSの padding:3mm（白背景）で確保する。
+// ------------------------------------------------------------
+function buildQrSvg(url) {
+  const qr = qrcode(0, 'M'); // 0=自動バージョン。'M'はpass.htmlと同じ誤り訂正
+  qr.addData(url);
+  qr.make();
+  return qr.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+}
+
+// ------------------------------------------------------------
+// 名札1枚のDOMを組み立てる。
+// 🔴 氏名・サロン名は必ずtextContentで入れる（innerHTMLは使わない）。
+//    公開フォーム由来なので <b> 等を含む文字列が実在しうるため（§6-3）。
+//    innerHTMLを使ってよいのはQRのSVGだけ（ライブラリの出力）。
+// ------------------------------------------------------------
+function buildBadgeEl(badge, opts) {
+  const wrap = document.createElement('div');
+  wrap.className = 'badge';
+
+  const band = document.createElement('div');
+  band.className = 'band';
+  const bandInfo = opts.bands[badge.band] || opts.bands.C || { color: '#7A8B99', label: 'その他' };
+  band.style.background = bandInfo.color;
+  band.textContent = badge.isSpare ? '予備' : bandInfo.label;
+  wrap.appendChild(band);
+
+  const body = document.createElement('div');
+  body.className = 'body';
+
+  const nameEl = document.createElement('div');
+  nameEl.className = 'name';
+  const displayName = badge.isSpare ? ('予備 ' + badge.app_id) : badge.staff_name;
+  nameEl.textContent = displayName; // 🔴 textContent必須
+  applyNameSizing(nameEl, displayName);
+  body.appendChild(nameEl);
+
+  if (!badge.isSpare) {
+    const salonEl = document.createElement('div');
+    salonEl.className = 'salon';
+    salonEl.textContent = badge.salon_name; // 🔴 textContent必須
+    body.appendChild(salonEl);
+  }
+
+  const bottomRow = document.createElement('div');
+  bottomRow.className = 'bottomRow';
+
+  const qrWrap = document.createElement('div');
+  qrWrap.className = 'qr';
+  const qrName = badge.isSpare ? '' : (opts.surnameOnly ? shortenForQr(badge.staff_name) : badge.staff_name);
+  const qrUrl = opts.passBase + '?t=' + encodeURIComponent(badge.ticket_token) +
+    (qrName ? '&n=' + encodeURIComponent(qrName) : '');
+  qrWrap.innerHTML = buildQrSvg(qrUrl); // QRのSVGだけはinnerHTML可（ライブラリの出力）
+
+  const idCol = document.createElement('div');
+  const appIdLine = document.createElement('div');
+  appIdLine.className = 'appIdLine';
+  appIdLine.textContent = badge.app_id; // 🔴 textContent必須（受付番号=手入力フォールバックのキー）
+  idCol.appendChild(appIdLine);
+
+  bottomRow.appendChild(qrWrap);
+  bottomRow.appendChild(idCol);
+  body.appendChild(bottomRow);
+
+  wrap.appendChild(body);
+  return wrap;
+}
+
+// ------------------------------------------------------------
+// 一覧を .sheet に分割して描画する（§6-3: DocumentFragmentに組み立ててから1回で挿入）
+// ------------------------------------------------------------
+const RENDER_WARN_THRESHOLD = 400; // これを超えたら確認を挟む（ブラウザの印刷プレビューが固まるのを防ぐ・§6-3）
+let pendingLargeRender = null;
+
+function renderSheets(badges, opts) {
+  const container = el('sheetsContainer');
+  container.innerHTML = '';
+
+  if (badges.length === 0) {
+    el('printBtn').disabled = true;
+    return;
+  }
+
+  const mock = isMock();
+  // 🔴 モックの赤帯は.sheetのグリッド1行目(grid-row:1・全列)を占有する。
+  // その分を名札の枚数から引いておかないと、グリッドの行数(--rows)を超えて
+  // はみ出し、A4 1枚に収まらなくなる（印刷時に余計なページが増える事故）。
+  // 帯が無い本番モードでは perSheet はそのまま badgesPerSheet() を使う。
+  const perSheet = mock ? (badgesPerSheet() - currentCols()) : badgesPerSheet();
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < badges.length; i += perSheet) {
+    const sheet = document.createElement('div');
+    sheet.className = 'sheet';
+
+    if (mock) {
+      // モックだと印刷物からも一目で分かるようにする（§8・落とし穴7）。
+      // .sheetの中に入れるので全ページの1枚目に必ず出る（position:fixedはChromeで1ページ目にしか出ない）。
+      // grid-row:1を明示指定しているので、後続の名札(自動配置)は自然に2行目以降から並ぶ。
+      const stripe = document.createElement('div');
+      stripe.className = 'mockStripe';
+      stripe.style.display = 'flex';
+      stripe.style.alignItems = 'center';
+      stripe.style.justifyContent = 'center';
+      stripe.style.background = '#fee2e2';
+      stripe.style.color = '#991b1b';
+      stripe.style.fontWeight = 'bold';
+      stripe.style.fontSize = '9pt';
+      stripe.style.height = '6mm';
+      stripe.textContent = '⚠ モック（ダミーデータ）';
+      sheet.appendChild(stripe);
+    }
+
+    const chunk = badges.slice(i, i + perSheet);
+    chunk.forEach(function (b) {
+      sheet.appendChild(buildBadgeEl(b, opts));
+    });
+    frag.appendChild(sheet);
+  }
+  container.appendChild(frag);
+  el('printBtn').disabled = false;
+}
+
+function doRenderSheets(badges, opts) {
+  if (badges.length > RENDER_WARN_THRESHOLD) {
+    pendingLargeRender = { badges: badges, opts: opts };
+    showMessage('fetchWarning',
+      '一度に印刷する枚数が多すぎます（' + badges.length + '件）。期間で分けてください。' +
+      'このまま描画すると印刷プレビューが固まることがあります。' +
+      '<button type="button" id="forceRenderBtn" style="margin-left:8px;">それでも描画する</button>');
+    el('printBtn').disabled = true;
+    return;
+  }
+  renderSheets(badges, opts);
+}
+
+// ------------------------------------------------------------
+// メッセージ表示
+// ------------------------------------------------------------
+function showMessage(id, html) {
+  const e = el(id);
+  e.innerHTML = html;
+  e.style.display = 'block';
+  if (id === 'fetchWarning') {
+    const btn = el('forceRenderBtn');
+    if (btn) {
+      btn.addEventListener('click', function () {
+        if (pendingLargeRender) {
+          renderSheets(pendingLargeRender.badges, pendingLargeRender.opts);
+          pendingLargeRender = null;
+        }
+        hideMessage('fetchWarning');
+      });
+    }
+  }
+}
+function hideMessage(id) {
+  const e = el(id);
+  e.style.display = 'none';
+  e.innerHTML = '';
+}
+
+// ------------------------------------------------------------
+// モックデータ（§8）。GASにもログインにも依存しない。
+// 必ず含める意地悪ケース: 長い氏名／空白なし氏名／長いサロン名／業態空欄／旧表記「エステ」／
+// <b>タグを含む氏名・サロン名／updated_atがcreated_atより新しい行。
+// 受付番号は MOCK-001 形式にし、サロン名の頭に【見本】を付ける（本物との混同防止・§8）。
+// ------------------------------------------------------------
+function resolveBandClient(businessType) {
+  if (businessType === '美容室' || businessType === '理容室') return 'A';
+  if (businessType === 'エステサロン' || businessType === 'ネイルサロン' || businessType === 'アイサロン') return 'B';
+  return 'C'; // その他・空欄・旧表記「エステ」等は全てdefault（例外を書き足さない・§5-3と同じ考え方）
+}
+
+function mockToken(n) {
+  return 'mock' + String(n).padStart(12, '0');
+}
+
+function generateMockVisitorBadges() {
+  const raw = [
+    { staff: '山田 太郎',                    salon: '〇〇美容室',                 biz: '美容室',       created: '2026-09-01', updated: '2026-09-01' },
+    { staff: '鈴木 花子',                    salon: '△△理容室',                 biz: '理容室',       created: '2026-09-02', updated: '2026-09-02' },
+    { staff: '佐々木 一郎',                  salon: 'サロン・ド・ボーテ',         biz: 'エステサロン', created: '2026-09-03', updated: '2026-09-03' },
+    { staff: '小野寺 舞',                    salon: 'ネイルズ・プラス',           biz: 'ネイルサロン', created: '2026-09-04', updated: '2026-09-04' },
+    { staff: '高橋 愛美',                    salon: 'アイラッシュ・ミュゼ',       biz: 'アイサロン',   created: '2026-09-05', updated: '2026-09-05' },
+    { staff: '田中 健',                      salon: 'その他サロン',               biz: 'その他',       created: '2026-09-06', updated: '2026-09-06' },
+    { staff: '長谷川 佐和子さんテスト用',    salon: 'ロングネーム美容室',         biz: '美容室',       created: '2026-09-07', updated: '2026-09-07' }, // 長い氏名（11文字以上）
+    { staff: '山田太郎',                     salon: 'スペースなしテスト店',       biz: '理容室',       created: '2026-09-08', updated: '2026-09-08' }, // 空白なし氏名
+    { staff: '伊藤 舞子',                    salon: '業態未設定サロン',           biz: '',             created: '2026-09-09', updated: '2026-09-09' }, // 業態空欄
+    { staff: '渡辺 玲奈',                    salon: '旧表記エステサロン',         biz: 'エステ',       created: '2026-09-10', updated: '2026-09-10' }, // 旧表記
+    { staff: '中村 実',                      salon: 'とても長いサロン名のテストです。二行に折り返されるかどうかを確認するためのダミーテキストです', biz: '美容室', created: '2026-09-11', updated: '2026-09-11' }, // 長いサロン名
+    { staff: '小林 大輝',                    salon: 'Bタイプサロン',              biz: 'ネイルサロン', created: '2026-09-12', updated: '2026-09-12' },
+    { staff: '加藤 美咲',                    salon: 'Cタイプその他店',            biz: 'その他',       created: '2026-09-13', updated: '2026-09-13' },
+    { staff: '吉田 悠人',                    salon: 'テストサロン14',             biz: '理容室',       created: '2026-09-14', updated: '2026-09-14' },
+    { staff: '山本 さくら',                  salon: 'テストサロン15',             biz: 'アイサロン',   created: '2026-09-15', updated: '2026-09-15' },
+    { staff: '<b>危険太郎</b>',              salon: '<script>alert(1)<\/script>サロン', biz: '美容室', created: '2026-09-16', updated: '2026-09-16' }, // textContent確認用（🔴 スクリプト終了タグの文字列そのものはインラインscriptを閉じてしまうため \/ でエスケープ必須。この行のコメントにも書かないこと）
+    { staff: '松本 陽菜',                    salon: 'テストサロン17',             biz: 'エステサロン', created: '2026-08-20', updated: '2026-09-17' }, // date_field切替確認用（更新日だけ新しい）
+    { staff: '井上 蓮',                      salon: 'テストサロン18',             biz: 'ネイルサロン', created: '2026-09-18', updated: '2026-09-18' },
+    { staff: '木村 優',                      salon: 'テストサロン19',             biz: 'その他',       created: '2026-09-19', updated: '2026-09-19' },
+    { staff: '林 千尋',                      salon: 'テストサロン20',             biz: 'アイサロン',   created: '2026-09-20', updated: '2026-09-20' }
+  ];
+  return raw.map(function (r, i) {
+    const n = i + 1;
+    return {
+      app_id: 'MOCK-' + String(n).padStart(3, '0'), // 🔴 F2026-形式にしない（本物との混同防止・§8）
+      salon_name: '【見本】' + r.salon,
+      staff_name: r.staff,
+      business_type: r.biz,
+      band: resolveBandClient(r.biz),
+      ticket_token: mockToken(n),
+      created_at: r.created,
+      updated_at: r.updated,
+      isSpare: false
+    };
+  });
+}
+
+function generateMockSpareBadges() {
+  return [
+    { spare_no: 'P-01', ticket_token: mockToken(901), assigned_app_id: '',           assigned_at: '' },
+    { spare_no: 'P-02', ticket_token: mockToken(902), assigned_app_id: 'F2026-0031', assigned_at: '2026-08-10 09:00:00' },
+    { spare_no: 'P-03', ticket_token: mockToken(903), assigned_app_id: '',           assigned_at: '' }
+  ].map(function (s) {
+    return {
+      app_id: s.spare_no,
+      salon_name: '',
+      staff_name: '',
+      business_type: '',
+      band: 'C',
+      ticket_token: s.ticket_token,
+      assigned_app_id: s.assigned_app_id,
+      assigned_at: s.assigned_at,
+      isSpare: true
+    };
+  });
+}
+
+// created_at/updated_atが 'yyyy-MM-dd' 文字列である前提の比較（モック用の簡易版。
+// 実データはサーバー側の_dateKey()で正規化済みの値が返る）
+function inDateRange(dateStr, from, to) {
+  if (from && dateStr < from) return false;
+  if (to && dateStr > to) return false;
+  return true;
+}
+
+function mockFetchVisitor(filters) {
+  const all = generateMockVisitorBadges();
+  const wantEmpty = filters.businessTypes.indexOf('__empty__') >= 0;
+  const wantSet = new Set(filters.businessTypes.filter(function (v) { return v !== '__empty__'; }));
+
+  let unknownCount = 0;
+  const filtered = all.filter(function (b) {
+    const known = BUSINESS_TYPE_OPTIONS.indexOf(b.business_type) >= 0;
+    if (!known) unknownCount++;
+    const bizOk = known ? wantSet.has(b.business_type) : wantEmpty;
+    if (!bizOk) return false;
+    const dateVal = (filters.dateField === 'updated_at') ? b.updated_at : b.created_at;
+    return inDateRange(dateVal, filters.from, filters.to);
+  });
+
+  return {
+    pass_base: buildPassBase(),
+    bands: MOCK_BANDS,
+    unknown_business_type_count: unknownCount,
+    skipped_no_token: 0,
+    total: filtered.length,
+    badges: filtered
+  };
+}
+
+function mockFetchSpare(filters) {
+  const all = generateMockSpareBadges();
+  const filtered = all.filter(function (s) {
+    return (filters.spareFilter === 'all') || !s.assigned_app_id;
+  });
+  return {
+    pass_base: buildPassBase(),
+    bands: MOCK_BANDS,
+    spares: filtered
+  };
+}
+
+// ------------------------------------------------------------
+// pass_base（モックでもQRのデコード結果を検証できるように、実URLと同じ形にする・§8）
+// ------------------------------------------------------------
+function buildPassBase() {
+  return location.origin + location.pathname.replace(/badges\.html$/, 'pass.html');
+}
+
+// ------------------------------------------------------------
+// 名簿取得（メイン処理）
+// ------------------------------------------------------------
+let lastBadgesData = null; // { badges, bands, ... } 直近の取得結果（サイズ/QR/姓のみ変更時の再描画に使う）
+
+function collectFilters() {
+  return {
+    target: currentTarget(),
+    businessTypes: selectedBusinessTypes(),
+    dateField: currentDateField(),
+    from: el('dateFrom').value || '',
+    to: el('dateTo').value || '',
+    spareFilter: currentSpareFilter()
+  };
+}
+
+async function fetchBadges() {
+  hideMessage('fetchWarning');
+  hideMessage('fetchError');
+  pendingLargeRender = null;
+
+  const filters = collectFilters();
+
+  if (filters.target === 'visitor' && filters.businessTypes.length === 0) {
+    showMessage('fetchError', '業態を1つ以上選んでください。');
+    return;
+  }
+
+  el('fetchBtn').disabled = true;
+  el('fetchStatusLine').textContent = '取得中…';
+
+  try {
+    let data;
+    if (isMock()) {
+      data = (filters.target === 'spare') ? mockFetchSpare(filters) : mockFetchVisitor(filters);
+    } else {
+      const session = getSession();
+      if (!session) { showGate(LOGIN_REQUIRED_HTML); return; }
+
+      const action = (filters.target === 'spare') ? 'listSpareBadges' : 'listBadges';
+      const payload = { session_token: session.token || '' };
+      if (filters.target === 'visitor') {
+        payload.business_types = filters.businessTypes;
+        payload.date_field = filters.dateField;
+        if (filters.from) payload.created_from = filters.from;
+        if (filters.to) payload.created_to = filters.to;
+      }
+
+      const json = await postWithRetry({ action: action, data: JSON.stringify(payload) }, function (n, max) {
+        el('fetchStatusLine').textContent = '取得中…（再試行 ' + n + '/' + max + '）';
+      });
+
+      if (!json || json.success !== true) {
+        const code = json && json.error;
+        if (code === 'SESSION_INVALID') {
+          clearSession();
+          showGate(SESSION_INVALID_HTML);
+          return;
+        }
+        if (code === 'AUTH_TRANSIENT') {
+          showMessage('fetchError',
+            '認証サーバーが一時的に応答しません。少し待って再試行してください。' +
+            '<button type="button" id="retryAuthBtn" style="margin-left:8px;">再試行</button>');
+          const btn = el('retryAuthBtn');
+          if (btn) btn.addEventListener('click', fetchBadges);
+          return;
+        }
+        showMessage('fetchError', code || '取得に失敗しました。時間をおいて再度お試しください。');
+        return;
+      }
+      data = json.data;
+    }
+
+    lastBadgesData = data;
+    applyFetchResult(data, filters.target);
+  } catch (e) {
+    showMessage('fetchError', '通信に失敗しました。時間をおいて再度お試しください。');
+  } finally {
+    el('fetchBtn').disabled = false;
+    el('fetchStatusLine').textContent = '';
+  }
+}
+
+function applyFetchResult(data, target) {
+  const badges = (target === 'spare') ? (data.spares || []) : (data.badges || []);
+  const perSheet = badgesPerSheet();
+  const pages = Math.ceil(badges.length / perSheet) || 0;
+  el('fetchStatusLine').textContent = '対象 ' + badges.length + '件 / ' + pages + 'ページ';
+
+  const msgs = [];
+  if (target === 'visitor') {
+    if (data.unknown_business_type_count > 0) {
+      msgs.push('業態が6択のいずれでもない申込が' + data.unknown_business_type_count + '件あります（その他色で出力します）');
+    }
+    if (data.skipped_no_token > 0) {
+      msgs.push('⚠ ticket_tokenが空の申込が' + data.skipped_no_token + '件あり、名札を出力できませんでした（データ異常の可能性があります）');
+    }
+  }
+  if (msgs.length > 0) showMessage('fetchWarning', msgs.join('<br>'));
+
+  renderAndMaybeWarn(badges, data.bands || MOCK_BANDS, data.pass_base || buildPassBase());
+}
+
+function renderAndMaybeWarn(badges, bands, passBase) {
+  const surnameOnly = el('surnameOnly').checked;
+
+  if (surnameOnly) {
+    const notShortened = badges.filter(function (b) { return !b.isSpare && couldNotShorten(b.staff_name); }).length;
+    if (notShortened > 0) {
+      el('surnameNote').style.display = 'block';
+      el('surnameNote').textContent = '※ ' + notShortened + '件は空白が無いため短縮できませんでした';
+    } else {
+      el('surnameNote').style.display = 'none';
+    }
+  } else {
+    el('surnameNote').style.display = 'none';
+  }
+
+  doRenderSheets(badges, { bands: bands, passBase: passBase, surnameOnly: surnameOnly });
+}
+
+// 再取得なしで見た目だけ変える系（サイズ・QRサイズ・姓のみ・断裁ガイド）
+function rerenderIfPossible() {
+  if (!lastBadgesData) return;
+  const target = currentTarget();
+  const badges = (target === 'spare') ? (lastBadgesData.spares || []) : (lastBadgesData.badges || []);
+  renderAndMaybeWarn(badges, lastBadgesData.bands || MOCK_BANDS, lastBadgesData.pass_base || buildPassBase());
+}
+
+// ------------------------------------------------------------
+// UIの出し分け（対象=予備名札のときだけ表示する行）
+// ------------------------------------------------------------
+function syncTargetUi() {
+  const isSpare = currentTarget() === 'spare';
+  el('businessTypeRow').style.display = isSpare ? 'none' : 'block';
+  el('dateRangeRow').style.display = isSpare ? 'none' : 'block';
+  el('spareFilterRow').style.display = isSpare ? 'block' : 'none';
+  el('surnameOnly').disabled = isSpare; // 予備名札はn=を付けないので姓のみトグルは無関係
+}
+
+// ------------------------------------------------------------
+// 起動処理
+// ------------------------------------------------------------
+function wireEvents() {
+  document.querySelectorAll('input[name=target]').forEach(function (r) {
+    r.addEventListener('change', syncTargetUi);
+  });
+  document.querySelectorAll('input[name=sizePreset]').forEach(function (r) {
+    r.addEventListener('change', function () { applySizePreset(); rerenderIfPossible(); });
+  });
+  document.querySelectorAll('input[name=qrSize]').forEach(function (r) {
+    r.addEventListener('change', function () { applyQrSize(); rerenderIfPossible(); });
+  });
+  el('surnameOnly').addEventListener('change', rerenderIfPossible);
+  el('showGuide').addEventListener('change', function () {
+    document.body.classList.toggle('no-guide', !el('showGuide').checked);
+  });
+  el('fetchBtn').addEventListener('click', fetchBadges);
+  el('printBtn').addEventListener('click', function () { window.print(); });
+}
+
+function init() {
+  el('versionLine').textContent = 'v' + APP_VERSION;
+  buildBusinessTypeChoices();
+  applySizePreset();
+  applyQrSize();
+  syncTargetUi();
+  wireEvents();
+
+  if (isMock()) {
+    el('mockBanner').style.display = 'block';
+    el('loginStatusLine').textContent = 'モック表示中（ログイン不要・GAS未接続）';
+    showApp();
+    fetchBadges(); // §9-1 #2: mockなら開いた時点で自動描画する
+    return;
+  }
+
+  const session = getSession();
+  if (!session) {
+    showGate(LOGIN_REQUIRED_HTML);
+    return;
+  }
+  el('loginStatusLine').textContent = (session.name || session.user_id || '') + ' でログイン中';
+  showApp();
+  // 🔴 実データはボタンを押すまで取得しない（未ログイン時に名簿を1件も描画しない・§4-7の徹底）
+}
+
+init();
+</script>
+
+</body>
+</html>
