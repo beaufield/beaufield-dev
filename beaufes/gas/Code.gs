@@ -137,9 +137,42 @@
 //   設定すると、新規申込（apply/applyLiffの新規登録時のみ・更新時は送らない）のたびに
 //   サロン名・お名前・業態・電話を通知する。未設定なら何もしない（既存の運用に影響なし）。
 //   失敗しても申込自体は成立済みのため、呼び出し側でtry/catchして握りつぶす。
+//
+// 🆕 v0.15.0（2026-08-15・優先項目④ 公開フォーム対策）: 認証なしの公開フォーム(`case 'apply'`)に
+//   多層の歯止めを入れる。設計の正は `公開フォーム対策_実装方針.md`。
+//   🔴 変更は applyApplication の中だけに閉じている。`doPost`のエントリ・
+//   `_validateApplicationFields`（LIFFと共有）・`applyLiff`・`liff.html` には一切触れていない
+//   （`LINE連携境界_調査レポート.md` §2「触ってはいけない3箇所」）。
+//
+//   ① ロック前ゲート `_publicFormGate()`: スプレッドシートに触る前・LockServiceを取る前に
+//      I/Oゼロで弾く。スパムの実害はメール枠だけでなく、**スクリプトロックの占有による
+//      受付停止**（正規の申込者がwaitLockのタイムアウトで弾かれ、さらに6回リトライして
+//      負荷を増やす）でもあるため、ここで捨てられるかどうかが受付能力を左右する。
+//      - 確定的な拒否: 入力長の上限・業態が6択にない（＝細工されたPOST）
+//      - ボット兆候はスコア方式（ハニーポット+1／滞在3秒未満+1／備考にURL+1）で
+//        **2点以上のときだけ**拒否する。単独の兆候で人間を弾かないための設計
+//        （自動入力がハニーポットを埋める事故・備考にサロンのURLを書く人が実在するため）
+//   ② メール枠の安全弁: `MailApp.getRemainingDailyQuota()` を見て、残50通で警告通知・
+//      残20通で確認メールを停止する。**申込行は必ず書き、pass_urlも返す**ので、
+//      申込者は画面で入場パスを受け取れる（メールは控え）。
+//      🔴 行数ではなく実残枠を見るのは、確認メールの消費元が `applyApplication` だけでなく
+//      `applyLiff`(L647)・`resendPass` にもあり、apply側で行数を数えても全体が見えないため。
+//   ③ 同一宛先への確認メールは1日5通まで（本日分の行数で判定・追加のシート読み込みなし）
+//   ④ `existing_notified` 経路の `_sendPassResendMail` に10分抑止を適用。
+//      v0.13.0のP2で `resendPass` だけ塞いだ穴が、apply経由では開いたままだった
+//      （他人のメール＋既知の氏名で無制限に再送させられる）
+//   ⑤ 新規申込のLINE WORKS通知は本日30件を超えたら停止（1回だけ要約を通知）。
+//      通知の洪水を防ぐと同時に、1件ごとのUrlFetchApp往復が応答時間を伸ばすのも止める
+//
+//   スクリプトプロパティ（すべて任意・未設定なら既定値）:
+//     PUBLIC_FORM_GUARD   'off'にすると①②③⑤を全て無効化（再デプロイ不要のキルスイッチ）
+//     MAIL_QUOTA_WARN     既定50 / MAIL_QUOTA_STOP 既定20
+//     PER_EMAIL_MAIL_MAX  既定5  / DAILY_NOTIFY_LIMIT 既定30
+//   🔴 新しいシートも新しいOAuthスコープも追加していない（MailAppは既に使用中）。
+//   したがってデプロイ後の手動マイグレーションは不要。
 // ============================================================
 
-const VERSION  = '0.14.2';
+const VERSION  = '0.15.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -393,6 +426,150 @@ function _updateApplicationRow(sh, row, f) {
 }
 
 // ============================================================
+// 🆕 v0.15.0: 公開フォーム専用のガード（優先項目④）
+//
+// 🔴 この節の関数は applyApplication（＝`case 'apply'`）からしか呼ばない。
+//    applyLiff・updateApplication・liff.html からは絶対に呼ばないこと。
+//    LINE経由の申込はIDトークンで本人確認済みであり、ここで想定している
+//    「認証なしの公開フォームへの機械的な投稿」とは前提がまったく違うため。
+// ============================================================
+
+// 入力長の上限。用途は「50KBの文字列を投げ込まれてシートを膨らませる」ことの防止であって
+// 入力内容の整形ではない。したがって**実用上ぶつからない寛容な値**にしてある
+// （厳しくすると、少し長めに書いた正規の申込者を弾く side effect のほうが確実に大きい）。
+const PUBLIC_FIELD_MAX = {
+  salonName: 100, staffName: 60, email: 254, phone: 40,
+  address: 200, referrer: 100, note: 2000
+};
+
+// ハニーポットの入力欄名。index.html 側と一致させること。
+// 🔴 `website` `company` `fax` 等の「意味のある名前」は使わない。
+// ブラウザやパスワードマネージャーの自動入力が拾って、人間の申込を誤爆させる実例があるため。
+const PUBLIC_HONEYPOT_FIELD = 'bf_note2';
+
+// ガード設定。getProperties()の1回呼び出しで済ませる（getPropertyを個別に叩くより安い）。
+function _guardConfig() {
+  const p = _PROPS.getProperties();
+  function num(key, def) {
+    const v = Number(p[key]);
+    return (isNaN(v) || v < 0) ? def : v;
+  }
+  return {
+    enabled:         String(p['PUBLIC_FORM_GUARD'] || 'on').toLowerCase() !== 'off',
+    mailQuotaWarn:   num('MAIL_QUOTA_WARN',    50),
+    mailQuotaStop:   num('MAIL_QUOTA_STOP',    20),
+    perEmailMailMax: num('PER_EMAIL_MAIL_MAX',  5),
+    dailyNotifyMax:  num('DAILY_NOTIFY_LIMIT', 30)
+  };
+}
+
+// ロック前ゲート。**スプレッドシートに一切触らない**（＝ロックも実行時間も消費させない）。
+// 戻り値: null＝通過 ／ 文字列＝拒否理由（呼び出し側が _err で返す）
+//
+// 🔴 拒否メッセージは index.html の TRANSPORT_ERROR_PATTERN（`不明なアクション|INVALID_REQUEST`）に
+// 絶対にマッチさせないこと。マッチすると輸送路の破損とみなされ、1回の拒否が6回のリトライに増幅する。
+function _publicFormGate(data, f) {
+  // --- (1) 確定的な拒否 ---------------------------------------------------
+  // 画面のプルダウンでは選べない値＝手で組み立てたPOST。ここは兆候ではなく確定とみなす。
+  if (BUSINESS_TYPE_OPTIONS.indexOf(f.businessType) < 0) {
+    return '業態を選択してください';
+  }
+  const tooLong =
+    (f.salonName.length > PUBLIC_FIELD_MAX.salonName) ||
+    (f.staffName.length > PUBLIC_FIELD_MAX.staffName) ||
+    (f.email.length     > PUBLIC_FIELD_MAX.email)     ||
+    (f.phone.length     > PUBLIC_FIELD_MAX.phone)     ||
+    (f.address.length   > PUBLIC_FIELD_MAX.address)   ||
+    (f.referrer.length  > PUBLIC_FIELD_MAX.referrer)  ||
+    (f.note.length      > PUBLIC_FIELD_MAX.note);
+  if (tooLong) {
+    return '入力が長すぎる項目があります。お手数ですが短くしてご入力ください';
+  }
+
+  // --- (2) ボット兆候のスコア ----------------------------------------------
+  // 🔴 1つでも当たったら拒否、にはしない。人間が誤って1つ踏むことは現実に起きるが
+  // （自動入力・備考にサロンのURLを書く等）、2つ同時に踏むことは実質起きないため。
+  // 🔴 いずれの兆候も「キー自体が無ければ加点しない」。旧HTMLキャッシュや
+  // liff.htmlからの避難経路（フィールドを持たない）を素通しさせるための後方互換
+  //（`request_id` が空でも動くのと同じ考え方）。
+  let score = 0;
+  const hits = [];
+
+  if (String(data[PUBLIC_HONEYPOT_FIELD] || '').trim() !== '') {
+    score++; hits.push('honeypot');
+  }
+  const elapsedMs = Number(data.elapsed_ms);
+  if (!isNaN(elapsedMs) && elapsedMs >= 0 && elapsedMs < 3000) {
+    score++; hits.push('too_fast:' + elapsedMs + 'ms');
+  }
+  if (/https?:\/\/|www\./i.test(f.note)) {
+    score++; hits.push('url_in_note');
+  }
+
+  if (score >= 2) {
+    Logger.log('publicFormGate: ボット判定で拒否 score=' + score + ' hits=' + hits.join(',') +
+               ' email=' + f.email + ' name=' + f.staffName);
+    // 理由は明かさない（ボットに学習させないため）。
+    // ただし人間が誤爆した場合の逃げ道として、LINEからの申込を案内する。
+    return '送信できませんでした。お手数ですが時間をおいて再度お試しいただくか、' +
+           'LINE公式アカウントからお申し込みください';
+  }
+  if (score > 0) {
+    // 1点は通す。実際に何が引っかかっているかを後から見られるようにログだけ残す。
+    Logger.log('publicFormGate: 兆候1点（通過） hits=' + hits.join(',') + ' email=' + f.email);
+  }
+  return null;
+}
+
+// created_at セルが「今日」かどうか。
+// 🔴 setValues で 'yyyy-MM-dd HH:mm:ss' 文字列を書いても、Sheetsが日時値として
+// 解釈して Date オブジェクトで返してくる場合がある。両方の表現を受けられるようにする。
+function _isTodayCell(v, todayStr) {
+  if (v instanceof Date) return Utilities.formatDate(v, 'Asia/Tokyo', 'yyyy-MM-dd') === todayStr;
+  return String(v).slice(0, 10) === todayStr;
+}
+
+// 残りのメール送信枠。取得に失敗したら null を返す（＝呼び出し側はフェイルオープン）。
+// 🔴 フェイルオープンにするのは、一時的な取得失敗で確認メールを全部止めるほうが
+// 実害が大きいため。止めるのは「残枠が確かに少ないと分かったとき」だけにする。
+function _remainingMailQuota() {
+  try {
+    return MailApp.getRemainingDailyQuota();
+  } catch (e) {
+    Logger.log('getRemainingDailyQuota失敗（フェイルオープン）: ' + e);
+    return null;
+  }
+}
+
+// LINE WORKSへ任意の文字列を通知する。
+// 🔴 既存の `_notifyNewApplicationLineWorks` をリファクタして共用しないのは、
+// あの関数が applyLiff からも呼ばれており、LINE経路に触れないという今回の大前提を
+// 守るため。5行の重複は、LINE申込を巻き込むリスクより安い。
+function _notifyLineWorksText(text) {
+  if (!LINEWORKS_WEBHOOK) return;
+  UrlFetchApp.fetch(LINEWORKS_WEBHOOK, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify({ body: { text: text } }),
+    muteHttpExceptions: true
+  });
+}
+
+// 同じ種類の警告は1日1回しか送らない。日付はスクリプトプロパティに置く
+// （シートI/Oを増やさないため。CacheServiceは使わない＝project_gas_cache_lessonの教訓）。
+// 🔴 同時実行で2通出ることはありうるが、警告が重複するだけなので許容する。
+function _alertOncePerDay(propKey, text) {
+  try {
+    const today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+    if (_PROPS.getProperty(propKey) === today) return;
+    _PROPS.setProperty(propKey, today);
+    _notifyLineWorksText(text);
+  } catch (e) {
+    Logger.log('_alertOncePerDay失敗（無視して継続）: ' + e);
+  }
+}
+
+// ============================================================
 // ① 申込受付（doPost: action=apply）
 //    キーは email_norm + 正規化した staff_name（§4-3）
 //
@@ -422,6 +599,14 @@ function applyApplication(data, clientAttempt) {
   const nameKey    = _normalizeName(f.staffName);
   const requestId  = String(data.request_id || '').trim().slice(0, 64);
 
+  // 🆕 v0.15.0: ロック前ゲート。ここで弾けたリクエストは
+  // スプレッドシートにもLockServiceにも到達しない（＝受付能力を消費しない）。
+  const cfg = _guardConfig();
+  if (cfg.enabled) {
+    const gateErr = _publicFormGate(data, f);
+    if (gateErr) return _err(gateErr);
+  }
+
   if (clientAttempt && Number(clientAttempt) >= 2) {
     Logger.log('apply: リトライ経由の到達 client_attempt=' + clientAttempt + ' request_id=' + requestId);
   }
@@ -430,6 +615,11 @@ function applyApplication(data, clientAttempt) {
   let replayed          = false; // 🆕 request_id一致＝配送失敗による再試行と確定した場合
   let existingNotified  = false;
   let resendList        = null; // メール一致・氏名一致が見つかった場合の再送先（ロック解放後に送信）
+
+  // 🆕 v0.15.0: 本日分の集計（既存の行スキャンの中で数えるので追加のシート読み込みはゼロ）
+  const todayStr       = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+  let todayNewCount    = 0; // 本日作成された申込行の数
+  let todayMailToEmail = 0; // 本日この宛先で作成された行の数（＝送った確認メール数の近似）
 
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -452,7 +642,15 @@ function applyApplication(data, clientAttempt) {
     if (!replayed) {
       // 同じメール＋同じ氏名（正規化）の既存申込を探す。見つかっても内容は一切書き換えない・
       // 一切返さない（他人のメールで氏名・サロン名が引ける経路を作らないため・§2-2）。
+      // 🆕 v0.15.0: 同じ1回のスキャンで本日分の件数も数えるため、一致を見つけても break せず
+      // 最後まで回す（rowsは既にメモリ上にあるので、コストはCPU上の走査だけ）。
       for (let i = 1; i < rows.length; i++) {
+        if (_isTodayCell(rows[i][1], todayStr)) {
+          todayNewCount++;
+          if (String(rows[i][7]).toLowerCase() === f.emailNorm) todayMailToEmail++;
+        }
+
+        if (existingNotified) continue;                    // 既に見つけている（先頭一致を採用）
         if (String(rows[i][7]).toLowerCase() !== f.emailNorm) continue;
         if (String(rows[i][17]) === 'cancelled') continue; // 取消済みは既存として扱わない
         if (_normalizeName(rows[i][5]) !== nameKey) continue;
@@ -463,7 +661,6 @@ function applyApplication(data, clientAttempt) {
           staffName: String(rows[i][5]),
           passUrl:   SITE_BASE_URL + 'pass.html?t=' + String(rows[i][16])
         }];
-        break;
       }
 
       if (!existingNotified) {
@@ -483,19 +680,66 @@ function applyApplication(data, clientAttempt) {
   }
 
   if (existingNotified) {
-    _sendPassResendMail(f.email, resendList);
+    // 🆕 v0.15.0: ここに10分抑止が無かったため、他人のメールアドレスと既知の氏名さえ分かれば
+    // 無制限にパス再送メールを送りつけられた（v0.13.0のP2は`resendPass`側だけを塞いでいた）。
+    // 応答は送信の有無にかかわらず同じにする（送ったかどうかを外から観測させない）。
+    if (!cfg.enabled || !_recentResendMailSent(f.email)) {
+      _sendPassResendMail(f.email, resendList);
+    } else {
+      Logger.log('apply: existing_notified のメールを10分抑止でスキップ email=' + f.email);
+    }
     return _ok({ existing_notified: true });
   }
 
   const passUrl = SITE_BASE_URL + 'pass.html?t=' + ticketToken;
-  _sendConfirmationMail(f.email, f.salonName, f.staffName, passUrl, false);
-  try {
-    _notifyNewApplicationLineWorks(appId, f, 'web');
-  } catch (e) {
-    Logger.log('LINE WORKS通知に失敗（申込自体は成立済み）: ' + e);
+
+  // 🆕 v0.15.0: 確認メールの安全弁。
+  // 🔴 どの分岐に落ちても「申込行は書けている・pass_url は返す」ことは変えない。
+  // メールが送れないことより、申込そのものが通らないことのほうが害が大きいため。
+  let mailSkipped = '';
+  if (cfg.enabled) {
+    const quota = _remainingMailQuota(); // 取得失敗時は null＝フェイルオープン
+    if (todayMailToEmail >= cfg.perEmailMailMax) {
+      mailSkipped = 'per_email_cap';
+    } else if (quota !== null && quota <= cfg.mailQuotaStop) {
+      mailSkipped = 'quota_stop';
+      _alertOncePerDay('ALERT_MAIL_QUOTA_STOP_DATE',
+        '🛑 ビューフェス申込: 残メール枠が' + quota + '通になったため、確認メールの自動送信を停止しました。\n' +
+        '申込の受付自体は継続しており、申込者には画面で入場パスが表示されています。\n' +
+        '（枠は翌日リセット。急ぎの場合は applications シートの pass_url を手動で送付してください）');
+    } else if (quota !== null && quota <= cfg.mailQuotaWarn) {
+      _alertOncePerDay('ALERT_MAIL_QUOTA_WARN_DATE',
+        '⚠️ ビューフェス申込: 残メール枠が' + quota + '通です（1日の上限は100通）。\n' +
+        '残' + cfg.mailQuotaStop + '通で確認メールの自動送信を停止します。');
+    }
   }
 
-  return _ok({ app_id: appId, pass_url: passUrl, is_update: false });
+  if (mailSkipped) {
+    Logger.log('apply: 確認メールをスキップ reason=' + mailSkipped + ' email=' + f.email + ' app_id=' + appId);
+  } else {
+    _sendConfirmationMail(f.email, f.salonName, f.staffName, passUrl, false);
+  }
+
+  // 🆕 v0.15.0: 1件ごとの通知は本日30件までにする。
+  // 通知の洪水で本物を見落とすのを防ぐと同時に、1件ごとのUrlFetchApp往復が
+  // 応答時間を伸ばして配送404を増やすのも止める（_health の知見）。
+  // 🔴 applyLiff 側の通知には手を入れない（LINE申込は本人確認済みで洪水にならないため）。
+  if (!cfg.enabled || todayNewCount < cfg.dailyNotifyMax) {
+    try {
+      _notifyNewApplicationLineWorks(appId, f, 'web');
+    } catch (e) {
+      Logger.log('LINE WORKS通知に失敗（申込自体は成立済み）: ' + e);
+    }
+  } else {
+    _alertOncePerDay('ALERT_NOTIFY_MUTED_DATE',
+      '🔕 ビューフェス申込: 本日のWeb申込が' + cfg.dailyNotifyMax + '件を超えたため、' +
+      '1件ごとの新規申込通知を本日ぶんは停止しました。\n' +
+      '申込の受付は継続しています。件数が想定外に多い場合は applications シートをご確認ください。');
+  }
+
+  const res = { app_id: appId, pass_url: passUrl, is_update: false };
+  if (mailSkipped) res.mail_skipped = mailSkipped; // 診断用。クライアントは参照していない
+  return _ok(res);
 }
 
 // ============================================================

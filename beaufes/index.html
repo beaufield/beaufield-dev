@@ -170,6 +170,18 @@
       <label>備考（あれば）</label>
       <textarea id="note"></textarea>
 
+      <!-- 🆕 v0.11.0: ハニーポット（人間には見えない・機械だけが埋める欄）。
+           🔴 消さないこと。空でないとサーバー側で不正投稿の兆候として加点される。
+           🔴 `website`『company』等の意味のある名前にしないこと。ブラウザやパスワード
+           マネージャーの自動入力が拾って、人間の申込を誤爆させる実例があるため。
+           display:none ではなく画面外配置にしているのは、display:none を避けて回る
+           ボットにも埋めさせるため。tabindexとaria-hiddenでキーボード操作・
+           スクリーンリーダーからは到達させない。 -->
+      <div style="position:absolute;left:-9999px;top:-9999px;" aria-hidden="true">
+        <label for="bf_note2">この欄は入力しないでください</label>
+        <input type="text" id="bf_note2" name="bf_note2" tabindex="-1" autocomplete="off">
+      </div>
+
       <div class="checkbox-line">
         <input type="checkbox" id="agree_capability" required>
         <label style="font-weight:normal;margin:0;" for="agree_capability">
@@ -226,7 +238,7 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.10.0';
+const APP_VERSION = '0.11.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
@@ -253,6 +265,12 @@ const RETRY_WAIT_MS    = [1000, 2000, 3000, 5000, 8000];
 // 判断し、二重登録にも「すでにお申し込みをお預かりしています」表示にもならない。
 const REQUEST_ID = (crypto && crypto.randomUUID) ? crypto.randomUUID()
   : (Date.now().toString(36) + Math.random().toString(36).slice(2));
+
+// 🆕 v0.11.0（優先項目④）: フォームを開いてから送信するまでの経過時間。
+// 3秒未満はサーバー側で不正投稿の兆候として1点加算される（単独では弾かれない）。
+// 🔴 絶対時刻ではなく経過ミリ秒を送る。端末の時計がずれていても影響を受けないようにするため。
+// 🔴 リトライしてもこの値は増え続けるだけなので、再送が誤爆することはない。
+const PAGE_LOADED_AT = Date.now();
 
 function el(id) { return document.getElementById(id); }
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
@@ -364,7 +382,10 @@ function buildPayload() {
     referrer:         el('referrer').value.trim(),
     note:             el('note').value.trim(),
     agree_capability: el('agree_capability').checked,
-    request_id:       REQUEST_ID // 🆕 v0.10.0（冪等キー）
+    request_id:       REQUEST_ID, // 🆕 v0.10.0（冪等キー）
+    // 🆕 v0.11.0（優先項目④）: 不正投稿対策の兆候。人間の操作では通常どちらも発生しない。
+    bf_note2:         el('bf_note2').value,          // ハニーポット（見えない欄・空が正常）
+    elapsed_ms:       Date.now() - PAGE_LOADED_AT    // 表示から送信までの経過ミリ秒
   };
 }
 
