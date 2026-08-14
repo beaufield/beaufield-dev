@@ -254,3 +254,10 @@ workflows/
 # banner-work/ は商品切り抜き・生成バナー等の中間生成物（GITHUB-RULES「コミット推奨外」）。
 # ============================================
 bcart-integration/free-pages/
+
+# ============================================
+# clasp 設定ファイル（scriptId はGAS URLと同格の機密・2026-08-14追加）
+# ============================================
+**/.clasp.json
+**/appsscript.json
+.claspignore
