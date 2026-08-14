@@ -773,7 +773,7 @@
 </div>
 
 <script>
-const APP_VERSION = 'v1.22.0';
+const APP_VERSION = 'v1.23.0';
 document.getElementById('headerVersion').textContent = APP_VERSION;
 // ============================================================
 // 設定（デプロイ後に GAS_URL を変更すること）
@@ -2615,7 +2615,7 @@ function renderStats() {
             const confirmedAmt = up > 0 ? fmtAmt(p.confirmed * up) : '—';
             return `
             <tr class="product-row${filterPid === p.product_id ? ' selected' : ''}"
-                onclick="selectStatsProduct('${esc(p.product_id)}', '${esc(p.product_name).replace(/'/g, "\\'")}')">
+                data-product-id="${esc(p.product_id)}" data-product-name="${esc(p.product_name)}">
               <td>${esc(p.product_name)}</td>
               <td class="num">${yoyakuQty}</td>
               <td class="num">${yoyakuAmt}</td>
@@ -2629,6 +2629,11 @@ function renderStats() {
           }).join('')}
         </tbody>
       </table>`;
+    prodEl.querySelectorAll('.product-row').forEach(row => {
+      row.addEventListener('click', () => {
+        selectStatsProduct(row.dataset.productId, row.dataset.productName);
+      });
+    });
   }
 
   // 担当別バーグラフ（数量＋金額）

@@ -301,14 +301,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <h2>BCARTマスター管理</h2>
     <p>ポータルからログインしてください</p>
     <button class="btn btn-primary" onclick="goToPortal()" style="width:100%">ポータルへ移動</button>
-    <div style="margin-top:12px;font-size:12px;color:#9ca3af;">HTML v2.12.0</div>
+    <div id="loginVersion" style="margin-top:12px;font-size:12px;color:#9ca3af;"></div>
   </div>
 </div>
 
 <div id="mainScreen" style="display:none;">
   <div class="header">
     <h1>BCARTマスター管理ツール</h1>
-    <span class="version">HTML v2.12.0</span>
+    <span class="version" id="headerVersion"></span>
   </div>
 
   <div class="tabs">
@@ -1265,6 +1265,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
+const APP_VERSION = 'v2.13.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
 const BCART_ADMIN_BASE = 'https://beaufieldec.i16.bcart.jp/admin/products';
 
@@ -1309,6 +1310,8 @@ let regBulkItems = [];
 
 // ===================== 初期化 =====================
 window.onload = function() {
+  document.getElementById('loginVersion').textContent = 'HTML ' + APP_VERSION;
+  document.getElementById('headerVersion').textContent = 'HTML ' + APP_VERSION;
   const raw = localStorage.getItem('bf_session');
   if (!raw) { goToPortal(); return; }
   try {
@@ -1568,11 +1571,11 @@ function renderDiffItem(d) {
     details = '<div class="diff-detail"><div class="row"><span class="lbl">売上単価</span><span>' + d.csvPrice.toLocaleString() + '円</span></div></div>';
     if (!isIgnored) {
       if (isWip) {
-        actionBtns += '<button class="btn btn-primary btn-sm" onclick="openRegisterModal(\'' + esc(d.code) + '\')">🆕 BCARTに登録</button>';
-        actionBtns += '<button class="btn btn-gray btn-sm" onclick="openAddSetSearchModal(\'' + esc(d.code) + '\')">📦 既存の商品に追加</button>';
-        actionBtns += '<button class="btn btn-gray btn-sm" onclick="unmarkWipConfirm(\'' + esc(d.code) + '\',\'' + esc(d.name) + '\')">作業中解除</button>';
+        actionBtns += '<button class="btn btn-primary btn-sm" onclick="openRegisterModal(\'' + jsArg(d.code) + '\')">🆕 BCARTに登録</button>';
+        actionBtns += '<button class="btn btn-gray btn-sm" onclick="openAddSetSearchModal(\'' + jsArg(d.code) + '\')">📦 既存の商品に追加</button>';
+        actionBtns += '<button class="btn btn-gray btn-sm" onclick="unmarkWipConfirm(\'' + jsArg(d.code) + '\',\'' + jsArg(d.name) + '\')">作業中解除</button>';
       } else {
-        actionBtns += '<button class="btn btn-wip btn-sm" onclick="markWip(\'' + esc(d.code) + '\',\'' + esc(d.name) + '\')">📝 作業中にする</button>';
+        actionBtns += '<button class="btn btn-wip btn-sm" onclick="markWip(\'' + jsArg(d.code) + '\',\'' + jsArg(d.name) + '\')">📝 作業中にする</button>';
       }
     }
   } else if (d.issues) {
@@ -1582,7 +1585,7 @@ function renderDiffItem(d) {
         badges += '<span class="badge badge-price">💰 価格差異</span>';
         details += '<div class="diff-detail"><div class="row"><span class="lbl">売上単価</span><span class="old">' + issue.bcartPrice.toLocaleString() + '円</span> → <span class="new">' + issue.csvPrice.toLocaleString() + '円</span></div></div>';
         if (!isIgnored) {
-          actionBtns += '<button class="btn btn-price btn-sm" onclick="updatePrice(\'' + d.bcartSetId + '\',\'' + esc(d.code) + '\',' + issue.csvPrice + ',' + (d.csvKouri||0) + ',' + (d.csvShiire||0) + ')">💰 売価更新</button>';
+          actionBtns += '<button class="btn btn-price btn-sm" onclick="updatePrice(\'' + jsArg(d.bcartSetId) + '\',\'' + jsArg(d.code) + '\',' + issue.csvPrice + ',' + (d.csvKouri||0) + ',' + (d.csvShiire||0) + ')">💰 売価更新</button>';
           updatableIssues.push({ type: 'price', price: issue.csvPrice });
         }
       }
@@ -1596,14 +1599,14 @@ function renderDiffItem(d) {
           details += '<div class="diff-detail"><div class="row"><span class="lbl">状態</span><span>BCARTセットを非表示にする必要があります</span></div></div>';
         }
         if (!isIgnored) {
-          actionBtns += '<button class="btn btn-danger btn-sm" onclick="hideProductSet(\'' + d.bcartSetId + '\',\'' + esc(d.code) + '\',\'' + esc(d.name) + '\')">' + (parentHidden ? '👻 セットも非表示' : '🚫 非表示にする') + '</button>';
+          actionBtns += '<button class="btn btn-danger btn-sm" onclick="hideProductSet(\'' + jsArg(d.bcartSetId) + '\',\'' + jsArg(d.code) + '\',\'' + jsArg(d.name) + '\')">' + (parentHidden ? '👻 セットも非表示' : '🚫 非表示にする') + '</button>';
         }
       }
       if (issue.type === 'jodai') {
         badges += '<span class="badge badge-jodai">💴 上代差異</span>';
         details += '<div class="diff-detail"><div class="row"><span class="lbl">上代</span><span class="old">' + issue.bcartJodai.toLocaleString() + '円</span> → <span class="new">' + issue.csvJodai.toLocaleString() + '円</span></div></div>';
         if (!isIgnored) {
-          actionBtns += '<button class="btn btn-jodai btn-sm" onclick="updateJodai(\'' + d.bcartSetId + '\',\'' + esc(d.code) + '\',' + issue.csvJodai + ')">💴 上代更新</button>';
+          actionBtns += '<button class="btn btn-jodai btn-sm" onclick="updateJodai(\'' + jsArg(d.bcartSetId) + '\',\'' + jsArg(d.code) + '\',' + issue.csvJodai + ')">💴 上代更新</button>';
           updatableIssues.push({ type: 'jodai', jodai: issue.csvJodai });
         }
       }
@@ -1611,7 +1614,7 @@ function renderDiffItem(d) {
         badges += '<span class="badge badge-jan">🔖 JAN差異</span>';
         details += '<div class="diff-detail"><div class="row"><span class="lbl">JAN</span><span class="old">' + esc(issue.bcartJan || '（なし）') + '</span> → <span class="new">' + esc(issue.csvJan) + '</span></div></div>';
         if (!isIgnored) {
-          actionBtns += '<button class="btn btn-sm" style="background:#f0fdf4;color:#16a34a;" onclick="updateJan(\'' + d.bcartSetId + '\',\'' + esc(d.code) + '\',\'' + esc(issue.csvJan) + '\')">🔖 JAN更新</button>';
+          actionBtns += '<button class="btn btn-sm" style="background:#f0fdf4;color:#16a34a;" onclick="updateJan(\'' + jsArg(d.bcartSetId) + '\',\'' + jsArg(d.code) + '\',\'' + jsArg(issue.csvJan) + '\')">🔖 JAN更新</button>';
           updatableIssues.push({ type: 'jan', janCode: issue.csvJan });
         }
       }
@@ -1619,7 +1622,7 @@ function renderDiffItem(d) {
         badges += '<span class="badge badge-parent-visible">👻 親商品表示中</span>';
         details += '<div class="diff-detail"><div class="row"><span class="lbl">状態</span><span style="color:#92400e;">廃番済みですが親商品（BCART）がまだ「表示」です。手動で非表示にしてください。</span></div></div>';
         if (!isIgnored && d.bcartProductId) {
-          actionBtns += '<button class="btn btn-sm" style="background:#fef9c3;color:#b45309;border:1px solid #fde047;" onclick="hideParentProduct(\'' + esc(d.bcartProductId) + '\',\'' + esc(d.code) + '\',\'' + esc(d.name) + '\')">👻 親商品を非表示</button>';
+          actionBtns += '<button class="btn btn-sm" style="background:#fef9c3;color:#b45309;border:1px solid #fde047;" onclick="hideParentProduct(\'' + jsArg(d.bcartProductId) + '\',\'' + jsArg(d.code) + '\',\'' + jsArg(d.name) + '\')">👻 親商品を非表示</button>';
         }
       }
     });
@@ -1627,10 +1630,10 @@ function renderDiffItem(d) {
       const priceIssue = updatableIssues.find(i => i.type === 'price');
       const jodaiIssue = updatableIssues.find(i => i.type === 'jodai');
       const janIssue   = updatableIssues.find(i => i.type === 'jan');
-      actionBtns += '<button class="btn btn-primary btn-sm" onclick="updateAll(\'' + d.bcartSetId + '\',\'' + esc(d.code) + '\',' +
+      actionBtns += '<button class="btn btn-primary btn-sm" onclick="updateAll(\'' + jsArg(d.bcartSetId) + '\',\'' + jsArg(d.code) + '\',' +
         (priceIssue ? priceIssue.price : 'null') + ',' +
         (jodaiIssue ? jodaiIssue.jodai : 'null') + ',\'' +
-        (janIssue ? esc(janIssue.janCode) : '') + '\',' +
+        (janIssue ? jsArg(janIssue.janCode) : '') + '\',' +
         (d.csvKouri||0) + ',' + (d.csvShiire||0) +
         ')">▶ まとめて更新</button>';
     }
@@ -1644,8 +1647,8 @@ function renderDiffItem(d) {
     : '';
 
   const ignoreBtn = isIgnored
-    ? '<button class="btn btn-gray btn-sm" onclick="unmarkIgnore(\'' + esc(d.code) + '\')">解除</button>'
-    : '<button class="btn btn-gray btn-sm" onclick="openIgnoreModal(\'' + esc(d.code) + '\',\'' + esc(d.name) + '\')">対応不要</button>';
+    ? '<button class="btn btn-gray btn-sm" onclick="unmarkIgnore(\'' + jsArg(d.code) + '\')">解除</button>'
+    : '<button class="btn btn-gray btn-sm" onclick="openIgnoreModal(\'' + jsArg(d.code) + '\',\'' + jsArg(d.name) + '\')">対応不要</button>';
 
   const links = bcartLinks(d);
   return '<div class="diff-item' + (isIgnored ? ' ignored' : '') + '" id="diff-' + esc(d.code) + '">' +
@@ -2137,8 +2140,8 @@ function searchStock() {
         '<div style="margin-top:4px;">' + stockBadge(p) + '</div>' +
       '</div>' +
       '<div style="display:flex;gap:8px;">' +
-      '<button class="btn btn-danger btn-sm" onclick="setStock(\'' + esc(p.product_no) + '\',0,this,\'' + esc(p.name) + '\')">🚫 欠品（在庫0）</button>' +
-      '<button class="btn btn-success btn-sm" onclick="setStock(\'' + esc(p.product_no) + '\',1,this,\'' + esc(p.name) + '\')">✅ 在庫あり（無制限）</button>' +
+      '<button class="btn btn-danger btn-sm" onclick="setStock(\'' + jsArg(p.product_no) + '\',0,this,\'' + jsArg(p.name) + '\')">🚫 欠品（在庫0）</button>' +
+      '<button class="btn btn-success btn-sm" onclick="setStock(\'' + jsArg(p.product_no) + '\',1,this,\'' + jsArg(p.name) + '\')">✅ 在庫あり（無制限）</button>' +
       '</div></div></div>'
     ).join('');
   });
@@ -2267,8 +2270,8 @@ function renderSearchProducts() {
       '<div class="search-product-actions">' +
       (isParentHidden
         ? '<button class="btn btn-secondary btn-sm" disabled>✅ 非表示済</button>'
-        : '<button class="btn btn-warning btn-sm" onclick="hideSearchProduct(\'' + esc(p.id) + '\',\'' + esc(p.product_no) + '\',\'' + esc(p.name) + '\',this)">🙈 非表示</button>') +
-      '<button class="btn btn-wip btn-sm" onclick="cloneSearchProduct(\'' + esc(p.id) + '\',this)">📋 複製</button>' +
+        : '<button class="btn btn-warning btn-sm" onclick="hideSearchProduct(\'' + jsArg(p.id) + '\',\'' + jsArg(p.product_no) + '\',\'' + jsArg(p.name) + '\',this)">🙈 非表示</button>') +
+      '<button class="btn btn-wip btn-sm" onclick="cloneSearchProduct(\'' + jsArg(p.id) + '\',this)">📋 複製</button>' +
       '</div>' +
       '</div>';
   }).join('');
@@ -3081,10 +3084,10 @@ function renderSpGroups() {
         '<div class="sp-card-sub">会員: ' + memberLabel + (memberLabel && codeLabel ? '　' : '') + codeLabel + '　特別価格商品: ' + detailCount + '件' + (g.note ? '　— ' + esc(g.note) : '') + '</div>' +
         '</div>' +
         '<div class="sp-card-actions">' +
-        '<button class="btn btn-sm btn-wip" onclick="openMemberSelectModal(\'' + esc(g.group_id) + '\',\'' + esc(g.group_name) + '\')">👥 会員を管理</button>' +
-        '<button class="btn btn-sm btn-primary" onclick="switchToSettings(\'' + esc(g.group_id) + '\')">💎 価格設定</button>' +
-        '<button class="btn btn-sm btn-gray" onclick="openGroupModal(\'' + esc(g.group_id) + '\')">編集</button>' +
-        '<button class="btn btn-sm btn-danger" onclick="deleteGroup(\'' + esc(g.group_id) + '\',\'' + esc(g.group_name) + '\')">削除</button>' +
+        '<button class="btn btn-sm btn-wip" onclick="openMemberSelectModal(\'' + jsArg(g.group_id) + '\',\'' + jsArg(g.group_name) + '\')">👥 会員を管理</button>' +
+        '<button class="btn btn-sm btn-primary" onclick="switchToSettings(\'' + jsArg(g.group_id) + '\')">💎 価格設定</button>' +
+        '<button class="btn btn-sm btn-gray" onclick="openGroupModal(\'' + jsArg(g.group_id) + '\')">編集</button>' +
+        '<button class="btn btn-sm btn-danger" onclick="deleteGroup(\'' + jsArg(g.group_id) + '\',\'' + jsArg(g.group_name) + '\')">削除</button>' +
         '</div>' +
         '</div>';
     }).join('');
@@ -3122,7 +3125,7 @@ function renderSpSettings() {
     html += '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:8px 12px;margin-bottom:16px;font-size:13px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
       '<span>👥 会員: <strong>' + memberIds.length + '名</strong>' + (memberIds.length > 0 ? '（ID: ' + memberIds.slice(0, 5).join(', ') + (memberIds.length > 5 ? ' 他' + (memberIds.length - 5) + '名' : '') + '）' : (groupCodes.length > 0 ? '' : '　未設定')) + '</span>' +
       (groupCodes.length > 0 ? '<span style="color:#7c3aed;">＋得意先コード: <strong>' + groupCodes.length + '件</strong>（反映時に会員へ自動解決・未登録分は保留）</span>' : '') +
-      '<button class="btn btn-sm btn-wip" style="margin-left:auto;" onclick="openMemberSelectModal(\'' + esc(spSelectedGroupId) + '\',\'' + esc(selGroup ? selGroup.group_name : '') + '\')">👥 会員を管理</button>' +
+      '<button class="btn btn-sm btn-wip" style="margin-left:auto;" onclick="openMemberSelectModal(\'' + jsArg(spSelectedGroupId) + '\',\'' + jsArg(selGroup ? selGroup.group_name : '') + '\')">👥 会員を管理</button>' +
       '</div>';
 
     // アプリ内保存済みの特別価格
@@ -3149,7 +3152,7 @@ function renderSpSettings() {
           '<td style="font-weight:700;color:#1a56db;">¥' + Number(d.unit_price).toLocaleString() + '</td>' +
           '<td style="font-size:11px;color:#9ca3af;">' + esc(String(d.updated_at || '').substring(0, 16)) + '</td>' +
           '<td>' + reflectBadge + '</td>' +
-          '<td><button class="btn btn-sm btn-danger" onclick="deleteSpDetail(\'' + esc(d.detail_id) + '\',\'' + esc(d.product_no) + '\')">削除</button></td>' +
+          '<td><button class="btn btn-sm btn-danger" onclick="deleteSpDetail(\'' + jsArg(d.detail_id) + '\',\'' + jsArg(d.product_no) + '\')">削除</button></td>' +
           '</tr>';
       });
       html += '</tbody></table></div>';
@@ -3221,7 +3224,7 @@ function renderSpSettings() {
           '<td style="font-family:monospace;font-size:12px;color:#6b7280;">' + esc(d.product_no) + '</td>' +
           '<td>' + esc(d.product_set_name) + '</td>' +
           '<td>' + reflectBadgeVf + '</td>' +
-          '<td><button class="btn btn-sm btn-danger" onclick="deleteVfDetail(\'' + esc(d.detail_id) + '\',\'' + d.product_set_id + '\',\'' + esc(d.product_no) + '\')">削除</button></td>' +
+          '<td><button class="btn btn-sm btn-danger" onclick="deleteVfDetail(\'' + jsArg(d.detail_id) + '\',\'' + jsArg(d.product_set_id) + '\',\'' + jsArg(d.product_no) + '\')">削除</button></td>' +
           '</tr>';
       });
       html += '</tbody></table></div>';
@@ -3504,7 +3507,7 @@ function searchVfProduct() {
         '<td style="font-size:12px;">' + esc(s.name) + '</td>' +
         '<td style="color:#6b7280;">¥' + Number(s.unit_price || 0).toLocaleString() + '</td>' +
         '<td><button class="btn btn-sm ' + (savedVfMap[String(s.id)] ? 'btn-gray' : 'btn-success') + '" ' +
-        (savedVfMap[String(s.id)] ? 'disabled' : 'onclick="addVfSearchResult(\'' + s.id + '\',\'' + esc(s.product_no) + '\',\'' + esc(s.name) + '\')"') +
+        (savedVfMap[String(s.id)] ? 'disabled' : 'onclick="addVfSearchResult(\'' + jsArg(s.id) + '\',\'' + jsArg(s.product_no) + '\',\'' + jsArg(s.name) + '\')"') +
         '>' + (savedVfMap[String(s.id)] ? '保存済み' : '追加') + '</button></td>' +
         '</tr>'
       ).join('') +
@@ -4041,7 +4044,7 @@ function renderSpIndividual() {
         '<td style="font-weight:700;color:#1a56db;">¥' + Number(d.unit_price).toLocaleString() + '</td>' +
         '<td>' + stateBadge + '</td>' +
         '<td>' + reflectBadge + '</td>' +
-        '<td><button class="btn btn-sm btn-danger" onclick="deleteIndPrice(\'' + esc(d.detail_id) + '\',\'' + esc(d.customer_code) + '\',\'' + esc(d.product_no) + '\')">削除</button></td>' +
+        '<td><button class="btn btn-sm btn-danger" onclick="deleteIndPrice(\'' + jsArg(d.detail_id) + '\',\'' + jsArg(d.customer_code) + '\',\'' + jsArg(d.product_no) + '\')">削除</button></td>' +
         '</tr>';
     });
     html += '</tbody></table></div>';
@@ -4222,7 +4225,7 @@ function renderExclusionSection() {
           '<td style="font-size:12px;">' + esc(x.label || '') + '</td>' +
           '<td style="font-size:12px;color:#6b7280;">' + esc(x.reason || '') + '</td>' +
           '<td style="font-size:11px;color:#9ca3af;">' + esc(String(x.created_at || '').substring(0, 16)) + '</td>' +
-          '<td><button class="btn btn-sm btn-danger" onclick="deleteExclusion(\'' + esc(x.exclude_id) + '\')">削除</button></td>' +
+          '<td><button class="btn btn-sm btn-danger" onclick="deleteExclusion(\'' + jsArg(x.exclude_id) + '\')">削除</button></td>' +
           '</tr>';
       });
       html += '</tbody></table></div>';
@@ -4755,13 +4758,12 @@ function renderDescProductList(products) {
     }
     let html = '';
     products.forEach(function(p) {
-      const nameAttr = escAttr(p.name);
-      html += '<div class="desc-product-card" id="desc-card-' + p.id + '" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;">' +
+      html += '<div class="desc-product-card" id="desc-card-' + escAttr(p.id) + '" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;">' +
         '<div style="flex:1;min-width:0;">' +
           '<div class="desc-product-name">' + esc(p.name) + '</div>' +
           '<div class="desc-product-meta">カテゴリ: ' + esc(p.category_name || '未設定') + ' ／ 商品ID: ' + p.id + '</div>' +
         '</div>' +
-        '<button class="btn btn-sm" onclick="unmarkDescSkipOne(\'' + p.id + '\',this)" style="white-space:nowrap;background:#f0fdf4;border:1px solid #86efac;color:#16a34a;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">↩️ 不要を解除</button>' +
+        '<button class="btn btn-sm" onclick="unmarkDescSkipOne(\'' + jsArg(p.id) + '\',this)" style="white-space:nowrap;background:#f0fdf4;border:1px solid #86efac;color:#16a34a;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">↩️ 不要を解除</button>' +
       '</div>';
     });
     el.innerHTML = html;
@@ -4777,21 +4779,21 @@ function renderDescProductList(products) {
     '<button class="btn btn-primary btn-sm" id="batchGenBtn" onclick="batchGenerateDesc()">✨ 上から' + BATCH_GEN_LIMIT + '件まとめて生成</button>' +
     '<span style="font-size:12px;color:#6b7280;">（1件ずつ順番に処理・Web検索ありの場合は1件あたり約6〜8秒）</span></div>';
   products.forEach(function(p) {
-    const nameAttr = escAttr(p.name);
-    const catAttr  = escAttr(p.category_name || '');
-    html += '<div class="desc-product-card" id="desc-card-' + p.id + '">' +
+    const nameArg = jsArg(p.name);
+    const catArg  = jsArg(p.category_name || '');
+    html += '<div class="desc-product-card" id="desc-card-' + escAttr(p.id) + '">' +
       '<div class="desc-product-header">' +
         '<div class="desc-product-name">' + esc(p.name) + '</div>' +
         '<div class="desc-product-meta">カテゴリ: ' + esc(p.category_name || '未設定') + ' ／ 商品ID: ' + p.id + '</div>' +
       '</div>' +
       '<div class="desc-product-btn-row">' +
         '<div class="desc-product-actions">' +
-          '<button class="btn btn-primary btn-sm" onclick="generateOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',\'' + catAttr + '\',this)">✨ 生成</button>' +
-          '<button class="btn btn-sm" onclick="findSimilarDesc(\'' + p.id + '\',\'' + nameAttr + '\',this)" style="background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">🔗 類似品</button>' +
-          '<button class="btn btn-sm" id="fact-btn-' + p.id + '" onclick="factCheckOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',\'' + catAttr + '\',this)" style="display:none;background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">🔍 チェック</button>' +
-          '<button class="btn btn-success btn-sm" id="apply-btn-' + p.id + '" onclick="applyOneDesc(\'' + p.id + '\',\'' + nameAttr + '\',this)" disabled>✅ 反映</button>' +
+          '<button class="btn btn-primary btn-sm" onclick="generateOneDesc(\'' + jsArg(p.id) + '\',\'' + nameArg + '\',\'' + catArg + '\',this)">✨ 生成</button>' +
+          '<button class="btn btn-sm" onclick="findSimilarDesc(\'' + jsArg(p.id) + '\',\'' + nameArg + '\',this)" style="background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">🔗 類似品</button>' +
+          '<button class="btn btn-sm" id="fact-btn-' + escAttr(p.id) + '" onclick="factCheckOneDesc(\'' + jsArg(p.id) + '\',\'' + nameArg + '\',\'' + catArg + '\',this)" style="display:none;background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">🔍 チェック</button>' +
+          '<button class="btn btn-success btn-sm" id="apply-btn-' + escAttr(p.id) + '" onclick="applyOneDesc(\'' + jsArg(p.id) + '\',\'' + nameArg + '\',this)" disabled>✅ 反映</button>' +
         '</div>' +
-        '<button class="btn btn-sm" onclick="markDescSkipOne(\'' + p.id + '\',\'' + nameAttr + '\',this)" style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">🚫 不要</button>' +
+        '<button class="btn btn-sm" onclick="markDescSkipOne(\'' + jsArg(p.id) + '\',\'' + nameArg + '\',this)" style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">🚫 不要</button>' +
       '</div>' +
       '<textarea class="desc-textarea" id="desc-text-' + p.id + '" rows="8" placeholder="「✨ 生成」を押すとAIが説明文を作成します。直接入力または修正後、「✅ 反映」でBCARTに登録します。" oninput="onDescInput(\'' + p.id + '\')"></textarea>' +
       '<div id="desc-sources-' + p.id + '" style="display:none;font-size:11px;color:#6b7280;margin-top:4px;padding:2px 0;line-height:1.6;"></div>' +
@@ -4803,7 +4805,18 @@ function renderDescProductList(products) {
 }
 
 function escAttr(str) {
-  return String(str || '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// HTMLのonclick属性内に埋め込む単一引用符JS文字列用。
+function jsArg(str) {
+  return String(str == null ? '' : str)
+    .replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+    .replace(/\r/g, '\\r').replace(/\n/g, '\\n')
+    .replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function markDescSkipOne(id, name, btn) {
@@ -5554,7 +5567,7 @@ function draftCardHtml(d) {
       '<button class="btn btn-sm" onclick="saveDraftOnly(\'' + d.draftId + '\',this)" style="background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;">✏️ 保存のみ</button>' +
       '<button class="btn btn-success btn-sm" onclick="approveDraftOne(\'' + d.draftId + '\',this)">✅ 承認して登録（非表示）</button>' +
       '<button class="btn btn-sm" onclick="openImagePromptModal(\'' + d.draftId + '\')" style="background:#faf5ff;border:1px solid #e9d5ff;color:#7c3aed;">🎨 画像生成プロンプト</button>' +
-      '<button class="btn btn-sm" onclick="openDraftRejectModal(\'' + d.draftId + '\',\'' + escAttr(d.productName) + '\')" style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;">🚫 却下</button>';
+      '<button class="btn btn-sm" onclick="openDraftRejectModal(\'' + jsArg(d.draftId) + '\',\'' + jsArg(d.productName) + '\')" style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;">🚫 却下</button>';
   } else if (d.status === '登録済') {
     actions =
       '<span style="font-size:12px;color:#6b7280;">BCART商品ID: ' + esc(d.registeredProductId) +

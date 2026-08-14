@@ -1,16 +1,15 @@
 // ============================================================
 // ビューフィールド 貸出管理アプリ — バックエンド
-// VERSION: GAS 1.9.0
 // 更新日: 2026-04-25
 // ============================================================
 
-const VERSION  = 'GAS 1.11.0';
+const VERSION  = 'GAS 1.12.0';
 const SHEET_ID      = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
 const AUTH_SHEET_ID = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID');
 // SHEET_ID / AUTH_SHEET_ID / LINEWORKS_WEBHOOK はスクリプトプロパティで管理
 const APP_NAME           = 'lending';
 const SESSION_HOURS      = 12;
-const CACHE_TTL_SESSION  = 120; // 権限剥奪・ログアウト反映を遅らせない
+const CACHE_TTL_SESSION  = 60; // 権限剥奪・ログアウトを最大1分で反映
 const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_LOCK_MINUTES = 10;
 const ss = SpreadsheetApp.openById(SHEET_ID);
@@ -113,14 +112,11 @@ function doPost(e) {
     const data   = JSON.parse(e.parameter.data);
     const token  = e.parameter.session_token || '';
 
-    // login / getAuthUsers は認証不要（ログイン画面用）
-    const PUBLIC_ACTIONS = ['login', 'getAuthUsers'];
-    let auth = null;
-    if (!PUBLIC_ACTIONS.includes(action)) {
-      auth = validateSession(token);
-      if (!auth.valid) {
-        return _respond({ status: 'error', error: 'SESSION_INVALID' });
-      }
+    // ログイン入口はポータルに統一し、貸出管理APIは全操作でセッションと明示ロールを必須にする。
+    const auth = validateSession(token);
+    if (!auth.valid) {
+      return _respond({ status: 'error', error: 'SESSION_INVALID' });
+    }
       const adminActions = [
         'saveDevice', 'registerDevice', 'saveSalesRep', 'deleteSalesRep',
         'uploadImage', 'saveMaker', 'deleteMaker', 'issueLabel',
@@ -140,7 +136,6 @@ function doPost(e) {
       if (action === 'changePin' && String(data.user_id || '') !== String(auth.user_id)) {
         return _respond({ status: 'error', error: 'FORBIDDEN' });
       }
-    }
 
     let result;
     if      (action === 'saveDevice')          result = saveDevice(data);
@@ -158,14 +153,13 @@ function doPost(e) {
     else if (action === 'assignLabel')         result = assignLabel(data);
     else if (action === 'extendDueDate')       result = extendDueDate(data);
     else if (action === 'notify')              result = notify(data);
-    else if (action === 'login')               result = login(data);
-    else if (action === 'getAuthUsers')        result = getAuthUsers();
     else if (action === 'changePin')           result = changePin(data);
     else result = { error: 'Unknown action: ' + action };
 
     return _respond({ status: 'ok', result });
   } catch(err) {
-    return _respond({ status: 'error', error: err.toString() });
+    Logger.log('doPost error: ' + err);
+    return _respond({ status: 'error', error: 'INTERNAL_ERROR' });
   }
 }
 
@@ -769,10 +763,20 @@ function changePin(data) {
         throw new Error('現在のPINが正しくありません');
       }
       sheet.getRange(i + 1, 3).setValue(String(newPin));
-      return { user_id: String(userId) };
+      _deleteAuthSessions_(authSs, userId);
+      return { user_id: String(userId), reauth_required: true };
     }
   }
   throw new Error('ユーザーが見つかりません');
+}
+
+function _deleteAuthSessions_(authSs, userId) {
+  var sessions = authSs.getSheetByName('sessions');
+  if (!sessions) return;
+  var rows = sessions.getDataRange().getValues();
+  for (var i = rows.length - 1; i >= 1; i--) {
+    if (String(rows[i][1]) === String(userId)) sessions.deleteRow(i + 1);
+  }
 }
 
 // ─── テスト用関数（GASエディタから手動実行） ────────────────

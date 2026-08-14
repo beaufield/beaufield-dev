@@ -15,16 +15,16 @@
 //   3. プロジェクトの設定でスクリプトプロパティ SPREADSHEET_ID を設定
 //   4. GASエディタの関数選択で setupSheets を選び、一度だけ実行（シート・見出し・configの初期値を作成）
 //   5. デプロイ → 新しいデプロイ → 種類「ウェブアプリ」
-//        実行ユーザー: 自分（tak.maejima@gmail.com。スプレッドシート作成に使ったGoogleアカウント）
+//        実行ユーザー: スプレッドシート作成に使った管理用Googleアカウント
 //        アクセスできるユーザー: 全員（お客様の申込フォームが認証なしで動く必要があるため）
 //   6. 発行されたウェブアプリURLを index.html / pass.html の GAS_URL に設定
 //
 // メール送信元（beaufes@gmail.com）を実際に使うには、事前に
-// tak.maejima@gmail.com のGmail設定で「他のメールアドレスを追加」から
+// GAS実行アカウントのGmail設定で「他のメールアドレスを追加」から
 // beaufes@gmail.com を送信元アドレス（send-as）として登録しておくこと。
-// 未登録の場合は自動的に MailApp（送信元は tak.maejima@ のまま・差出人名とReply-Toで代替）にフォールバックする。
+// 未登録の場合は自動的に MailApp（送信元は実行アカウント・差出人名とReply-Toで代替）にフォールバックする。
 //
-// 🔴 送信量の注意（2026-08-04 実測確認済み）: tak.maejima@gmail.com はGoogle Workspace Business
+// 🔴 送信量の注意（2026-08-04 実測確認済み）: GAS実行アカウントはGoogle Workspace Business
 // Standardを契約しているにもかかわらず、Apps Scriptの送信枠は個人アカウント扱いで1日100通だった
 //（MailApp.getRemainingDailyQuota()で実測確認済み。契約と実測の食い違いの原因は未特定・追跡はせず
 // 実測値を設計上の正として採用。checkMailQuota()関数でいつでも再確認できる）。
@@ -140,7 +140,7 @@
 //   失敗しても申込自体は成立済みのため、呼び出し側でtry/catchして握りつぶす。
 // ============================================================
 
-const VERSION  = '0.14.0';
+const VERSION  = '0.14.1';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -1484,7 +1484,7 @@ function migrateFixPhoneColumn() {
 
 // ============================================================
 // 本日のメール送信残数を確認する（診断用・手動実行）
-// 2026-08-04実測: tak.maejima@gmail.comはGoogle Workspace Business Standard契約にも
+// 2026-08-04実測: GAS実行アカウントはGoogle Workspace Business Standard契約にも
 // かかわらず、Apps Script上では個人アカウント扱いで100通/日だった（原因未特定）
 // ============================================================
 function checkMailQuota() {

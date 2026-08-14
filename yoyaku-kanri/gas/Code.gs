@@ -1,6 +1,5 @@
 // ============================================================
 // Beaufield 予約管理アプリ - Google Apps Script
-// Version: 1.8.0
 // ============================================================
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
@@ -10,7 +9,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.11.0';
+const VERSION  = '1.12.0';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -23,7 +22,7 @@ const SHEET_PRODUCTS     = 'products';
 const SHEET_RESERVATIONS = 'reservations';
 
 // CacheService キャッシュ時間（秒）
-const CACHE_TTL_AUTH  = 900;  // セッション検証キャッシュ: 15分（増加でシート読み込み頻度削減）
+const CACHE_TTL_AUTH  = 60;   // 権限変更・ログアウトを最大1分で反映
 const CACHE_TTL_USERS = 600;  // ユーザー一覧キャッシュ: 10分（_getUsersFromAuth の二重シート読み込みを防ぐ）
 
 // ============================================================
@@ -69,7 +68,7 @@ function validateAndGetUser(token) {
 
     // キャッシュヒット確認
     const cache    = CacheService.getScriptCache();
-    const cacheKey = 'auth_' + token;
+    const cacheKey = 'auth_yoyaku_v2_' + token;
     const cached   = cache.get(cacheKey);
     if (cached) return JSON.parse(cached);
 
@@ -99,14 +98,18 @@ function validateAndGetUser(token) {
     if (!ush) return { valid: false };
     const uRows = ush.getDataRange().getValues();
     let userName = null;
+    let activeUser = false;
+    let isAdmin = false;
 
     for (let i = 1; i < uRows.length; i++) {
       if (String(uRows[i][0]) === userId) {
         userName = String(uRows[i][1]);
+        activeUser = uRows[i][3] === true || uRows[i][3] === 'TRUE';
+        isAdmin = uRows[i][5] === true || uRows[i][5] === 'TRUE';
         break;
       }
     }
-    if (!userName) return { valid: false };
+    if (!userName || !activeUser) return { valid: false };
 
     // --- 3. user_app_roles からアプリ固有ロール取得 ---
     //    "admin" → 事務（商品管理・全予約管理）
@@ -123,12 +126,14 @@ function validateAndGetUser(token) {
         }
       }
     }
+    if (!yoyakuRole || yoyakuRole === 'none') return { valid: false };
 
     const result = {
       valid:       true,
       user_id:     userId,
       name:        userName,
-      yoyaku_role: yoyakuRole   // "admin" / "staff" / null
+      is_admin:    isAdmin,
+      yoyaku_role: yoyakuRole   // "admin" / "staff"
     };
     cache.put(cacheKey, JSON.stringify(result), CACHE_TTL_AUTH);
     return result;

@@ -10,7 +10,7 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.9.1';
+const VERSION       = 'v1.10.0';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
 
 // ロックアウト設定
@@ -136,6 +136,7 @@ function doPost(e) {
       case 'login':           return _json(login(data));
       case 'resetPin':        return _json(resetPin(data));
       case 'changePin':       return _json(changePin(data));
+      case 'logout':          return _json(logout(data));
       case 'validateSession': return _json(validateSession(data));
       case 'getUserApps':     return _json(getUserApps(data.session_token || ''));
       default:                return _json({ success: false, error: '不明なアクション: ' + action });
@@ -318,7 +319,9 @@ function changePin(data) {
         return { success: false, message: '現在のPINが正しくありません' };
       }
       sh.getRange(i + 1, 3).setValue(newPinStr);
-      return { success: true, message: 'PINを変更しました' };
+      // PIN変更後は旧PINで発行済みの全セッションを失効させる。
+      _deleteUserSessions(ss, userId);
+      return { success: true, message: 'PINを変更しました。すべての端末で再ログインしてください。', reauth_required: true };
     }
   }
   return { success: false, message: 'ユーザーが見つかりません' };
@@ -333,6 +336,17 @@ function getUserApps(token) {
   const ss     = SpreadsheetApp.openById(AUTH_SHEET_ID);
   const userId = _getSessionUser(ss, token);
   if (!userId) return { success: false, error: 'SESSION_INVALID' };
+
+  // セッション発行後に無効化されたユーザーは、一覧取得でも拒否する。
+  const users = ss.getSheetByName('users').getDataRange().getValues();
+  let activeUser = false;
+  for (let i = 1; i < users.length; i++) {
+    if (String(users[i][0]) === userId) {
+      activeUser = users[i][3] === true || users[i][3] === 'TRUE';
+      break;
+    }
+  }
+  if (!activeUser) return { success: false, error: 'SESSION_INVALID' };
 
   const roles = ss.getSheetByName('user_app_roles').getDataRange().getValues();
 
@@ -452,6 +466,24 @@ function _deleteUserSessions(ss, userId) {
   for (let i = data.length - 1; i >= 1; i--) {
     if (String(data[i][1]) === userId) sh.deleteRow(i + 1);
   }
+}
+
+// ============================================================
+// 現在の端末で使用中のセッションだけを削除する（サーバー側ログアウト）
+// ============================================================
+function logout(data) {
+  const token = String((data && (data.session_token || data.token)) || '');
+  if (!token) return { success: true };
+
+  const ss = SpreadsheetApp.openById(AUTH_SHEET_ID);
+  const sh = ss.getSheetByName('sessions');
+  if (!sh) return { success: true };
+
+  const rows = sh.getDataRange().getValues();
+  for (let i = rows.length - 1; i >= 1; i--) {
+    if (String(rows[i][0]) === token) sh.deleteRow(i + 1);
+  }
+  return { success: true };
 }
 
 // ============================================================

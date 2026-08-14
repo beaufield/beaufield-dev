@@ -536,7 +536,7 @@
 
 <script>
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzNVW7AaPUTuwneE-M40DTN1clO5VT2yLCHq7cjYvaHqfMfXgVi38UAOsDZQbmmN3wOzw/exec';
-  const APP_VERSION  = 'v1.3.0';
+  const APP_VERSION  = 'v1.4.0';
   const SESSION_KEY  = 'bf_session';
   const SESSION_HOURS = 12;
 
@@ -610,15 +610,18 @@
         return;
       }
       grid.innerHTML = res.users.map(u =>
-        `<button class="user-btn" data-id="${u.user_id}" onclick="selectUser('${u.user_id}','${escHtml(u.name)}')">${escHtml(u.name)}</button>`
+        `<button class="user-btn" data-id="${escHtml(u.user_id)}">${escHtml(u.name)}</button>`
       ).join('');
+      grid.querySelectorAll('.user-btn').forEach(btn => {
+        btn.addEventListener('click', () => selectUser(btn.dataset.id));
+      });
     } catch {
       showError('ユーザー情報の読み込みに失敗しました');
     }
   }
 
   // ── ユーザー選択 ──────────────────────────────────────────────
-  function selectUser(id, name) {
+  function selectUser(id) {
     selectedUserId = id;
     document.querySelectorAll('.user-btn').forEach(b => b.classList.remove('active'));
     document.querySelector(`.user-btn[data-id="${id}"]`).classList.add('active');
@@ -685,7 +688,14 @@
   }
 
   // ── ログアウト ─────────────────────────────────────────────────
-  function doLogout() {
+  async function doLogout() {
+    const session = getSession();
+    // 通信失敗時も端末側は必ずログアウトする。成功時はサーバー側トークンも失効する。
+    try {
+      if (session && session.token) {
+        await gasPost('logout', { session_token: session.token });
+      }
+    } catch (e) {}
     clearSession();
     selectedUserId = null;
     document.getElementById('homeScreen').style.display  = 'none';
@@ -716,8 +726,11 @@
         return;
       }
       grid.innerHTML = res.users.map(u =>
-        `<button class="user-btn" data-mid="${u.user_id}" onclick="selectManageUser('${u.user_id}','${escHtml(u.name)}')">${escHtml(u.name)}</button>`
+        `<button class="user-btn" data-mid="${escHtml(u.user_id)}" data-name="${escHtml(u.name)}">${escHtml(u.name)}</button>`
       ).join('');
+      grid.querySelectorAll('.user-btn').forEach(btn => {
+        btn.addEventListener('click', () => selectManageUser(btn.dataset.mid, btn.dataset.name));
+      });
     } catch {
       grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--danger);font-size:13px">読み込みに失敗しました</div>';
     }
@@ -827,10 +840,12 @@
         new_pin:       newPin
       });
       if (res.success) {
-        showChangePinMsg('success', 'PINを変更しました');
+        showChangePinMsg('success', res.message || 'PINを変更しました。再ログインしてください');
         document.getElementById('cpCurrentPin').value = '';
         document.getElementById('cpNewPin').value     = '';
         document.getElementById('cpConfirmPin').value = '';
+        clearSession();
+        setTimeout(() => location.reload(), 1200);
       } else {
         showChangePinMsg('error', res.message || 'PIN変更に失敗しました');
       }
