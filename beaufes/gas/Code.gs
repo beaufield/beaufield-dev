@@ -170,9 +170,14 @@
 //     PER_EMAIL_MAIL_MAX  既定5  / DAILY_NOTIFY_LIMIT 既定30
 //   🔴 新しいシートも新しいOAuthスコープも追加していない（MailAppは既に使用中）。
 //   したがってデプロイ後の手動マイグレーションは不要。
+//
+// 🆕 v0.15.1（2026-08-15・名札印刷badges.html準備 S0）: 診断専用の `testAuthSheetAccess()` を追加。
+//   `badges.html`（名札印刷）はbeaufield-authの共通セッションに相乗りする設計（名札印刷_badges設計.md）。
+//   認証基盤(validateSession等)を実装する前に、beaufesのGAS実行アカウントが
+//   beaufield-auth スプレッドシートを開けることをこの関数で確認する。既存の申込経路への影響なし。
 // ============================================================
 
-const VERSION  = '0.15.0';
+const VERSION  = '0.15.1';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -1766,5 +1771,22 @@ function pingHeavy(data) {
     seq: String((data && data.seq) || ''),
     row_count: rows.length - 1,
     server_time: _now()
+  });
+}
+
+// ============================================================
+// 🆕 S0（名札印刷badges.html・事前チェック専用）: beaufield-auth を開けるかだけを確かめる。
+// 名札印刷_badges設計.md §0-2。認証基盤(validateSession等)を実装する前に、
+// beaufesのGAS実行アカウントが beaufield-auth スプレッドシートを開けることを確認する。
+// 確認できたら削除せず残してよい（診断用として無害）。
+// 🔴 PIN・氏名・トークンは絶対にログへ出さない（行数だけ見る）
+// ============================================================
+function testAuthSheetAccess() {
+  const id = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID');
+  if (!id) { Logger.log('NG: AUTH_SHEET_ID が未設定'); return; }
+  const ss = SpreadsheetApp.openById(id);
+  ['users', 'user_app_roles', 'sessions'].forEach(function (n) {
+    const sh = ss.getSheetByName(n);
+    Logger.log(n + ': ' + (sh ? sh.getLastRow() + '行' : '🔴 シートが無い'));
   });
 }
