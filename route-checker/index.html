@@ -801,7 +801,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = 'v1.20.0';
+const APP_VERSION = 'v1.21.0';
 const START_MONTH = '2026-04'; // 運用開始月（これより前は選択肢に表示しない）
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbxaJg7FmAxJBc-miR-Xc7Aa-PFO8gcjZqcCrFxAKLZ93E4syqyYHGxF2JcUHmRH8tr_/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
@@ -903,8 +903,8 @@ function dateDisplayStr(dateStr) {
 // セッション管理（localStorage / ポータル共通セッション bf_session を使用）
 // ============================================================
 var SESSION_KEY  = 'bf_session'; // ポータルと共通キー
-var SESSION_DAYS = 30;
-var SESSION_MS   = SESSION_DAYS * 24 * 60 * 60 * 1000;
+var SESSION_HOURS = 12;
+var SESSION_MS    = SESSION_HOURS * 60 * 60 * 1000;
 
 // ============================================================
 // サロンキャッシュ（localStorage / 1時間保持）
@@ -1154,17 +1154,14 @@ function resetTo(viewName, data) {
 // API
 // ============================================================
 async function apiGet(action, params) {
+  const publicActions = ['login', 'getPublicUsers'];
+  if (!publicActions.includes(action)) return apiPost(action, params);
   const url = new URL(GAS_URL);
   url.searchParams.set('action', action);
   if (params && Object.keys(params).length > 0) {
     url.searchParams.set('data', JSON.stringify(params));
   }
   // 認証不要アクション以外はセッショントークンを付与
-  const publicActions = ['login', 'getPublicUsers'];
-  if (!publicActions.includes(action)) {
-    var session = _getBfSession();
-    if (session && session.token) url.searchParams.set('session_token', session.token);
-  }
   const res  = await fetch(url.toString());
   const json = await res.json();
   if (json.status !== 'ok') {

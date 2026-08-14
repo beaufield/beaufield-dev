@@ -10,7 +10,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.10.0';
+const VERSION  = '1.11.0';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -165,34 +165,7 @@ function cleanExpiredSessions() {
 // エントリーポイント（GET）
 // ============================================================
 function doGet(e) {
-  const action = (e && e.parameter && e.parameter.action) ? e.parameter.action : '';
-  let data = {};
-  try {
-    if (e && e.parameter && e.parameter.data) data = JSON.parse(e.parameter.data);
-  } catch(jsonErr) {
-    return _jsonResponse(_err('INVALID_REQUEST'));
-  }
-  const token  = (e && e.parameter && e.parameter.session_token) ? e.parameter.session_token : '';
-
-  const auth = validateAndGetUser(token);
-  if (!auth.valid) return _jsonResponse(_err('SESSION_INVALID'));
-
-  data._userId   = auth.user_id;
-  data._userInfo = auth;
-
-  try {
-    switch (action) {
-      case 'init':            return _jsonResponse(initApp(data));
-      case 'getProducts':     return _jsonResponse(getProducts(data));
-      case 'getReservations': return _jsonResponse(getReservations(data));
-      case 'getUsers':        return _jsonResponse(getUsers(data));
-      case 'getUserInfo':     return _jsonResponse(_ok({ user_id: auth.user_id, name: auth.name, yoyaku_role: auth.yoyaku_role }));
-      default:                return _jsonResponse(_err('不明なアクション: ' + action));
-    }
-  } catch (err) {
-    Logger.log('doGet error: ' + err);
-    return _jsonResponse(_err('INTERNAL_ERROR'));
-  }
+  return _jsonResponse(_err('USE_POST'));
 }
 
 // ============================================================
@@ -226,6 +199,11 @@ function doPost(e) {
       case 'bulkUpdateStatus':    return _jsonResponse(bulkUpdateStatus(data));
       case 'bulkUpdateDelivery':  return _jsonResponse(bulkUpdateDelivery(data));
       case 'processArrival':      return _jsonResponse(processArrival(data));
+      case 'init':                return _jsonResponse(initApp(data));
+      case 'getProducts':         return _jsonResponse(getProducts(data));
+      case 'getReservations':     return _jsonResponse(getReservations(data));
+      case 'getUsers':            return _jsonResponse(getUsers(data));
+      case 'getUserInfo':         return _jsonResponse(_ok({ user_id: auth.user_id, name: auth.name, yoyaku_role: auth.yoyaku_role }));
       default:                    return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {

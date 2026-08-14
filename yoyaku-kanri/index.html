@@ -419,7 +419,7 @@
 <header class="header">
   <h1>📋 予約管理</h1>
   <span class="header-user" id="headerUser"></span>
-  <span class="header-version">v1.21.0</span>
+  <span class="header-version" id="headerVersion"></span>
 </header>
 
 <!-- ============================================================ -->
@@ -773,6 +773,8 @@
 </div>
 
 <script>
+const APP_VERSION = 'v1.22.0';
+document.getElementById('headerVersion').textContent = APP_VERSION;
 // ============================================================
 // 設定（デプロイ後に GAS_URL を変更すること）
 // ============================================================
@@ -2883,13 +2885,7 @@ function formatDateJP(dateStr) {
 // GAS API 通信
 // ============================================================
 async function gasGet(action, params = {}) {
-  const qs = new URLSearchParams({
-    action,
-    session_token: token,
-    data: JSON.stringify(params)
-  });
-  const res = await fetch(`${GAS_URL}?${qs}`, { redirect: 'follow' });
-  return res.json();
+  return gasPost(action, params);
 }
 
 async function gasPost(action, data = {}) {

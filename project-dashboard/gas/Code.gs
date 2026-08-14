@@ -12,7 +12,7 @@
  *   SYNC_TOKEN    … 同期スクリプト用の共有シークレット（ランダム長文字列）
  */
 
-const VERSION = '1.7.0';
+const VERSION = '1.8.0';
 const APP_NAME = 'project-dashboard';
 const CACHE_TTL_SESSION = 900; // セッション検証キャッシュ 15分（他アプリと同一パターン）
 
@@ -268,6 +268,9 @@ function doPost(e) {
         const guard = authGuard_(p.session_token || '');
         if (guard) return guard;
         return jsonResponse(reorderPriorities_(p));
+      }
+      case 'data': {
+        return jsonResponse({ success: false, error: 'USE_POST' });
       }
       default:
         return jsonResponse({ success: false, error: '不明なアクション' });

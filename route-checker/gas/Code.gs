@@ -13,7 +13,7 @@
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS         = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID = _PROPS.getProperty('SPREADSHEET_ID');
-const VERSION        = '1.11.3';
+const VERSION        = '1.12.0';
 
 // beaufield-auth 共通認証設定
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
@@ -125,12 +125,7 @@ function doGet(e) {
   // login・getPublicUsers は認証不要（ログイン画面・ユーザー名表示用）
   const publicActions = ['login', 'getPublicUsers'];
   if (!publicActions.includes(action)) {
-    const auth = validateSession(token);
-    if (!auth.valid) {
-      return _jsonResponse(_err('SESSION_INVALID'));
-    }
-    // セッション検証済みのuser_idで上書き（クライアント送信値の改ざんを防止）
-    data.user_id = auth.user_id;
+    return _jsonResponse(_err('USE_POST'));
   }
 
   try {
@@ -191,6 +186,14 @@ function doPost(e) {
       case 'changePin':        return _jsonResponse(changePin(data));
       case 'updateSalonAdmin': return _jsonResponse(updateSalonAdmin(data));
       case 'updateUserOrder':  return _jsonResponse(updateUserOrder(data));
+      case 'getMyRoute':       return _jsonResponse(getMyRoute(data));
+      case 'getMySalons':      return _jsonResponse(getMySalons(data));
+      case 'getTodayLogs':     return _jsonResponse(getTodayLogs(data));
+      case 'getCheckScreenData': return _jsonResponse(getCheckScreenData(data));
+      case 'getVisitHistory':  return _jsonResponse(getVisitHistory(data));
+      case 'getSummary':       return _jsonResponse(getSummary(data));
+      case 'getUsers':         return _jsonResponse(getUsers(data));
+      case 'getAllSalons':     return _jsonResponse(getAllSalons(data));
       default:                 return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {

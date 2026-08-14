@@ -367,7 +367,7 @@
   // ============================================================
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzkuWEqpJLhERoYlosHIeazlVjl3ipIq8u3x0rp4tCU7BaqPuYt4kP78Ha5Vu4ayNWDCg/exec';
   const PORTAL_URL   = 'https://beaufield.github.io/beaufield-dev/';
-  const APP_VERSION  = '1.10.0';
+  const APP_VERSION  = '1.11.0';
   const USE_MOCK     = false; // ← 開発中は true にして data/dashboard_data.json を見る
 
   document.getElementById('header-version').textContent = 'v' + APP_VERSION;
@@ -428,7 +428,11 @@
           assets: mock.assets,
           jobs: mock.jobs
         }))
-      : fetch(GAS_URL + '?action=data&session_token=' + encodeURIComponent(session.token))
+      : fetch(GAS_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'data', session_token: session.token })
+        })
           .then(r => r.json());
 
     dataPromise

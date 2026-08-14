@@ -4,24 +4,27 @@
 // 更新日: 2026-04-25
 // ============================================================
 
-const VERSION  = 'GAS 1.10.0';
+const VERSION  = 'GAS 1.11.0';
 const SHEET_ID      = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
 const AUTH_SHEET_ID = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID');
 // SHEET_ID / AUTH_SHEET_ID / LINEWORKS_WEBHOOK はスクリプトプロパティで管理
 const APP_NAME           = 'lending';
-const SESSION_DAYS       = 30;
-const CACHE_TTL_SESSION  = 900; // 15分（CacheService保持秒数）
+const SESSION_HOURS      = 12;
+const CACHE_TTL_SESSION  = 120; // 権限剥奪・ログアウト反映を遅らせない
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCK_MINUTES = 10;
 const ss = SpreadsheetApp.openById(SHEET_ID);
 
 // ─── セッション検証 ──────────────────────────────────────────
 // beaufield-auth の sessions シートでトークンを照合する
 // CacheService で 15 分間キャッシュしてシート読み込みを削減
-// 戻り値: { valid: true, user_id } または { valid: false }
+// 戻り値: { valid: true, user_id, role } または { valid: false }
 function validateSession(token) {
   if (!token) return { valid: false };
 
   const cache    = CacheService.getScriptCache();
-  const cacheKey = 'sess_' + token.slice(-32);
+  // v2: アプリ権限を含む結果だけをキャッシュする。旧キャッシュはキーを分けて無効化する。
+  const cacheKey = 'sess_lending_v2_' + token.slice(-32);
   const cached   = cache.get(cacheKey);
   if (cached !== null) {
     try { return JSON.parse(cached); } catch(e) {}
@@ -37,13 +40,35 @@ function validateSession(token) {
 
     for (let i = 1; i < data.length; i++) {
       if (String(data[i][0]) === token) {
-        if (Number(data[i][2]) < now) {
-          sh.deleteRow(i + 1);
-          const r = { valid: false };
-          cache.put(cacheKey, JSON.stringify(r), 60);
-          return r;
+        if (Number(data[i][2]) < now) return { valid: false };
+
+        const userId = String(data[i][1]);
+        const users = authSs.getSheetByName('users').getDataRange().getValues();
+        const userRow = users.find(function(row, idx) {
+          return idx > 0 && String(row[0]) === userId;
+        });
+        if (!userRow || !(userRow[3] === true || userRow[3] === 'TRUE')) {
+          return { valid: false };
         }
-        const r = { valid: true, user_id: String(data[i][1]) };
+
+        const roles = authSs.getSheetByName('user_app_roles').getDataRange().getValues();
+        let role = '';
+        for (let j = 1; j < roles.length; j++) {
+          if (String(roles[j][0]) === userId && String(roles[j][1]) === APP_NAME) {
+            role = String(roles[j][2] || '');
+            break;
+          }
+        }
+        if (!role || role === 'none') return { valid: false };
+
+        const isAdmin = userRow[5] === true || userRow[5] === 'TRUE';
+        const r = {
+          valid: true,
+          user_id: userId,
+          name: String(userRow[1] || userId),
+          role: role,
+          is_admin: isAdmin
+        };
         cache.put(cacheKey, JSON.stringify(r), CACHE_TTL_SESSION);
         return r;
       }
@@ -52,9 +77,8 @@ function validateSession(token) {
     Logger.log('validateSession error: ' + e);
   }
 
-  const r = { valid: false };
-  cache.put(cacheKey, JSON.stringify(r), 60);
-  return r;
+  // Google側の一時障害を「無効なセッション」として負キャッシュしない。
+  return { valid: false };
 }
 
 // ─── セッション保存（beaufield-auth の sessions シートに書き込む） ─
@@ -91,15 +115,36 @@ function doPost(e) {
 
     // login / getAuthUsers は認証不要（ログイン画面用）
     const PUBLIC_ACTIONS = ['login', 'getAuthUsers'];
+    let auth = null;
     if (!PUBLIC_ACTIONS.includes(action)) {
-      const auth = validateSession(token);
+      auth = validateSession(token);
       if (!auth.valid) {
         return _respond({ status: 'error', error: 'SESSION_INVALID' });
+      }
+      const adminActions = [
+        'saveDevice', 'registerDevice', 'saveSalesRep', 'deleteSalesRep',
+        'uploadImage', 'saveMaker', 'deleteMaker', 'issueLabel',
+        'updatePrintStatus', 'assignLabel'
+      ];
+      const role = String(auth.role || '').toLowerCase();
+      const canAdmin = auth.is_admin === true || ['admin', 'manager'].includes(role);
+      if (adminActions.includes(action) && !canAdmin) {
+        return _respond({ status: 'error', error: 'FORBIDDEN' });
+      }
+
+      // 操作者名はクライアント入力を信用せず、検証済みセッションから確定する。
+      const actorName = auth.name || auth.user_id;
+      if (action === 'saveLoan' && data) data.registeredBy = actorName;
+      if (action === 'saveLoanTransaction' && data && data.loan) data.loan.registeredBy = actorName;
+      if (action === 'extendDueDate' && data) data.registeredBy = actorName;
+      if (action === 'changePin' && String(data.user_id || '') !== String(auth.user_id)) {
+        return _respond({ status: 'error', error: 'FORBIDDEN' });
       }
     }
 
     let result;
     if      (action === 'saveDevice')          result = saveDevice(data);
+    else if (action === 'getAllData')          result = getAllData();
     else if (action === 'saveLoan')            result = saveLoan(data);
     else if (action === 'registerDevice')      result = registerDevice(data);
     else if (action === 'saveLoanTransaction') result = saveLoanTransaction(data);
@@ -126,15 +171,7 @@ function doPost(e) {
 
 // ─── エントリーポイント（GET） ───────────────────────────────
 function doGet(e) {
-  const token = (e && e.parameter && e.parameter.session_token) ? e.parameter.session_token : '';
-  const auth  = validateSession(token);
-  if (!auth.valid) {
-    return _respond({ status: 'error', error: 'SESSION_INVALID' });
-  }
-  const result = getAllData();
-  return ContentService
-    .createTextOutput(JSON.stringify(result))
-    .setMimeType(ContentService.MimeType.JSON);
+  return _respond({ status: 'error', error: 'USE_POST' });
 }
 
 // ─── 全データ取得（起動時に呼ばれる） ────────────────────────
@@ -488,8 +525,12 @@ function extendDueDate(data) {
 
 // ─── LINE WORKS通知の後追い送信（フロントから登録応答後に呼ばれる） ─
 function notify(data) {
-  const text = data && data.text;
+  const text = data && String(data.text || '');
   if (!text) return { success: false };
+  const allowedPrefixes = ['【貸出登録】', '【返却登録】', '【返却期限延長】'];
+  if (text.length > 2000 || !allowedPrefixes.some(function(prefix) { return text.indexOf(prefix) === 0; })) {
+    throw new Error('通知内容が許可されていません');
+  }
   sendLineWorksMessage(text);
   return { success: true };
 }
@@ -650,6 +691,15 @@ function login(data) {
     throw new Error('user_idとpinは必須です');
   }
 
+  var props = PropertiesService.getScriptProperties();
+  var lockKey = 'login_lockout_' + userId;
+  var lockData = JSON.parse(props.getProperty(lockKey) || '{"count":0,"until":0}');
+  var now = Date.now();
+  if (Number(lockData.until || 0) > now) {
+    var remaining = Math.ceil((Number(lockData.until) - now) / 60000);
+    throw new Error('PIN入力がロックされています。' + remaining + '分後に再試行してください');
+  }
+
   var authSs  = SpreadsheetApp.openById(AUTH_SHEET_ID);
   var pinStr  = String(pin).padStart(4, '0');
 
@@ -659,8 +709,17 @@ function login(data) {
   for (var i = 1; i < authRows.length; i++) {
     var row = authRows[i];
     if (String(row[0]) === userId && (row[3] === true || row[3] === 'TRUE')) {
-      if (String(row[2]).padStart(4, '0') !== pinStr) throw new Error('PINが正しくありません');
+      if (String(row[2]).padStart(4, '0') !== pinStr) {
+        lockData.count = Number(lockData.count || 0) + 1;
+        if (lockData.count >= LOGIN_MAX_ATTEMPTS) {
+          lockData.count = 0;
+          lockData.until = now + LOGIN_LOCK_MINUTES * 60 * 1000;
+        }
+        props.setProperty(lockKey, JSON.stringify(lockData));
+        throw new Error('PINが正しくありません');
+      }
       authUser = { user_id: String(row[0]), name: String(row[1]) };
+      props.deleteProperty(lockKey);
       break;
     }
   }
@@ -679,7 +738,7 @@ function login(data) {
 
   // Step 3: サーバー側セッショントークン発行（beaufield-auth sessions シートに保存）
   var token     = Utilities.getUuid();
-  var expiresAt = Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000;
+  var expiresAt = now + SESSION_HOURS * 60 * 60 * 1000;
   _saveSession(authSs, token, authUser.user_id, expiresAt);
 
   return { user_id: authUser.user_id, name: authUser.name, role: role, session_token: token, expires: expiresAt };
