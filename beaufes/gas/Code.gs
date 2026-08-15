@@ -177,12 +177,17 @@
 //   beaufield-auth スプレッドシートを開けることをこの関数で確認する。既存の申込経路への影響なし。
 // ============================================================
 
-const VERSION  = '0.15.1';
+const VERSION  = '0.16.0-wip1';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS         = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID = _PROPS.getProperty('SPREADSHEET_ID');
+
+// 🆕 名札印刷badges.html用（名札印刷_badges設計.md §5-1）。
+// beaufield-authの共通セッションに相乗りするためのスプレッドシートID。
+const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
+const CACHE_TTL_SESSION = 60; // 権限変更を最大1分で反映（order-appと同じ）
 
 // シート名定数
 const SHEET_APPLICATIONS       = 'applications';
@@ -193,6 +198,7 @@ const SHEET_MAIL_LOG           = 'mail_log';
 const SHEET_CONFIG             = 'config';
 const SHEET_LINE_FRIENDS_CACHE = 'line_friends_cache'; // 🆕 L1-a（LINE Harness友だちのキャッシュ）
 const SHEET_LINE_SYNC_LOG      = 'line_sync_log';       // 🆕 L2（プッシュ・タグ付与・metadata書き戻しの失敗ログ）
+const SHEET_SPARE_BADGES       = 'spare_badges';        // 🆕 名札印刷（予備名札プール・§5-5）
 
 // メール送信元（機密ではないため直書きでよい。§7-0-2で確定）
 const MAIL_FROM_ADDR = 'beaufes@gmail.com';
@@ -229,6 +235,113 @@ function _checkProps() {
 function _checkLineHarnessProps() {
   if (!LINE_HARNESS_API_URL) throw new Error('スクリプトプロパティ LINE_HARNESS_API_URL が未設定です');
   if (!LINE_HARNESS_API_KEY) throw new Error('スクリプトプロパティ LINE_HARNESS_API_KEY が未設定です');
+}
+
+// ============================================================
+// 🆕 名札印刷badges.html用の認証（S1・名札印刷_badges設計.md §5-2）
+//
+// beaufield-authの共通セッション（sessions→users→user_app_rolesの3シート）に相乗りする。
+// order-app/gas/Code.gs:88-164 の validateSession をそのまま移植したもの
+// （APP_NAMEとキャッシュキーだけ変更）。自分で考えた別方式にしないこと（§2-4）。
+//
+// 🔴 この節の関数は listBadges/listSpareBadges（＝badges.html関連アクション）からしか
+//    呼ばない。既存の申込経路（apply/applyLiff/updateApplication等）には一切関与しない。
+// ============================================================
+
+// セッション検証。beaufield-authの sessions シートでトークンを照合する。
+// CacheServiceで60秒キャッシュ（権限変更・ログアウトを最大1分で反映）。
+// 戻り値: { valid:true, user_id, name, is_admin, role } または
+//        { valid:false } または { valid:false, transient:true }（一時障害・負キャッシュしない）
+function validateSession(token) {
+  if (!token) return { valid: false };
+  if (!AUTH_SHEET_ID) return { valid: false, transient: true }; // 未設定はプロパティ不備＝一時的な設定不足として扱う
+
+  const cache    = CacheService.getScriptCache();
+  const cacheKey = 'sess_beaufes_v1_' + token.slice(-32); // 🔴 他アプリと衝突させないプレフィックス
+  const cached   = cache.get(cacheKey);
+  if (cached !== null) {
+    try { return JSON.parse(cached); } catch (e) {}
+  }
+
+  try {
+    const ss = SpreadsheetApp.openById(AUTH_SHEET_ID);
+    const sh = ss.getSheetByName('sessions');
+    // シート取得失敗は「セッション無効」ではなく一時障害。負キャッシュしない
+    // （Google側の一時的な応答不良でも起こりうるため。負キャッシュすると
+    //  有効なトークンがTTLの間ブロックされ続けてしまう）
+    if (!sh) return { valid: false, transient: true };
+
+    const data = sh.getDataRange().getValues();
+    const now  = Date.now();
+
+    for (let i = 1; i < data.length; i++) {
+      const rowToken   = String(data[i][0]);
+      const rowUserId  = String(data[i][1]);
+      const rowExpires = Number(data[i][2]);
+
+      if (rowToken === token) {
+        if (rowExpires < now) {
+          // 期限切れ → 行を削除してから拒否
+          sh.deleteRow(i + 1);
+          const r = { valid: false };
+          cache.put(cacheKey, JSON.stringify(r), 60);
+          return r;
+        }
+        const usersSh = ss.getSheetByName('users');
+        const rolesSh = ss.getSheetByName('user_app_roles');
+        if (!usersSh || !rolesSh) return { valid: false, transient: true };
+
+        const users = usersSh.getDataRange().getValues();
+        let userRow = null;
+        for (let j = 1; j < users.length; j++) {
+          if (String(users[j][0]) === rowUserId) { userRow = users[j]; break; }
+        }
+        if (!userRow || !(userRow[3] === true || userRow[3] === 'TRUE')) {
+          return { valid: false };
+        }
+
+        const roles = rolesSh.getDataRange().getValues();
+        let role = '';
+        for (let j = 1; j < roles.length; j++) {
+          if (String(roles[j][0]) === rowUserId && String(roles[j][1]) === APP_NAME) {
+            role = String(roles[j][2] || '').trim().toLowerCase();
+            break;
+          }
+        }
+        if (!role || role === 'none') return { valid: false };
+
+        const r = {
+          valid: true,
+          user_id: rowUserId,
+          name: String(userRow[1] || rowUserId),
+          is_admin: userRow[5] === true || userRow[5] === 'TRUE',
+          role: role
+        };
+        cache.put(cacheKey, JSON.stringify(r), CACHE_TTL_SESSION);
+        return r;
+      }
+    }
+  } catch (e) {
+    // 認証シートを読めなかった＝一時障害。ここも負キャッシュしない（上記と同じ理由）
+    Logger.log('beaufes validateSession エラー: ' + e);
+    return { valid: false, transient: true };
+  }
+  // ここに到達＝シートは読めたがトークンが見つからなかった＝本物の無効
+  const r = { valid: false };
+  cache.put(cacheKey, JSON.stringify(r), 60);
+  return r;
+}
+
+// 認証必須アクションの入口で必ず呼ぶ。
+// 🔴 例外を投げないこと。doPost の外側 catch(err) が全部 INTERNAL_ERROR に潰してしまい、
+//    画面側が「未ログイン」と「サーバー障害」を区別できなくなるため（§5-2）。
+// 戻り値: { ok:true, session } または { ok:false, error:'SESSION_INVALID'|'AUTH_TRANSIENT' }
+function _requireSession(data) {
+  const v = validateSession(String((data && data.session_token) || ''));
+  if (v.valid) return { ok: true, session: v };
+  // 認証シートを読めなかっただけの場合は「ログインし直せ」ではなく「一時障害」として返す。
+  // ここを一緒くたにすると、Google側の一時不調のたびに社員がログアウトさせられる。
+  return { ok: false, error: v.transient ? 'AUTH_TRANSIENT' : 'SESSION_INVALID' };
 }
 
 // ============================================================
