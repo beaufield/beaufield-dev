@@ -175,9 +175,18 @@
 //   `badges.html`（名札印刷）はbeaufield-authの共通セッションに相乗りする設計（名札印刷_badges設計.md）。
 //   認証基盤(validateSession等)を実装する前に、beaufesのGAS実行アカウントが
 //   beaufield-auth スプレッドシートを開けることをこの関数で確認する。既存の申込経路への影響なし。
+//
+// 🆕 v0.16.0（2026-08-15・名札印刷badges.html本体 S1〜S3）: `badges.html` から呼ばれる
+//   読み取り専用アクション `listBadges`/`listSpareBadges` を追加。認証は
+//   beaufield-authの共通セッション（`validateSession`をorder-appから移植・§5-2）。
+//   `spare_badges`シート・configの`badge_*`キーは`setupSpareBadges()`/`seedBadgeConfig()`で
+//   手動投入（新シート・新OAuthスコープはこれ以外に無し）。
+//   🔴 変更は新しい関数と`doPost`の新しい`case`2行のみ。既存の申込経路
+//  （apply/applyLiff/updateApplication/_validateApplicationFields/liff.html）は一切変更していない。
+//   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.16.0-wip2';
+const VERSION  = '0.16.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -393,6 +402,9 @@ function doPost(e) {
       // 🆕 診断用（diag.html）。読み取りのみ・データを一切変更しない
       case 'ping':              return _jsonResponse(pingLight(data));
       case 'pingHeavy':         return _jsonResponse(pingHeavy(data));
+      // 🆕 名札印刷badges.html用（S3）。🔒 認証必須（_requireSession・上記以外は認証なしのまま）
+      case 'listBadges':        return _jsonResponse(listBadges(data));
+      case 'listSpareBadges':   return _jsonResponse(listSpareBadges(data));
       default:                  return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
@@ -1143,6 +1155,140 @@ function _syncApplicationToLine(appId, friendId, isUpdate, f, passUrl) {
   } catch (e) {
     _logLineSync(appId, friendId, 'metadata', 'error', String(e));
   }
+}
+
+// ============================================================
+// 🆕 名札印刷badges.html用の読み取りアクション（S3・名札印刷_badges設計.md §5-3・§5-4）
+//    doPost: action=listBadges / listSpareBadges ―― 🔒 認証必須（_requireSession）
+//
+// 🔴 この節は読み取り専用。申込データを一切変更しない。既存の申込経路
+//    （apply/applyLiff/updateApplication等）とは完全に独立している。
+// ============================================================
+
+// created_at/updated_at セルを 'yyyy-MM-dd' に正規化して文字列比較できるようにする。
+// 🔴 通常は_now()が返す文字列だが、人がシートを編集するとDate型になりうるので両方吸収する
+// （JSTで統一。_isTodayCellと同じ考え方）。
+function _dateKey(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, 'Asia/Tokyo', 'yyyy-MM-dd');
+  return String(v || '').slice(0, 10);
+}
+
+// 業態文字列からA/B/C帯を決定する。6値のどれでもなければ（空欄・旧表記「エステ」等）
+// 例外を書き足さずdefaultへ落とす（§5-3の設計方針と同じ）。
+function _resolveBand(cfg, businessType) {
+  const key = 'badge_color_' + String(businessType || '').trim();
+  const v = cfg[key];
+  return (v === 'A' || v === 'B' || v === 'C') ? v : String(cfg['badge_color_default'] || 'C');
+}
+
+// config の badge_band_*/badge_label_* から bands オブジェクトを組み立てる
+function _buildBandsFromConfig(cfg) {
+  const bands = {};
+  ['A', 'B', 'C'].forEach(function (k) {
+    bands[k] = {
+      color: String(cfg['badge_band_' + k] || ''),
+      label: String(cfg['badge_label_' + k] || '')
+    };
+  });
+  return bands;
+}
+
+// 来場者名札の名簿を返す（doPost: action=listBadges）。
+// data: { session_token, business_types?, date_field?, created_from?, created_to? }
+function listBadges(data) {
+  const auth = _requireSession(data);
+  if (!auth.ok) return _err(auth.error);
+  _checkProps();
+
+  const businessTypes = Array.isArray(data.business_types) ? data.business_types : [];
+  const dateField  = (data.date_field === 'updated_at') ? 'updated_at' : 'created_at';
+  const fromKey    = String(data.created_from || '').trim();
+  const toKey      = String(data.created_to || '').trim();
+  const wantAll    = businessTypes.length === 0; // 省略 or 空配列 → 全業態
+  const wantEmpty  = businessTypes.indexOf('__empty__') >= 0;
+  const wantSet    = {};
+  businessTypes.forEach(function (bt) { if (bt !== '__empty__') wantSet[bt] = true; });
+
+  const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh  = _getSheet(ss, SHEET_APPLICATIONS);
+  const rows = sh.getDataRange().getValues();
+  const cfg  = _getConfig(); // 🔴 _getConfig()は自分でopenByIdする実装のため呼び出しが2回になるが、
+                              // 既存関数を書き換えない（§0-1の原則）。読み取り2回は誤差なので最適化しない
+
+  let unknownCount   = 0;
+  let skippedNoToken = 0;
+  const badges = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][17]) !== 'confirmed') continue; // status
+
+    const token = String(rows[i][16] || '');
+    if (!token) { skippedNoToken++; continue; } // ticket_tokenが空＝データ異常。名札は出せない
+
+    const businessType = String(rows[i][20] || '');
+    const known = BUSINESS_TYPE_OPTIONS.indexOf(businessType) >= 0;
+    if (!known) unknownCount++;
+
+    if (!wantAll) {
+      const bizOk = known ? !!wantSet[businessType] : wantEmpty;
+      if (!bizOk) continue;
+    }
+
+    if (fromKey || toKey) {
+      const dk = _dateKey(rows[i][dateField === 'updated_at' ? 2 : 1]);
+      if (fromKey && dk < fromKey) continue;
+      if (toKey && dk > toKey) continue;
+    }
+
+    badges.push({
+      app_id:        String(rows[i][0]),
+      salon_name:    String(rows[i][4]),
+      staff_name:    String(rows[i][5]),
+      business_type: businessType,
+      band:          _resolveBand(cfg, businessType),
+      ticket_token:  token,
+      created_at:    String(rows[i][1])
+    });
+  }
+
+  badges.sort(function (a, b) { return a.app_id < b.app_id ? -1 : (a.app_id > b.app_id ? 1 : 0); });
+
+  return _ok({
+    pass_base: SITE_BASE_URL + 'pass.html',
+    bands: _buildBandsFromConfig(cfg),
+    unknown_business_type_count: unknownCount,
+    skipped_no_token: skippedNoToken,
+    total: badges.length,
+    badges: badges
+  });
+}
+
+// 予備名札の一覧を返す（doPost: action=listSpareBadges）。data: { session_token }
+// 未割当のみ/すべての絞り込みは画面側で行う（§5-4。既定＝未割当のみ）。
+function listSpareBadges(data) {
+  const auth = _requireSession(data);
+  if (!auth.ok) return _err(auth.error);
+  _checkProps();
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh = _ensureSpareBadgesSheet(ss);
+  const rows = sh.getDataRange().getValues();
+
+  const spares = [];
+  for (let i = 1; i < rows.length; i++) {
+    if (!rows[i][0]) continue;
+    spares.push({
+      spare_no:         String(rows[i][0]),
+      ticket_token:      String(rows[i][1]),
+      assigned_app_id:   String(rows[i][2] || ''),
+      assigned_at:       String(rows[i][3] || '')
+    });
+  }
+
+  return _ok({
+    pass_base: SITE_BASE_URL + 'pass.html',
+    spares: spares
+  });
 }
 
 // ============================================================
