@@ -177,7 +177,7 @@
 //   beaufield-auth スプレッドシートを開けることをこの関数で確認する。既存の申込経路への影響なし。
 // ============================================================
 
-const VERSION  = '0.16.0-wip1';
+const VERSION  = '0.16.0-wip2';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -1759,6 +1759,15 @@ function setupSheets() {
     Logger.log('line_sync_logシートは既に存在します');
   }
 
+  // --- spare_badges シート（🆕 名札印刷。予備名札プール）---
+  // 本番の既存シートには_ensureSpareBadgesSheet()がsetupSpareBadges()初回実行時に自動作成される。
+  // setupSheetsでの作成は「新規シートを最初から作る場合」の網羅目的（他の_ensure*系と同じ書き方）
+  if (!ss.getSheetByName(SHEET_SPARE_BADGES)) {
+    _ensureSpareBadgesSheet(ss);
+  } else {
+    Logger.log('spare_badgesシートは既に存在します');
+  }
+
   Logger.log('setupSheets完了');
 }
 
@@ -1841,6 +1850,92 @@ function migrateFixPhoneColumn() {
     }
   }
   Logger.log('電話番号列の書式修正が完了しました。復元した行数: ' + fixed + '（列全体もPlain Text化済み）');
+}
+
+// ============================================================
+// 🆕 名札印刷badges.html用（S2・名札印刷_badges設計.md §5-5・§5-6）
+// ============================================================
+
+// spare_badges シートが無ければヘッダー付きで作成する（line_friends_cache等と同じ書き方）
+function _ensureSpareBadgesSheet(ss) {
+  let sh = ss.getSheetByName(SHEET_SPARE_BADGES);
+  if (!sh) {
+    sh = ss.insertSheet(SHEET_SPARE_BADGES);
+    sh.getRange(1, 1, 1, 4).setValues([[
+      'spare_no', 'ticket_token', 'assigned_app_id', 'assigned_at'
+    ]]);
+    sh.setFrozenRows(1);
+    Logger.log('spare_badgesシート作成完了');
+  }
+  return sh;
+}
+
+// 予備名札を count 件（既定20）発行する。【本番シートに対して手動実行すること】
+// 🔴 既存行は絶対に上書きしない。P-01が既にあればP-21から続けて追加する（冪等）。
+function setupSpareBadges(count) {
+  _checkProps();
+  count = count || 20;
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh = _ensureSpareBadgesSheet(ss);
+
+  const rows = sh.getDataRange().getValues();
+  let maxSeq = 0;
+  for (let i = 1; i < rows.length; i++) {
+    const m = String(rows[i][0] || '').match(/^P-(\d+)$/);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n > maxSeq) maxSeq = n;
+    }
+  }
+
+  const newRows = [];
+  for (let i = 1; i <= count; i++) {
+    const seq = maxSeq + i;
+    newRows.push(['P-' + ('00' + seq).slice(-2), _genToken(), '', '']);
+  }
+
+  if (newRows.length > 0) {
+    sh.getRange(sh.getLastRow() + 1, 1, newRows.length, 4).setValues(newRows);
+  }
+
+  Logger.log('setupSpareBadges完了: ' + newRows[0][0] + '〜' + newRows[newRows.length - 1][0] + ' を作成しました（' + newRows.length + '件）。');
+}
+
+// config シートに業態→色帯マッピングの既定値を投入する（無ければ追加・既存値は上書きしない）。
+// 【本番シートに対して手動実行すること】badges.html §5-6・§14-3。
+// 🔴 色はコードに直書きしない方針の実体化。A/B/Cの実際の色は用紙が決まってから
+// たかしさんがconfigシートを書き換えるだけで変わる。ここに入れるのは仮置きの既定値。
+function seedBadgeConfig() {
+  _checkProps();
+  const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh  = _getSheet(ss, SHEET_CONFIG);
+  const cfg = _getConfig();
+
+  const defaults = [
+    ['badge_color_美容室',       'A'],
+    ['badge_color_理容室',       'A'],
+    ['badge_color_エステサロン', 'B'],
+    ['badge_color_ネイルサロン', 'B'],
+    ['badge_color_アイサロン',   'B'],
+    ['badge_color_その他',       'C'],
+    ['badge_color_default',     'C'],
+    ['badge_band_A',  '#E8542F'],
+    ['badge_band_B',  '#2FA8CC'],
+    ['badge_band_C',  '#7A8B99'],
+    ['badge_label_A', '理美容'],
+    ['badge_label_B', '美容サロン'],
+    ['badge_label_C', 'その他']
+  ];
+
+  let added = 0;
+  defaults.forEach(function (pair) {
+    if (cfg[pair[0]] !== undefined) return; // 既にある値は上書きしない
+    sh.appendRow(pair);
+    added++;
+  });
+
+  Logger.log('seedBadgeConfig完了: ' + added + '件を追加しました（既存の値は変更していません）。');
 }
 
 // ============================================================
