@@ -12,7 +12,7 @@
  *   SYNC_TOKEN    … 同期スクリプト用の共有シークレット（ランダム長文字列）
  */
 
-const VERSION = '1.9.0';
+const VERSION = '1.10.0';
 const APP_NAME = 'project-dashboard';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 
@@ -228,17 +228,15 @@ function authGuard_(token) {
 }
 
 // ============================================================
-// エントリーポイント（GET）: データ取得
+// エントリーポイント（GET）: 疎通確認のみ
+// v1.10.0: データ取得はPOSTへ移設（GETだとURL・アクセスログにsession_tokenが残るため）
 // ============================================================
 function doGet(e) {
   const p = (e && e.parameter) ? e.parameter : {};
   try {
     switch (p.action || '') {
-      case 'data': {
-        const guard = authGuard_(p.session_token || '');
-        if (guard) return guard;
-        return jsonResponse(getData_());
-      }
+      case 'data':
+        return jsonResponse({ success: false, error: 'USE_POST' });
       case 'version':
         return jsonResponse({ success: true, version: VERSION });
       default:
@@ -293,7 +291,9 @@ function doPost(e) {
         return jsonResponse(reorderPriorities_(p));
       }
       case 'data': {
-        return jsonResponse({ success: false, error: 'USE_POST' });
+        const guard = authGuard_(p.session_token || '');
+        if (guard) return guard;
+        return jsonResponse(getData_());
       }
       default:
         return jsonResponse({ success: false, error: '不明なアクション' });
