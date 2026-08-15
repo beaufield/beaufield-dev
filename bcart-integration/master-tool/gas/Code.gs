@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.25.0';
+const VERSION = 'v2.26.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -52,7 +52,7 @@ function doPost(e) {
     const noAuthActions = ['getVersion'];
     // AI用キーはプレビューとドラフト作成だけに限定する。
     // BCARTを変更するapply系は別キーを必要とし、漏えい時の被害範囲を分離する。
-    const claudeDraftActions = ['previewSuffixName', 'previewHanbaiEnd', 'previewSetDescription', 'previewProductFields', 'previewSetFields', 'previewProductSort', 'getDraftSupplierSummary', 'getDraftCandidates', 'getRegisteredExamples', 'saveDrafts'];
+    const claudeDraftActions = ['previewSuffixName', 'previewHanbaiEnd', 'previewSetDescription', 'previewProductFields', 'previewSetFields', 'previewProductSort', 'getDraftSupplierSummary', 'getDraftCandidates', 'getRegisteredExamples', 'saveDrafts', 'previewProductsByNo'];
     const claudeApplyActions = ['applySuffixName', 'applyHanbaiEnd', 'applySetDescription', 'applyProductFields', 'applySetFields', 'applyProductSort'];
     // 明示した参照系以外はすべて更新系として扱う（未知のactionを誤って一般ユーザーへ開放しない）。
     const sessionReadOnlyActions = [
@@ -170,6 +170,7 @@ function doPost(e) {
       case 'saveFeatureType':         return jsonResponse(saveFeatureType(params));
       case 'bulkSaveFeatureTypes':    return jsonResponse(bulkSaveFeatureTypes(params));
       // 機能E: Claudeチャット直接操作
+      case 'previewProductsByNo':    return jsonResponse(previewProductsByNo(params));
       case 'previewSuffixName':      return jsonResponse(previewSuffixName(params));
       case 'applySuffixName':        return jsonResponse(applySuffixName(params));
       case 'previewHanbaiEnd':       return jsonResponse(previewHanbaiEnd(params));
@@ -5002,4 +5003,100 @@ function applyProductSort(params) {
     });
   }
   return { ok: res.ok, count: productUpdates.length, error: res.error || '', notFound: d.notFound };
+}
+
+// ---- 操作7: 社内商品コード（product_no）から商品情報を引く（読み取り専用） ----
+//
+// 用途: line-weekly-draft スキルが sales-db の選定結果（社内商品コード）を
+//       Bカートの登録状況と突合するために使う。配信候補について
+//       「Bカートに存在するか」「表示中か」「画像があるか」を確認し、
+//       非表示商品・画像なし商品がLINE配信に混じるのを防ぐ。
+//
+// ⚠️ 読み取り専用。BCARTへの書き込み（PATCH/POST）は一切行わない。
+// ⚠️ 既存のClaude用アクションはすべてBカート内部ID（productIds）指定だが、
+//    こちらは社内商品コード（productNos）で引ける点が違う。
+//
+// パラメータ:
+//   productNos    : 社内商品コードの配列（必須）
+//   imageBasePath : 画像URLを組み立てる場合のベース（任意）
+//                   例 'https://files.bcart.jp/beaufieldec/uploads'
+//                   （末尾に /items/ は付けない。product.image が '/items/...' で始まるため）
+function previewProductsByNo(params) {
+  if (!params.productNos || !Array.isArray(params.productNos) || params.productNos.length === 0)
+    return { ok: false, error: 'productNos が未指定です' };
+
+  const products = bcartGetAll('/products');
+  if (!products.ok) return products;
+  Utilities.sleep(500);
+  const sets = bcartGetAll('/product_sets');
+  if (!sets.ok) return sets;
+
+  // 突合キーの正規化: 社内商品コードはゼロ埋めされている場合があるため parseInt で桁を揃える。
+  // getUnregisteredForDraft と同じ作法。正規化したうえで「完全一致」で突合する（部分一致はしない）。
+  // 数値化できないコード（英字混じり等）は元の文字列のまま扱う。
+  const normalizeNo_ = v => {
+    const s = String(v == null ? '' : v).trim();
+    if (!s) return '';
+    const n = parseInt(s, 10);
+    return String(isNaN(n) ? s : (n || s));
+  };
+
+  const productById = {};
+  products.data.forEach(p => { productById[String(p.id)] = p; });
+
+  // product_no はセット側が正（差異一覧・登録ドラフトと同じ基準）。
+  // 同一コードに複数セットがある場合は最初の1件を採用する。
+  const setByNo = {};
+  sets.data.forEach(s => {
+    const k = normalizeNo_(s.product_no);
+    if (k && !setByNo[k]) setByNo[k] = s;
+  });
+
+  // セット側に無く親商品側にしか product_no / main_no が無いケースの保険
+  const productByNo = {};
+  products.data.forEach(p => {
+    const k = normalizeNo_(p.product_no || p.main_no || '');
+    if (k && !productByNo[k]) productByNo[k] = p;
+  });
+
+  const imageBase = String(params.imageBasePath || '').replace(/\/+$/, '');
+  const found = [];
+  const notFound = [];
+
+  params.productNos.forEach(raw => {
+    const key = normalizeNo_(raw);
+    const set = key ? (setByNo[key] || null) : null;
+    const product = set
+      ? (productById[String(set.product_id)] || null)
+      : (key ? (productByNo[key] || null) : null);
+
+    if (!product) { notFound.push(String(raw)); return; }
+
+    const image = product.image || '';
+    found.push({
+      requestedNo: String(raw),
+      productNo: set ? set.product_no : (product.product_no || product.main_no || ''),
+      productId: product.id,
+      productName: product.name || '',
+      setId: set ? set.id : null,
+      setName: set ? (set.name || '') : '',
+      flag: product.flag || '',
+      isVisible: product.flag === '表示',
+      hasImage: Boolean(image),
+      image: image,
+      imageUrl: (image && imageBase) ? (imageBase + image) : '',
+      categoryId: product.category_id || null,
+      hanbaiEnd: product.hanbai_end || null
+    });
+  });
+
+  return {
+    ok: true,
+    requested: params.productNos.length,
+    foundCount: found.length,
+    // 配信に使える＝存在し・表示中・画像ありの3条件を満たすもの
+    usableCount: found.filter(f => f.isVisible && f.hasImage).length,
+    found: found,
+    notFound: notFound
+  };
 }
