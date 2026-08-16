@@ -20,7 +20,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.33.0';
+const VERSION         = 'v1.34.0';
 const APP_NAME        = 'order-app';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 const PROP_STUCK_NOTIFY_DAYS = 14; // 提案滞留の通知・「要対応」表示の閾値（日）。Phase M, v1.31.0〜
@@ -876,6 +876,17 @@ function saveOrder(p, user_id) {
   if (!date || !supplierCode || !supplierName || !staff) {
     return { success: false, error: 'REQUIRED_FIELDS_MISSING', message: '必須項目が不足しています' };
   }
+  // 発注日の妥当性チェック（v1.34.0）。アプリ側で発注日を自由に変更できるようになったため、
+  // generateOrderNo() の前提（発注Noが日付昇順に並ぶ）を壊す不正値・極端な日付をここで弾く
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return { success: false, error: 'DATE_INVALID', message: '発注日の形式が不正です' };
+  }
+  const todayKey = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+  const minKey = Utilities.formatDate(new Date(Date.now() - 30 * 86400000), 'Asia/Tokyo', 'yyyy-MM-dd');
+  const maxKey = Utilities.formatDate(new Date(Date.now() +  7 * 86400000), 'Asia/Tokyo', 'yyyy-MM-dd');
+  if (date < minKey || date > maxKey) {
+    return { success: false, error: 'DATE_OUT_OF_RANGE', message: '発注日が許容範囲外です' };
+  }
 
   const requestHash = sha256Hex_(canonicalOrderPayload_(p, user_id, items));
   const lock = LockService.getScriptLock();
@@ -1019,13 +1030,19 @@ function getIsAdmin(user_id) {
 
 // 発注No採番（YYYYMMDD-NNN）
 function generateOrderNo(dateStr) {
-  const dateKey = dateStr.replace(/-/g, '');
+  const dateKey = String(dateStr || '').replace(/-/g, '');
+  if (!/^\d{8}$/.test(dateKey)) return '';
   const sh = getSheet(SHEET_HISTORY);
-  // 対象日より前の行まで読み終えたら打ち切る（発注Noは日付を含み昇順に並ぶ前提。対策1）。
-  // A列（発注No）だけで判定できるので1列のみ読む（対策2）
-  const rows = readTailRowsUntil_(sh, 1, chunkRows =>
-    chunkRows.length > 0 && String(chunkRows[0][0] || '').trim() < dateKey
-  );
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return dateKey + '-001';
+  const todayKey = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyyMMdd');
+  // 当日ぶんは必ず末尾に固まっているので従来どおり末尾走査でよい（対策1・対策2）。
+  // 過去日付（後日入力・v1.34.0で許可）はシート末尾に追記されて発注Noの日付昇順が崩れるため、
+  // 末尾走査だと採番済みの発注Noを見落として重複しうる。A列1列だけの全件読みに切り替える
+  const rows = (dateKey === todayKey)
+    ? readTailRowsUntil_(sh, 1, chunkRows =>
+        chunkRows.length > 0 && String(chunkRows[0][0] || '').trim() < dateKey)
+    : sh.getRange(2, 1, lastRow - 1, 1).getValues();
   let maxSeq = 0;
   rows.forEach(r => {
     const no = String(r[0] || '');
