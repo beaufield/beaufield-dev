@@ -363,6 +363,19 @@
       background: var(--surface);
       color: var(--text);
     }
+    /* 作成中の発注への復帰バナー（v1.63.0） */
+    .cart-resume {
+      background: #fff8e1;
+      border: 1px solid #ffe082;
+      border-left: 4px solid var(--warning);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      margin-bottom: 10px;
+    }
+    .cart-resume-title { font-size: 14px; font-weight: 700; color: #8a5a00; }
+    .cart-resume-sub   { font-size: 12px; color: var(--text-light); margin-top: 3px; }
+    .cart-resume-acts  { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .cart-resume-acts .btn { flex: 1; min-width: 130px; }
     .order-summary-note {
       font-size: 13px;
       font-weight: 600;
@@ -785,6 +798,9 @@
 
   <!-- ステップA: 発注先・担当者選択 -->
   <div id="step-select">
+    <!-- 作成中の発注への復帰バナー（v1.63.0）。再読み込み等でstep-selectに戻ってしまっても
+         カートを捨てずに続きから入力できるようにするための唯一の導線 -->
+    <div id="cart-resume-banner" style="display:none"></div>
     <div class="card">
       <div class="card-label">商品マスター</div>
       <div id="master-badge" class="master-badge red">
@@ -1038,7 +1054,7 @@
   <div id="inv-list"></div>
   <!-- カートへ移動ボタン（カートに商品がある時だけ表示） -->
   <div id="inv-cart-btn" style="display:none;position:sticky;bottom:64px;padding:8px 14px">
-    <button class="btn btn-primary" style="width:100%" onclick="switchScreen('order');showStep('step-input')">
+    <button class="btn btn-primary" style="width:100%" onclick="resumeCart()">
       🛒 発注画面へ（カート <span id="inv-cart-count">0</span>件）
     </button>
   </div>
@@ -1112,8 +1128,9 @@
 
 <!-- ボトムナビ -->
 <nav class="bottom-nav">
-  <div class="nav-item active" id="nav-order" onclick="switchScreen('order')">
+  <div class="nav-item active" id="nav-order" onclick="switchScreen('order')" style="position:relative">
     <span class="nav-icon">🛒</span><span>発注</span>
+    <span id="cart-badge-count" style="display:none;position:absolute;top:6px;right:6px;background:var(--primary);color:#fff;font-size:10px;font-weight:bold;border-radius:10px;padding:1px 5px;min-width:16px;text-align:center;line-height:1.4"></span>
   </div>
   <div class="nav-item" id="nav-proposal" onclick="switchScreen('proposal')" style="position:relative">
     <span class="nav-icon">💡</span><span>提案</span>
@@ -1325,7 +1342,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.62.0'; // 発注日の変更・提案タブの発注済み除外・系列まるごと見送り
+const APP_VERSION    = 'v1.63.0'; // カートへの復帰導線（発注情報の永続化・復帰バナー・カート件数バッジ）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1333,6 +1350,7 @@ const LS_MASTER_DATE     = 'bf_pm_date_v2';
 const LS_MASTER_GAS_DATE = 'bf_pm_gas_date_v2';
 const LS_PROD_HIST   = 'bf_prod_hist'; // 商品別直近注文（localStorage永続）
 const SS_CART        = 'bf_cart';
+const SS_ORDER       = 'bf_order'; // 作成中の発注情報（発注先・発注日）。カートと対で復元しないと再読み込み後に戻れなくなる（v1.63.0）
 const LS_MEMO_HIST   = 'bf_memo_h';
 const LS_ORDER_OUTBOX = 'bf_order_outbox_v1';
 const LS_GAS_DIAG     = 'bf_gas_diag_v1';
@@ -1403,6 +1421,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     const saved = sessionStorage.getItem(SS_CART);
     if (saved) cartItems = JSON.parse(saved);
   } catch(e) { cartItems = []; }
+
+  // 作成中の発注情報も復元する（v1.63.0）。担当者だけは今ログインしている人で上書きする
+  // （別の人が同じ端末でログインし直したときに、前の担当者名のまま発注されるのを防ぐ）
+  try {
+    const savedOrder = sessionStorage.getItem(SS_ORDER);
+    if (savedOrder) {
+      const o = JSON.parse(savedOrder);
+      if (o && typeof o === 'object') currentOrder = { ...currentOrder, ...o, staff: session.name };
+    }
+  } catch(e) {}
+  updateCartNavBadge();
+  renderCartResumeBanner();
 
   loadProductMasterFromCache();
   updateMasterBadge();
@@ -1882,6 +1912,8 @@ async function loadMasters() {
       renderSupplierDropdown();
       renderSettingsPage();
       updateHistoryFilterOptions(); // マスター読込後にフィルター選択肢を更新
+      // 復帰バナーは起動直後（suppliers未読込）にも描画されるため、発注先名を出せる状態で描き直す
+      renderCartResumeBanner();
       // 在庫画面が開いている場合は再描画（初期表示時にsuppliersが空だったケアを含む）
       if (currentScreen === 'inventory') {
         renderInventorySupplierFilter();
@@ -2150,6 +2182,19 @@ async function startOrder() {
   if (!supSel.value) { showToast('発注先を選択してください', 'error'); return; }
   if (!dateIn.value) { showToast('発注日を入力してください', 'error'); return; }
 
+  // 「発注を開始する」はカートを空にしてから始める。作りかけのカートがあるまま無警告で
+  // 消すと、再読み込み後にここしか導線が無い状況では作業内容が黙って失われる（v1.63.0で修正）。
+  // 続きから入力したい場合は、上の復帰バナー「続きから入力する」を使ってもらう
+  if (cartItems.length > 0) {
+    const supName = currentOrder.supplierCode
+      ? resolveSupplierName(currentOrder.supplierCode, currentOrder.supplierName) : '発注先未確定';
+    if (!confirm(
+      `作成中の発注（${supName} ／ ${cartItems.length}品目）があります。\n\n` +
+      `破棄して新しい発注を始めますか？\n` +
+      `※続きから入力したい場合はキャンセルして、上の「続きから入力する」を押してください。`
+    )) return;
+  }
+
   const pmDate = localStorage.getItem(LS_MASTER_DATE);
   const today  = getTodayStr();
   if (productMasterLoading) {
@@ -2205,6 +2250,7 @@ function updateInputHeader() {
 
 function goToSelect() {
   showStep('step-select');
+  renderCartResumeBanner(); // カートを持ったままstep-selectへ来たら復帰導線を出す
   document.getElementById('header-sub').textContent = '発注先を選んでください';
 }
 
@@ -2234,8 +2280,10 @@ function goToInput() {
 }
 
 function startNewOrder() {
-  cartItems = []; savedOrderNo = null; orderRequestId = null; revisionBaseOrderNo = null; saveCart();
-  showStep('step-select'); updateMasterBadge();
+  cartItems = []; savedOrderNo = null; orderRequestId = null; revisionBaseOrderNo = null;
+  currentOrder = { supplierCode: '', supplierName: '', fax: '', staff: '', date: '', outputType: '' };
+  saveCart();
+  showStep('step-select'); updateMasterBadge(); renderCartResumeBanner();
   document.getElementById('header-sub').textContent = '発注先を選んでください';
 }
 
@@ -2707,8 +2755,119 @@ function saveCart() {
   savedOrderNo = null;
   orderRequestId = null; // カート内容が変わった＝新しい発注リクエストとして扱う
   sessionStorage.setItem(SS_CART, JSON.stringify(cartItems));
+  saveOrderMeta();
+  // カートが変わる経路はすべてここを通るので、復帰導線の表示もここで揃えておく
+  // （個々の呼び出し元に任せると、新しい導線が増えたときに更新漏れが起きる）
+  updateCartNavBadge();
+  renderCartResumeBanner();
   if (currentScreen === 'inventory') renderInventoryList();
 }
+
+// 発注先・発注日（currentOrder）をカートと対で永続化する（v1.63.0）。
+// カートだけを復元していた頃は、再読み込み後に「カートに商品が残っています」の警告だけが出て
+// 発注先が失われ、step-selectから戻る手段が無くなる（唯一の導線 startOrder がカートを消す）
+// という袋小路が起きていた。復帰バナー（renderCartResumeBanner）もこの値を使う
+function saveOrderMeta() {
+  try { sessionStorage.setItem(SS_ORDER, JSON.stringify(currentOrder)); } catch(e) {}
+}
+
+/* ===================================================
+   カートへの復帰（v1.63.0）
+   再読み込み・タブ破棄でstep-selectに戻されても、カートを捨てずに続きから入力できるようにする。
+   従来はstep-selectからstep-inputへ行く導線が startOrder（＝カートを消す）しか無く、
+   在庫タブの復帰ボタンも currentOrder.supplierCode を条件にしていたため同時に消えていた
+=================================================== */
+
+/* === CART RESUME (test:cart-resume) === */
+// ボトムナビ「発注」のカート件数バッジ
+function updateCartNavBadge() {
+  const badge = document.getElementById('cart-badge-count');
+  if (!badge) return;
+  const n = cartItems.length;
+  badge.style.display = n > 0 ? '' : 'none';
+  badge.textContent = n > 99 ? '99+' : String(n);
+}
+
+// カート内の商品から発注先を推定する（currentOrderが失われた古いセッションからの復帰用）。
+// 最も多くの商品が属する仕入先CDを採用する
+function inferSupplierFromCart() {
+  const counts = {};
+  cartItems.forEach(i => {
+    const cd = String(i.supplierCD || '').trim();
+    if (cd) counts[cd] = (counts[cd] || 0) + 1;
+  });
+  const codes = Object.keys(counts);
+  if (codes.length === 0) return '';
+  codes.sort((a, b) => counts[b] - counts[a]);
+  // 発注先マスターに存在するものだけを採用する（未登録CDだと発注先名が出せないため）
+  return codes.find(c => masters.suppliers.some(s => s.code === c)) || '';
+}
+
+function renderCartResumeBanner() {
+  const wrap = document.getElementById('cart-resume-banner');
+  if (!wrap) return;
+  if (cartItems.length === 0) { wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
+
+  const supName = currentOrder.supplierCode
+    ? resolveSupplierName(currentOrder.supplierCode, currentOrder.supplierName)
+    : (resolveSupplierName(inferSupplierFromCart(), '') || '発注先が未確定');
+  const dateNote = currentOrder.date ? ` ・ ${currentOrder.date}` : '';
+  const totalQty = cartItems.reduce((s, i) => s + (i.qty || 0), 0);
+
+  wrap.style.display = 'block';
+  wrap.innerHTML = `
+    <div class="cart-resume">
+      <div class="cart-resume-title">🛒 作成中の発注があります</div>
+      <div class="cart-resume-sub">${escHtml(supName)}${escHtml(dateNote)} ／ ${cartItems.length}品目・計${totalQty}点</div>
+      <div class="cart-resume-acts">
+        <button class="btn btn-primary btn-sm" onclick="resumeCart()">続きから入力する →</button>
+        <button class="btn btn-outline btn-sm" onclick="discardCart()">破棄する</button>
+      </div>
+    </div>`;
+}
+
+// カート内容を保ったまま商品入力画面へ戻る
+function resumeCart() {
+  if (cartItems.length === 0) { showToast('カートは空です', 'error'); renderCartResumeBanner(); return; }
+  // currentOrderが失われている場合（このバージョン以前に作られたカート）は、
+  // カート商品→発注先プルダウンの順で発注先を補う
+  if (!currentOrder.supplierCode) {
+    const code = inferSupplierFromCart() || document.getElementById('sel-supplier').value;
+    if (!code) {
+      showToast('発注先を選択してから「続きから入力する」を押してください', 'error');
+      return;
+    }
+    const sup = masters.suppliers.find(s => s.code === code);
+    currentOrder = {
+      supplierCode: code,
+      supplierName: sup ? sup.name : code,
+      fax: sup ? (sup.fax || '') : '',
+      staff: currentUser ? currentUser.name : '',
+      date: currentOrder.date || resolveOrderDate(),
+      outputType: ''
+    };
+    saveOrderMeta();
+  }
+  if (!currentOrder.date) { currentOrder.date = resolveOrderDate(); saveOrderMeta(); }
+  switchScreen('order');
+  goToInput();
+  updateInputHeader();
+  renderItemList();
+  updateInventoryCartBtn();
+}
+
+function discardCart() {
+  if (!confirm(`カートの${cartItems.length}品目を破棄しますか？\nこの操作は取り消せません。`)) return;
+  cartItems = []; savedOrderNo = null; orderRequestId = null; revisionBaseOrderNo = null;
+  currentOrder = { supplierCode: '', supplierName: '', fax: '', staff: '', date: '', outputType: '' };
+  saveCart();
+  renderCartResumeBanner();
+  renderItemList();
+  updateInventoryCartBtn();
+  showToast('カートを破棄しました', 'success');
+}
+/* === /CART RESUME === */
+
 function updateItemQty(idx, val){ const q = parseInt(val); if (q > 0) { cartItems[idx].qty = q; saveCart(); } }
 function updateItemMemo(idx, v) { cartItems[idx].memo = v; saveCart(); }
 function removeItem(idx)        { cartItems.splice(idx, 1); saveCart(); renderItemList(); }
@@ -3249,6 +3408,7 @@ async function outputCSV() {
     const dateStr = currentOrder.date.replace(/-/g, '');
     downloadBlob(blob, `${currentOrder.supplierName}_${dateStr}.csv`);
     sessionStorage.removeItem(SS_CART);
+    sessionStorage.removeItem(SS_ORDER); // 出力済みの発注を再読み込み後に「作成中」として復帰させない
     showCompleteState();
     showToast('CSV出力が完了しました', 'success');
   } catch(e) {
@@ -3779,6 +3939,7 @@ async function outputPDF() {
     const dateStr = currentOrder.date.replace(/-/g, '');
     pdf.save(`${currentOrder.supplierName}_${dateStr}_${orderNo}.pdf`);
     sessionStorage.removeItem(SS_CART);
+    sessionStorage.removeItem(SS_ORDER); // 出力済みの発注を再読み込み後に「作成中」として復帰させない
     showCompleteState();
     showToast('PDF保存が完了しました', 'success');
   } catch(e) {
@@ -4853,7 +5014,10 @@ function openInventoryQtyModal(idx) {
 function updateInventoryCartBtn() {
   const btn   = document.getElementById('inv-cart-btn');
   const count = document.getElementById('inv-cart-count');
-  if (cartItems.length > 0 && currentOrder.supplierCode) {
+  // 条件は「カートに商品があること」だけにする（v1.63.0）。以前は currentOrder.supplierCode も
+  // 条件にしていたため、再読み込みで発注先が失われると復帰ボタンごと消えて戻れなくなっていた。
+  // 発注先が欠けている場合は resumeCart() がカート内容から補完する
+  if (cartItems.length > 0) {
     btn.style.display = 'block';
     count.textContent = cartItems.length;
   } else {

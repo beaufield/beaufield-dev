@@ -283,11 +283,122 @@ function testMgSkipGuards() {
   assert.strictEqual(context.propMgPins['MILFY'], undefined, 'pin must not be recorded while skipped');
 }
 
+/* ===================================================
+   機能4（v1.63.0）: カートへの復帰導線
+   （再読み込みでcurrentOrderが失われてもカートを捨てずに戻れること）
+=================================================== */
+function testCartResume() {
+  const toastCalls = [];
+  const els = {
+    'cart-resume-banner': { style: {}, innerHTML: '' },
+    'cart-badge-count':   { style: {}, textContent: '' },
+    'sel-supplier':       { value: '' }
+  };
+  const calls = [];
+  const context = vm.createContext({
+    console, JSON, String, Number, Object, Date,
+    cartItems: [],
+    currentOrder: { supplierCode: '', supplierName: '', fax: '', staff: '', date: '', outputType: '' },
+    currentUser: { name: 'テスト担当' },
+    masters: { suppliers: [{ code: '48', name: '株式会社 千代田化学', fax: '000' }] },
+    savedOrderNo: null, orderRequestId: null, revisionBaseOrderNo: null,
+    sessionStorage: makeStorage(),
+    SS_ORDER: 'bf_order',
+    document: { getElementById: id => els[id] || null },
+    showToast: (msg, type) => { toastCalls.push({ msg, type }) },
+    confirm: () => true,
+    escHtml: s => String(s == null ? '' : s),
+    resolveSupplierName: (code, fallback) => {
+      const s = context.masters.suppliers.find(x => x.code === code);
+      return (s && s.name) ? s.name : (fallback || code || '');
+    },
+    resolveOrderDate: () => '2026-08-16',
+    // 復帰時に呼ばれる画面遷移系は呼ばれたことだけ記録する
+    switchScreen: n => calls.push('switchScreen:' + n),
+    goToInput: () => calls.push('goToInput'),
+    updateInputHeader: () => calls.push('updateInputHeader'),
+    renderItemList: () => calls.push('renderItemList'),
+    updateInventoryCartBtn: () => calls.push('updateInventoryCartBtn'),
+    saveCart: () => calls.push('saveCart'),
+    saveOrderMeta: () => calls.push('saveOrderMeta')
+  });
+  const block = section(html,
+    '/* === CART RESUME (test:cart-resume) === */',
+    '/* === /CART RESUME === */');
+  vm.runInContext(`${block}\n globalThis.testApi = {
+    inferSupplierFromCart, renderCartResumeBanner, resumeCart, discardCart, updateCartNavBadge
+  };`, context);
+  const api = context.testApi;
+
+  // カートが空ならバナーもバッジも出ない
+  api.renderCartResumeBanner();
+  assert.strictEqual(els['cart-resume-banner'].style.display, 'none');
+  api.updateCartNavBadge();
+  assert.strictEqual(els['cart-badge-count'].style.display, 'none');
+
+  // カートあり＋発注先あり → バナーに発注先・品目数・点数が出る
+  context.cartItems = [
+    { code: 'A', qty: 2, supplierCD: '48' },
+    { code: 'B', qty: 3, supplierCD: '48' }
+  ];
+  context.currentOrder = { supplierCode: '48', supplierName: '株式会社 千代田化学', fax: '', staff: 'x', date: '2026-08-15', outputType: '' };
+  api.renderCartResumeBanner();
+  assert.strictEqual(els['cart-resume-banner'].style.display, 'block');
+  assert(els['cart-resume-banner'].innerHTML.includes('千代田化学'), 'banner must name the supplier');
+  assert(els['cart-resume-banner'].innerHTML.includes('2品目・計5点'), 'banner must show item and unit counts');
+  assert(els['cart-resume-banner'].innerHTML.includes('resumeCart()'), 'banner must offer the resume action');
+  api.updateCartNavBadge();
+  assert.strictEqual(els['cart-badge-count'].textContent, '2', 'nav badge shows cart item count');
+
+  // 発注先が確定していれば、そのまま商品入力画面へ戻る
+  calls.length = 0;
+  api.resumeCart();
+  assert(calls.includes('goToInput'), 'resumeCart must return to the input step');
+  assert(calls.includes('renderItemList'), 'resumeCart must re-render the cart');
+
+  // ★本命: 再読み込みでcurrentOrderが失われた状態でも、カート商品から発注先を補って復帰できる
+  context.currentOrder = { supplierCode: '', supplierName: '', fax: '', staff: '', date: '', outputType: '' };
+  assert.strictEqual(api.inferSupplierFromCart(), '48', 'supplier must be inferred from cart items');
+  calls.length = 0; toastCalls.length = 0;
+  api.resumeCart();
+  assert.strictEqual(context.currentOrder.supplierCode, '48', 'resumeCart must restore the supplier');
+  assert.strictEqual(context.currentOrder.supplierName, '株式会社 千代田化学');
+  assert.strictEqual(context.currentOrder.date, '2026-08-16', 'missing date falls back to resolveOrderDate()');
+  assert(calls.includes('goToInput'), 'resumeCart must still reach the input step');
+  assert.strictEqual(toastCalls.length, 0, 'no error toast when the supplier can be inferred');
+
+  // 発注先マスターに無いCDしか無い場合は推定せず、プルダウンの選択値を使う
+  context.cartItems = [{ code: 'C', qty: 1, supplierCD: '999' }];
+  context.currentOrder = { supplierCode: '', supplierName: '', fax: '', staff: '', date: '', outputType: '' };
+  assert.strictEqual(api.inferSupplierFromCart(), '', 'unknown supplier CD must not be inferred');
+  els['sel-supplier'].value = '48';
+  calls.length = 0;
+  api.resumeCart();
+  assert.strictEqual(context.currentOrder.supplierCode, '48', 'dropdown selection is used as the fallback');
+
+  // 手書きのみ（supplierCD無し）＋プルダウン未選択 → 案内トーストを出して復帰しない
+  context.cartItems = [{ code: 'D', qty: 1 }];
+  context.currentOrder = { supplierCode: '', supplierName: '', fax: '', staff: '', date: '', outputType: '' };
+  els['sel-supplier'].value = '';
+  calls.length = 0; toastCalls.length = 0;
+  api.resumeCart();
+  assert.strictEqual(toastCalls.length, 1);
+  assert.strictEqual(toastCalls[0].type, 'error');
+  assert(!calls.includes('goToInput'), 'must not jump to the input step without a supplier');
+
+  // 破棄するとカートも発注先も空になる
+  context.cartItems = [{ code: 'E', qty: 1, supplierCD: '48' }];
+  api.discardCart();
+  assert.strictEqual(context.cartItems.length, 0, 'discardCart empties the cart');
+  assert.strictEqual(context.currentOrder.supplierCode, '', 'discardCart clears the order info');
+}
+
 (async () => {
   testOrderDateHelpers();
   testOrderedCacheAndBuildOrderedByCode();
   testGenerateOrderNoPastDateFullScan();
   testMgSkipGuards();
+  testCartResume();
   console.log('All order-feature tests passed.');
 })().catch(err => {
   console.error(err);
