@@ -662,9 +662,12 @@
     .jan-not-found-opts { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
 
     /* 発注提案タブ */
-    .prop-group-head  { display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
-    .prop-group-name  { font-weight: 700; font-size: 15px; flex: 1; }
-    .prop-group-count { font-size: 12px; color: var(--text-light); white-space: nowrap; }
+    /* 見出しは「仕入先名 ＋ 件数」。件数側に発注済み非表示の注記などが増えると横に伸びるため、
+       nowrap のままだと縮まずカードごと画面外へはみ出し、sticky ヘッダーまで横スクロールでズレる（v1.63.1で修正）。
+       名前・件数の両方を折り返し可能にし、名前には最低幅を持たせて1文字ずつの縦積みを防ぐ */
+    .prop-group-head  { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 2px 8px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    .prop-group-name  { font-weight: 700; font-size: 15px; flex: 1 1 40%; min-width: 7em; overflow-wrap: anywhere; }
+    .prop-group-count { font-size: 12px; color: var(--text-light); flex: 1 1 auto; min-width: 40%; text-align: right; overflow-wrap: anywhere; }
     .prop-group-chev  { font-size: 12px; color: var(--text-light); transition: transform 0.15s; }
     .prop-group.open .prop-group-chev { transform: rotate(90deg); }
     .prop-group-body  { display: none; margin-top: 4px; }
@@ -1342,7 +1345,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.63.0'; // カートへの復帰導線（発注情報の永続化・復帰バナー・カート件数バッジ）
+const APP_VERSION    = 'v1.63.1'; // 提案タブの仕入先見出しが横にはみ出して画面全体がズレる不具合を修正
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
