@@ -20,11 +20,19 @@
  *   TAG_BEAUFES           … 「ビューフェス2026申込」タグID
  *   FORM_AUTH_ID           … 認証フォーム（段階1）ID
  *   FORM_BMALL_ID          … Bモール登録フォーム（段階2）ID
+ *   SALES_REP_TAGS         … 🆕 営業担当タグの名前→タグID対応（JSON文字列・任意）。
+ *                             例: {"井戸川":"4fa97b9c-...","中村":"42210f2c-...",
+ *                                  "脇本":"569b4e18-...","嵐":"1de8a1f0-...",
+ *                                  "松田":"a892abcb-...","その他":"8ca733f8-..."}
+ *                             （タグIDの原本: LINEHarness/tools/tag-sales-rep/README.md）
+ *                             未設定でもダッシュボードは動く（担当別分析が非表示になるだけ）。
+ *                             タグは手動運用（自動トリガーなし・2026-08-16 Takashi決定）のため、
+ *                             タグ付け替えのタイミングでずれることがある前提で見る。
  *
  * 参照: LINEHarness/友だち登録進捗ダッシュボード_設計.md
  */
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const APP_NAME = 'line-progress';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 const CACHE_TTL_DATA = 90;     // 集計結果キャッシュ 90秒（§8-2「開くたび最新」の実務的な下限）
@@ -212,6 +220,22 @@ function fetchSubmissions_(formId) {
 }
 
 // ============================================================
+// 🆕 営業担当タグ（名前→タグID）。SALES_REP_TAGS 未設定なら null を返し、
+// 呼び出し側は「担当別分析なし」として静かにスキップする（必須機能にしない）。
+// ============================================================
+function getSalesRepTagMap_() {
+  const raw = PropertiesService.getScriptProperties().getProperty('SALES_REP_TAGS');
+  if (!raw) return null;
+  try {
+    const map = JSON.parse(raw);
+    return (map && typeof map === 'object') ? map : null;
+  } catch (e) {
+    Logger.log('SALES_REP_TAGS のJSONパースに失敗: ' + e);
+    return null;
+  }
+}
+
+// ============================================================
 // タグ実在チェック（§7 R2: タグを作り直すとIDが変わり集計が静かに0になる事故対策）
 // ============================================================
 function healthCheck_() {
@@ -231,6 +255,14 @@ function healthCheck_() {
   Object.keys(need).forEach(function (key) {
     if (!ids[need[key]]) missing.push(key);
   });
+
+  const repMap = getSalesRepTagMap_();
+  if (repMap) {
+    Object.keys(repMap).forEach(function (name) {
+      if (!ids[repMap[name]]) missing.push('SALES_REP_TAGS:' + name);
+    });
+  }
+
   return { success: true, ok: missing.length === 0, missing: missing };
 }
 
@@ -255,6 +287,13 @@ function getData_(fresh) {
   const TAG_BEAUFES = prop_('TAG_BEAUFES');
   const FORM_AUTH_ID = prop_('FORM_AUTH_ID');
   const FORM_BMALL_ID = prop_('FORM_BMALL_ID');
+
+  // 🆕 営業担当タグ: タグID→担当名の逆引き（未設定ならnullのまま＝全員salesRep:null）
+  const repMap = getSalesRepTagMap_();
+  const repNameByTagId_ = {};
+  if (repMap) {
+    Object.keys(repMap).forEach(function (name) { repNameByTagId_[repMap[name]] = name; });
+  }
 
   const friends = fetchAllFriends_();
   const authSubs = fetchSubmissions_(FORM_AUTH_ID);
@@ -284,6 +323,16 @@ function getData_(fresh) {
     const has_ = function (id) { return !!tagIds[id]; };
     const meta = f.metadata || {};
 
+    // 🆕 営業担当: friendが持つタグのうちSALES_REP_TAGSに載っているものを1つ採用
+    // （通常は前方一致で単一タグのみ付与される運用。複数付いていた場合はタグ配列の先頭優先）
+    let salesRep = null;
+    if (repMap) {
+      (f.tags || []).some(function (t) {
+        if (repNameByTagId_[t.id]) { salesRep = repNameByTagId_[t.id]; return true; }
+        return false;
+      });
+    }
+
     const row = {
       id: f.id,
       name: meta.staff_name || f.displayName || '',
@@ -292,6 +341,7 @@ function getData_(fresh) {
       confirm: has_(TAG_CONFIRM),
       bmall: has_(TAG_BMALL),
       beaufes: has_(TAG_BEAUFES),
+      salesRep: salesRep,
       addedAt: f.createdAt || null,
       formAt: formAtMap[f.id] || null,
       bmallAt: bmallAtMap[f.id] || null
@@ -331,7 +381,10 @@ function getData_(fresh) {
     staff: staff,
     partner: partner,
     series: series,
-    bmallUnmatchedCount: bmallUnmatchedCount
+    bmallUnmatchedCount: bmallUnmatchedCount,
+    // 🆕 SALES_REP_TAGS のキー順（=タグ定義の表示順）。未設定なら空配列＝フロントは
+    // 担当別分析セクションを表示しない
+    salesReps: repMap ? Object.keys(repMap) : []
   };
 
   cache.put(cacheKey, JSON.stringify(result), CACHE_TTL_DATA);
