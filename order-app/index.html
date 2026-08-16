@@ -347,6 +347,22 @@
     }
     .order-summary-supplier { font-size: 17px; font-weight: 700; }
     .order-summary-meta { font-size: 12px; color: var(--text-light); margin-top: 2px; }
+    .order-summary-date {
+      font-size: 13px;
+      color: var(--text);
+      margin-top: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .order-summary-date input[type="date"] {
+      font-size: 13px;
+      padding: 3px 6px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+    }
     .order-summary-note {
       font-size: 13px;
       font-weight: 600;
@@ -695,6 +711,11 @@
     .prop-badge.tier-手動 { background: #fff9c4; color: #8d6e00; }
     .prop-mg-pin-note  { font-size: 12px; margin-top: 6px; color: #8d6e00; }
     .prop-mg-pin-clear { padding: 2px 8px; font-size: 11px; border: 1px solid #ffe082; border-radius: 10px; background: #fff9c4; color: #8d6e00; cursor: pointer; margin-left: 6px; }
+    /* 系列まるごと見送り（v1.62.0） */
+    .prop-mg-skip      { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-light); margin-top: 8px; cursor: pointer; }
+    .prop-mg-skip input { cursor: pointer; }
+    .prop-mg.skipped   { opacity: 0.7; }
+    .prop-mg.skipped .prop-mg-state { color: var(--text-light); font-weight: 700; }
     .prop-sort-btn.active { background: var(--primary); color: #fff; }
     .prop-web-btn.active  { background: var(--primary); color: #fff; }
     /* 提案滞留の可視化（Phase M, v1.58.0）: 「いつから不足しているか」に気付きやすくする */
@@ -707,6 +728,11 @@
     .prop-urgent-body .prop-item:first-child { border-top: none; }
     .prop-urgent-jump      { width: 100%; margin-top: 8px; font-weight: 700; }
     .prop-group-stuck-note { color: #e65100; font-weight: 700; }
+    /* 発注済み（仕入未計上）の除外・表示（v1.62.0） */
+    .prop-badge.ordered        { background: #e6f4ea; color: #1e7e34; }
+    .prop-group-ordered-note   { color: var(--text-light); font-size: 11px; }
+    .prop-group-ordered-only .prop-group-count { color: #1e7e34; font-weight: 700; }
+    #prop-ordered-toggle.active { background: var(--primary); color: #fff; }
     .excess-item      { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
     .excess-item-name { font-size: 13px; font-weight: 600; }
     .excess-item-sub  { font-size: 11px; color: var(--text-light); margin-top: 2px; }
@@ -793,6 +819,9 @@
     <div class="order-summary-card">
       <div class="order-summary-supplier" id="input-supplier"></div>
       <div class="order-summary-meta" id="input-meta"></div>
+      <div class="order-summary-date">
+        発注日 <input type="date" id="order-date-edit" onchange="changeOrderDate(this.value)">
+      </div>
       <div class="order-summary-deadline" id="input-deadline" style="display:none"></div>
       <div class="order-summary-note" id="input-note" style="display:none"></div>
       <div class="order-summary-web" id="input-web-banner" style="display:none">🌐 Web発注先です。このアプリからは送信しません。発注サイトで注文した（する）内容を記録します</div>
@@ -1038,6 +1067,9 @@
       <button class="btn btn-outline btn-sm prop-web-btn" id="prop-web-all" onclick="setProposalWebFilter('all')" style="flex:1">すべて</button>
       <button class="btn btn-outline btn-sm prop-web-btn" id="prop-web-only" onclick="setProposalWebFilter('onlyWeb')" style="flex:1">🌐 Webのみ</button>
       <button class="btn btn-outline btn-sm prop-web-btn" id="prop-web-exclude" onclick="setProposalWebFilter('excludeWeb')" style="flex:1">🌐 Web除外</button>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button class="btn btn-outline btn-sm" id="prop-ordered-toggle" onclick="toggleHideOrdered()" style="flex:1">✅ 発注済みを隠す</button>
     </div>
   </div>
   <div id="prop-list">
@@ -1293,7 +1325,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.61.0'; // GAS通信deadline・書込結果照会・未確定発注の自動復旧
+const APP_VERSION    = 'v1.62.0'; // 発注日の変更・提案タブの発注済み除外・系列まるごと見送り
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1304,6 +1336,7 @@ const SS_CART        = 'bf_cart';
 const LS_MEMO_HIST   = 'bf_memo_h';
 const LS_ORDER_OUTBOX = 'bf_order_outbox_v1';
 const LS_GAS_DIAG     = 'bf_gas_diag_v1';
+const LS_ORDERED      = 'orderApp_orderedCodes'; // 保存成功した発注のローカル記録（提案タブの「発注済みを隠す」用）
 const SESSION_KEY    = 'bf_session';
 const SESSION_HOURS  = 12;
 
@@ -1364,7 +1397,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ────────────────────────────────────────────────────────────
 
   document.getElementById('version-label').textContent = APP_VERSION;
-  document.getElementById('input-date').value = getTodayStr();
+  syncOrderDateInputs();
 
   try {
     const saved = sessionStorage.getItem(SS_CART);
@@ -1656,6 +1689,10 @@ function _gasErrorMessage(e) {
   if (e && e.name === 'GasOutcomeUnknownError') return '処理結果を確認できませんでした。同じ操作をすぐ繰り返さず、画面の状態を確認してください。';
   if (e && e.name === 'GasDeadlineError') return '処理時間の上限に達しました。画面を戻しました。';
   if (e && e.name === 'GasQueueTimeoutError') return '通信が混み合っているため開始できませんでした。少し待ってからお試しください。';
+  // セマフォ不整合は一度発生すると _gasSemaphoreBroken が二度とfalseに戻らず、以後すべての通信が
+  // 即座に失敗する（fail-closed）。既定文言のまま「もう一度お試しください」と出すと、何度試しても
+  // 直らないのに再試行だけを促してしまうため、再読み込み誘導の専用文言にする（_handoff.md記載の残タスク）
+  if (e && e.name === 'GasSemaphoreError') return 'アプリの内部状態に問題が発生しました。ページを再読み込みしてください。';
   if (e && e.name === 'TypeError') return '通信エラー。ネットワークを確認してください。';
   return 'Google側が一時的に混み合っています。もう一度お試しください。';
 }
@@ -2140,6 +2177,7 @@ async function startOrder() {
 }
 
 function updateInputHeader() {
+  syncOrderDateInputs();
   document.getElementById('input-supplier').textContent = currentOrder.supplierName;
   document.getElementById('input-meta').textContent =
     `${currentOrder.date} / ${currentOrder.staff}` +
@@ -2707,11 +2745,17 @@ function renderItemList() {
 =================================================== */
 function renderConfirmPage() {
   const confirmSup = masters.suppliers.find(s => s.code === currentOrder.supplierCode);
+  // 出力済み（savedOrderNo）・送信中（orderRequestId）は日付編集不可。それ以外は編集欄を出す
+  const dateEditable = !savedOrderNo && !orderRequestId;
+  const dateHtml = dateEditable
+    ? `発注日 <input type="date" id="confirm-date-edit" value="${escAttr(currentOrder.date)}"
+         min="${orderDateMin()}" max="${orderDateMax()}" onchange="changeOrderDate(this.value)">`
+    : `発注日: ${escHtml(currentOrder.date)}`;
   document.getElementById('confirm-header').innerHTML = `
     <div class="confirm-header-box">
       <div class="confirm-supplier">${escHtml(currentOrder.supplierName)}</div>
       <div class="confirm-meta">
-        発注日: ${currentOrder.date} / 担当: ${currentOrder.staff}
+        ${dateHtml} / 担当: ${currentOrder.staff}
         ${currentOrder.fax ? ' / FAX: ' + currentOrder.fax : ''}
       </div>
       ${confirmSup && confirmSup.deadline ? `<div class="order-summary-deadline" style="margin-top:8px">⏰ 発注限 ${escHtml(confirmSup.deadline)}</div>` : ''}
@@ -2911,8 +2955,47 @@ function _markOrderEntry(entry, status, detail = '') {
   catch(e) { console.warn('[order outbox] status update failed:', e); }
 }
 
+/* === ORDERED CACHE (test:ordered-cache) === */
+// 保存成功した発注をローカルに記録し、提案タブで「発注済みを隠す」判定に使う。
+// GASの pendingOrders（リアルタイム集計）はセッション中キャッシュされる提案データの
+// 取得タイミングでしか更新されないため、発注直後に提案タブへ戻っても即座には反映されない。
+// このローカル記録が即時性を担保し、次回の提案再取得で pendingOrders 側に置き換わる
+const ORDERED_KEEP_DAYS = 30; // analyze_demand.py の ORDER_OPEN_CUTOFF_DAYS と合わせる
+
+function _readOrderedLocal() {
+  let rows = [];
+  try { rows = JSON.parse(localStorage.getItem(LS_ORDERED) || '[]'); } catch(e) { rows = []; }
+  const limit = Date.now() - ORDERED_KEEP_DAYS * 86400000;
+  const alive = rows.filter(r => r && r.savedAt > limit);
+  if (alive.length !== rows.length) _writeOrderedLocal(alive);
+  return alive;
+}
+function _writeOrderedLocal(rows) {
+  try { localStorage.setItem(LS_ORDERED, JSON.stringify(rows)); } catch(e) {}
+}
+// 保存成功時に呼ぶ。修正発注なら元発注ぶんの記録を先に落とす
+function _recordOrderedLocal(entry, orderNo) {
+  let items = [];
+  try { items = JSON.parse(entry.params.items || '[]'); } catch(e) { return; }
+  const base = String(entry.params.revisionBaseOrderNo || '');
+  let rows = _readOrderedLocal().filter(r => r.orderNo !== orderNo && (!base || r.orderNo !== base));
+  items.forEach(it => {
+    if (!it.code || !(it.qty > 0)) return;
+    rows.push({ code: String(it.code), qty: Number(it.qty) || 0,
+                orderDate: String(entry.params.date || ''), orderNo: String(orderNo || ''),
+                savedAt: Date.now() });
+  });
+  _writeOrderedLocal(rows);
+}
+function _forgetOrderedLocal(orderNo) {
+  _writeOrderedLocal(_readOrderedLocal().filter(r => r.orderNo !== orderNo));
+}
+/* === /ORDERED CACHE === */
+
 function _completeOrderEntry(entry, orderNo) {
   _removeOrderOutbox(entry.requestId);
+  _recordOrderedLocal(entry, orderNo);
+  proposalsLoaded = false; // 次に提案タブを開いたときGASから取り直し、pendingOrdersを最新化する
   // 新規・修正どちらも次回の履歴表示ではGASから取り直し、古い20件キャッシュを使わない。
   sessionStorage.removeItem(SS_HIST_CACHE);
   if (orderRequestId === entry.requestId) {
@@ -2936,7 +3019,8 @@ function _serverOrderError(res) {
 function _isTerminalOrderError(code) {
   return [
     'REQUEST_ID_REQUIRED', 'REQUEST_ID_INVALID', 'ITEMS_INVALID',
-    'REQUIRED_FIELDS_MISSING', 'REQUEST_ID_CONFLICT', 'ORDER_STATE_INVALID'
+    'REQUIRED_FIELDS_MISSING', 'REQUEST_ID_CONFLICT', 'ORDER_STATE_INVALID',
+    'DATE_INVALID', 'DATE_OUT_OF_RANGE'
   ].includes(String(code || ''));
 }
 
@@ -4363,6 +4447,7 @@ async function deleteOrderHistory(orderNo) {
       allHistoryOrders = allHistoryOrders.filter(o => o.orderNo !== orderNo);
       delete historyDetailCache[orderNo];
       sessionStorage.removeItem(SS_HIST_CACHE); // セッションキャッシュを無効化
+      _forgetOrderedLocal(orderNo); // 発注済み記録も削除（提案タブの非表示対象から外す）
       updateHistoryFilterOptions();
       applyHistoryFilter();
       showToast('削除しました', 'success');
@@ -4754,7 +4839,7 @@ function openInventoryQtyModal(idx) {
       supplierName: supplier.name,
       fax:          supplier.fax || '',
       staff:        currentUser ? currentUser.name : '',
-      date:         getTodayStr(),
+      date:         resolveOrderDate(),
       outputType:   ''
     };
     savedOrderNo = null;
@@ -4784,6 +4869,68 @@ function getTodayStr() {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
+/* === ORDER DATE HELPERS (test:order-date) === */
+// 発注日として許可する範囲。過去日は発注No（YYYYMMDD-NNN）と入荷待ち判定の基準日にも
+// なるため、際限なく遡れると履歴の並びが壊れる。実運用で必要な「昨日の発注を今日入力する」
+// 「週末ぶんを月曜にまとめて入力する」を通せる幅に絞る
+const ORDER_DATE_PAST_LIMIT_DAYS   = 30;
+const ORDER_DATE_FUTURE_LIMIT_DAYS = 7;
+
+function shiftDateStr(baseStr, days) {
+  const [y, m, d] = baseStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d + days);
+  return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+}
+function orderDateMin() { return shiftDateStr(getTodayStr(), -ORDER_DATE_PAST_LIMIT_DAYS); }
+function orderDateMax() { return shiftDateStr(getTodayStr(),  ORDER_DATE_FUTURE_LIMIT_DAYS); }
+function isOrderDateAllowed(v) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(v || ''))) return false;
+  return v >= orderDateMin() && v <= orderDateMax();
+}
+// 発注タブで設定済みの日付を引き継ぐ。未設定・範囲外なら当日にフォールバックする
+function resolveOrderDate() {
+  const el = document.getElementById('input-date');
+  const v  = el ? el.value : '';
+  return isOrderDateAllowed(v) ? v : getTodayStr();
+}
+// 発注日の変更。出力前（savedOrderNoが未設定）かつ送信中でない（orderRequestIdが未設定）
+// ときだけ許可する。_newOrderOutboxEntry は最初に固定したpayloadをorderRequestId経由で
+// 再利用するため（index.html内 _newOrderOutboxEntry 参照）、orderRequestIdが残ったまま
+// 日付だけ書き換えると「表示は新しい日付・送信は古い日付のまま」に食い違いうる。
+// そのためここでは書き換えず、送信中はブロックして結果確定後の再操作を促す
+function changeOrderDate(value) {
+  if (savedOrderNo) {
+    showToast('出力済みの発注は日付を変更できません。「修正発注」から変更してください', 'error');
+    syncOrderDateInputs(); return;
+  }
+  if (orderRequestId) {
+    showToast('送信中（未確定）の発注があります。結果が確定してから変更してください', 'error');
+    syncOrderDateInputs(); return;
+  }
+  if (!isOrderDateAllowed(value)) {
+    showToast(`発注日は ${orderDateMin()} 〜 ${orderDateMax()} の範囲で指定してください`, 'error');
+    syncOrderDateInputs(); return;
+  }
+  currentOrder.date = value;
+  syncOrderDateInputs();
+  updateInputHeader();
+  if (document.getElementById('step-confirm').style.display !== 'none') renderConfirmPage();
+  showToast(`発注日を ${value} に変更しました`, 'success');
+}
+
+// 3か所（発注タブ・商品入力・確認）の日付入力欄を currentOrder.date に合わせる
+function syncOrderDateInputs() {
+  const v = (currentOrder && currentOrder.date) ? currentOrder.date : getTodayStr();
+  ['input-date', 'order-date-edit', 'confirm-date-edit'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = v;
+    el.min = orderDateMin();
+    el.max = orderDateMax();
+  });
+}
+/* === /ORDER DATE HELPERS === */
+
 function openModal(id)  { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
@@ -4797,12 +4944,14 @@ let proposalsLoaded  = false;
 let proposalsLoading = false;
 let proposalsSort    = 'name'; // 'name'（あ順・既定）| 'amount'（金額が多い順）| 'stuck'（滞留が長い順・v1.58.0）
 let propWebFilter    = 'all'; // 'all'（既定）| 'onlyWeb'（Webのみ）| 'excludeWeb'（Web除外）
+let propHideOrdered  = true; // 既定ON。アプリで発注済み（仕入未計上）の商品を提案タブから隠す（v1.62.0）
 let excessShowCount  = 20; // 「持ちすぎ在庫」の初期表示件数（もっと見るで増える）
 let propUncheckedItems = new Set(); // ユーザーが手動でチェックを外した商品（"仕入先コード|商品コード"）。再描画してもチェック状態を維持するため
 let propMgOpenRest   = new Set(); // まとめ発注グループで「今回配分なしの商品」を展開しているグループID
 let propMgQty        = {};        // まとめ発注グループをアプリ側で組み直した数量 {グループID: {商品コード: 本数}}
 let propMgPins        = {};       // まとめ発注グループで手動固定した本数 {グループID: {商品コード: 本数}}（0=今回は入れない）
 let propMgLots        = {};       // まとめ発注グループの現在のロット数 {グループID: 本数}。ピン操作時に同じロット数で組み直すため
+let propMgSkipped     = new Set(); // 「今回はこの系列を発注しない」にした発注グループID。画面を開いている間だけ保持（再読み込み・🔄更新で解除）
 let deadShowCount    = 20; // 「整理」タブの初期表示件数（もっと見るで増える）
 let deadFilter       = 'all'; // 'all' | 'tier1'（完全死蔵）| 'tier2'（休眠）| 'unsold'（未販売）
 let deadSort         = 'amount'; // 'amount'（金額が多い順）| 'months'（放置期間が長い順）
@@ -4815,6 +4964,13 @@ function setProposalSort(mode) {
 function setProposalWebFilter(mode) {
   propWebFilter = mode;
   renderProposalList();
+}
+
+function toggleHideOrdered() {
+  propHideOrdered = !propHideOrdered;
+  renderProposalFilter();
+  renderProposalList();
+  updateProposalBadge();
 }
 
 // 発注先マスターの発注方法に「Web」が含まれるか（このアプリからは出力しない仕入先）
@@ -4851,12 +5007,42 @@ const fmtOrderDate = s => {
   return s;
 };
 
+/* === BUILD ORDERED BY CODE (test:ordered-cache) === */
+// 発注済み（アプリ経由・仕入未計上）の商品コード → { qty合計, 直近の発注日, 発注No, isDelayed }
+// GASの pendingOrders（リアルタイム集計・受領✓と自動突合済み・30日超過は除外済み）と
+// ローカル発注記録（即時性を担保するため）の両方を突き合わせて作る（v1.62.0）
+function buildOrderedByCode() {
+  const map = {};
+  const put = (code, qty, orderDate, orderNo, isDelayed) => {
+    if (!code) return;
+    const cur = map[code];
+    if (!cur) { map[code] = { qty, orderDate, orderNo, isDelayed: !!isDelayed }; return; }
+    cur.qty += qty;
+    cur.isDelayed = cur.isDelayed || !!isDelayed;
+    if (orderDate > cur.orderDate) { cur.orderDate = orderDate; cur.orderNo = orderNo; }
+  };
+  (proposalsData.pendingOrders || []).forEach(x => put(x.code, x.qty || 0, x.orderDate || '', x.orderNo || '', x.isDelayed));
+  // ローカル記録は pendingOrders と重複しうるので、同じ発注Noは二重計上しない
+  const seenOrderNos = new Set((proposalsData.pendingOrders || []).map(x => x.orderNo));
+  _readOrderedLocal().forEach(r => {
+    if (seenOrderNos.has(r.orderNo)) return;
+    put(r.code, r.qty, r.orderDate, r.orderNo, false);
+  });
+  return map;
+}
+/* === /BUILD ORDERED BY CODE === */
+
 // 1商品ぶんの行HTML。通常の提案行・まとめ発注グループの行・「要対応」セクションで共通に使う
 // （v1.58.0でrenderProposalListから独立関数に切り出し。3箇所から呼べるようにするため）
-function renderPropItem(p, code, delayedByCode) {
+function renderPropItem(p, code, delayedByCode, orderedByCode) {
   const badgeCls = PROP_PATTERN_CLASS[p.pattern] || 'sporadic';
   const note = p.aiNote || p.note || '';
   const stockNeg = (parseFloat(p.stock) || 0) < 0;
+  // 発注済み（仕入未計上）バッジ（v1.62.0）。「発注済みも表示」トグルON時のみここに来る
+  // （既定ONの「発注済みを隠す」状態では該当商品自体が描画対象から除かれる）
+  const ordered = (orderedByCode || {})[p.code];
+  const orderedBadge = ordered
+    ? `<span class="prop-badge ordered">✅ ${fmtOrderDate(ordered.orderDate)}発注済 ${ordered.qty}個</span>` : '';
   // 発注済み（仕入未計上）＝実物は届いている可能性が高いが在庫にはまだ反映されていない分
   const onOrder = p.onOrder > 0 ? `<span style="color:var(--text-light)">＋発注済(未計上) <b>${p.onOrder}</b></span> ` : '';
   const unitCost = parseFloat(p.unitCost) || 0;
@@ -4900,14 +5086,15 @@ function renderPropItem(p, code, delayedByCode) {
   // グループ行は「配分ゼロ＝アクション不要」のときだけグレーにする。発注時期前でも
   // 「今すぐ組む」で数量が入った行はチェックONになるので、グレーのままだと食い違う。
   // 在庫が推奨を下回っている行は配分ゼロでもグレーにしない（気づいてほしい行なので）。
-  // ただし「📌 今回は入れない」と人が明示的に決めた行は、不足していてもグレーのままにする
-  const isGrey = p.groupId ? (qty <= 0 && (pinned || !mgIsShort(p))) : p.refOnly;
+  // ただし「📌 今回は入れない」と人が明示的に決めた行は、不足していてもグレーのままにする。
+  // 発注済み（ordered）は種別を問わず常にグレー（v1.62.0）
+  const isGrey = !!ordered || (p.groupId ? (qty <= 0 && (pinned || !mgIsShort(p))) : p.refOnly);
   return `
   <div class="prop-item${isGrey ? ' prop-ref' : ''}" data-code="${escHtml(p.code)}" data-unit-cost="${unitCost}">
     <div class="prop-item-top">
       <input type="checkbox" class="prop-check" data-key="${escAttr(itemKey)}" ${propUncheckedItems.has(itemKey) ? '' : 'checked'}>
       <div class="prop-item-name">${escHtml(p.name)}
-        <div class="prop-item-code">${escHtml(p.code)}<span class="prop-badge ${badgeCls}">${escHtml(p.pattern)}</span>${abcBadge}${tierBadge}${refBadge}${stuckBadge}</div>
+        <div class="prop-item-code">${escHtml(p.code)}<span class="prop-badge ${badgeCls}">${escHtml(p.pattern)}</span>${abcBadge}${tierBadge}${refBadge}${stuckBadge}${orderedBadge}</div>
       </div>
       <div class="prop-item-actions">
         <button class="prop-excl-btn" onclick="excludeProposal('${escAttr(p.code)}','${escAttr(p.name)}')">🚫 除外</button>
@@ -4997,6 +5184,7 @@ function renderProposalUrgent() {
   const wrap = document.getElementById('prop-urgent');
   if (!wrap) return;
   const delayedByCode = buildDelayedByCode();
+  const orderedByCode = propHideOrdered ? buildOrderedByCode() : {};
   const seen = new Set();
   const items = [];
   (proposalsData.proposals || []).forEach(p => {
@@ -5008,6 +5196,9 @@ function renderProposalUrgent() {
     const stuckDays = p.stuckDays || 0;
     const recentDemand = parseFloat(p.recentDemandMonthly) || 0;
     const delayed = !!delayedByCode[p.code];
+    // 発注済み（仕入未計上）は要対応から外す。ただし③入荷遅延は「発注したのに届いていない」
+    // という気づくべき情報なので、発注済みでも掲載を続ける（v1.62.0）
+    if (orderedByCode[p.code] && !delayed) return;
     const cond1 = stock <= 0 && recentDemand >= PROP_URGENT_MIN_MONTHLY;
     const cond2 = stuckDays >= PROP_STUCK_URGENT_DAYS && shortQty > 0;
     if (!cond1 && !cond2 && !delayed) return;
@@ -5046,6 +5237,7 @@ async function loadProposals(force = false) {
       propUncheckedItems = new Set(); // サーバーから再取得した時だけチェック状態をリセット
       propMgQty = {};  // 組み直し結果も同様にリセット（古い提案データに基づく配分を持ち越さない）
       propMgPins = {}; // 手動固定（Phase L）も同様にリセット
+      propMgSkipped = new Set(); // 「今回は発注しない」系列の見送りも同様にリセット（画面を開いている間だけの状態のため）
       // 参考表示（提案対象外だが在庫が推奨を下回った商品）は既定でチェックOFFにする。
       // ここで propUncheckedItems に入れておけば、以後のチェック操作・再描画は
       // 通常の商品とまったく同じ仕組み（propUncheckedItems）で状態が保たれる
@@ -5067,6 +5259,12 @@ async function loadProposals(force = false) {
         groupStatus:  res.groupStatus  || [],
         orderGroups:  res.orderGroups  || []
       };
+      // 発注済み（仕入未計上）の商品も既定でチェックOFFにする（v1.62.0）。
+      // buildOrderedByCode() は proposalsData.pendingOrders を見るため、代入後に行う必要がある
+      const orderedByCodeAtLoad = buildOrderedByCode();
+      proposalsData.proposals.forEach(p => {
+        if (orderedByCodeAtLoad[p.code]) propUncheckedItems.add(p.supplierCode + '|' + p.code);
+      });
       proposalsLoaded = true;
       excessShowCount = 20;
       deadShowCount = 20;
@@ -5092,8 +5290,9 @@ async function loadProposals(force = false) {
 
 function updateProposalBadge() {
   const badge = document.getElementById('prop-badge-count');
-  // タブのバッジは「発注すべき件数」なので参考表示は数えない
-  const n = proposalsData.proposals.filter(p => !p.refOnly).length;
+  // タブのバッジは「発注すべき件数」なので参考表示・発注済み（隠している時）は数えない
+  const orderedByCode = propHideOrdered ? buildOrderedByCode() : {};
+  const n = proposalsData.proposals.filter(p => !p.refOnly && !orderedByCode[p.code]).length;
   badge.style.display = n > 0 ? '' : 'none';
   badge.textContent = n > 99 ? '99+' : String(n);
 }
@@ -5160,13 +5359,15 @@ function kpiDeltaHtml(curr, prev, formatFn) {
 function renderProposalFilter() {
   const sel = document.getElementById('prop-filter-supplier');
   const prev = sel.value;
+  const orderedByCode = propHideOrdered ? buildOrderedByCode() : {};
   const seen = {};
   proposalsData.proposals.forEach(p => { seen[p.supplierCode] = resolveSupplierName(p.supplierCode, p.supplierName); });
   const opts = Object.keys(seen)
     .sort((a, b) => seen[a].localeCompare(seen[b], 'ja'))
     .map(code => {
-      // 件数は提案のみ。参考しか無いメーカーは「参考N件」と出して選べる状態は保つ
-      const items = proposalsData.proposals.filter(p => p.supplierCode === code);
+      // 件数は提案のみ。参考しか無いメーカーは「参考N件」と出して選べる状態は保つ。
+      // 発注済みを隠す設定のときは、隠れる商品を件数からも除く（v1.62.0）
+      const items = proposalsData.proposals.filter(p => p.supplierCode === code && !orderedByCode[p.code]);
       const main  = items.filter(p => !p.refOnly).length;
       const label = main > 0 ? `${main}件` : `参考${items.length}件`;
       return `<option value="${escHtml(code)}">${escHtml(seen[code])} (${label})</option>`;
@@ -5178,11 +5379,27 @@ function renderProposalFilter() {
 function renderProposalList() {
   const wrap = document.getElementById('prop-list');
   const filter = document.getElementById('prop-filter-supplier').value;
+  const orderedByCode = buildOrderedByCode();
   let props = proposalsData.proposals.filter(p => !filter || p.supplierCode === filter);
   if (propWebFilter === 'onlyWeb')    props = props.filter(p => isWebSupplier(p.supplierCode));
   if (propWebFilter === 'excludeWeb') props = props.filter(p => !isWebSupplier(p.supplierCode));
 
+  // 発注済み（仕入未計上）の除外（v1.62.0）。仕入先ごとの非表示件数を先に数えてから絞り込む
+  // （絞り込んだ後だと「隠した件数」が分からなくなるため）
+  // 遅延中（発注したのに届いていない）は隠さない。「要対応」セクション（renderProposalUrgent）が
+  // 同じ商品を「🛒 xxxのカードへ移動して発注」で誘導してくるため、ここで隠すと移動先が空になって
+  // 操作できなくなる（v1.62.0）
   const delayedByCode = buildDelayedByCode();
+  const hiddenOrderedBySupplier = {};
+  if (propHideOrdered) {
+    props.forEach(p => {
+      if (orderedByCode[p.code] && !delayedByCode[p.code]) {
+        hiddenOrderedBySupplier[p.supplierCode] = (hiddenOrderedBySupplier[p.supplierCode] || 0) + 1;
+      }
+    });
+    props = props.filter(p => !orderedByCode[p.code] || delayedByCode[p.code]);
+  }
+  const totalHiddenOrdered = Object.values(hiddenOrderedBySupplier).reduce((s, n) => s + n, 0);
 
   document.getElementById('prop-sort-name').classList.toggle('active', proposalsSort === 'name');
   document.getElementById('prop-sort-amount').classList.toggle('active', proposalsSort === 'amount');
@@ -5190,18 +5407,36 @@ function renderProposalList() {
   document.getElementById('prop-web-all').classList.toggle('active', propWebFilter === 'all');
   document.getElementById('prop-web-only').classList.toggle('active', propWebFilter === 'onlyWeb');
   document.getElementById('prop-web-exclude').classList.toggle('active', propWebFilter === 'excludeWeb');
+  const orderedBtn = document.getElementById('prop-ordered-toggle');
+  if (orderedBtn) {
+    orderedBtn.classList.toggle('active', propHideOrdered);
+    orderedBtn.textContent = propHideOrdered ? '✅ 発注済みを隠す' : '✅ 発注済みも表示中';
+  }
 
-  if (props.length === 0) {
+  if (props.length === 0 && totalHiddenOrdered === 0) {
     wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">🎉</div><div>現在、発注提案はありません</div></div>';
+  } else if (props.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">🎉</div><div>現在、発注提案はありません（✅発注済みで非表示 ${totalHiddenOrdered}件）</div></div>`;
   } else {
     // 仕入先ごとにアコーディオン表示（タップで開閉・デフォルト閉）
     const groups = {};
     props.forEach(p => {
       (groups[p.supplierCode] = groups[p.supplierCode] || { name: resolveSupplierName(p.supplierCode, p.supplierName), items: [] }).items.push(p);
     });
+    // 発注済みだけになって表示行が0件になった仕入先も、アコーディオンごと消さない。
+    // 「本当に発注済みなのか」を確認できないと二重発注の不安が消えないため（v1.62.0）
+    Object.keys(hiddenOrderedBySupplier).forEach(code => {
+      if (groups[code]) return; // 通常表示される提案が残っている仕入先は既に入っている
+      const sample = proposalsData.proposals.find(p => p.supplierCode === code);
+      groups[code] = {
+        name: resolveSupplierName(code, sample && sample.supplierName),
+        items: [], orderedOnly: true
+      };
+    });
     // 商品マスターから棚番を引けるようマップ化（提案データ自体には棚番が無いため）
     const shelfMap = new Map(productMaster.map(p => [p.code, { shelf: p.shelfNo || '', jan: p.jan || '' }]));
     Object.values(groups).forEach(g => {
+      if (g.orderedOnly) { g.mainItems = []; g.refCount = 0; g.totalAmount = 0; g.maxStuckDays = 0; return; }
       // 参考表示は「気づくため」の行なので、グループ見出しの件数・数量・金額には含めない
       g.mainItems = g.items.filter(p => !p.refOnly);
       // まとめ発注グループ（Phase J）の行は専用ブロックで見せるので、仕入先見出しの
@@ -5229,10 +5464,21 @@ function renderProposalList() {
     wrap.innerHTML = sortedCodes
       .map(code => {
         const g = groups[code];
+        // 発注済みだけの仕入先（表示行が0件）は専用の簡易カードだけ出す
+        if (g.orderedOnly) {
+          const hiddenN = hiddenOrderedBySupplier[code] || 0;
+          return `
+          <div class="card prop-group prop-group-ordered-only" id="prop-group-${escHtml(code)}">
+            <div class="prop-group-head" style="cursor:default">
+              <span class="prop-group-name">${escHtml(g.name)}</span>
+              <span class="prop-group-count">✅ 発注済み${hiddenN}件のみ（表示なし）</span>
+            </div>
+          </div>`;
+        }
         // まとめ発注グループ（Phase J）の行は専用ブロックにまとめ、通常の提案行と分ける
         const mgIds = [];
         g.items.forEach(p => { if (p.groupId && !mgIds.includes(p.groupId)) mgIds.push(p.groupId); });
-        const renderItem = (p, c) => renderPropItem(p, c, delayedByCode);
+        const renderItem = (p, c) => renderPropItem(p, c, delayedByCode, orderedByCode);
         const items = mgIds.map(gid => renderMgBlock(gid, code, renderItem)).join('')
           + g.items.filter(p => !p.groupId).map(p => renderItem(p, code)).join('');
         const totalQty = g.mainItems.reduce((s, p) => s + (p.proposedQty || 0), 0);
@@ -5240,11 +5486,18 @@ function renderProposalList() {
         const refNote = g.refCount ? `<span style="color:var(--text-light)"> ＋参考${g.refCount}件</span>` : '';
         // まとめ発注グループを持つ仕入先は見出しにも状況を出す。全グループが発注時期前だと
         // 通常の提案が0件になり「0件 / 計0個 / ¥0」だけが並んで意味が伝わらないため
-        const mgDue = mgIds.filter(gid => (mgStatusById(gid) || {}).due).length;
-        const countText = (g.mainItems.length === 0 && mgIds.length > 0)
-          ? `📦 まとめ発注${mgIds.length}系列：発注時期ではありません`
+        const mgDue = mgIds.filter(gid => !propMgSkipped.has(gid) && (mgStatusById(gid) || {}).due).length;
+        const mgSkippedCount = mgIds.filter(gid => propMgSkipped.has(gid)).length;
+        // 発注済みで隠した件数（v1.62.0）: 見出しに出して「消えたのではなく発注済み」と分かるようにする
+        const hiddenNote = (propHideOrdered && hiddenOrderedBySupplier[code])
+          ? `<span class="prop-group-ordered-note"> ・✅発注済み${hiddenOrderedBySupplier[code]}件を非表示</span>` : '';
+        const countText = ((g.mainItems.length === 0 && mgIds.length > 0)
+          ? (mgSkippedCount === mgIds.length
+              ? `📦 まとめ発注${mgIds.length}系列：⏭ すべて見送り中`
+              : `📦 まとめ発注${mgIds.length}系列：発注時期ではありません${mgSkippedCount > 0 ? `（うち${mgSkippedCount}系列見送り中）` : ''}`)
           : `${g.mainItems.length}件${refNote} / 計${totalQty}個 / ${formatYen(totalAmount)}`
-            + (mgIds.length > 0 ? `<span style="color:var(--text-light)"> ・📦${mgDue}/${mgIds.length}系列</span>` : '');
+            + (mgIds.length > 0 ? `<span style="color:var(--text-light)"> ・📦${mgDue}/${mgIds.length}系列${mgSkippedCount > 0 ? `（${mgSkippedCount}系列見送り中）` : ''}</span>` : ''))
+          + hiddenNote;
         // 見出しに最大滞留日数を出す（v1.58.0）: 閉じたままでも急ぎの仕入先が分かるように
         const stuckNote = g.maxStuckDays >= PROP_STUCK_URGENT_DAYS
           ? ` <span class="prop-group-stuck-note">⏳最長${g.maxStuckDays}日</span>` : '';
@@ -5296,10 +5549,17 @@ function mgConfigById(groupId) {
   return (proposalsData.orderGroups || []).find(g => g.groupId === groupId) || null;
 }
 function mgItemsOf(groupId) {
-  return proposalsData.proposals.filter(p => p.groupId === groupId);
+  const items = proposalsData.proposals.filter(p => p.groupId === groupId);
+  if (!propHideOrdered) return items;
+  // 発注済み（仕入未計上）の商品は再配分の対象から外す。除外しないと、発注済みの商品に
+  // 系列の残り本数の一部がまた割り当てられてしまう（v1.62.0）
+  const orderedByCode = buildOrderedByCode();
+  return items.filter(p => !orderedByCode[p.code]);
 }
-// 表示する発注数。優先順位: 手動固定（ピン）＞ アプリ側で組み直した値 ＞ サーバーの配分結果
+/* === MG SKIP GUARDS (test:mg-skip) === */
+// 表示する発注数。優先順位: 「今回は発注しない」見送り中 ＞ 手動固定（ピン）＞ アプリ側で組み直した値 ＞ サーバーの配分結果
 function mgQtyOf(groupId, p) {
+  if (propMgSkipped.has(groupId)) return 0; // 見送り中は常に0本（他商品への再配分を止める本体）
   const pins = propMgPins[groupId];
   if (pins && pins[p.code] !== undefined) return pins[p.code];
   const o = propMgQty[groupId];
@@ -5380,6 +5640,10 @@ function reRenderProposalsKeepScroll() {
 // keepPins=false のときだけ手動固定（ピン）を破棄してゼロから組み直す（「最初から組み直す」用）。
 // changedCode を渡すと、その商品以外で減った分をトーストに出す（ピン操作からの呼び出し用）
 function mgRebuild(groupId, lots, keepPins = true, changedCode) {
+  if (propMgSkipped.has(groupId)) {
+    showToast('「今回はこの系列を発注しない」が有効です。解除してから組んでください', 'error');
+    return;
+  }
   const st = mgStatusById(groupId), cfg = mgConfigById(groupId);
   if (!st || !cfg) { showToast('発注グループの設定が読み込めていません', 'error'); return; }
   const items = mgItemsOf(groupId);
@@ -5425,6 +5689,7 @@ function mgRebuild(groupId, lots, keepPins = true, changedCode) {
 // 手動固定（ピン）を設定する。組成済み（発注時期 or 組んだことがある）ならその場で再配分し、
 // 未組成なら記録だけして「今すぐ組む」を押したときに反映されるようにする
 function mgSetPin(groupId, code, qty) {
+  if (propMgSkipped.has(groupId)) return; // 見送り中は±6・チェック操作からの再配分を止める
   qty = Math.max(0, qty);
   const st = mgStatusById(groupId);
   if (!st) return;
@@ -5438,6 +5703,7 @@ function mgSetPin(groupId, code, qty) {
     showToast('手動指定を記録しました。「今すぐ組む」を押すと反映されます', 'success');
   }
 }
+/* === /MG SKIP GUARDS === */
 
 // グループの手動固定（ピン）を全解除して組み直す
 function mgClearPins(groupId) {
@@ -5458,6 +5724,33 @@ function mgToggleRest(groupId) {
   renderProposalList();
 }
 
+// 「今回はこの系列を発注しない」の切替（Phase M追補, v1.62.0）。
+// ミルフィーのように系列合計が発注単位の倍数でしか組めないグループは、1商品ずつ
+// チェックを外しても mgRebuild が残り本数を他商品へ配り直してしまい、系列全体を
+// 除外する手段が無かった。propMgSkipped に入れている間は mgQtyOf が常に0を返し、
+// mgRebuild・mgSetPin も動作を止める（本体のガードは mgQtyOf/mgRebuild/mgSetPin 側）。
+// 画面を開いている間だけの状態（再読み込み・🔄更新で解除。loadProposals 参照）
+function mgToggleSkip(groupId, skip) {
+  const st = mgStatusById(groupId);
+  const name = st ? st.groupName : groupId;
+  if (skip) {
+    propMgSkipped.add(groupId);
+    delete propMgQty[groupId];
+    delete propMgPins[groupId];
+    delete propMgLots[groupId];
+    // 系列の全商品をチェックOFFにする。発注画面へ送る経路（startOrderFromProposals）は
+    // DOM上のチェック状態しか見ないので、これで確実に発注対象から外れる。
+    // mgItemsOf ではなく生の proposals から拾う（発注済み除外フィルタの影響を受けないため）
+    proposalsData.proposals
+      .filter(p => p.groupId === groupId)
+      .forEach(p => propUncheckedItems.add(p.supplierCode + '|' + p.code));
+  } else {
+    propMgSkipped.delete(groupId);
+  }
+  reRenderProposalsKeepScroll();
+  showToast(skip ? `${name}は今回の発注に含めません` : `${name}の見送りを解除しました`, 'success');
+}
+
 // 手当済在庫（現在庫＋発注済み未計上）が推奨在庫を下回っているか
 function mgIsShort(p) {
   return (parseFloat(p.stock) || 0) + (parseFloat(p.onOrder) || 0) < (parseFloat(p.recommended) || 0);
@@ -5468,6 +5761,27 @@ function renderMgBlock(groupId, supplierCode, renderItem) {
   const items = mgItemsOf(groupId).filter(p => p.supplierCode === supplierCode);
   if (!st || items.length === 0) return '';
   const unit = st.groupUnit || 0;
+  const skipped = propMgSkipped.has(groupId);
+  const skipBox = `
+    <label class="prop-mg-skip">
+      <input type="checkbox" ${skipped ? 'checked' : ''}
+        onchange="mgToggleSkip('${escAttr(groupId)}', this.checked)">
+      今回はこの系列を発注しない
+    </label>`;
+  // 見送り中は商品行を描画しない（畳んだ簡易表示にする）。行を残すとチェック操作から
+  // mgSetPin 経路に入り込む余地が生まれ、updatePropMgTotal の集計にも乗ってしまうため
+  if (skipped) {
+    const shortCount = items.filter(mgIsShort).length;
+    return `
+    <div class="prop-mg skipped" data-group-id="${escAttr(groupId)}" data-group-unit="${unit}">
+      <div class="prop-mg-head">
+        <div class="prop-mg-title">📦 ${escHtml(st.groupName)}<span class="prop-mg-unit">${unit}本単位</span></div>
+        <div class="prop-mg-state">⏭ 今回は発注しません（${items.length}商品・すべてチェックOFF${
+          shortCount > 0 ? ` ／ 在庫が推奨を下回っている商品 ${shortCount}件` : ''}）</div>
+        ${skipBox}
+      </div>
+    </div>`;
+  }
   const allocated = items.filter(p => mgQtyOf(groupId, p) > 0);
   // ⚠️ 在庫が推奨を下回っているのに今回配分されなかった商品は、折りたたみに入れずに必ず出す。
   //   ここを「配分なし」でまとめて隠すと、在庫1本の商品が画面から消えて気づけなくなる
@@ -5532,6 +5846,7 @@ function renderMgBlock(groupId, supplierCode, renderItem) {
         shortNoAlloc.length > 0 ? `（うち${shortNoAlloc.length}件は今回の配分に入っていません・下に表示）` : ''}${
         outCount > 0 ? ` ／ うち在庫0以下 ${outCount}件` : ''}</div>` : ''}
       <div class="prop-mg-acts">${acts.join('')}</div>
+      ${skipBox}
     </div>
     <div class="prop-mg-body">
       ${allocated.map(p => renderItem(p, supplierCode)).join('')}
@@ -5632,6 +5947,8 @@ function handlePropItemInputChange(e) {
   // mgSetPin がグループ全体を発注単位ぴったりに組み直して再描画する
   if (mgEl) {
     const groupId = mgEl.dataset.groupId;
+    // 見送り中（renderMgBlockが商品行を描画しないため通常は発火しないが、念のための防御）
+    if (propMgSkipped.has(groupId)) { reRenderProposalsKeepScroll(); return; }
     if (e.target.matches('.prop-check')) {
       if (e.type !== 'change') return; // チェックボックスのinputイベントは無視（changeで確定）
       const qtyInput = item.querySelector('.prop-qty');
@@ -6301,7 +6618,7 @@ function startOrderFromProposals(supplierCode) {
     supplierName,
     fax: supplier ? (supplier.fax || '') : '',
     staff: currentUser.name,
-    date: getTodayStr(),
+    date: resolveOrderDate(),   // 発注タブで設定済みの日付を引き継ぐ（getTodayStr()固定だったv1.61.0以前の不具合修正）
     outputType: ''
   };
   savedOrderNo = null; orderRequestId = null; revisionBaseOrderNo = null;
