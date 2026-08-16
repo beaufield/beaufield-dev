@@ -288,6 +288,52 @@ h1 {
   white-space: nowrap;
 }
 .btn-copy:hover { background: var(--surface-2); }
+.rep-select {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13.5px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.rep-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ---- Sales rep summary ---- */
+.rep-summary-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.rep-summary-card h2 { margin: 0; font-size: 15px; font-weight: 700; }
+.rep-summary-note { font-size: 12.5px; color: var(--muted); margin-top: -6px; }
+.rep-table-scroll { overflow-x: auto; }
+.rep-table { width: 100%; border-collapse: collapse; min-width: 620px; }
+.rep-table th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.03em;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.rep-table th.center, .rep-table td.center { text-align: center; }
+.rep-table td { padding: 9px 12px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.rep-table tbody tr:last-child td { border-bottom: none; }
+.rep-table tr.is-active { background: var(--accent-soft); }
+.rep-table tr.is-clickable { cursor: pointer; }
+.rep-table tr.is-clickable:hover { background: var(--surface-2); }
+.rep-table .rep-name { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; }
+.rep-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.rep-pct { color: var(--muted); font-size: 12.5px; }
 
 /* ---- Table ---- */
 .table-card {
@@ -518,6 +564,27 @@ footer {
     <div class="chart-note" id="chartNote"></div>
   </div>
 
+  <div class="rep-summary-card" id="repSummaryCard" hidden>
+    <h2>営業担当別の進捗</h2>
+    <div class="rep-summary-note">行をクリックすると、その担当だけに絞り込んで下の一覧に表示します。</div>
+    <div class="rep-table-scroll">
+      <table class="rep-table">
+        <thead>
+          <tr>
+            <th>担当</th>
+            <th class="center">対象</th>
+            <th class="center">①初期フォーム</th>
+            <th class="center">②確認番号</th>
+            <th class="center">③Bモール登録</th>
+            <th class="center">3項目完了</th>
+            <th class="center">停滞7日以上</th>
+          </tr>
+        </thead>
+        <tbody id="repSummaryBody"></tbody>
+      </table>
+    </div>
+  </div>
+
   <div class="controls">
     <div class="segmented" role="tablist" aria-label="表示フィルター">
       <button class="active" data-filter="all">すべて</button>
@@ -526,6 +593,9 @@ footer {
       <button data-filter="none">未着手</button>
       <button data-filter="stalled7">停滞7日以上</button>
     </div>
+    <select class="rep-select" id="repFilter" aria-label="営業担当で絞り込み" hidden>
+      <option value="all">担当: すべて</option>
+    </select>
     <div class="search">
       <input type="text" id="searchInput" placeholder="氏名・サロン名で検索" aria-label="氏名・サロン名で検索">
     </div>
@@ -547,6 +617,7 @@ footer {
             <th>登録日</th>
             <th class="center">停滞</th>
             <th class="center">ビューフェス</th>
+            <th id="repColHeader" hidden>担当</th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
@@ -584,13 +655,16 @@ footer {
 // SESSION_INVALID しか返らないためここに書く分には問題ない。
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbxJiASlhlwa8pVPpVOTRz18wN8IRru6xg7xD5Q9ysggP_LvwzXKCucHumEYA6O148BK/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 // Phase 3で実データ接続に切替済み（2026-08-11）。ローカルでモックに戻したいときだけ true にする。
 const USE_MOCK    = false;
+// 🆕 営業担当タグの色分け（GAS側 SALES_REP_TAGS の順に割り当て。「未設定」は常にグレー固定）
+const REP_PALETTE = ['#3B82F6', '#F59E0B', '#10B981', '#8B5CF6', '#EC4899', '#0EA5E9', '#F97316', '#14B8A6'];
 
 let session = null;
-let DATA = { customers: [], staff: [], partner: [], series: null, bmallUnmatchedCount: 0 };
+let DATA = { customers: [], staff: [], partner: [], series: null, bmallUnmatchedCount: 0, salesReps: [] };
 let currentFilter = 'all';
+let currentRepFilter = 'all';
 let currentQuery = '';
 let loading = false;
 
@@ -669,8 +743,15 @@ function loadData(isManualRefresh, isRetry) {
         staff: data.staff || [],
         partner: data.partner || [],
         series: data.series || { dates: [], friends: [], form: [], bmall: [] },
-        bmallUnmatchedCount: data.bmallUnmatchedCount || 0
+        bmallUnmatchedCount: data.bmallUnmatchedCount || 0,
+        salesReps: data.salesReps || []
       };
+      // 担当フィルターは再取得のたびに一覧が作り直されるため、選択中の担当が
+      // 新しい一覧に無ければ「すべて」に戻す（担当タグが付け替わった直後の事故防止）
+      if (currentRepFilter !== 'all' && currentRepFilter !== '__none__' &&
+          DATA.salesReps.indexOf(currentRepFilter) < 0) {
+        currentRepFilter = 'all';
+      }
       DATA.syncedAt = data.synced_at || new Date().toISOString();
       renderAll();
       showMain();
@@ -758,6 +839,8 @@ function renderAll() {
   document.getElementById('staffCount').textContent = '（' + DATA.staff.length + '名）';
   document.getElementById('partnerCount').textContent = '（' + DATA.partner.length + '件）';
 
+  renderRepFilterOptions();
+  renderRepSummary();
   renderTable();
 }
 
@@ -849,17 +932,39 @@ function matchesFilter(r, filter) {
   return true;
 }
 
+// 🆕 営業担当タグでの絞り込み。'all'=全員 / '__none__'=タグ未設定 / それ以外=担当名の完全一致
+function matchesRep(r, repFilter) {
+  if (repFilter === 'all') return true;
+  if (repFilter === '__none__') return !r.salesRep;
+  return r.salesRep === repFilter;
+}
+
 function visibleRows() {
   const q = currentQuery.trim().toLowerCase();
   return DATA.customers.filter(function (r) {
     if (!matchesFilter(r, currentFilter)) return false;
+    if (!matchesRep(r, currentRepFilter)) return false;
     if (!q) return true;
     return r.name.toLowerCase().indexOf(q) >= 0 || (r.salon || '').toLowerCase().indexOf(q) >= 0;
   });
 }
 
+// 🆕 担当タグの色。DATA.salesReps（GAS側 SALES_REP_TAGS の順）でのインデックスに
+// パレットを割り当てるだけなので、タグの並びを変えると色も変わる（固定運用ではない）
+function repColor_(rep) {
+  if (!rep) return 'var(--todo)';
+  const idx = (DATA.salesReps || []).indexOf(rep);
+  return idx < 0 ? 'var(--todo)' : REP_PALETTE[idx % REP_PALETTE.length];
+}
+
+function repBadge(rep) {
+  if (!rep) return '&mdash;';
+  return '<span class="rep-name"><span class="rep-dot" style="background:' + repColor_(rep) + '"></span>' + escapeHtml(rep) + '</span>';
+}
+
 function renderTable() {
   const rows = visibleRows();
+  const showRep = !!(DATA.salesReps && DATA.salesReps.length);
   document.getElementById('tbody').innerHTML = rows.map(function (r) {
     return '<tr>' +
       '<td class="name">' + escapeHtml(r.name) + '</td>' +
@@ -871,9 +976,82 @@ function renderTable() {
       '<td class="date-cell">' + fmtDate(r.addedAt) + '</td>' +
       '<td class="center">' + stalledBadge(r) + '</td>' +
       '<td class="center">' + (r.beaufes ? '<span class="badge beaufes">申込済</span>' : '&mdash;') + '</td>' +
+      (showRep ? '<td class="center">' + repBadge(r.salesRep) + '</td>' : '') +
       '</tr>';
   }).join('');
   document.getElementById('resultCount').textContent = rows.length + ' / ' + DATA.customers.length + ' 件を表示';
+}
+
+// 🆕 担当フィルターのプルダウンと、テーブルの「担当」列の出し分け
+// （GASの SALES_REP_TAGS が未設定なら salesReps が空配列で返り、機能ごと非表示になる）
+function renderRepFilterOptions() {
+  const sel = document.getElementById('repFilter');
+  const repColHeader = document.getElementById('repColHeader');
+  const reps = DATA.salesReps || [];
+
+  if (!reps.length) {
+    sel.hidden = true;
+    repColHeader.hidden = true;
+    return;
+  }
+  sel.hidden = false;
+  repColHeader.hidden = false;
+
+  const hasNone = DATA.customers.some(function (c) { return !c.salesRep; });
+  const opts = ['<option value="all">担当: すべて</option>'].concat(
+    reps.map(function (name) { return '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>'; })
+  );
+  if (hasNone) opts.push('<option value="__none__">未設定</option>');
+  sel.innerHTML = opts.join('');
+  sel.value = currentRepFilter;
+}
+
+// 🆕 担当別サマリー表。行クリックでその担当に絞り込み・もう一度クリックで解除
+function renderRepSummary() {
+  const card = document.getElementById('repSummaryCard');
+  const reps = DATA.salesReps || [];
+  if (!reps.length) { card.hidden = true; return; }
+  card.hidden = false;
+
+  const groups = reps.slice();
+  const hasNone = DATA.customers.some(function (c) { return !c.salesRep; });
+  if (hasNone) groups.push('__none__');
+
+  const cellPct_ = function (v, n) {
+    if (!n) return '&mdash;';
+    return v + '<span class="rep-pct">（' + Math.round((v / n) * 100) + '%）</span>';
+  };
+
+  document.getElementById('repSummaryBody').innerHTML = groups.map(function (g) {
+    const isNone = g === '__none__';
+    const rows = DATA.customers.filter(function (c) { return isNone ? !c.salesRep : c.salesRep === g; });
+    const n = rows.length;
+    const cnt = function (pred) { return rows.filter(pred).length; };
+    const stalledN = cnt(function (r) {
+      return scoreOf(r) < 3 && r.stalledDays !== null && r.stalledDays !== undefined && r.stalledDays >= 7;
+    });
+    const active = currentRepFilter === g;
+    return '<tr class="is-clickable' + (active ? ' is-active' : '') + '" data-rep="' + escapeHtml(g) + '">' +
+      '<td><span class="rep-name"><span class="rep-dot" style="background:' + repColor_(isNone ? null : g) + '"></span>' +
+      escapeHtml(isNone ? '未設定' : g) + '</span></td>' +
+      '<td class="center">' + n + '</td>' +
+      '<td class="center">' + cellPct_(cnt(function (r) { return r.form; }), n) + '</td>' +
+      '<td class="center">' + cellPct_(cnt(function (r) { return r.confirm; }), n) + '</td>' +
+      '<td class="center">' + cellPct_(cnt(function (r) { return r.bmall; }), n) + '</td>' +
+      '<td class="center">' + cellPct_(cnt(function (r) { return r.form && r.confirm && r.bmall; }), n) + '</td>' +
+      '<td class="center">' + (stalledN ? '<span class="badge stalled">' + stalledN + '</span>' : '&mdash;') + '</td>' +
+      '</tr>';
+  }).join('');
+
+  document.querySelectorAll('#repSummaryBody tr[data-rep]').forEach(function (tr) {
+    tr.addEventListener('click', function () {
+      const rep = tr.dataset.rep;
+      currentRepFilter = (currentRepFilter === rep) ? 'all' : rep;
+      document.getElementById('repFilter').value = currentRepFilter;
+      renderTable();
+      renderRepSummary();
+    });
+  });
 }
 
 document.querySelectorAll('.segmented button').forEach(function (btn) {
@@ -883,6 +1061,12 @@ document.querySelectorAll('.segmented button').forEach(function (btn) {
     currentFilter = btn.dataset.filter;
     renderTable();
   });
+});
+
+document.getElementById('repFilter').addEventListener('change', function (e) {
+  currentRepFilter = e.target.value;
+  renderTable();
+  renderRepSummary();
 });
 
 document.getElementById('searchInput').addEventListener('input', function (e) {
@@ -895,7 +1079,9 @@ document.getElementById('searchInput').addEventListener('input', function (e) {
 // ============================================================
 document.getElementById('copyBtn').addEventListener('click', function () {
   const rows = visibleRows();
-  const header = ['氏名', 'サロン名', '①初期フォーム', '②確認番号', '③Bモール登録', '登録日', '停滞日数', 'ビューフェス'];
+  const showRep = !!(DATA.salesReps && DATA.salesReps.length);
+  const header = ['氏名', 'サロン名', '①初期フォーム', '②確認番号', '③Bモール登録', '登録日', '停滞日数', 'ビューフェス']
+    .concat(showRep ? ['担当'] : []);
   const lines = [header.join('\t')].concat(rows.map(function (r) {
     return [
       r.name, r.salon || '',
@@ -903,7 +1089,7 @@ document.getElementById('copyBtn').addEventListener('click', function () {
       fmtDate(r.addedAt),
       (r.stalledDays === null || r.stalledDays === undefined) ? '' : r.stalledDays,
       r.beaufes ? '済' : ''
-    ].join('\t');
+    ].concat(showRep ? [r.salesRep || ''] : []).join('\t');
   }));
   const tsv = lines.join('\n');
   if (navigator.clipboard && navigator.clipboard.writeText) {
