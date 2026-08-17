@@ -10,7 +10,7 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.11.0';
+const VERSION       = 'v1.11.1';
 // ポータル画面（GitHub Pages）のURL。旧HTML向けの更新案内タイルのリンク先に使う。
 const PORTAL_URL    = 'https://beaufield.github.io/beaufield-dev/';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
@@ -32,12 +32,6 @@ const APP_MASTER = [
     label:   '発注アプリ',
     icon:    '📦',
     url:     'https://beaufield.github.io/beaufield-dev/order-app/'
-  },
-  {
-    appName: 'route-checker',
-    label:   'ルート訪問チェッカー',
-    icon:    '🗺️',
-    url:     'https://beaufield.github.io/beaufield-dev/route-checker/'
   },
   {
     appName: 'lending',
