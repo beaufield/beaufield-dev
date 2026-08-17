@@ -10,7 +10,7 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.10.1';
+const VERSION       = 'v1.11.0';
 // ポータル画面（GitHub Pages）のURL。旧HTML向けの更新案内タイルのリンク先に使う。
 const PORTAL_URL    = 'https://beaufield.github.io/beaufield-dev/';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
@@ -19,8 +19,8 @@ const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
 const MAX_ATTEMPTS = 5;
 const LOCK_MINUTES = 10;
 
-// セッション有効期間。共有端末でのトークン残存を抑えるため業務日内に限定する。
-const SESSION_HOURS = 12;
+// セッション有効期間。共有端末でのトークン残存を抑えつつ、頻繁な再ログインを避けるため7日とする。
+const SESSION_HOURS = 24 * 7;
 
 // ============================================================
 // アプリマスター
