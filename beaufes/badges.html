@@ -298,10 +298,11 @@
 <script src="lib/qrcode.min.js"></script>
 <script>
 // ============================================================
-// badges.html（名札印刷・社員用） v0.1.0
+// badges.html（名札印刷・社員用）
 // 設計は 名札印刷_badges設計.md を正とする（本ファイルは実装のみ・設計は変更しない）
+// 版数の定義はこの APP_VERSION 1箇所だけ（AGENTS.md バージョン管理ルール）
 // ============================================================
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.1.1';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 const SESSION_KEY = 'bf_session'; // ポータルと共通（§2-4）
@@ -732,24 +733,14 @@ function generateMockVisitorBadges() {
   });
 }
 
+// 🔴 GASの listSpareBadges（Code.gs）が返す生の形のまま返すこと。
+// 名札1枚の形への変換は toSpareBadge() に一本化してある（モックだけ形が違うと実データが壊れる・§8）。
 function generateMockSpareBadges() {
   return [
     { spare_no: 'P-01', ticket_token: mockToken(901), assigned_app_id: '',           assigned_at: '' },
     { spare_no: 'P-02', ticket_token: mockToken(902), assigned_app_id: 'F2026-0031', assigned_at: '2026-08-10 09:00:00' },
     { spare_no: 'P-03', ticket_token: mockToken(903), assigned_app_id: '',           assigned_at: '' }
-  ].map(function (s) {
-    return {
-      app_id: s.spare_no,
-      salon_name: '',
-      staff_name: '',
-      business_type: '',
-      band: 'C',
-      ticket_token: s.ticket_token,
-      assigned_app_id: s.assigned_app_id,
-      assigned_at: s.assigned_at,
-      isSpare: true
-    };
-  });
+  ];
 }
 
 // created_at/updated_atが 'yyyy-MM-dd' 文字列である前提の比較（モック用の簡易版。
@@ -785,15 +776,13 @@ function mockFetchVisitor(filters) {
   };
 }
 
+// 🔴 「未割当のみ/すべて」の絞り込みはここでやらない。GASと同じく全件返し、
+// 画面側（badgesFromData）で絞る（設計 §5-4）。モックと実データで経路を揃えるため。
 function mockFetchSpare(filters) {
-  const all = generateMockSpareBadges();
-  const filtered = all.filter(function (s) {
-    return (filters.spareFilter === 'all') || !s.assigned_app_id;
-  });
   return {
     pass_base: buildPassBase(),
     bands: MOCK_BANDS,
-    spares: filtered
+    spares: generateMockSpareBadges()
   };
 }
 
@@ -802,6 +791,42 @@ function mockFetchSpare(filters) {
 // ------------------------------------------------------------
 function buildPassBase() {
   return location.origin + location.pathname.replace(/badges\.html$/, 'pass.html');
+}
+
+// ------------------------------------------------------------
+// 予備名札 → 名札1枚の形への変換（§5-4）
+// 🔴 サーバー（listSpareBadges）が返すのは { spare_no, ticket_token, assigned_app_id, assigned_at } だけで、
+//    描画側が読む app_id / staff_name / salon_name / band / isSpare は含まれない。
+//    ここを通さずに描画へ渡すと String(undefined) が効いて例外は出ず、
+//    氏名も受付番号も「undefined」と印字された名札が静かに刷り上がる。
+//    モック・実データの両方が必ずこの関数を通ること。
+// ------------------------------------------------------------
+function toSpareBadge(s) {
+  return {
+    app_id:          String(s.spare_no || ''), // 受付番号 = P-01形式（手入力フォールバックのキー・§4-2）
+    salon_name:      '',
+    staff_name:      '',
+    business_type:   '',
+    band:            'C',
+    ticket_token:    String(s.ticket_token || ''),
+    assigned_app_id: String(s.assigned_app_id || ''),
+    assigned_at:     String(s.assigned_at || ''),
+    isSpare:         true
+  };
+}
+
+// 「未割当のみ/すべて」の絞り込みは画面側で行う（設計 §5-4。既定＝未割当のみ）
+function filterSpares(spares, spareFilter) {
+  return spares.filter(function (s) {
+    return (spareFilter === 'all') || !s.assigned_app_id;
+  });
+}
+
+// 取得結果（モック・実データ共通）から、描画に渡す名札の配列を作る唯一の入口
+function badgesFromData(data, target) {
+  if (!data) return [];
+  if (target !== 'spare') return data.badges || [];
+  return filterSpares(data.spares || [], currentSpareFilter()).map(toSpareBadge);
 }
 
 // ------------------------------------------------------------
@@ -883,12 +908,14 @@ async function fetchBadges() {
     showMessage('fetchError', '通信に失敗しました。時間をおいて再度お試しください。');
   } finally {
     el('fetchBtn').disabled = false;
-    el('fetchStatusLine').textContent = '';
+    // 🔴 消してよいのは「取得中…」の進捗表示だけ。無条件に空にすると、
+    //    直前に applyFetchResult が入れた「対象 N件 / Mページ」まで毎回消えてしまう。
+    if (/^取得中/.test(el('fetchStatusLine').textContent)) el('fetchStatusLine').textContent = '';
   }
 }
 
 function applyFetchResult(data, target) {
-  const badges = (target === 'spare') ? (data.spares || []) : (data.badges || []);
+  const badges = badgesFromData(data, target);
   const perSheet = badgesPerSheet();
   const pages = Math.ceil(badges.length / perSheet) || 0;
   el('fetchStatusLine').textContent = '対象 ' + badges.length + '件 / ' + pages + 'ページ';
@@ -908,7 +935,10 @@ function applyFetchResult(data, target) {
 }
 
 function renderAndMaybeWarn(badges, bands, passBase) {
-  const surnameOnly = el('surnameOnly').checked;
+  // 🔴 予備名札モードでは syncTargetUi() がこのチェックボックスをdisabledにするが、
+  //    checked の状態は残る。disabled を見ずに読むと、予備名札なのに姓のみ短縮の
+  //    警告件数を数えてしまう（QRに n= は付けないので無関係のはず）。
+  const surnameOnly = el('surnameOnly').checked && !el('surnameOnly').disabled;
 
   if (surnameOnly) {
     const notShortened = badges.filter(function (b) { return !b.isSpare && couldNotShorten(b.staff_name); }).length;
@@ -928,8 +958,7 @@ function renderAndMaybeWarn(badges, bands, passBase) {
 // 再取得なしで見た目だけ変える系（サイズ・QRサイズ・姓のみ・断裁ガイド）
 function rerenderIfPossible() {
   if (!lastBadgesData) return;
-  const target = currentTarget();
-  const badges = (target === 'spare') ? (lastBadgesData.spares || []) : (lastBadgesData.badges || []);
+  const badges = badgesFromData(lastBadgesData, currentTarget());
   renderAndMaybeWarn(badges, lastBadgesData.bands || MOCK_BANDS, lastBadgesData.pass_base || buildPassBase());
 }
 
@@ -956,6 +985,13 @@ function wireEvents() {
   });
   document.querySelectorAll('input[name=qrSize]').forEach(function (r) {
     r.addEventListener('change', function () { applyQrSize(); rerenderIfPossible(); });
+  });
+  // 「未割当のみ/すべて」は画面側の絞り込みなので取得し直さない（§5-4）。
+  // 件数表示も更新したいので applyFetchResult を通す。
+  document.querySelectorAll('input[name=spareFilter]').forEach(function (r) {
+    r.addEventListener('change', function () {
+      if (lastBadgesData && currentTarget() === 'spare') applyFetchResult(lastBadgesData, 'spare');
+    });
   });
   el('surnameOnly').addEventListener('change', rerenderIfPossible);
   el('showGuide').addEventListener('change', function () {
