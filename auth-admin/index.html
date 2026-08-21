@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>権限管理</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif;
+    background: #f5f5f5;
+    color: #222;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  header {
+    background: #1a237e;
+    color: #fff;
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; font-weight: bold; }
+  header .fetched-at { font-size: 11px; opacity: 0.85; }
+  header .version { font-size: 11px; opacity: 0.7; margin-left: auto; }
+  header button {
+    background: rgba(255,255,255,0.18); border: none; color: #fff;
+    border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer;
+  }
+  header button:active { background: rgba(255,255,255,0.32); }
+
+  .legend {
+    background: #fff;
+    border-bottom: 1px solid #ddd;
+    padding: 8px 12px;
+    font-size: 11px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    color: #555;
+  }
+  .legend .chip { display: inline-flex; align-items: center; gap: 4px; }
+  .legend .swatch {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 18px; height: 18px; border-radius: 4px; font-size: 10px; font-weight: bold;
+  }
+  .swatch.none  { background: #eee; color: #999; }
+  .swatch.on    { background: #1976d2; color: #fff; }
+  .swatch.legacy{ background: #fbc02d; color: #333; }
+
+  .toolbar {
+    background: #fff;
+    border-bottom: 1px solid #ddd;
+    padding: 6px 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 12px;
+    flex-wrap: wrap;
+  }
+  .toolbar label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+
+  .warnings {
+    background: #fff8e1;
+    border-bottom: 1px solid #ffe082;
+    padding: 8px 12px;
+    font-size: 11px;
+    color: #7a5c00;
+    display: none;
+  }
+  .warnings.visible { display: block; }
+  .warnings .w-line { margin: 2px 0; }
+
+  main {
+    flex: 1;
+    overflow: auto;
+    padding-bottom: 72px; /* 保存バーの高さぶん */
+  }
+
+  .matrix-wrap { overflow: auto; max-width: 100%; }
+  table.matrix { border-collapse: collapse; font-size: 12px; }
+
+  table.matrix th, table.matrix td {
+    border: 1px solid #e0e0e0;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  /* 1列目（アプリ名）: sticky */
+  table.matrix th.app-col, table.matrix td.app-col {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: #fafafa;
+    text-align: left;
+    padding: 6px 10px;
+    min-width: 150px;
+    max-width: 220px;
+    white-space: normal;
+  }
+  table.matrix td.app-col.hidden-app { color: #999; }
+  table.matrix td.app-col .app-note { display: block; font-size: 10px; color: #999; }
+
+  /* ヘッダー行: sticky */
+  table.matrix thead th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: #eef1fb;
+    padding: 6px 4px;
+    font-weight: bold;
+    writing-mode: horizontal-tb;
+  }
+  table.matrix thead th.app-col { z-index: 4; left: 0; }
+  table.matrix thead th.retired { color: #999; }
+
+  table.matrix td.cell {
+    width: 46px;
+    min-width: 46px;
+    height: 42px;
+    cursor: pointer;
+    user-select: none;
+    font-weight: bold;
+    font-size: 13px;
+  }
+  table.matrix td.cell.retired-col { background: #f0f0f0; opacity: 0.55; }
+  table.matrix td.cell .mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 6px;
+  }
+  .mark.none   { background: transparent; color: #ccc; }
+  .mark.on     { background: #1976d2; color: #fff; }
+  .mark.legacy { background: #fbc02d; color: #333; font-size: 10px; }
+  td.cell.changed { background: #fff9c4; position: relative; }
+  td.cell.changed::before {
+    content: '';
+    position: absolute; top: 2px; left: 2px;
+    width: 0; height: 0;
+    border-style: solid;
+    border-width: 6px 6px 0 0;
+    border-color: #f57f17 transparent transparent transparent;
+  }
+
+  .save-bar {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    background: #fff;
+    border-top: 1px solid #ccc;
+    padding: 10px 14px;
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    box-shadow: 0 -2px 8px rgba(0,0,0,0.08);
+    z-index: 10;
+  }
+  .save-bar.visible { display: flex; }
+  .save-bar .count { font-size: 13px; font-weight: bold; }
+  .save-bar .btns { display: flex; gap: 8px; }
+  .save-bar button {
+    padding: 8px 16px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer;
+  }
+  .btn-cancel { background: #eee; color: #333; }
+  .btn-save   { background: #1976d2; color: #fff; }
+  .btn-save:disabled { opacity: 0.5; }
+
+  .footer-note {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    background: #263238;
+    color: #cfd8dc;
+    font-size: 10px;
+    padding: 4px 10px;
+    text-align: center;
+    z-index: 9;
+  }
+  .save-bar.visible ~ .footer-note { display: none; }
+
+  .loading, .error-box {
+    padding: 40px 20px;
+    text-align: center;
+    color: #666;
+    font-size: 13px;
+  }
+  .error-box { color: #c62828; white-space: pre-wrap; }
+
+  /* ── 保存確認ダイアログ ── */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+    display: none; align-items: center; justify-content: center; z-index: 20; padding: 16px;
+  }
+  .modal-backdrop.visible { display: flex; }
+  .modal {
+    background: #fff; border-radius: 10px; max-width: 480px; width: 100%;
+    max-height: 80vh; display: flex; flex-direction: column; overflow: hidden;
+  }
+  .modal h2 { font-size: 15px; padding: 14px 16px; border-bottom: 1px solid #eee; }
+  .modal .modal-body { padding: 10px 16px; overflow: auto; font-size: 12px; }
+  .modal .diff-row { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px dashed #eee; }
+  .modal .diff-row .who { color: #555; }
+  .modal .diff-row .change { font-weight: bold; }
+  .modal .modal-footer { padding: 12px 16px; border-top: 1px solid #eee; display: flex; justify-content: flex-end; gap: 8px; }
+  .modal .conflict-line { color: #c62828; }
+  .modal .result-line { padding: 4px 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🔐 権限管理</h1>
+  <span class="fetched-at" id="fetchedAt"></span>
+  <button onclick="reload()">再読込</button>
+  <span class="version" id="versionLine"></span>
+</header>
+
+<div class="legend" id="legend"></div>
+
+<div class="toolbar">
+  <label><input type="checkbox" id="showRetired" onchange="render()"> 退職者も表示</label>
+</div>
+
+<div class="warnings" id="warnings"></div>
+
+<main>
+  <div id="content" class="loading">読み込み中...</div>
+</main>
+
+<div class="save-bar" id="saveBar">
+  <span class="count" id="saveCount">変更 0件</span>
+  <div class="btns">
+    <button class="btn-cancel" onclick="cancelChanges()">取消</button>
+    <button class="btn-save" id="btnSave" onclick="openSaveDialog()">保存</button>
+  </div>
+</div>
+<div class="footer-note">反映まで最大1分（Bカート受注確認は最大5分）／対象者が再ログインすれば即時反映されます</div>
+
+<div class="modal-backdrop" id="saveModal">
+  <div class="modal">
+    <h2 id="saveModalTitle">変更内容</h2>
+    <div class="modal-body" id="saveModalBody"></div>
+    <div class="modal-footer" id="saveModalFooter">
+      <button class="btn-cancel" onclick="closeSaveDialog()">戻る</button>
+      <button class="btn-save" id="btnConfirmSave" onclick="confirmSave()">この内容で保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ============================================================
+  // 設定
+  // ============================================================
+  const GAS_URL     = 'GAS_URL_PLACEHOLDER'; // ← Phase 0でデプロイ後、実際のGAS URLに差し替える
+  const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
+  const APP_VERSION = 'v1.0.0';
+  const SESSION_KEY = 'bf_session'; // ポータルと共通
+
+  let session   = null;
+  let matrix    = null;   // getMatrix() の生の応答
+  let dirty     = {};     // key(user_id/app_name) -> { user_id, app_name, prev_role, next_role }
+  let saving    = false;
+
+  // ============================================================
+  // 初期化
+  // ============================================================
+  window.onload = function () {
+    try { session = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch (e) { session = null; }
+    if (!session || !session.token || !session.expires || Date.now() > session.expires) {
+      location.href = PORTAL_URL;
+      return;
+    }
+    document.getElementById('versionLine').textContent = APP_VERSION;
+    window.addEventListener('beforeunload', function (e) {
+      if (Object.keys(dirty).length > 0) { e.preventDefault(); e.returnValue = ''; }
+    });
+    loadMatrix();
+  };
+
+  function reload() {
+    if (Object.keys(dirty).length > 0) {
+      if (!confirm('未保存の変更があります。破棄して再読込しますか？')) return;
+    }
+    dirty = {};
+    loadMatrix();
+  }
+
+  // ============================================================
+  // データ取得
+  // ============================================================
+  function loadMatrix() {
+    document.getElementById('content').className = 'loading';
+    document.getElementById('content').textContent = '読み込み中...';
+
+    gasPost('getMatrix', {})
+      .then(res => {
+        if (!res.success) {
+          if (res.error === 'SESSION_INVALID' || res.error === 'FORBIDDEN') {
+            location.href = PORTAL_URL;
+            return;
+          }
+          throw new Error(res.error || '取得に失敗しました');
+        }
+        matrix = res;
+        dirty = {};
+        renderAll();
+      })
+      .catch(err => {
+        document.getElementById('content').className = 'error-box';
+        document.getElementById('content').textContent = '読み込みに失敗しました。\n' + (err.message || err);
+      });
+  }
+
+  // ============================================================
+  // 描画
+  // ============================================================
+  function renderAll() {
+    document.getElementById('fetchedAt').textContent =
+      '取得: ' + new Date(matrix.fetched_at).toLocaleString('ja-JP');
+    renderLegend();
+    renderWarnings();
+    render();
+  }
+
+  function renderLegend() {
+    const seen = {};
+    let chips = '<span class="chip"><span class="swatch none">−</span>なし</span>';
+    matrix.apps.forEach(app => {
+      app.roles.forEach(r => {
+        const label = (app.role_labels && app.role_labels[r]) || r;
+        const key = r + ':' + label;
+        if (seen[key]) return;
+        seen[key] = true;
+        chips += '<span class="chip"><span class="swatch on">' + escapeHtml(markFor(r, app)) + '</span>' + escapeHtml(label) + '</span>';
+      });
+    });
+    chips += '<span class="chip"><span class="swatch legacy">?</span>旧ロール（要移行）</span>';
+    document.getElementById('legend').innerHTML = chips;
+  }
+
+  function renderWarnings() {
+    const el = document.getElementById('warnings');
+    const lines = [];
+    if (matrix.legacy_roles && matrix.legacy_roles.length) {
+      lines.push('⚠️ 旧ロール語彙が残っています（' + matrix.legacy_roles.length + '件）: ' +
+        matrix.legacy_roles.map(r => r.user_id + '/' + r.app_name + '=' + r.role).join(', '));
+    }
+    if (matrix.duplicate_rows && matrix.duplicate_rows.length) {
+      lines.push('⚠️ user_app_roles に重複行があります（保存は最初の行だけを更新します）: ' +
+        matrix.duplicate_rows.map(r => r.user_id + '/' + r.app_name + '(' + r.count + '行)').join(', '));
+    }
+    if (matrix.orphan_apps && matrix.orphan_apps.length) {
+      lines.push('⚠️ apps シートに未登録のアプリ名があります: ' + matrix.orphan_apps.join(', '));
+    }
+    if (matrix.orphan_users && matrix.orphan_users.length) {
+      lines.push('⚠️ users シートに存在しない user_id への権限行があります: ' + matrix.orphan_users.join(', '));
+    }
+    if (lines.length) {
+      el.innerHTML = lines.map(l => '<div class="w-line">' + escapeHtml(l) + '</div>').join('');
+      el.className = 'warnings visible';
+    } else {
+      el.className = 'warnings';
+      el.innerHTML = '';
+    }
+  }
+
+  function render() {
+    if (!matrix) return;
+    const showRetired = document.getElementById('showRetired').checked;
+    const users = matrix.users.filter(u => showRetired || u.active);
+    const apps  = matrix.apps;
+
+    let html = '<div class="matrix-wrap"><table class="matrix"><thead><tr><th class="app-col">アプリ</th>';
+    users.forEach(u => {
+      html += '<th class="' + (u.active ? '' : 'retired') + '">' + escapeHtml(u.short_name) + '</th>';
+    });
+    html += '</tr></thead><tbody>';
+
+    apps.forEach(app => {
+      html += '<tr>';
+      html += '<td class="app-col' + (app.status === 'hidden' ? ' hidden-app' : '') + '">' +
+        escapeHtml(app.icon) + ' ' + escapeHtml(app.label) +
+        (app.status === 'hidden' ? '<span class="app-note">非表示中（タイル非公開）</span>' : '') +
+        '</td>';
+      users.forEach(u => {
+        const key = cellKey(u.user_id, app.app_name);
+        const savedRole = (matrix.roles[u.user_id] && matrix.roles[u.user_id][app.app_name]) || '';
+        const role = dirty[key] ? dirty[key].next_role : savedRole;
+        const isChanged = !!dirty[key] && dirty[key].next_role !== dirty[key].prev_role;
+        html += '<td class="cell' + (u.active ? '' : ' retired-col') + (isChanged ? ' changed' : '') +
+          '" onclick="cycleCell(\'' + escUid(u.user_id) + '\',\'' + escUid(app.app_name) + '\')" ' +
+          'title="' + escapeHtml(u.name + ' / ' + app.label) + '">' +
+          '<span class="mark ' + markClass(role) + '">' + escapeHtml(markFor(role, app)) + '</span>' +
+          '</td>';
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+
+    document.getElementById('content').className = '';
+    document.getElementById('content').innerHTML = html;
+    updateSaveBar();
+  }
+
+  function markClass(role) {
+    if (!role) return 'none';
+    if (role === 'admin' || role === 'user') return 'on';
+    return 'legacy';
+  }
+  function markFor(role, app) {
+    if (!role) return '−';
+    const label = (app.role_labels && app.role_labels[role]) || role;
+    return label.charAt(0);
+  }
+
+  // ============================================================
+  // セル操作（タップ＝循環）
+  // ============================================================
+  function cellKey(userId, appName) { return userId + '/' + appName; }
+
+  function cycleCell(userId, appName) {
+    const app = matrix.apps.find(a => a.app_name === appName);
+    if (!app) return;
+    const key = cellKey(userId, appName);
+    const savedRole = (matrix.roles[userId] && matrix.roles[userId][appName]) || '';
+    const current = dirty[key] ? dirty[key].next_role : savedRole;
+
+    // 循環順: なし → roles[0] → roles[1] → … → なし
+    const cycle = [''].concat(app.roles);
+    let idx = cycle.indexOf(current);
+    if (idx === -1) idx = 0; // 旧ロール等の未知値は「なし」扱いから開始
+    const next = cycle[(idx + 1) % cycle.length];
+
+    if (next === savedRole) {
+      delete dirty[key]; // 元に戻った
+    } else {
+      dirty[key] = { user_id: userId, app_name: appName, prev_role: savedRole, next_role: next };
+    }
+    render();
+  }
+
+  function updateSaveBar() {
+    const n = Object.keys(dirty).length;
+    const bar = document.getElementById('saveBar');
+    if (n > 0) {
+      bar.className = 'save-bar visible';
+      document.getElementById('saveCount').textContent = '変更 ' + n + '件';
+    } else {
+      bar.className = 'save-bar';
+    }
+  }
+
+  function cancelChanges() {
+    dirty = {};
+    render();
+  }
+
+  // ============================================================
+  // 保存フロー
+  // ============================================================
+  function openSaveDialog() {
+    const changes = Object.values(dirty);
+    if (!changes.length) return;
+
+    let body = '';
+    changes.forEach(c => {
+      const u = matrix.users.find(x => x.user_id === c.user_id);
+      const app = matrix.apps.find(x => x.app_name === c.app_name);
+      body += '<div class="diff-row"><span class="who">' +
+        escapeHtml((u ? u.name : c.user_id) + ' / ' + (app ? app.label : c.app_name)) +
+        '</span><span class="change">' + escapeHtml(roleText(c.prev_role, app)) + ' → ' + escapeHtml(roleText(c.next_role, app)) +
+        '</span></div>';
+    });
+
+    document.getElementById('saveModalTitle').textContent = '変更内容（' + changes.length + '件）';
+    document.getElementById('saveModalBody').innerHTML = body;
+    document.getElementById('saveModalFooter').innerHTML =
+      '<button class="btn-cancel" onclick="closeSaveDialog()">戻る</button>' +
+      '<button class="btn-save" id="btnConfirmSave" onclick="confirmSave()">この内容で保存</button>';
+    document.getElementById('saveModal').className = 'modal-backdrop visible';
+  }
+
+  function roleText(role, app) {
+    if (!role) return 'なし';
+    if (app && app.role_labels && app.role_labels[role]) return app.role_labels[role];
+    return role;
+  }
+
+  function closeSaveDialog() {
+    document.getElementById('saveModal').className = 'modal-backdrop';
+  }
+
+  function confirmSave() {
+    if (saving) return;
+    saving = true;
+    const btn = document.getElementById('btnConfirmSave');
+    if (btn) { btn.disabled = true; btn.textContent = '保存中...'; }
+
+    const changes = Object.values(dirty).map(c => ({
+      user_id: c.user_id, app_name: c.app_name, prev_role: c.prev_role, next_role: c.next_role
+    }));
+    const requestId = genRequestId();
+
+    gasPost('saveMatrix', { request_id: requestId, changes: changes })
+      .then(res => {
+        saving = false;
+        if (!res.success) {
+          if (res.error === 'SESSION_INVALID' || res.error === 'FORBIDDEN') {
+            location.href = PORTAL_URL;
+            return;
+          }
+          document.getElementById('saveModalBody').innerHTML =
+            '<div class="result-line conflict-line">保存に失敗しました: ' + escapeHtml(res.error || 'INTERNAL_ERROR') +
+            (res.detail ? ' (' + escapeHtml(res.detail) + ')' : '') + '</div>';
+          document.getElementById('saveModalFooter').innerHTML =
+            '<button class="btn-cancel" onclick="closeSaveDialog()">閉じる</button>';
+          return;
+        }
+
+        let msg = '<div class="result-line">✅ ' + res.applied + '件を保存しました。</div>';
+        if (res.conflicts && res.conflicts.length) {
+          msg += '<div class="result-line conflict-line">⚠️ ' + res.conflicts.length + '件は他の変更と競合したため反映されませんでした:</div>';
+          res.conflicts.forEach(c => {
+            msg += '<div class="result-line conflict-line">・' + escapeHtml(c.user_id + '/' + c.app_name) +
+              '（期待値 ' + escapeHtml(c.expected) + ' / 実際 ' + escapeHtml(c.actual) + '）</div>';
+          });
+        }
+        document.getElementById('saveModalBody').innerHTML = msg;
+        document.getElementById('saveModalFooter').innerHTML =
+          '<button class="btn-save" onclick="closeSaveDialog(); dirty={}; loadMatrix();">閉じる（最新の状態を読み込む）</button>';
+      })
+      .catch(err => {
+        saving = false;
+        document.getElementById('saveModalBody').innerHTML =
+          '<div class="result-line conflict-line">通信エラー: ' + escapeHtml(err.message || String(err)) +
+          '<br>下書きは保持されています。もう一度お試しください。</div>';
+        document.getElementById('saveModalFooter').innerHTML =
+          '<button class="btn-cancel" onclick="closeSaveDialog()">閉じる</button>' +
+          '<button class="btn-save" onclick="confirmSave()">再試行</button>';
+      });
+  }
+
+  function genRequestId() {
+    if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+    return 'req-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  }
+
+  // ============================================================
+  // GAS 通信
+  // ============================================================
+  async function gasPost(action, data) {
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(Object.assign({ action: action, session_token: session.token }, data))
+    });
+    return res.json();
+  }
+
+  // ============================================================
+  // ヘルパー
+  // ============================================================
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  // onclick属性の中に安全に埋め込むため、シングルクォート・バックスラッシュだけ最小限エスケープする
+  // （user_id / app_name は英数字とハイフンのみの想定だが、想定外文字が来ても属性を壊さないための保険）
+  function escUid(s) {
+    return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  }
+</script>
+
+</body>
+</html>
