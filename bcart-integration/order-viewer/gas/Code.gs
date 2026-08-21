@@ -13,8 +13,12 @@
  *   - 受注データをSheets、Drive、Properties、Cacheへ保存しない
  */
 
-const VERSION = 'v0.1.1';
+const VERSION = 'v0.1.2';
 const APP_NAME = 'bcart-orders';
+// ロール語彙統一（2026-08-21〜）: user_app_roles の値を admin/user/none の3語に揃える移行中。
+// 旧語彙（viewer）が残っているシート行も従来どおり通すためのエイリアス。
+// 移行後もシート直編集で旧語彙が復活した場合の安全網として残す。
+const ROLE_ALIAS = { viewer: 'user' };
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
 const BCART_ADMIN_ORDER_BASE = 'https://beaufieldec.i16.bcart.jp/admin/order';
 const SESSION_CACHE_SECONDS = 300;
@@ -172,8 +176,9 @@ function authorizeRequest_(token) {
 
   const appAuth = portalValidateSession_(token, APP_NAME);
   if (appAuth.ok) {
-    const role = String(appAuth.role || '').toLowerCase();
-    if (role !== 'viewer' && role !== 'admin') {
+    const rawRole = String(appAuth.role || '').toLowerCase();
+    const role = ROLE_ALIAS[rawRole] || rawRole;
+    if (role !== 'user' && role !== 'admin') {
       const deniedRole = {
         ok: false,
         error: 'APP_ACCESS_DENIED',
