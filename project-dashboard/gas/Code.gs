@@ -12,7 +12,7 @@
  *   SYNC_TOKEN    … 同期スクリプト用の共有シークレット（ランダム長文字列）
  */
 
-const VERSION = '1.10.0';
+const VERSION = '1.11.0';
 const APP_NAME = 'project-dashboard';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 
@@ -33,7 +33,10 @@ const COLS = [
   // ↓同期列（原本は manual_ops.json → dashboard_sync.py。シート末尾に追加＝v1.4.0）
   'manual_ops',
   // ↓同期列（原本は各プロジェクトの _handoff.md「## 次の一手」→ dashboard_sync.py。シート末尾に追加＝v1.5.0）
-  'next_action_short'
+  'next_action_short',
+  // ↓同期列（同じく「## 次の一手」の全文。short はカード表示用に1段落・40字へ詰めてあるので、
+  //   タップ展開時に見せる原文をこちらに持つ。シート末尾に追加＝v1.11.0）
+  'next_action_full'
 ];
 const MANUAL_COLS = ['priority', 'manual_ball', 'memo', 'effort'];
 
@@ -138,6 +141,25 @@ function migrateAddNextActionShortColumn() {
   }
   sh.getRange(1, lastCol + 1).setValue('next_action_short');
   Logger.log('next_action_short列を追加しました（列' + (lastCol + 1) + '）');
+}
+
+// ============================================================
+// マイグレーション（v1.11.0・GASエディタから一度だけ手動実行する）
+// 既存の projects シートに next_action_full 列（「次の一手」の全文）を末尾追加する
+// ⚠ syncProjects_ は COLS の並び順で位置指定書き込みをするため、
+//    このマイグレーションを先に流してから新しいコードをデプロイすること
+// ============================================================
+function migrateAddNextActionFullColumn() {
+  const ss = SpreadsheetApp.openById(prop_('DB_SHEET_ID'));
+  const sh = ss.getSheetByName('projects');
+  const lastCol = sh.getLastColumn();
+  const header = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+  if (header.indexOf('next_action_full') >= 0) {
+    Logger.log('next_action_full列は既に存在します（列' + (header.indexOf('next_action_full') + 1) + '）。何もしません');
+    return;
+  }
+  sh.getRange(1, lastCol + 1).setValue('next_action_full');
+  Logger.log('next_action_full列を追加しました（列' + (lastCol + 1) + '）');
 }
 
 // ============================================================
