@@ -123,6 +123,19 @@
     margin-top: 6px; font-size: 14px; font-weight: bold; color: #14326b;
     line-height: 1.4;
   }
+  /* 原本の「次の一手」が規約より長いとカードが縦に伸びて一覧性が壊れるため2行で畳む。
+     カードをタップすると .text-expanded が付いて全文（next_action_full）が出る。
+     自動ジョブの点検結果は複数行ワンセットなので、この修飾子を付けない側で全行出す */
+  .pcard-next-action.clamp2 {
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .pcard.text-expanded .pcard-next-action.clamp2 { -webkit-line-clamp: unset; display: block; }
+
+  /* プロジェクト名も原本次第で長文になりうる（**プロジェクト**行が説明文のケース） */
+  .pcard-name {
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .pcard.text-expanded .pcard-name { -webkit-line-clamp: unset; display: block; }
 
   .edit-toggle-btn {
     border: none; background: none; color: #bbb; font-size: 15px; cursor: pointer;
@@ -367,7 +380,7 @@
   // ============================================================
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzkuWEqpJLhERoYlosHIeazlVjl3ipIq8u3x0rp4tCU7BaqPuYt4kP78Ha5Vu4ayNWDCg/exec';
   const PORTAL_URL   = 'https://beaufield.github.io/beaufield-dev/';
-  const APP_VERSION  = '1.13.0';
+  const APP_VERSION  = '1.14.0';
   const USE_MOCK     = false; // ← 開発中は true にして data/dashboard_data.json を見る
 
   document.getElementById('header-version').textContent = 'v' + APP_VERSION;
@@ -687,7 +700,7 @@
     const st = assetState(a);
     // 忘れている資産は使い方も忘れている。トリガーワードはカードの主役として常に出す
     const triggerHtml = a.trigger
-      ? '<div class="pcard-next-action">🗣 ' + esc(a.trigger) + '</div>' : '';
+      ? '<div class="pcard-next-action clamp2">🗣 ' + esc(a.trigger) + '</div>' : '';
     const summaryHtml = (textExpanded && a.summary)
       ? '<div class="pcard-summary">' + esc(a.summary) + '</div>' : '';
     const countTxt = a.evidence === 'none' ? '実行回数の記録なし' : (Number(a.use_count) || 0) + '回';
@@ -878,8 +891,15 @@
       '<span class="ball-badge ball-' + ball + '">' + esc(ball) + '</span>';
     const parseWarn = p.parse_ok === false ? '<span class="badge badge-要確認">⚠要確認</span>' : '';
 
-    const nextActionHtml = p.next_action_short ?
-      '<div class="pcard-next-action">👉 ' + esc(p.next_action_short) + '</div>' : '';
+    // 折り畳み時は短縮版（同期側で1段落・40字に詰めたもの）、展開時は原本の全文を出す。
+    // next_action_full が無い（GAS側の列追加前・古いデータ）ときは短縮版のまま
+    const naFull = p.next_action_full || '';
+    const nextActionText = (textExpanded && naFull) ? naFull : p.next_action_short;
+    // ツールチップは長すぎると邪魔になるので短いものだけ（全文はタップ展開で見る）
+    const naTitle = (naFull && naFull.length <= 200 && naFull !== p.next_action_short)
+      ? ' title="' + esc(naFull) + '"' : '';
+    const nextActionHtml = nextActionText ?
+      '<div class="pcard-next-action clamp2"' + naTitle + '>👉 ' + esc(nextActionText) + '</div>' : '';
 
     // summary / next_actions の詳細はカードタップ（全文展開）時のみ表示。主役は次の一手に譲る
     const summaryHtml = (textExpanded && p.summary) ?
