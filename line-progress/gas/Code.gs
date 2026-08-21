@@ -32,7 +32,7 @@
  * 参照: LINEHarness/友だち登録進捗ダッシュボード_設計.md
  */
 
-const VERSION = '1.2.0';
+const VERSION = '1.4.0';
 const APP_NAME = 'line-progress';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 const CACHE_TTL_DATA = 90;     // 集計結果キャッシュ 90秒（§8-2「開くたび最新」の実務的な下限）
@@ -336,6 +336,7 @@ function getData_(fresh) {
     const row = {
       id: f.id,
       name: meta.staff_name || f.displayName || '',
+      lineName: f.displayName || '', // 🆕 LINEの表示名（初期登録フォームの氏名とは別に常時保持。登録前の旧名での識別用）
       salon: meta.salon_name || '',
       form: has_(TAG_FORM),
       confirm: has_(TAG_CONFIRM),
