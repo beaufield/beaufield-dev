@@ -773,7 +773,7 @@
 </div>
 
 <script>
-const APP_VERSION = 'v1.23.0';
+const APP_VERSION = 'v1.23.1';
 document.getElementById('headerVersion').textContent = APP_VERSION;
 // ============================================================
 // 設定（デプロイ後に GAS_URL を変更すること）
@@ -838,7 +838,8 @@ function _saveLocalCache(userId, data) {
 function _applyInitData(d) {
   currentUser  = d.user;
   allUsers     = d.users;
-  users        = d.users.filter(u => u.yoyaku_role === 'staff');
+  // 2026-08-21〜: ロール語彙統一のためGAS側は将来'staff'→'user'に変わる。両対応にしておく。
+  users        = d.users.filter(u => u.yoyaku_role === 'staff' || u.yoyaku_role === 'user');
   products     = d.products;
   reservations = d.reservations;
 
@@ -986,7 +987,8 @@ function _refreshProductCounts() {
  *  staff（営業）: 自分 + その他 の2択（自分をデフォルト選択）
  *  admin（事務）: 全staffユーザー + その他 から選択 */
 function _updateUserDropdowns() {
-  const isStaff = currentUser?.yoyaku_role === 'staff';
+  // 2026-08-21〜: ロール語彙統一のためGAS側は将来'staff'→'user'に変わる。両対応にしておく。
+  const isStaff = currentUser?.yoyaku_role === 'staff' || currentUser?.yoyaku_role === 'user';
 
   // 共通ヘルパー: セレクトに選択肢を構築
   function buildStaffOptions(sel, defaultBlank) {
