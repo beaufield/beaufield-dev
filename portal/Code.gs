@@ -10,7 +10,7 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.11.1';
+const VERSION       = 'v1.12.0';
 // ポータル画面（GitHub Pages）のURL。旧HTML向けの更新案内タイルのリンク先に使う。
 const PORTAL_URL    = 'https://beaufield.github.io/beaufield-dev/';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
@@ -82,6 +82,51 @@ const APP_MASTER = [
     url:     'https://beaufield.github.io/beaufield-dev/line-progress/'
   }
 ];
+
+// ============================================================
+// アプリマスターの読み込み（beaufield-auth の apps シートを正本とする）
+// ============================================================
+// 2026-08-21〜: アプリ一覧の原本を APP_MASTER（コード直書き）から
+// beaufield-auth の apps シートへ移設。以後のアプリ追加・並べ替え・非表示は
+// シート編集だけで完結し、ポータルの再デプロイが不要になる。
+// APP_MASTER は下記のとおり三重フォールバックの安全弁として削除せず残す
+// （シート未作成／空／例外時は自動的に現状のAPP_MASTERへ戻る）。
+// キャッシュは60秒（他アプリのロールキャッシュと同じ粒度）。
+function _loadAppMaster() {
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get('app_master_v1');
+  if (hit) {
+    try { return JSON.parse(hit); } catch (e) {}
+  }
+  try {
+    const sh = SpreadsheetApp.openById(AUTH_SHEET_ID).getSheetByName('apps');
+    if (!sh || sh.getLastRow() < 2) return APP_MASTER; // シート未作成 → 現状維持
+    const rows = sh.getDataRange().getValues();
+    const list = [];
+    for (let i = 1; i < rows.length; i++) {
+      const appName = String(rows[i][0] || '').trim();       // A: app_name
+      const label   = String(rows[i][1] || '').trim();       // B: label
+      const url     = String(rows[i][3] || '').trim();       // D: url
+      const status  = String(rows[i][7] || 'active').trim(); // H: status
+      if (!appName || !label || !url) continue;              // 不正行はスキップ
+      if (status !== 'active') continue;                     // hidden / archived は出さない
+      list.push({
+        appName: appName,
+        label:   label,
+        icon:    String(rows[i][2] || '📱'),                 // C: icon
+        url:     url,
+        sort:    Number(rows[i][6]) || 999                   // G: sort_order
+      });
+    }
+    if (!list.length) return APP_MASTER;                     // 全滅 → 現状維持
+    list.sort((a, b) => a.sort - b.sort);
+    cache.put('app_master_v1', JSON.stringify(list), 60);
+    return list;
+  } catch (e) {
+    Logger.log('_loadAppMaster failed: ' + e);
+    return APP_MASTER;                                       // 例外 → 現状維持
+  }
+}
 
 // ============================================================
 // エントリーポイント（GET）
@@ -387,7 +432,7 @@ function getUserApps(token) {
     }
   }
 
-  const apps = APP_MASTER
+  const apps = _loadAppMaster()
     .filter(app => accessMap[app.appName])
     .map(app => ({
       appName: app.appName,
