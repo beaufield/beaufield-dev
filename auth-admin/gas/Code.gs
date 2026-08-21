@@ -26,7 +26,7 @@
 // ============================================================
 
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION        = 'v1.0.0';
+const VERSION        = 'v1.1.0';
 const APP_NAME        = 'auth-admin';
 const AUTH_SHEET_ID  = _PROPS.getProperty('AUTH_SHEET_ID');
 
@@ -541,6 +541,36 @@ function _json(data) {
 // ============================================================
 function keepWarm() {
   // 何もしない（トリガーによる定期呼び出しでインスタンスをウォームアップするだけ）
+}
+
+// ============================================================
+// activateAuthAdminTile: auth-admin 自身のタイルを有効化する（一度だけ手動実行）。
+// GASエディタの関数選択で選んで実行するだけでよい（引数不要のラッパー）。
+// 実行後、ポータルのApp_MASTER読込対応（Phase 5）が本番反映されればタイルが表示される。
+// ============================================================
+function activateAuthAdminTile() {
+  setAppRow('auth-admin', 'https://beaufield.github.io/beaufield-dev/auth-admin/', 'active');
+}
+
+// ============================================================
+// setAppRow: apps シートの1行（url・status）を app_name で更新する汎用ヘルパー。
+// Phase 6 で saveApp アクションとして画面から使えるようにするまでの暫定版。
+// ============================================================
+function setAppRow(appName, url, status) {
+  const ss = SpreadsheetApp.openById(AUTH_SHEET_ID);
+  const sh = ss.getSheetByName('apps');
+  if (!sh) { Logger.log('🔴 apps シートがありません'); return; }
+
+  const rows = sh.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]).trim() === appName) {
+      sh.getRange(i + 1, 4, 1, 1).setValue(url);     // D列: url
+      sh.getRange(i + 1, 8, 1, 1).setValue(status);  // H列: status
+      Logger.log(appName + ' 行を更新しました: url=' + url + ' / status=' + status);
+      return;
+    }
+  }
+  Logger.log('🔴 該当行が見つかりません: ' + appName);
 }
 
 // ============================================================
