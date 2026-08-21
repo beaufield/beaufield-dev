@@ -916,6 +916,7 @@
   <!-- ステップC: 確認・出力 -->
   <div id="step-confirm" style="display:none">
     <div id="complete-banner" class="complete-banner" style="display:none">✅ 出力・保存しました（履歴に登録済み）</div>
+    <div id="save-status" style="display:none;margin-bottom:10px;font-size:12px;line-height:1.6"></div>
     <div class="card">
       <div class="card-label">発注内容確認</div>
       <div id="confirm-header"></div>
@@ -949,7 +950,7 @@
   <div class="card">
     <div class="card-label" style="display:flex;justify-content:space-between;align-items:center">
       <span>発注履歴（直近20件）</span>
-      <button class="btn btn-outline btn-sm" onclick="loadHistory(true)">🔄 更新</button>
+      <button class="btn btn-outline btn-sm" onclick="refreshHistory()">🔄 更新</button>
     </div>
     <div class="hist-filter-wrap">
       <select id="hist-filter-supplier" onchange="applyHistoryFilter()">
@@ -1345,7 +1346,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.63.1'; // 提案タブの仕入先見出しが横にはみ出して画面全体がズレる不具合を修正
+const APP_VERSION    = 'v1.64.0'; // テキスト出力が「出力中...」で固まる不具合を修正（クリップボード書き込みの強制打ち切り）＋履歴の更新ボタンで未確定保存を先に片付ける
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -2976,6 +2977,7 @@ function renderConfirmPage() {
   document.getElementById('complete-banner').style.display = 'none';
   document.getElementById('new-order-wrap').style.display  = 'none';
   document.getElementById('output-btns').style.display     = 'block';
+  _setOrderSaveStatus('none');
   applyOutputButtons();
 }
 
@@ -3160,6 +3162,13 @@ function _completeOrderEntry(entry, orderNo) {
   proposalsLoaded = false; // 次に提案タブを開いたときGASから取り直し、pendingOrdersを最新化する
   // 新規・修正どちらも次回の履歴表示ではGASから取り直し、古い20件キャッシュを使わない。
   sessionStorage.removeItem(SS_HIST_CACHE);
+  // 保存が終わるまでGAS側の履歴行はPENDING＝履歴取得に出てこない。履歴画面を開いたまま
+  // 保存が完了した場合は、利用者が更新を押さなくてもこの時点で最新化する
+  // （更新ボタン経由なら直後に取り直すので、重い getOrders を二重に投げない）
+  if (currentScreen === 'history' && !_historyRefreshing) {
+    const histFilter = document.getElementById('hist-filter-supplier');
+    loadHistory(true, (histFilter && histFilter.value) || undefined);
+  }
   if (orderRequestId === entry.requestId) {
     savedOrderNo = orderNo;
     const revisionBase = entry.params.revisionBaseOrderNo || '';
@@ -3321,10 +3330,21 @@ async function saveOrderToGAS(outputType) {
 
 // クリップボードコピー共通ヘルパー
 // Clipboard API が使えない場合は execCommand フォールバックを使う
+// navigator.clipboard.writeText() は、他アプリがWindowsのクリップボードを掴んでいる間や
+// ドキュメントが非フォーカスのときに、解決も拒否もされないまま返ってこないことがある
+// （Chrome/Windowsで実際に発生）。await がそこで止まると呼び出し元は永久に待ち続けるため、
+// 必ず時間で打ち切ってフォールバックへ進む。コピーは「できれば嬉しい」おまけであり、
+// 本体（ダウンロード・履歴保存）を巻き添えで止めてよいものではない
+const CLIPBOARD_TIMEOUT_MS = 3000;
+
 async function copyToClipboard(text) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
     try {
-      await navigator.clipboard.writeText(text);
+      await Promise.race([
+        navigator.clipboard.writeText(text),
+        new Promise((_, reject) => setTimeout(
+          () => reject(new Error('clipboard write timeout')), CLIPBOARD_TIMEOUT_MS))
+      ]);
       return true;
     } catch(e) {}
   }
@@ -3344,6 +3364,48 @@ async function copyToClipboard(text) {
   }
 }
 
+// バックグラウンド保存の状態表示
+// 出力（.txt/.csv のダウンロード）が終わっても、GAS側の発注履歴は保存が完了するまで
+// saveState=PENDING で、履歴取得（getOrders）には出てこない。ここを黙って進めると
+// 「出力したのに履歴に出ない・更新を押しても出ない」だけが利用者に残るため、
+// 登録中／登録済み／要再試行を確認画面に出し続ける
+function _setOrderSaveStatus(state, detail = '', outputType = '') {
+  const el = document.getElementById('save-status');
+  if (!el) return;
+  if (state === 'saving') {
+    el.style.display = 'block';
+    el.style.color = 'var(--text-light)';
+    el.textContent = '⏳ 発注履歴に登録中...';
+  } else if (state === 'done') {
+    el.style.display = 'block';
+    el.style.color = 'var(--text-light)';
+    el.textContent = `✅ 発注履歴に登録しました${detail ? '（発注No: ' + detail + '）' : ''}`;
+  } else if (state === 'failed') {
+    el.style.display = 'block';
+    el.style.color = 'var(--danger)';
+    el.innerHTML = '⚠️ 出力は完了していますが、発注履歴への登録が終わっていません。'
+      + '<br>このままでは履歴画面に出てきません。'
+      + `<button class="btn btn-outline btn-sm" style="margin-top:6px" onclick="retryOrderSave('${escAttr(outputType)}')">🔄 履歴登録をやり直す</button>`;
+  } else {
+    el.style.display = 'none';
+    el.innerHTML = '';
+  }
+}
+
+function _trackBackgroundOrderSave(outputType) {
+  _setOrderSaveStatus('saving');
+  return saveOrderToGAS(outputType)
+    .then(orderNo => { _setOrderSaveStatus('done', orderNo); })
+    .catch(e => {
+      _setOrderSaveStatus('failed', '', outputType);
+      showToast(`${outputType}は出力済みです。発注履歴への登録が完了していないため、画面の「履歴登録をやり直す」で再試行してください。`, 'error');
+    });
+}
+
+function retryOrderSave(outputType) {
+  return _trackBackgroundOrderSave(outputType || 'テキスト');
+}
+
 // テキスト出力（LINE等のメッセージ用）
 // 手書き商品も含め「商品名 × 数量単位」形式で出力
 // クリップボードコピー + .txtダウンロードの両方を実行
@@ -3360,22 +3422,31 @@ async function outputText() {
 
   showLoading('出力中...');
   try {
-    const copied = await copyToClipboard(text);
+    // ダウンロードと画面遷移を先に済ませてからクリップボードへ書く。
+    // クリップボード書き込みは環境要因（他アプリがクリップボードを掴んでいる等）で
+    // いつまでも返ってこないことがあり、先に await すると .txt すら受け取れないまま
+    // 「出力中...」で固まる。出力の本体を待たせない順序にしている
     const bom  = new Uint8Array([0xEF, 0xBB, 0xBF]);
     const blob = new Blob([bom, text], { type: 'text/plain;charset=utf-8' });
     const dateStr = currentOrder.date.replace(/-/g, '');
     downloadBlob(blob, `${currentOrder.supplierName}_${dateStr}.txt`);
+    sessionStorage.removeItem(SS_CART);
+    sessionStorage.removeItem(SS_ORDER); // 出力済みの発注を再読み込み後に「作成中」として復帰させない
     showCompleteState();
-    showToast(copied ? 'テキストをコピー＆ダウンロードしました' : 'テキストを出力しました', 'success');
   } catch(e) {
+    hideLoading();
     showToast('エラー: ' + e.message, 'error');
     return;
-  } finally { hideLoading(); }
+  }
+  hideLoading();
 
   // 発注履歴への保存はテキスト出力完了後にバックグラウンドで実行
-  saveOrderToGAS('テキスト').catch(e => {
-    showToast('テキストは出力済みです。発注履歴は未確定として保持し、次回起動時にも自動確認します。', 'error');
-  });
+  _trackBackgroundOrderSave('テキスト');
+
+  const copied = await copyToClipboard(text);
+  showToast(copied ? 'テキストをコピー＆ダウンロードしました'
+                   : 'テキストを出力しました（クリップボードへのコピーはできませんでした）',
+            copied ? 'success' : 'error');
 }
 
 // Web発注先の発注記録として保存（アプリからは送信しない。Phase H）
@@ -3420,9 +3491,7 @@ async function outputCSV() {
   } finally { hideLoading(); }
 
   // 発注履歴への保存はCSV出力完了後にバックグラウンドで実行
-  saveOrderToGAS('CSV').catch(e => {
-    showToast('CSVは出力済みです。発注履歴は未確定として保持し、次回起動時にも自動確認します。', 'error');
-  });
+  _trackBackgroundOrderSave('CSV');
 }
 
 /* ===================================================
@@ -4070,8 +4139,16 @@ function formatHistoryDate(str) {
 
 // filterSupplierCode を指定するとそのメーカーの直近20件をGASから取得する
 // 指定なし（全件）の場合はセッションキャッシュを活用
+//
+// 画面切替とフィルター操作と更新ボタンから同時に呼ばれうる。GAS通信は再試行を含めて
+// 最大60秒かかることがあり、先に始まった古い読み込みが後から完了すると、更新ボタンで
+// 取り直した新しい内容を古い内容で上書きしてしまう（＝更新したのに変わらないように見える）。
+// 呼び出しごとに通し番号を振り、最新の呼び出し以外は結果を捨てる
+let _historyLoadSeq = 0;
+let _historyRefreshing = false; // 更新ボタンの処理中フラグ（保存完了時の自動再取得と重複させない）
 async function loadHistory(forceRefresh, filterSupplierCode) {
   const container = document.getElementById('history-list');
+  const seq = ++_historyLoadSeq;
 
   // フィルターなし + forceRefreshなし → セッションキャッシュ優先
   if (!filterSupplierCode && !forceRefresh) {
@@ -4094,6 +4171,7 @@ async function loadHistory(forceRefresh, filterSupplierCode) {
     const params = { action: 'getOrders' };
     if (filterSupplierCode) params.supplierCode = filterSupplierCode; // メーカー絞り込み
     const res = await gasGet(params);
+    if (seq !== _historyLoadSeq) return; // より新しい読み込みが始まっているので古い結果は捨てる
     if (res.success) {
       allHistoryOrders = res.orders || [];
       productHistory   = res.productHistory || {};
@@ -4113,8 +4191,26 @@ async function loadHistory(forceRefresh, filterSupplierCode) {
       container.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><div>履歴がありません</div></div>`;
     }
   } catch(e) {
+    if (seq !== _historyLoadSeq) return;
     container.innerHTML = `<div class="empty-state"><div>${escHtml(_gasErrorMessage(e))}</div></div>`;
   }
+}
+
+// 🔄 更新ボタン
+// GAS側の発注履歴は保存が完了するまで saveState=PENDING で、履歴取得に出てこない。
+// 出力直後に保存が詰まっていると、何度更新を押しても新しい発注が現れず、
+// 「ブラウザを再読み込みすると出てくる」状態になっていた（再読み込み時だけ
+// recoverPendingOrders が走って保存が確定していたため）。更新ボタンでも同じことをする
+async function refreshHistory() {
+  const sel       = document.getElementById('hist-filter-supplier');
+  const filter    = sel ? sel.value : '';
+  const container = document.getElementById('history-list');
+  container.innerHTML = `<div class="empty-state"><div class="spinner"></div><div style="margin-top:8px">未確定の発注を確認しています...</div></div>`;
+  _historyRefreshing = true;
+  try { await recoverPendingOrders(false); }
+  catch(e) { console.warn('[history] pending recovery failed:', e); }
+  finally { _historyRefreshing = false; }
+  await loadHistory(true, filter || undefined);
 }
 
 // フィルター選択肢をマスターの全発注先から構築（コードを値、名前を表示）
@@ -4322,12 +4418,13 @@ async function reOutputText(orderNo) {
 
   const text = items.map(i => `${i.name} × ${i.qty}${i.unit || ''}`).join('\n');
 
-  const copied = await copyToClipboard(text);
-
+  // ダウンロードを先に確定させる（クリップボード書き込みは待たされることがあるため）
   const bom  = new Uint8Array([0xEF, 0xBB, 0xBF]);
   const blob = new Blob([bom, text], { type: 'text/plain;charset=utf-8' });
   const dateStr = (orderInfo.date || '').replace(/\//g, '');
   downloadBlob(blob, `${orderInfo.supplierName}_${dateStr}_${orderNo}.txt`);
+
+  const copied = await copyToClipboard(text);
   showToast(copied ? 'テキストをコピー＆ダウンロードしました' : 'テキストを再出力しました', 'success');
 }
 
