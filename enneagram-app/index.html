@@ -121,35 +121,59 @@
   <script id="app-data" type="application/json">
 {
   "scenarios": [
-    {"id":"S1","title":"何かを深く学び、情報を集めるシーン","prompt":"あなたが関心のある分野について、一生懸命に調べたり、知識を深めたりしている時、あなたの頭の中の「一番の目的」は何ですか？","options":[
-      {"id":"A","typeId":5,"text":"他人に頼らず、自分一人で自立して生きるため。完璧な理解を頭の中に用意しておくことで、自分の時間やエネルギーが他者に侵食されるのを防ぎたいから。"},
-      {"id":"B","typeId":6,"text":"予期せぬ失敗やリスクを防ぎ、安心するため。得た知識や本質を信頼できる相手と共有・共感し合って、お互いの確信を確かめ合いたいから。"},
-      {"id":"C","typeId":3,"text":"プロフェッショナルとして自分の価値を証明するため。専門性の高いスマートな自分でいることで、周囲から有能で特別な存在だと認められたいから。"},
-      {"id":"D","typeId":1,"text":"正しい判断を下し、間違いのない選択をするため。完璧な知識を身につけることで、不適切な行動や堕落を防ぎ、物事を正しい方向へ進めたいから。"}
+    {"id":"S1","title":"プライベートで旅行やお出かけの計画を立てる時","prompt":"あなたが休みの日にお出かけや旅行の計画を立てる時、あなたの心の中で「最も優先されている本音」はどれですか？","options":[
+      {"id":"A","typeId":1,"text":"時間やマナー、移動ルートに無駄がなく、誰もが「良かった」と思える整ったスケジュールを事前にきちんと組んでおきたい。"},
+      {"id":"B","typeId":5,"text":"あまり周囲に振り回されず、事前にその土地の面白そうなマイナー情報を一人でじっくり調べて、静かに自分のペースで味わいたい。"},
+      {"id":"C","typeId":6,"text":"「もし道に迷ったら」「もし店が閉まっていたら」と、不測の事態やリスクを考え、対策や代わりの候補を事前にいくつか手元に揃えておきたい。"},
+      {"id":"D","typeId":7,"text":"細かい計画に縛られるとつまらないので、その時の気分や面白そうな直感に従って、何が起こるか分からないワクワク感を楽しみたい。"}
     ]},
-    {"id":"S2","title":"他者を気遣い、手助けをするシーン","prompt":"あなたが誰かをサポートしたり、親切な行動やアドバイスをしたりする時、心の奥にある「本当の原動力」は何ですか？","options":[
-      {"id":"A","typeId":2,"text":"相手に愛され、必要とされる存在でありたいから。「自分が誰かを助けなければ、自分には居場所も価値もない」という無意識の焦りがあるから。"},
-      {"id":"B","typeId":1,"text":"それが良心として、また人間関係や組織において「客観的に見て正しい義務」だと思うから。改善すべき点を見過ごすことが、自分の誠実さに反するから。"},
-      {"id":"C","typeId":6,"text":"お互いの信頼関係や、安全な所属コミュニティを強固にしたいから。いざという時に、お互いを守り合える強固なネットワークを作っておきたいから。"},
-      {"id":"D","typeId":8,"text":"相手が自分自身の力で立ち上がり、強く自立できるように手助けしたいから。周囲の人のポテンシャルを引き出し、エンパワーメントすることに使命を感じるから。"}
+    {"id":"S2","title":"身近な人から「最近ちょっと落ち込んでいて…」と打ち明けられた時","prompt":"あなたが誰かの悩みや相談を聞く時、あなたの心の底にある「一番の姿勢」はどれですか？","options":[
+      {"id":"A","typeId":2,"text":"「自分がこの人を元気にしなきゃ」と強く感じ、相手が少しでも前を向けるような温かいアドバイスや、自分にできるサポートをすぐに差し出したくなる。"},
+      {"id":"B","typeId":4,"text":"簡単に「分かるよ」などと言わず、相手の抱える深い憂鬱さや心の痛みにただ耳を傾け、その重苦しい空気感に一緒にじっと留まろうとする。"},
+      {"id":"C","typeId":8,"text":"ウジウジ悩むよりも「現状をどう突破するか」が大切だと思うので、相手が自分で決断し、前進するためのエネルギーを強く引き出してあげたくなる。"},
+      {"id":"D","typeId":9,"text":"あれこれ口出しせず、ただ「そのままでいいよ、なんとかなる」と相手の存在をそのまま優しく受け入れ、お互いの心が落ち着くような穏やかな時間を過ごしたい。"}
     ]},
-    {"id":"S3","title":"人との関わりにおいて、自分の考えを話すシーン","prompt":"あなたが人と話をしたり、自分の意見や現状を伝えたりする時、心の底で「最も満たされたい欲求」は何ですか？","options":[
-      {"id":"A","typeId":3,"text":"自分の強みや洗練されたセルフイメージを相手に伝えたい。自分が具体的な価値を生み出す、スマートで非の打ちどころがない人間として関心や賞賛を得たいから。"},
-      {"id":"B","typeId":6,"text":"自分の不安や本音、物事のリスクを包み隠さず相手に伝えたい。お互いの本心を開示し合って、深い共感や裏表のない確実な信頼関係を確かめ合いたいから。"},
-      {"id":"C","typeId":4,"text":"自分独自の感性や、誰も簡単には理解できないような複雑な心の内を洗練された形で表現したい。自分の繊細な特別さをありのまま受け止めて（理解して）ほしいから。"},
-      {"id":"D","typeId":9,"text":"お互いの心の平穏を保ちたい。衝突や対立を引き起こすようなトゲのある自己主張は避け、その場の調和のとれた一体感を壊さずに気楽に関わり合いたいから。"}
+    {"id":"S3","title":"プライベートで新しい趣味や習い事を始めようとする時","prompt":"あなたが新しい趣味に興味を持って取り組む時、あなたの心を駆り立てている「最大の目的」は何ですか？","options":[
+      {"id":"A","typeId":3,"text":"やるからには人より上手くなりたい、何かの形（スコア、作品、資格など）で自分の実力が目に見える成果として残るようにしたい。"},
+      {"id":"B","typeId":5,"text":"誰かとワイワイやるより、まずは一人でその趣味の仕組みや専門的な本質を徹底的に調べ、頭の中で「すべてが繋がった」という知的興奮を感じたい。"},
+      {"id":"C","typeId":7,"text":"面白そうな体験に次々と手を広げて、その分野の「楽しいところ」を軽快に味わいたい（飽きたらすぐに別の楽しそうなことを探せばいい）。"},
+      {"id":"D","typeId":8,"text":"周囲のペースや誰かの指示に従うのが嫌なので、自分のペースとやり方を自分で開拓し、自分の意志でそのジャンルを完全に乗りこなしたい。"}
     ]},
-    {"id":"S4","title":"決まり事やルール、周囲のペースに合わせるシーン","prompt":"あなたが全体の規則や約束事、他人の希望に従って行動している時、あなたの心の中で起きている「本当の動き」はどれですか？","options":[
-      {"id":"A","typeId":9,"text":"反論して面倒な波風を立てるくらいなら、自分の欲求を抑えて合わせる方が圧倒的に楽だから。ただ内面の平穏を守り、物事を円滑にやり過ごしたいから。"},
-      {"id":"B","typeId":6,"text":"自分一人の決断で失敗した時のリスクや不安を負いたくないから。信頼できるシステムや共通のルールを「確かな支え（保証）」として依存していたいから。"},
-      {"id":"C","typeId":1,"text":"それが論理的・良心的に見て「客観的に正しいこと」だから。個人的な好みを脇に置き、いかなる時も規則や最善の道徳に従うのが正しいと信じているから。"},
-      {"id":"D","typeId":5,"text":"余計な衝突に自分の貴重な時間やエネルギーを消耗したくないから。表面的には従うフリをして、自分の関心がある一人の思考世界に早く引きこもりたいから。"}
+    {"id":"S4","title":"親しい人との約束を、相手から直前に「急用ができて…」とキャンセルされた時","prompt":"約束をドタキャンされた瞬間、あなたの頭の中に真っ先によぎる「本音のつぶやき」はどれですか？","options":[
+      {"id":"A","typeId":1,"text":"「約束を破るというのは、人として不誠実だ」というイライラが湧き、頭の中で相手のルーズさやマナーの甘さを厳しく批判してしまう。"},
+      {"id":"B","typeId":2,"text":"「自分が何か気に障ることをしたのだろうか、嫌われたのかな」と不安になり、すぐに相手を気遣うメッセージを送って、相手の役に立とうとする。"},
+      {"id":"C","typeId":4,"text":"「所詮、自分はその程度の存在なんだ」と自分の存在の軽さを感じて寂しくなり、一人の部屋でその切なく取り残されたような感情を静かに味わい続けてしまう。"},
+      {"id":"D","typeId":6,"text":"「本当に急用なのか？裏に別の理由があるのでは？」と疑念がよぎり、今後の関係に危険がないか、相手の本当のトーンを慎重に測ろうとする。"}
     ]},
-    {"id":"S5","title":"精力的に動く、または新しいことに挑戦するシーン","prompt":"あなたがエネルギッシュに活動し、新しいアイデアや計画を立ち上げている時、あなたを駆り立てる「最大の心の動機」は何ですか？","options":[
-      {"id":"A","typeId":7,"text":"退屈な日常や、現在直面している不快な感情（苦痛）から目をそらすため。頭の中を常に心躍る新しい予定やワクワクする可能性で満たしていたいから。"},
-      {"id":"B","typeId":8,"text":"他人に主導権を握られたり、不当にコントロールされたりするのを防ぐため。自分の活力と意志で、状況を力強く支配し、物事を自分の手で動かしたいから。"},
-      {"id":"C","typeId":3,"text":"社会的な成果を挙げ、人より秀でた成功を収めるため。自分が有能であることを他者に向けて証明し、自分を高めていきたいという情熱があるから。"},
-      {"id":"D","typeId":6,"text":"最悪のシナリオや隠れた危機から未来を守るため。常に警戒を怠らず、不確実な世の中を生き抜くための万全の備えや防衛策を精力的に整えておきたいから。"}
+    {"id":"S5","title":"久しぶりに自分の部屋を片付ける時","prompt":"あなたが自分の部屋を整理整頓する時、あなたの頭の中を支配している「理想の状態」はどれですか？","options":[
+      {"id":"A","typeId":1,"text":"すべての物の定位置が論理的に決まっていて、引き出しの中まで「正しい状態」に完璧に整っていないと、頭がモヤモヤして落ち着かない。"},
+      {"id":"B","typeId":3,"text":"自分の部屋はセンスを表す場所だと思うので、いつ誰が入ってきても「洗練されていて、私生活もスマートでデキる人」に見えるように演出したい。"},
+      {"id":"C","typeId":5,"text":"余計な持ち物の整理や管理に自分のエネルギーを奪われたくないので、極限まで物を減らし、自分の思考を邪魔しない「静かでミニマルな聖域」にしておきたい。"},
+      {"id":"D","typeId":9,"text":"途中で面倒になると「まあ、生活に支障はないし、今のままでも十分にリラックスできるからこれでいいか」と、ざっと片付けてすぐのんびりモードに戻る。"}
+    ]},
+    {"id":"S6","title":"SNSなどで、他人の楽しそうなプライベートの投稿を目にした時","prompt":"他人の充実した様子を目にした瞬間、あなたの心の中で起きている「本当の反応」はどれですか？","options":[
+      {"id":"A","typeId":3,"text":"「自分も負けていられない、もっと自分の生き方や輝いている瞬間を周囲に見せて、魅力的な存在だと認めてもらいたい」と刺激を受ける。"},
+      {"id":"B","typeId":4,"text":"「あの人たちにはあって、自分には欠けている決定的な何か」を痛烈に感じてしまい、自分の寂しさや、世間に馴染めない特別な個性を意識して切なくなる。"},
+      {"id":"C","typeId":6,"text":"「本当にこんなに幸せなのだろうか？」「何か別の意図や見栄があるのでは？」と、その裏にある本音やリスクを無意識に勘ぐってしまう。"},
+      {"id":"D","typeId":7,"text":"素晴らしい体験や楽しそうな場所を目にすると、羨ましがるよりも「次は自分がもっと楽しい計画を立てて、ワクワクする体験をしよう！」と考え始める。"}
+    ]},
+    {"id":"S7","title":"大切にしていた身の回りのものを、うっかりどこかに失くしてしまった時","prompt":"紛失に気づいた瞬間、あなたの心の中で起きる「最初の動き」はどれですか？","options":[
+      {"id":"A","typeId":1,"text":"「なぜあそこできちんと確認しなかったのか！」と自分の不注意さが許せず、自分のだらしなさに対してしばらく強い自己批判が止まらなくなる。"},
+      {"id":"B","typeId":5,"text":"感情的に悔やんでもエネルギーを無駄に消耗するだけなので、ただ「紛失という客観的な事実」として頭の中で感情を切り離し、静かに次の現実的な手段を考える。"},
+      {"id":"C","typeId":8,"text":"失くしたという事実に激しくイライラし、状況に振り回されるのが嫌なので、すぐに「新しい、もっと強力なものを自分の手で手に入れよう」とエネルギーを湧き立たせる。"},
+      {"id":"D","typeId":9,"text":"ショックや怒りで心が波立つのを避けたいので、「まあ、寿命だったんだ。形あるものはいつか壊れるしね」と自分を納得させて、穏やかな平穏を保とうとする。"}
+    ]},
+    {"id":"S8","title":"親しい仲間内でのカジュアルな集まり（食事会やイベントなど）での過ごし方","prompt":"あなたが複数人の集まりにいる時、最も「自分にとって自然で心地よい役割」はどれですか？","options":[
+      {"id":"A","typeId":2,"text":"グラスが空いていないか、誰かが寂しそうにしていないかを常に気にかけ、みんなが心地よく過ごせるように甲斐甲斐しくケアすることに自分の存在意義を感じる。"},
+      {"id":"B","typeId":3,"text":"会話の中で、自分の体験や話が「スマートで、ユーモアがあり、感心されるような内容」になるように意識して、その場を魅力的にリードしたい。"},
+      {"id":"C","typeId":7,"text":"面白いエピソードや冗談を次々と投げかけて、その場をパッと明るい雰囲気にし、みんなで笑って楽しい体験を共有することに全力を尽くしたい。"},
+      {"id":"D","typeId":9,"text":"自分が目立ったり主張したりすることはせず、ただみんなの楽しそうな声を聴きながら、その穏やかで調和した一体感に包まれてリラックスしていたい。"}
+    ]},
+    {"id":"S9","title":"衣服や身の回りのものを自分のために購入する時の選び方","prompt":"あなたが買い物をしている時、あなたの無意識の基準に最も近い「心の声」はどれですか？","options":[
+      {"id":"A","typeId":2,"text":"周囲の人から「優しそうで、話しかけやすい、温かい人」という良い印象を持ってもらえるような、相手への配慮を感じさせる選択を無意識にする。"},
+      {"id":"B","typeId":4,"text":"世間の流行や他の人と被るものは絶対に避け、自分の内なる複雑な感性やストーリーを表現してくれる「自分だけの特別な一点」にこだわりたい。"},
+      {"id":"C","typeId":6,"text":"周囲から浮いてしまって警戒されるような奇抜なものは避け、どんな場でも失礼にならず、長く使っても問題のない「確かな信頼性」があるものを選ぶ。"},
+      {"id":"D","typeId":8,"text":"周囲の意見やトレンドなど一切気にせず、自分が主導権を持って「これが自分の力強さと尊厳を一番引き立てる」と直感したタフなものを堂々と選ぶ。"}
     ]}
   ],
   "typeResults": {
@@ -267,12 +291,12 @@
   <script>
     'use strict';
 
-    const APP_VERSION = 'v2.0.0';
-    const STORAGE_KEY = 'enneagramApp:v6:state';
-    const LEGACY_STORAGE_KEYS = ['enneagramApp:v1:state', 'enneagramApp:v2:state', 'enneagramApp:v3:state', 'enneagramApp:v4:state', 'enneagramApp:v5:state'];
+    const APP_VERSION = 'v2.1.0';
+    const STORAGE_KEY = 'enneagramApp:v7:state';
+    const LEGACY_STORAGE_KEYS = ['enneagramApp:v1:state', 'enneagramApp:v2:state', 'enneagramApp:v3:state', 'enneagramApp:v4:state', 'enneagramApp:v5:state', 'enneagramApp:v6:state'];
     const FIRST_SCORE = 3;
     const SECOND_SCORE = 1;
-    const MAX_TYPE_SCORE = 15;
+    const MAX_TYPE_SCORE = 12;
     const DISPLAY_ORDER = [
       'Q1', 'Q16', 'Q7', 'Q28', 'Q22',
       'Q13', 'Q4', 'Q19', 'Q10', 'Q25',
@@ -634,10 +658,11 @@
 
     function validateScenarioData() {
       const expectedMappings = [
-        [5, 6, 3, 1], [2, 1, 6, 8], [3, 6, 4, 9],
-        [9, 6, 1, 5], [7, 8, 3, 6]
+        [1, 5, 6, 7], [2, 4, 8, 9], [3, 5, 7, 8],
+        [1, 2, 4, 6], [1, 3, 5, 9], [3, 4, 6, 7],
+        [1, 5, 8, 9], [2, 3, 7, 9], [2, 4, 6, 8]
       ];
-      const valid = Array.isArray(SCENARIOS) && SCENARIOS.length === 5 &&
+      const valid = Array.isArray(SCENARIOS) && SCENARIOS.length === 9 &&
         SCENARIOS.every(function (scenario, index) {
           return scenario.id === 'S' + (index + 1) && scenario.title && scenario.prompt &&
             Array.isArray(scenario.options) && scenario.options.length === 4 &&
@@ -657,7 +682,7 @@
     }
 
     function normalizeScenarioState(candidate) {
-      if (!candidate || candidate.schemaVersion !== 6 ||
+      if (!candidate || candidate.schemaVersion !== 7 ||
           !Number.isInteger(candidate.currentScenario) ||
           candidate.currentScenario < 0 || candidate.currentScenario >= SCENARIOS.length ||
           !candidate.rankings || typeof candidate.rankings !== 'object' || Array.isArray(candidate.rankings)) return null;
@@ -688,7 +713,7 @@
     function saveScenarioState() {
       try {
         sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
-          schemaVersion: 6,
+          schemaVersion: 7,
           currentScenario: state.currentScenario,
           rankings: state.rankings
         }));
@@ -707,11 +732,11 @@
     function showScenarioStart(shouldScrollTop) {
       clearApp();
       app.append(el('h1', '', 'エニアグラム・タイプ診断'));
-      app.append(el('p', 'lead', '5つの日常シーンから、行動の奥にある「本当の動機」を比べ、コアタイプとウイングを見つける診断です。'));
+      app.append(el('p', 'lead', '9つの身近な日常シーンから、行動の奥にある「本当の動機」を比べ、コアタイプとウイングを見つける診断です。'));
       const card = el('section', 'card');
       card.append(el('h2', '', '回答方法'));
       card.append(el('p', '', '各シーンには、異なる心の動機を表す4つの選択肢があります。「最も本音に近いもの」を1位、「次に近いもの」を2位として、それぞれ1つ選んでください。'));
-      card.append(el('p', '', '1位は3点、2位は1点として集計します。見栄えのよい答えではなく、これまでの人生で無意識に繰り返してきた心の動きに近いものを選ぶのがコツです。'));
+      card.append(el('p', '', '見栄えのよい答えではなく、これまでの人生で無意識に繰り返してきた心の動きに近いものを選ぶのがコツです。'));
       app.append(card);
       app.append(el('p', 'privacy', '回答内容はこの端末内で一時的に扱われ、サーバーには送信されません。結果の共有は任意です。'));
       app.append(button(completeScenarioCount() > 0 ? '診断を続ける' : '診断を始める', 'primary', function () {
@@ -752,12 +777,12 @@
         optionCard.append(el('div', 'option-label', '選択肢 ' + option.id));
         optionCard.append(el('p', 'option-text', option.text));
         const rankActions = el('div', 'rank-actions');
-        const firstButton = button('1位に選ぶ（3点）', 'rank-button first', function () {
+        const firstButton = button('1位に選ぶ', 'rank-button first', function () {
           selectScenarioRank(scenario.id, option.id, 'first');
         });
         firstButton.setAttribute('aria-pressed', String(selection.first === option.id));
         firstButton.setAttribute('aria-label', '選択肢' + option.id + 'を1位に選ぶ');
-        const secondButton = button('2位に選ぶ（1点）', 'rank-button second', function () {
+        const secondButton = button('2位に選ぶ', 'rank-button second', function () {
           selectScenarioRank(scenario.id, option.id, 'second');
         });
         secondButton.setAttribute('aria-pressed', String(selection.second === option.id));
@@ -883,8 +908,8 @@
         const block = el('section', 'section-card');
         block.append(el('h3', '', 'シナリオ' + (index + 1) + '：' + scenario.title));
         const list = el('ol');
-        list.append(el('li', '', '1位（3点）：タイプ' + first.typeId + ' — ' + first.text));
-        list.append(el('li', '', '2位（1点）：タイプ' + second.typeId + ' — ' + second.text));
+        list.append(el('li', '', '1位：タイプ' + first.typeId + ' — ' + first.text));
+        list.append(el('li', '', '2位：タイプ' + second.typeId + ' — ' + second.text));
         block.append(list);
         section.append(block);
       });
@@ -906,7 +931,7 @@
       result.wingResults.forEach(function (wingResult) { app.append(renderWingSummary(wingResult)); });
       app.append(renderRadarSection(result));
       app.append(renderScenarioReview(result));
-      app.append(el('p', 'notice', 'この結果は、5つのシナリオで選んだ動機から見える傾向の一つです。人を固定的な型として扱うものではありません。'));
+      app.append(el('p', 'notice', 'この結果は、9つのシナリオで選んだ動機から見える傾向の一つです。人を固定的な型として扱うものではありません。'));
       app.append(renderAllTypeDetails(result));
       app.append(renderClosingMessage());
       app.append(button('もう一度診断する', 'primary', restartScenario));
@@ -935,7 +960,7 @@
         'aria-labelledby': 'radar-title radar-description'
       });
       svg.append(svgEl('title', { id: 'radar-title' }, '9タイプの得点レーダーチャート'));
-      svg.append(svgEl('desc', { id: 'radar-description' }, '各タイプ0点から15点までのシナリオ得点を9本の軸で比較します。'));
+      svg.append(svgEl('desc', { id: 'radar-description' }, '各タイプ0点から12点までのシナリオ得点を9本の軸で比較します。'));
       for (let level = 3; level <= MAX_TYPE_SCORE; level += 3) {
         const gridPoints = [];
         for (let typeId = 1; typeId <= 9; typeId += 1) {
@@ -1003,7 +1028,7 @@
     function renderRadarSection(result) {
       const section = el('section', 'card result-overview');
       section.append(el('h2', '', '9タイプの得点バランス'));
-      section.append(el('p', 'chart-help', '9本の軸はタイプ1〜9、外側ほど得点が高く、目盛りの上限は15点です。下のタイプを押すと、その解説へ移動します。'));
+      section.append(el('p', 'chart-help', '9本の軸はタイプ1〜9、外側ほど得点が高く、目盛りの上限は12点です。下のタイプを押すと、その解説へ移動します。'));
       const wrap = el('div', 'radar-wrap');
       wrap.append(renderRadarChart(result));
       section.append(wrap);
