@@ -25,7 +25,7 @@
     .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:20px; margin:16px 0; box-shadow:0 2px 10px rgba(57,43,27,.04); }
     .notice { background:#f4f0e8; border-left:4px solid #a48458; padding:14px 16px; margin:20px 0; }
     .privacy { color:var(--muted); font-size:14px; }
-    .primary,.secondary,.rank-button { min-height:48px; border-radius:10px; border:2px solid transparent; padding:10px 18px; font-weight:700; }
+    .primary,.secondary,.rating-button { min-height:48px; border-radius:10px; border:2px solid transparent; padding:10px 18px; font-weight:700; }
     .primary { color:#fff; background:var(--accent); width:100%; }
     .primary:hover { background:#465c4b; }
     .secondary { color:var(--ink); background:#fff; border-color:var(--line); }
@@ -37,17 +37,18 @@
     .scenario-card { border-top:5px solid #a48458; }
     .scenario-number { color:var(--muted); font-size:14px; font-weight:700; }
     .scenario-prompt { font-size:18px; font-weight:700; }
-    .selection-summary { padding:12px 14px; border-radius:10px; background:#f4f0e8; margin:16px 0; font-weight:700; }
+    .answer-summary { padding:12px 14px; border-radius:10px; background:#f4f0e8; margin:16px 0; font-weight:700; }
     .option-list { display:grid; gap:14px; }
     .motive-option { border:1px solid var(--line); border-radius:12px; padding:16px; background:#fff; }
-    .motive-option.selected-first { border-color:#9a6d20; background:#fff9e9; }
-    .motive-option.selected-second { border-color:#77618a; background:#f8f3fb; }
+    .motive-option.answered { border-color:var(--accent); background:#f8fbf7; }
     .option-label { color:var(--muted); font-size:14px; font-weight:800; }
     .option-text { margin:6px 0 14px; }
-    .rank-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-    .rank-button { color:var(--ink); background:#fff; border-color:var(--line); padding:8px 10px; }
-    .rank-button.first[aria-pressed="true"] { color:#5c3e0a; border-color:#9a6d20; background:#fff1c9; }
-    .rank-button.second[aria-pressed="true"] { color:#49345c; border-color:#77618a; background:#eee4f4; }
+    .rating-actions { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; }
+    .rating-button { color:var(--ink); background:#fff; border-color:var(--line); padding:8px 9px; font-size:13px; line-height:1.45; }
+    .rating-button[aria-pressed="true"] { color:#214b2b; border-color:var(--accent); background:var(--accent-soft); }
+    .self-observation-card { border-top:5px solid #8b6f98; }
+    .self-question { border:1px solid var(--line); border-radius:12px; padding:16px; margin:14px 0; background:#fff; }
+    .self-question.answered { border-color:var(--accent); background:#f8fbf7; }
     .scenario-review { border-left:4px solid #8b6f98; }
     .scenario-review ol { padding-left:22px; }
     .error { color:#732c22; background:var(--warn-soft); border-left:4px solid var(--warn); padding:12px 14px; margin:16px 0; }
@@ -89,8 +90,8 @@
     .disclaimer { font-size:14px; color:var(--muted); }
     @media (max-width:520px) {
       h1 { font-size:26px; }
-      .rank-actions { grid-template-columns:1fr; }
-      .rank-button { font-size:14px; }
+      .rating-actions { grid-template-columns:1fr; }
+      .rating-button { font-size:14px; }
       .score-nav { grid-template-columns:1fr; }
       .radar-label { font-size:14px; }
       .radar-label-top { font-size:15px; }
@@ -121,60 +122,65 @@
   <script id="app-data" type="application/json">
 {
   "scenarios": [
-    {"id":"S1","title":"プライベートで旅行やお出かけの計画を立てる時","prompt":"あなたが休みの日にお出かけや旅行の計画を立てる時、あなたの心の中で「最も優先されている本音」はどれですか？","options":[
+    {"id":"S1","title":"プライベートで旅行やお出かけの計画を立てる時","prompt":"以下の4つの「心の声」それぞれについて、あなたの本音に近い度合いを5段階で評価してください。","options":[
       {"id":"A","typeId":1,"text":"時間やマナー、移動ルートに無駄がなく、誰もが「良かった」と思える整ったスケジュールを事前にきちんと組んでおきたい。"},
       {"id":"B","typeId":5,"text":"あまり周囲に振り回されず、事前にその土地の面白そうなマイナー情報を一人でじっくり調べて、静かに自分のペースで味わいたい。"},
-      {"id":"C","typeId":6,"text":"「もし道に迷ったら」「もし店が閉まっていたら」と、不測の事態やリスクを考え、対策や代わりの候補を事前にいくつか手元に揃えておきたい。"},
+      {"id":"C","typeId":6,"text":"「もし道に迷ったら」「もし店が閉まっていたら」とリスクを考え、対策や代わりの候補を事前にいくつか手元に揃えて安心したい。"},
       {"id":"D","typeId":7,"text":"細かい計画に縛られるとつまらないので、その時の気分や面白そうな直感に従って、何が起こるか分からないワクワク感を楽しみたい。"}
     ]},
-    {"id":"S2","title":"身近な人から「最近ちょっと落ち込んでいて…」と打ち明けられた時","prompt":"あなたが誰かの悩みや相談を聞く時、あなたの心の底にある「一番の姿勢」はどれですか？","options":[
+    {"id":"S2","title":"身近な人から「最近ちょっと落ち込んでいて…」と打ち明けられた時","prompt":"以下の4つの「心の声」それぞれについて、あなたの本音に近い度合いを5段階で評価してください。","options":[
       {"id":"A","typeId":2,"text":"「自分がこの人を元気にしなきゃ」と強く感じ、相手が少しでも前を向けるような温かいアドバイスや、自分にできるサポートをすぐに差し出したくなる。"},
       {"id":"B","typeId":4,"text":"簡単に「分かるよ」などと言わず、相手の抱える深い憂鬱さや心の痛みにただ耳を傾け、その重苦しい空気感に一緒にじっと留まろうとする。"},
       {"id":"C","typeId":8,"text":"ウジウジ悩むよりも「現状をどう突破するか」が大切だと思うので、相手が自分で決断し、前進するためのエネルギーを強く引き出してあげたくなる。"},
       {"id":"D","typeId":9,"text":"あれこれ口出しせず、ただ「そのままでいいよ、なんとかなる」と相手の存在をそのまま優しく受け入れ、お互いの心が落ち着くような穏やかな時間を過ごしたい。"}
     ]},
-    {"id":"S3","title":"プライベートで新しい趣味や習い事を始めようとする時","prompt":"あなたが新しい趣味に興味を持って取り組む時、あなたの心を駆り立てている「最大の目的」は何ですか？","options":[
+    {"id":"S3","title":"プライベートで新しい趣味や習い事を始めようとする時","prompt":"以下の4つの「心の声」それぞれについて、あなたの本音に近い度合いを5段階で評価してください。","options":[
       {"id":"A","typeId":3,"text":"やるからには人より上手くなりたい、何かの形（スコア、作品、資格など）で自分の実力が目に見える成果として残るようにしたい。"},
       {"id":"B","typeId":5,"text":"誰かとワイワイやるより、まずは一人でその趣味の仕組みや専門的な本質を徹底的に調べ、頭の中で「すべてが繋がった」という知的興奮を感じたい。"},
       {"id":"C","typeId":7,"text":"面白そうな体験に次々と手を広げて、その分野の「楽しいところ」を軽快に味わいたい（飽きたらすぐに別の楽しそうなことを探せばいい）。"},
       {"id":"D","typeId":8,"text":"周囲のペースや誰かの指示に従うのが嫌なので、自分のペースとやり方を自分で開拓し、自分の意志でそのジャンルを完全に乗りこなしたい。"}
     ]},
-    {"id":"S4","title":"親しい人との約束を、相手から直前に「急用ができて…」とキャンセルされた時","prompt":"約束をドタキャンされた瞬間、あなたの頭の中に真っ先によぎる「本音のつぶやき」はどれですか？","options":[
+    {"id":"S4","title":"親しい人との約束を、相手から直前に「急用ができて…」とキャンセルされた時","prompt":"以下の4つの「心の声」それぞれについて、あなたの本音に近い度合いを5段階で評価してください。","options":[
       {"id":"A","typeId":1,"text":"「約束を破るというのは、人として不誠実だ」というイライラが湧き、頭の中で相手のルーズさやマナーの甘さを厳しく批判してしまう。"},
       {"id":"B","typeId":2,"text":"「自分が何か気に障ることをしたのだろうか、嫌われたのかな」と不安になり、すぐに相手を気遣うメッセージを送って、相手の役に立とうとする。"},
       {"id":"C","typeId":4,"text":"「所詮、自分はその程度の存在なんだ」と自分の存在の軽さを感じて寂しくなり、一人の部屋でその切なく取り残されたような感情を静かに味わい続けてしまう。"},
       {"id":"D","typeId":6,"text":"「本当に急用なのか？裏に別の理由があるのでは？」と疑念がよぎり、今後の関係に危険がないか、相手の本当のトーンを慎重に測ろうとする。"}
     ]},
-    {"id":"S5","title":"久しぶりに自分の部屋を片付ける時","prompt":"あなたが自分の部屋を整理整頓する時、あなたの頭の中を支配している「理想の状態」はどれですか？","options":[
+    {"id":"S5","title":"久しぶりに自分の部屋を片付ける時","prompt":"以下の4つの「心の声」それぞれについて、あなたの本音に近い度合いを5段階で評価してください。","options":[
       {"id":"A","typeId":1,"text":"すべての物の定位置が論理的に決まっていて、引き出しの中まで「正しい状態」に完璧に整っていないと、頭がモヤモヤして落ち着かない。"},
       {"id":"B","typeId":3,"text":"自分の部屋はセンスを表す場所だと思うので、いつ誰が入ってきても「洗練されていて、私生活もスマートでデキる人」に見えるように演出したい。"},
       {"id":"C","typeId":5,"text":"余計な持ち物の整理や管理に自分のエネルギーを奪われたくないので、極限まで物を減らし、自分の思考を邪魔しない「静かでミニマルな聖域」にしておきたい。"},
       {"id":"D","typeId":9,"text":"途中で面倒になると「まあ、生活に支障はないし、今のままでも十分にリラックスできるからこれでいいか」と、ざっと片付けてすぐのんびりモードに戻る。"}
     ]},
-    {"id":"S6","title":"SNSなどで、他人の楽しそうなプライベートの投稿を目にした時","prompt":"他人の充実した様子を目にした瞬間、あなたの心の中で起きている「本当の反応」はどれですか？","options":[
+    {"id":"S6","title":"SNSなどで、他人の楽しそうなプライベートの投稿を目にした時","prompt":"以下の4つの「心の声」それぞれについて、あなたの本音に近い度合いを5段階で評価してください。","options":[
       {"id":"A","typeId":3,"text":"「自分も負けていられない、もっと自分の生き方や輝いている瞬間を周囲に見せて、魅力的な存在だと認めてもらいたい」と刺激を受ける。"},
       {"id":"B","typeId":4,"text":"「あの人たちにはあって、自分には欠けている決定的な何か」を痛烈に感じてしまい、自分の寂しさや、世間に馴染めない特別な個性を意識して切なくなる。"},
       {"id":"C","typeId":6,"text":"「本当にこんなに幸せなのだろうか？」「何か別の意図や見栄があるのでは？」と、その裏にある本音やリスクを無意識に勘ぐってしまう。"},
       {"id":"D","typeId":7,"text":"素晴らしい体験や楽しそうな場所を目にすると、羨ましがるよりも「次は自分がもっと楽しい計画を立てて、ワクワクする体験をしよう！」と考え始める。"}
     ]},
-    {"id":"S7","title":"大切にしていた身の回りのものを、うっかりどこかに失くしてしまった時","prompt":"紛失に気づいた瞬間、あなたの心の中で起きる「最初の動き」はどれですか？","options":[
+    {"id":"S7","title":"大切にしていた身の回りのものを、うっかりどこかに失くしてしまった時","prompt":"以下の4つの「心の声」それぞれについて、あなたの本音に近い度合いを5段階で評価してください。","options":[
       {"id":"A","typeId":1,"text":"「なぜあそこできちんと確認しなかったのか！」と自分の不注意さが許せず、自分のだらしなさに対してしばらく強い自己批判が止まらなくなる。"},
       {"id":"B","typeId":5,"text":"感情的に悔やんでもエネルギーを無駄に消耗するだけなので、ただ「紛失という客観的な事実」として頭の中で感情を切り離し、静かに次の現実的な手段を考える。"},
       {"id":"C","typeId":8,"text":"失くしたという事実に激しくイライラし、状況に振り回されるのが嫌なので、すぐに「新しい、もっと強力なものを自分の手で手に入れよう」とエネルギーを湧き立たせる。"},
       {"id":"D","typeId":9,"text":"ショックや怒りで心が波立つのを避けたいので、「まあ、寿命だったんだ。形あるものはいつか壊れるしね」と自分を納得させて、穏やかな平穏を保とうとする。"}
     ]},
-    {"id":"S8","title":"親しい仲間内でのカジュアルな集まり（食事会やイベントなど）での過ごし方","prompt":"あなたが複数人の集まりにいる時、最も「自分にとって自然で心地よい役割」はどれですか？","options":[
+    {"id":"S8","title":"親しい仲間内でのカジュアルな集まり（食事会やイベントなど）での過ごし方","prompt":"以下の4つの「心の声」それぞれについて、あなたの本音に近い度合いを5段階で評価してください。","options":[
       {"id":"A","typeId":2,"text":"グラスが空いていないか、誰かが寂しそうにしていないかを常に気にかけ、みんなが心地よく過ごせるように甲斐甲斐しくケアすることに自分の存在意義を感じる。"},
       {"id":"B","typeId":3,"text":"会話の中で、自分の体験や話が「スマートで、ユーモアがあり、感心されるような内容」になるように意識して、その場を魅力的にリードしたい。"},
       {"id":"C","typeId":7,"text":"面白いエピソードや冗談を次々と投げかけて、その場をパッと明るい雰囲気にし、みんなで笑って楽しい体験を共有することに全力を尽くしたい。"},
       {"id":"D","typeId":9,"text":"自分が目立ったり主張したりすることはせず、ただみんなの楽しそうな声を聴きながら、その穏やかで調和した一体感に包まれてリラックスしていたい。"}
     ]},
-    {"id":"S9","title":"衣服や身の回りのものを自分のために購入する時の選び方","prompt":"あなたが買い物をしている時、あなたの無意識の基準に最も近い「心の声」はどれですか？","options":[
+    {"id":"S9","title":"衣服や身の回りのものを自分のために購入する時の選び方","prompt":"以下の4つの「心の声」それぞれについて、あなたの本音に近い度合いを5段階で評価してください。","options":[
       {"id":"A","typeId":2,"text":"周囲の人から「優しそうで、話しかけやすい、温かい人」という良い印象を持ってもらえるような、相手への配慮を感じさせる選択を無意識にする。"},
       {"id":"B","typeId":4,"text":"世間の流行や他の人と被るものは絶対に避け、自分の内なる複雑な感性やストーリーを表現してくれる「自分だけの特別な一点」にこだわりたい。"},
       {"id":"C","typeId":6,"text":"周囲から浮いてしまって警戒されるような奇抜なものは避け、どんな場でも失礼にならず、長く使っても問題のない「確かな信頼性」があるものを選ぶ。"},
       {"id":"D","typeId":8,"text":"周囲の意見やトレンドなど一切気にせず、自分が主導権を持って「これが自分の力強さと尊厳を一番引き立てる」と直感したタフなものを堂々と選ぶ。"}
     ]}
+  ],
+  "selfObservationQuestions": [
+    {"id":"Q37","text":"自分が普段「自分の性格（強み）」だと思っているものが、実は過去に自分を守るために身につけたパターンであり、今は自分を不自由にしていると感じることがある。"},
+    {"id":"Q38","text":"自動的な防衛反応（不安、イライラなど）が起きているまさにその瞬間に気づき、直ちにその行動を「中止」する練習をしている。"},
+    {"id":"Q39","text":"過去の記憶や未来の不安に引きずられず、ただ「今、ここ（プレゼンス）」の現実に無防備に留まることが、いかに困難で重要であるかを感じている。"}
   ],
   "typeResults": {
     "1": {
@@ -291,36 +297,35 @@
   <script>
     'use strict';
 
-    const APP_VERSION = 'v2.1.0';
-    const STORAGE_KEY = 'enneagramApp:v7:state';
-    const LEGACY_STORAGE_KEYS = ['enneagramApp:v1:state', 'enneagramApp:v2:state', 'enneagramApp:v3:state', 'enneagramApp:v4:state', 'enneagramApp:v5:state', 'enneagramApp:v6:state'];
-    const FIRST_SCORE = 3;
-    const SECOND_SCORE = 1;
-    const MAX_TYPE_SCORE = 12;
-    const DISPLAY_ORDER = [
-      'Q1', 'Q16', 'Q7', 'Q28', 'Q22',
-      'Q13', 'Q4', 'Q19', 'Q10', 'Q25',
-      'Q17', 'Q8', 'Q23', 'Q14', 'Q5',
-      'Q20', 'Q11', 'Q26', 'Q2', 'Q29',
-      'Q18', 'Q9', 'Q24', 'Q15', 'Q6',
-      'Q21', 'Q12', 'Q27', 'Q3', 'Q30'
+    const APP_VERSION = 'v2.2.0';
+    const STORAGE_KEY = 'enneagramApp:v8:state';
+    const LEGACY_STORAGE_KEYS = [
+      'enneagramApp:v1:state', 'enneagramApp:v2:state', 'enneagramApp:v3:state',
+      'enneagramApp:v4:state', 'enneagramApp:v5:state', 'enneagramApp:v6:state',
+      'enneagramApp:v7:state'
     ];
-    const ANSWER_OPTIONS = [
-      { value:'strongAgree', score:4, label:'とてもそう思う' },
-      { value:'agree', score:2, label:'そう思う' },
+    const MAX_TYPE_SCORE = 16;
+    const MAX_SELF_OBSERVATION_SCORE = 12;
+    const RATING_OPTIONS = [
+      { value:'veryClose', score:4, label:'とても自分の本音に近い' },
+      { value:'close', score:2, label:'まあ自分の本音に近い' },
       { value:'neutral', score:1, label:'どちらともいえない' },
-      { value:'disagree', score:0, label:'あまりそう思わない' },
-      { value:'strongDisagree', score:0, label:'全くそう思わない' }
+      { value:'notVeryClose', score:0, label:'あまり自分の本音ではない' },
+      { value:'notClose', score:0, label:'全く自分の本音ではない' }
     ];
-    const ANSWER_SCORE_MAP = Object.fromEntries(ANSWER_OPTIONS.map(function (option) {
+    const SELF_OBSERVATION_OPTIONS = [
+      { value:'veryClose', score:4, label:'とてもそう思う' },
+      { value:'close', score:2, label:'そう思う' },
+      { value:'neutral', score:1, label:'どちらともいえない' },
+      { value:'notVeryClose', score:0, label:'あまりそう思わない' },
+      { value:'notClose', score:0, label:'全くそう思わない' }
+    ];
+    const RATING_SCORE_MAP = Object.fromEntries(RATING_OPTIONS.map(function (option) {
       return [option.value, option.score];
     }));
     const APP_DATA = JSON.parse(document.getElementById('app-data').textContent);
     const SCENARIOS = APP_DATA.scenarios;
-    // v1系の関数定義は段階的な移行確認用に残しますが、v2の起動経路からは呼びません。
-    const QUESTIONS = [];
-    const TYPE_QUESTIONS = QUESTIONS.filter(function (question) { return question.typeId !== null; });
-    const SELF_OBSERVATION_QUESTIONS = QUESTIONS.filter(function (question) { return question.category === 'selfObservation'; });
+    const SELF_OBSERVATION_QUESTIONS = APP_DATA.selfObservationQuestions;
     const TYPE_RESULTS = APP_DATA.typeResults;
     const TYPE_CHARACTER_FILES = {
       1:'type-01-reformer-v1.png', 2:'type-02-helper-v1.png', 3:'type-03-achiever-v1.png',
@@ -328,89 +333,7 @@
       7:'type-07-enthusiast-v1.png', 8:'type-08-challenger-v1.png', 9:'type-09-peacemaker-v1.png'
     };
     const app = document.getElementById('app');
-    const orderedQuestions = DISPLAY_ORDER.map(function (id) {
-      return QUESTIONS.find(function (question) { return question.id === id; });
-    });
-    let state = { currentScenario: 0, rankings: {} };
-
-    // 原稿や固定表示順が壊れた場合、誤った診断を始めさせません。
-    function validateData() {
-      const ids = QUESTIONS.map(function (question) { return question.id; });
-      const typeCounts = {};
-      TYPE_QUESTIONS.forEach(function (question) {
-        typeCounts[question.typeId] = (typeCounts[question.typeId] || 0) + 1;
-      });
-      const validTypeCounts = Array.from({ length: 9 }, function (_, index) {
-        return typeCounts[index + 1] === 3;
-      }).every(Boolean);
-      const validWingMapping = Array.from({ length: 9 }, function (_, index) {
-        const coreType = index + 1;
-        const expectedWings = [coreType === 1 ? 9 : coreType - 1, coreType === 9 ? 1 : coreType + 1];
-        const questions = TYPE_QUESTIONS.filter(function (question) { return question.typeId === coreType; });
-        const wingA = questions.find(function (question) { return question.wingRole === 'A'; });
-        const core = questions.find(function (question) { return question.wingRole === 'core'; });
-        const wingB = questions.find(function (question) { return question.wingRole === 'B'; });
-        return wingA && core && wingB &&
-          wingA.wingType === expectedWings[0] && core.wingType === null && wingB.wingType === expectedWings[1];
-      }).every(Boolean);
-      const dataIsValid = QUESTIONS.length === 30 &&
-        TYPE_QUESTIONS.length === 27 &&
-        SELF_OBSERVATION_QUESTIONS.length === 3 &&
-        new Set(ids).size === 30 &&
-        DISPLAY_ORDER.length === 30 &&
-        new Set(DISPLAY_ORDER).size === 30 &&
-        DISPLAY_ORDER.every(function (id) { return ids.includes(id); }) &&
-        Object.keys(TYPE_RESULTS).length === 9 &&
-        validTypeCounts &&
-        validWingMapping &&
-        Object.keys(TYPE_CHARACTER_FILES).length === 9 &&
-        APP_DATA.closingMessage;
-      if (!dataIsValid || orderedQuestions.some(function (question) { return !question; })) {
-        throw new Error('診断データに不備があります。管理者へ連絡してください。');
-      }
-    }
-
-    function isAnswerValue(value) {
-      return Object.prototype.hasOwnProperty.call(ANSWER_SCORE_MAP, value);
-    }
-
-    function normalizeState(candidate) {
-      if (!candidate ||
-          candidate.schemaVersion !== 5 ||
-          !Number.isInteger(candidate.currentStep) ||
-          candidate.currentStep < 0 ||
-          candidate.currentStep >= TOTAL_STEPS ||
-          !candidate.answers ||
-          typeof candidate.answers !== 'object' ||
-          Array.isArray(candidate.answers)) return null;
-      const validIds = new Set(QUESTIONS.map(function (question) { return question.id; }));
-      for (const entry of Object.entries(candidate.answers)) {
-        if (!validIds.has(entry[0]) || !isAnswerValue(entry[1])) return null;
-      }
-      return { currentStep: candidate.currentStep, answers: candidate.answers };
-    }
-
-    // 保存できない環境でも、画面上の診断は続けられます。
-    function loadState() {
-      try {
-        LEGACY_STORAGE_KEYS.forEach(function (key) { sessionStorage.removeItem(key); });
-        return normalizeState(JSON.parse(sessionStorage.getItem(STORAGE_KEY))) || { currentStep: 0, answers: {} };
-      } catch (_) {
-        return { currentStep: 0, answers: {} };
-      }
-    }
-
-    function saveState() {
-      try {
-        sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
-          schemaVersion: 5,
-          currentStep: state.currentStep,
-          answers: state.answers
-        }));
-      } catch (_) {
-        // 一時保存不可でも診断は継続します。
-      }
-    }
+    let state = emptyScenarioState();
 
     function clearApp() { app.replaceChildren(); }
 
@@ -441,10 +364,6 @@
       document.getElementById('app-version').textContent = APP_VERSION;
     }
 
-    function answeredCount() {
-      return Object.keys(state.answers).length;
-    }
-
     function showError(message) {
       const node = el('div', 'error', message);
       node.setAttribute('role', 'alert');
@@ -455,152 +374,6 @@
       requestAnimationFrame(function () {
         window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
       });
-    }
-
-    function showStart(shouldScrollTop) {
-      clearApp();
-      app.append(el('h1', '', 'エニアグラム・タイプ診断'));
-      app.append(el('p', 'lead', '30の質問から、普段の「無意識の囚われ」、コアタイプ、ウイングを自動判定する診断です。'));
-      const card = el('section', 'card');
-      card.append(el('h2', '', '回答するときの目安'));
-      card.append(el('p', '', 'これまでの人生の大半における「素の自分」を思い浮かべ、5つの選択肢から最も近いものを選んでください。仕事上の役割より、無意識に繰り返す心の動きを基準にします。'));
-      card.append(el('p', '', '質問は10問ずつ、タイプ別に並ばない固定の混在順で進みます。回答後、タイプ別得点と各タイプ内の2つのウイング傾向を比較して自動判定します。質問順は診断ごとに変わりません。'));
-      app.append(card);
-      app.append(el('p', 'privacy', '回答内容はこの端末内で一時的に扱われ、サーバーには送信されません。結果の共有は任意です。'));
-      app.append(button(answeredCount() > 0 ? '診断を続ける' : '診断を始める', 'primary', function () {
-        showQuestions(undefined, true);
-      }));
-      if (shouldScrollTop) scrollPageTop();
-    }
-
-    function showQuestions(errorMessage, shouldScrollTop) {
-      clearApp();
-      const start = state.currentStep * QUESTIONS_PER_STEP;
-      const stepQuestions = orderedQuestions.slice(start, start + QUESTIONS_PER_STEP);
-      const progressHead = el('div', 'progress-head');
-      progressHead.append(el('span', '', '質問 ' + (state.currentStep + 1) + ' / ' + TOTAL_STEPS));
-      progressHead.append(el('span', '', '回答済み ' + answeredCount() + ' / 30'));
-      app.append(progressHead);
-      const progress = el('div', 'progress');
-      const progressBar = el('div');
-      progressBar.style.width = ((answeredCount() / 30) * 100) + '%';
-      progress.append(progressBar);
-      app.append(progress);
-      app.append(el('h1', '', '診断質問'));
-      app.append(el('p', '', '今の役割ではなく、普段の自然な自分に最も近いものを選んでください。'));
-      if (errorMessage) app.append(showError(errorMessage));
-      const list = el('div', 'question-list');
-      stepQuestions.forEach(function (question, offset) {
-        const displayNumber = start + offset + 1;
-        const fieldset = el('fieldset');
-        fieldset.id = 'question-' + question.id;
-        fieldset.append(el('legend', '', '質問 ' + displayNumber));
-        fieldset.append(el('p', 'question-text', question.text));
-        const row = el('div', 'answer-row');
-        ANSWER_OPTIONS.forEach(function (option) {
-          const answerButton = button(option.label, 'answer', function () {
-            state.answers[question.id] = option.value;
-            saveState();
-            showQuestions(undefined, false);
-          });
-          answerButton.setAttribute('aria-pressed', String(state.answers[question.id] === option.value));
-          answerButton.setAttribute('aria-label', '質問 ' + displayNumber + '：' + option.label);
-          row.append(answerButton);
-        });
-        fieldset.append(row);
-        list.append(fieldset);
-      });
-      app.append(list);
-      const actions = el('div', 'actions');
-      if (state.currentStep > 0) {
-        actions.append(button('戻る', 'secondary', function () {
-          state.currentStep -= 1;
-          saveState();
-          showQuestions(undefined, true);
-        }));
-      }
-      const isLastStep = state.currentStep === TOTAL_STEPS - 1;
-      actions.append(button(isLastStep ? '診断結果を見る' : '次へ', 'primary', function () {
-        proceed(isLastStep);
-      }));
-      app.append(actions);
-      if (shouldScrollTop) scrollPageTop();
-    }
-
-    function proceed(isLastStep) {
-      const start = state.currentStep * QUESTIONS_PER_STEP;
-      const firstUnanswered = orderedQuestions.slice(start, start + QUESTIONS_PER_STEP).find(function (question) {
-        return !isAnswerValue(state.answers[question.id]);
-      });
-      if (firstUnanswered) {
-        showQuestions('このステップには未回答の質問があります。最初の未回答へ移動しました。', false);
-        requestAnimationFrame(function () {
-          document.getElementById('question-' + firstUnanswered.id).scrollIntoView({ behavior: 'smooth', block: 'center' });
-        });
-        return;
-      }
-      if (isLastStep) {
-        const missing = orderedQuestions.filter(function (question) {
-          return !isAnswerValue(state.answers[question.id]);
-        });
-        if (missing.length) {
-          showQuestions('未回答が ' + missing.length + ' 問あります。すべての質問に回答してください。', false);
-          return;
-        }
-        showResults(calculateDiagnosis(state.answers));
-      } else {
-        state.currentStep += 1;
-        saveState();
-        showQuestions(undefined, true);
-      }
-    }
-
-    function calculateDiagnosis(answers) {
-      if (QUESTIONS.some(function (question) { return !isAnswerValue(answers[question.id]); })) {
-        throw new Error('未回答があるため診断できません。');
-      }
-      const scores = { 1:0, 2:0, 3:0, 4:0, 5:0, 6:0, 7:0, 8:0, 9:0 };
-      TYPE_QUESTIONS.forEach(function (question) {
-        scores[question.typeId] += ANSWER_SCORE_MAP[answers[question.id]];
-      });
-      const topScore = Math.max.apply(null, Object.values(scores));
-      const topTypes = Object.keys(scores).map(Number).filter(function (typeId) {
-        return scores[typeId] === topScore;
-      });
-      const selfObservationScore = SELF_OBSERVATION_QUESTIONS.reduce(function (total, question) {
-        return total + ANSWER_SCORE_MAP[answers[question.id]];
-      }, 0);
-      return {
-        status: topTypes.length === 1 ? 'single' : 'tie',
-        scores: scores,
-        topScore: topScore,
-        topTypes: topTypes,
-        selfObservationScore: selfObservationScore,
-        wingResults: topTypes.map(function (coreType) {
-          return determineWing(coreType, answers);
-        })
-      };
-    }
-
-    function determineWing(coreType, answers) {
-      const typeQuestions = TYPE_QUESTIONS.filter(function (question) { return question.typeId === coreType; });
-      const wingAQuestion = typeQuestions.find(function (question) { return question.wingRole === 'A'; });
-      const wingBQuestion = typeQuestions.find(function (question) { return question.wingRole === 'B'; });
-      const wingAScore = ANSWER_SCORE_MAP[answers[wingAQuestion.id]];
-      const wingBScore = ANSWER_SCORE_MAP[answers[wingBQuestion.id]];
-      const isBalanced = wingAScore === wingBScore;
-      const selectedQuestion = isBalanced ? null : (wingAScore > wingBScore ? wingAQuestion : wingBQuestion);
-      const wingType = selectedQuestion ? selectedQuestion.wingType : null;
-      return {
-        coreType: coreType,
-        wingType: wingType,
-        wingLabel: isBalanced ? coreType + '-両' : coreType + 'w' + wingType,
-        wingAScore: wingAScore,
-        wingBScore: wingBScore,
-        wingAType: wingAQuestion.wingType,
-        wingBType: wingBQuestion.wingType,
-        balanced: isBalanced
-      };
     }
 
     function renderWingSummary(wingResult) {
@@ -619,41 +392,9 @@
       return section;
     }
 
-    function showResults(result) {
-      clearApp();
-      app.append(el('h1', '', '診断結果'));
-      if (result.status === 'single') {
-        const wingResult = result.wingResults[0];
-        app.append(el('p', 'lead', 'あなたの診断タイプは「' + wingResult.wingLabel + '：' + TYPE_RESULTS[wingResult.coreType].nameJa + '」です。'));
-      } else {
-        const names = result.wingResults.map(function (wingResult) {
-          return wingResult.wingLabel + '（' + TYPE_RESULTS[wingResult.coreType].nameJa + '）';
-        }).join('・');
-        app.append(el('div', 'notice', 'コアタイプが同点でした。すべての同率候補を表示します：' + names));
-      }
-      result.wingResults.forEach(function (wingResult) {
-        app.append(renderWingSummary(wingResult));
-      });
-      app.append(renderRadarSection(result));
-      app.append(renderSelfObservation(result.selfObservationScore));
-      app.append(el('p', 'notice', 'この結果は、30問への回答から見える傾向の一つです。人を固定的な型として扱うものではありません。'));
-      app.append(renderAllTypeDetails(result));
-      app.append(renderClosingMessage());
-      app.append(button('もう一度診断する', 'primary', restart));
-      scrollPageTop();
-    }
-
-    function renderSelfObservation(score) {
-      const section = el('section', 'card');
-      section.append(el('h2', '', '自己観察度'));
-      section.append(el('p', 'lead', score + ' / 12点'));
-      section.append(el('p', '', '自分の自動的な防衛反応や「今、ここ」への意識を、どの程度自覚しているかを表す別枠指標です。コアタイプとウイングの判定には加算していません。'));
-      return section;
-    }
-
-    // v2: 共通行動の裏にある動機を、1位・2位の順位選択で比較します。
+    // 第4版: 4つの動機を互いに比較せず、一つずつ5段階で独立評価します。
     function emptyScenarioState() {
-      return { currentScenario: 0, rankings: {} };
+      return { currentScenario: 0, ratings: {}, selfObservationAnswers: {} };
     }
 
     function validateScenarioData() {
@@ -662,6 +403,12 @@
         [1, 2, 4, 6], [1, 3, 5, 9], [3, 4, 6, 7],
         [1, 5, 8, 9], [2, 3, 7, 9], [2, 4, 6, 8]
       ];
+      const typeCounts = {};
+      SCENARIOS.forEach(function (scenario) {
+        scenario.options.forEach(function (option) {
+          typeCounts[option.typeId] = (typeCounts[option.typeId] || 0) + 1;
+        });
+      });
       const valid = Array.isArray(SCENARIOS) && SCENARIOS.length === 9 &&
         SCENARIOS.every(function (scenario, index) {
           return scenario.id === 'S' + (index + 1) && scenario.title && scenario.prompt &&
@@ -671,10 +418,19 @@
                 option.typeId === expectedMappings[index][optionIndex] && option.text;
             });
         }) &&
+        Array.from({ length: 9 }, function (_, index) { return typeCounts[index + 1] === 4; }).every(Boolean) &&
+        Array.isArray(SELF_OBSERVATION_QUESTIONS) && SELF_OBSERVATION_QUESTIONS.length === 3 &&
+        SELF_OBSERVATION_QUESTIONS.every(function (question, index) {
+          return question.id === 'Q' + (index + 37) && question.text;
+        }) &&
         Object.keys(TYPE_RESULTS).length === 9 &&
         Object.keys(TYPE_CHARACTER_FILES).length === 9 &&
         APP_DATA.closingMessage;
       if (!valid) throw new Error('診断データに不備があります。管理者へ連絡してください。');
+    }
+
+    function isRatingValue(value) {
+      return Object.prototype.hasOwnProperty.call(RATING_SCORE_MAP, value);
     }
 
     function optionExists(scenario, optionId) {
@@ -682,21 +438,28 @@
     }
 
     function normalizeScenarioState(candidate) {
-      if (!candidate || candidate.schemaVersion !== 7 ||
+      if (!candidate || candidate.schemaVersion !== 8 ||
           !Number.isInteger(candidate.currentScenario) ||
-          candidate.currentScenario < 0 || candidate.currentScenario >= SCENARIOS.length ||
-          !candidate.rankings || typeof candidate.rankings !== 'object' || Array.isArray(candidate.rankings)) return null;
+          candidate.currentScenario < 0 || candidate.currentScenario > SCENARIOS.length ||
+          !candidate.ratings || typeof candidate.ratings !== 'object' || Array.isArray(candidate.ratings) ||
+          !candidate.selfObservationAnswers || typeof candidate.selfObservationAnswers !== 'object' ||
+          Array.isArray(candidate.selfObservationAnswers)) return null;
       const normalized = emptyScenarioState();
       normalized.currentScenario = candidate.currentScenario;
-      for (const entry of Object.entries(candidate.rankings)) {
+      for (const entry of Object.entries(candidate.ratings)) {
         const scenario = SCENARIOS.find(function (item) { return item.id === entry[0]; });
-        const selection = entry[1];
-        if (!scenario || !selection || typeof selection !== 'object' || Array.isArray(selection)) return null;
-        const first = selection.first || null;
-        const second = selection.second || null;
-        if ((first && !optionExists(scenario, first)) || (second && !optionExists(scenario, second)) ||
-            (first && second && first === second)) return null;
-        normalized.rankings[scenario.id] = { first: first, second: second };
+        const scenarioRatings = entry[1];
+        if (!scenario || !scenarioRatings || typeof scenarioRatings !== 'object' || Array.isArray(scenarioRatings)) return null;
+        normalized.ratings[scenario.id] = {};
+        for (const ratingEntry of Object.entries(scenarioRatings)) {
+          if (!optionExists(scenario, ratingEntry[0]) || !isRatingValue(ratingEntry[1])) return null;
+          normalized.ratings[scenario.id][ratingEntry[0]] = ratingEntry[1];
+        }
+      }
+      const selfIds = new Set(SELF_OBSERVATION_QUESTIONS.map(function (question) { return question.id; }));
+      for (const entry of Object.entries(candidate.selfObservationAnswers)) {
+        if (!selfIds.has(entry[0]) || !isRatingValue(entry[1])) return null;
+        normalized.selfObservationAnswers[entry[0]] = entry[1];
       }
       return normalized;
     }
@@ -713,82 +476,101 @@
     function saveScenarioState() {
       try {
         sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
-          schemaVersion: 7,
+          schemaVersion: 8,
           currentScenario: state.currentScenario,
-          rankings: state.rankings
+          ratings: state.ratings,
+          selfObservationAnswers: state.selfObservationAnswers
         }));
       } catch (_) {
         // 一時保存不可でも診断は継続します。
       }
     }
 
+    function completeMotiveCount() {
+      return SCENARIOS.reduce(function (total, scenario) {
+        const scenarioRatings = state.ratings[scenario.id] || {};
+        return total + scenario.options.filter(function (option) {
+          return isRatingValue(scenarioRatings[option.id]);
+        }).length;
+      }, 0);
+    }
+
     function completeScenarioCount() {
       return SCENARIOS.filter(function (scenario) {
-        const selection = state.rankings[scenario.id];
-        return selection && selection.first && selection.second && selection.first !== selection.second;
+        const scenarioRatings = state.ratings[scenario.id] || {};
+        return scenario.options.every(function (option) { return isRatingValue(scenarioRatings[option.id]); });
+      }).length;
+    }
+
+    function completeSelfObservationCount() {
+      return SELF_OBSERVATION_QUESTIONS.filter(function (question) {
+        return isRatingValue(state.selfObservationAnswers[question.id]);
       }).length;
     }
 
     function showScenarioStart(shouldScrollTop) {
       clearApp();
       app.append(el('h1', '', 'エニアグラム・タイプ診断'));
-      app.append(el('p', 'lead', '9つの身近な日常シーンから、行動の奥にある「本当の動機」を比べ、コアタイプとウイングを見つける診断です。'));
+      app.append(el('p', 'lead', '9つの日常シーンにある36の「心の声」を一つずつ評価し、無意識に繰り返す防衛パターンからコアタイプとウイングを見つける診断です。'));
       const card = el('section', 'card');
       card.append(el('h2', '', '回答方法'));
-      card.append(el('p', '', '各シーンには、異なる心の動機を表す4つの選択肢があります。「最も本音に近いもの」を1位、「次に近いもの」を2位として、それぞれ1つ選んでください。'));
-      card.append(el('p', '', '見栄えのよい答えではなく、これまでの人生で無意識に繰り返してきた心の動きに近いものを選ぶのがコツです。'));
+      card.append(el('p', '', '各シーンの4つの心の声すべてについて、本音に近い度合いを5段階で個別に選びます。心の声同士を順位付けする必要はありません。すべて同じ回答にすることもできます。'));
+      card.append(el('p', '', '見栄えのよい答えではなく、これまでの人生で無意識に繰り返してきた心の動きに近いものを選ぶのがコツです。最後に、判定へ加算しない自己観察度3問があります。'));
       app.append(card);
       app.append(el('p', 'privacy', '回答内容はこの端末内で一時的に扱われ、サーバーには送信されません。結果の共有は任意です。'));
-      app.append(button(completeScenarioCount() > 0 ? '診断を続ける' : '診断を始める', 'primary', function () {
-        showScenario(undefined, true);
+      const hasProgress = completeMotiveCount() > 0 || completeSelfObservationCount() > 0;
+      app.append(button(hasProgress ? '診断を続ける' : '診断を始める', 'primary', function () {
+        if (state.currentScenario === SCENARIOS.length) showSelfObservation(undefined, true);
+        else showScenario(undefined, true);
       }));
       if (shouldScrollTop) scrollPageTop();
     }
 
-    function rankLabel(optionId) {
-      return optionId ? '選択肢' + optionId : '未選択';
+    function renderRatingActions(options, selectedValue, onSelect, ariaPrefix) {
+      const actions = el('div', 'rating-actions');
+      options.forEach(function (option) {
+        const ratingButton = button(option.label, 'rating-button', function () { onSelect(option.value); });
+        ratingButton.setAttribute('aria-pressed', String(selectedValue === option.value));
+        ratingButton.setAttribute('aria-label', ariaPrefix + '：' + option.label);
+        actions.append(ratingButton);
+      });
+      return actions;
     }
 
     function showScenario(errorMessage, shouldScrollTop) {
       clearApp();
       const scenario = SCENARIOS[state.currentScenario];
-      const selection = state.rankings[scenario.id] || { first:null, second:null };
-      const completed = completeScenarioCount();
+      const scenarioRatings = state.ratings[scenario.id] || {};
+      const answeredInScenario = scenario.options.filter(function (option) {
+        return isRatingValue(scenarioRatings[option.id]);
+      }).length;
       const progressHead = el('div', 'progress-head');
       progressHead.append(el('span', '', 'シナリオ ' + (state.currentScenario + 1) + ' / ' + SCENARIOS.length));
-      progressHead.append(el('span', '', '回答済み ' + completed + ' / ' + SCENARIOS.length));
+      progressHead.append(el('span', '', '回答済み ' + completeMotiveCount() + ' / 36'));
       app.append(progressHead);
       const progress = el('div', 'progress');
       const progressBar = el('div');
-      progressBar.style.width = ((completed / SCENARIOS.length) * 100) + '%';
+      progressBar.style.width = ((completeMotiveCount() / 36) * 100) + '%';
       progress.append(progressBar);
       app.append(progress);
       const card = el('section', 'card scenario-card');
       card.append(el('p', 'scenario-number', 'シナリオ ' + (state.currentScenario + 1)));
       card.append(el('h1', '', scenario.title));
       card.append(el('p', 'scenario-prompt', scenario.prompt));
-      card.append(el('div', 'selection-summary', '1位：' + rankLabel(selection.first) + '　／　2位：' + rankLabel(selection.second)));
+      card.append(el('div', 'answer-summary', 'このシーンの回答：' + answeredInScenario + ' / 4'));
       if (errorMessage) card.append(showError(errorMessage));
       const list = el('div', 'option-list');
       scenario.options.forEach(function (option) {
         const optionCard = el('article', 'motive-option');
-        if (selection.first === option.id) optionCard.classList.add('selected-first');
-        if (selection.second === option.id) optionCard.classList.add('selected-second');
-        optionCard.append(el('div', 'option-label', '選択肢 ' + option.id));
+        if (isRatingValue(scenarioRatings[option.id])) optionCard.classList.add('answered');
+        optionCard.append(el('div', 'option-label', '心の声 ' + option.id));
         optionCard.append(el('p', 'option-text', option.text));
-        const rankActions = el('div', 'rank-actions');
-        const firstButton = button('1位に選ぶ', 'rank-button first', function () {
-          selectScenarioRank(scenario.id, option.id, 'first');
-        });
-        firstButton.setAttribute('aria-pressed', String(selection.first === option.id));
-        firstButton.setAttribute('aria-label', '選択肢' + option.id + 'を1位に選ぶ');
-        const secondButton = button('2位に選ぶ', 'rank-button second', function () {
-          selectScenarioRank(scenario.id, option.id, 'second');
-        });
-        secondButton.setAttribute('aria-pressed', String(selection.second === option.id));
-        secondButton.setAttribute('aria-label', '選択肢' + option.id + 'を2位に選ぶ');
-        rankActions.append(firstButton, secondButton);
-        optionCard.append(rankActions);
+        optionCard.append(renderRatingActions(
+          RATING_OPTIONS,
+          scenarioRatings[option.id],
+          function (value) { selectScenarioRating(scenario.id, option.id, value); },
+          '心の声' + option.id
+        ));
         list.append(optionCard);
       });
       card.append(list);
@@ -801,49 +583,37 @@
           showScenario(undefined, true);
         }));
       }
-      const isLast = state.currentScenario === SCENARIOS.length - 1;
-      actions.append(button(isLast ? '診断結果を見る' : '次へ', 'primary', function () {
-        proceedScenario(isLast);
-      }));
+      actions.append(button(state.currentScenario === SCENARIOS.length - 1 ? '自己観察度の質問へ' : '次へ', 'primary', proceedScenario));
       app.append(actions);
       if (shouldScrollTop) scrollPageTop();
     }
 
-    function selectScenarioRank(scenarioId, optionId, rank) {
-      const selection = state.rankings[scenarioId] || { first:null, second:null };
-      if (rank === 'first') {
-        if (selection.second === optionId) {
-          const previousFirst = selection.first;
-          selection.first = optionId;
-          selection.second = previousFirst && previousFirst !== optionId ? previousFirst : null;
-        } else {
-          selection.first = optionId;
-        }
-      } else if (selection.first === optionId) {
-        const previousSecond = selection.second;
-        selection.second = optionId;
-        selection.first = previousSecond && previousSecond !== optionId ? previousSecond : null;
-      } else {
-        selection.second = optionId;
-      }
-      state.rankings[scenarioId] = selection;
+    function selectScenarioRating(scenarioId, optionId, value) {
+      if (!isRatingValue(value)) return;
+      if (!state.ratings[scenarioId]) state.ratings[scenarioId] = {};
+      state.ratings[scenarioId][optionId] = value;
       saveScenarioState();
       showScenario(undefined, false);
     }
 
-    function proceedScenario(isLast) {
+    function proceedScenario() {
       const scenario = SCENARIOS[state.currentScenario];
-      const selection = state.rankings[scenario.id];
-      if (!selection || !selection.first || !selection.second || selection.first === selection.second) {
-        showScenario('1位と2位に、異なる選択肢を1つずつ選んでください。', false);
+      const scenarioRatings = state.ratings[scenario.id] || {};
+      const missing = scenario.options.filter(function (option) {
+        return !isRatingValue(scenarioRatings[option.id]);
+      });
+      if (missing.length) {
+        showScenario('未回答の心の声が ' + missing.length + ' 件あります。4つすべてを評価してください。', false);
         return;
       }
-      if (isLast) {
+      if (state.currentScenario === SCENARIOS.length - 1) {
         if (completeScenarioCount() !== SCENARIOS.length) {
-          showScenario('未回答のシナリオがあります。すべてのシナリオで1位と2位を選んでください。', false);
+          showScenario('未回答のシナリオがあります。全36件の心の声を評価してください。', false);
           return;
         }
-        showScenarioResults(calculateScenarioDiagnosis(state.rankings));
+        state.currentScenario = SCENARIOS.length;
+        saveScenarioState();
+        showSelfObservation(undefined, true);
       } else {
         state.currentScenario += 1;
         saveScenarioState();
@@ -851,19 +621,73 @@
       }
     }
 
-    function calculateScenarioDiagnosis(rankings) {
+    function showSelfObservation(errorMessage, shouldScrollTop) {
+      clearApp();
+      const answered = completeSelfObservationCount();
+      const progressHead = el('div', 'progress-head');
+      progressHead.append(el('span', '', '自己観察度 / 最終ステップ'));
+      progressHead.append(el('span', '', '回答済み ' + answered + ' / 3'));
+      app.append(progressHead);
+      const progress = el('div', 'progress');
+      const progressBar = el('div');
+      progressBar.style.width = (((36 + answered) / 39) * 100) + '%';
+      progress.append(progressBar);
+      app.append(progress);
+      const card = el('section', 'card self-observation-card');
+      card.append(el('h1', '', '自己観察度の質問'));
+      card.append(el('p', '', 'この3問は「心のギプスを外す準備ができているか」を振り返る別枠指標です。コアタイプとウイングの得点には加算しません。'));
+      card.append(el('div', 'answer-summary', '回答：' + answered + ' / 3'));
+      if (errorMessage) card.append(showError(errorMessage));
+      SELF_OBSERVATION_QUESTIONS.forEach(function (question, index) {
+        const questionCard = el('section', 'self-question');
+        if (isRatingValue(state.selfObservationAnswers[question.id])) questionCard.classList.add('answered');
+        questionCard.append(el('div', 'option-label', '質問 ' + (index + 37)));
+        questionCard.append(el('p', 'option-text', question.text));
+        questionCard.append(renderRatingActions(
+          SELF_OBSERVATION_OPTIONS,
+          state.selfObservationAnswers[question.id],
+          function (value) {
+            state.selfObservationAnswers[question.id] = value;
+            saveScenarioState();
+            showSelfObservation(undefined, false);
+          },
+          '質問' + (index + 37)
+        ));
+        card.append(questionCard);
+      });
+      app.append(card);
+      const actions = el('div', 'actions');
+      actions.append(button('戻る', 'secondary', function () {
+        state.currentScenario = SCENARIOS.length - 1;
+        saveScenarioState();
+        showScenario(undefined, true);
+      }));
+      actions.append(button('診断結果を見る', 'primary', function () {
+        if (completeSelfObservationCount() !== SELF_OBSERVATION_QUESTIONS.length) {
+          showSelfObservation('未回答の質問があります。3問すべてに回答してください。', false);
+          return;
+        }
+        showScenarioResults(calculateScenarioDiagnosis(state.ratings, state.selfObservationAnswers));
+      }));
+      app.append(actions);
+      if (shouldScrollTop) scrollPageTop();
+    }
+
+    function calculateScenarioDiagnosis(ratings, selfObservationAnswers) {
       const scores = { 1:0, 2:0, 3:0, 4:0, 5:0, 6:0, 7:0, 8:0, 9:0 };
       SCENARIOS.forEach(function (scenario) {
-        const selection = rankings[scenario.id];
-        if (!selection || !selection.first || !selection.second || selection.first === selection.second ||
-            !optionExists(scenario, selection.first) || !optionExists(scenario, selection.second)) {
-          throw new Error('未回答または不正な順位があるため診断できません。');
-        }
-        const first = scenario.options.find(function (option) { return option.id === selection.first; });
-        const second = scenario.options.find(function (option) { return option.id === selection.second; });
-        scores[first.typeId] += FIRST_SCORE;
-        scores[second.typeId] += SECOND_SCORE;
+        const scenarioRatings = ratings[scenario.id] || {};
+        scenario.options.forEach(function (option) {
+          const rating = scenarioRatings[option.id];
+          if (!isRatingValue(rating)) throw new Error('未回答の心の声があるため診断できません。');
+          scores[option.typeId] += RATING_SCORE_MAP[rating];
+        });
       });
+      const selfObservationScore = SELF_OBSERVATION_QUESTIONS.reduce(function (total, question) {
+        const rating = selfObservationAnswers[question.id];
+        if (!isRatingValue(rating)) throw new Error('自己観察度に未回答があるため診断できません。');
+        return total + RATING_SCORE_MAP[rating];
+      }, 0);
       const topScore = Math.max.apply(null, Object.values(scores));
       const topTypes = Object.keys(scores).map(Number).filter(function (typeId) {
         return scores[typeId] === topScore;
@@ -873,7 +697,8 @@
         scores: scores,
         topScore: topScore,
         topTypes: topTypes,
-        rankings: rankings,
+        ratings: ratings,
+        selfObservationScore: selfObservationScore,
         wingResults: topTypes.map(function (coreType) { return determineScenarioWing(coreType, scores); })
       };
     }
@@ -897,19 +722,22 @@
       };
     }
 
+    function ratingOption(value) {
+      return RATING_OPTIONS.find(function (option) { return option.value === value; });
+    }
+
     function renderScenarioReview(result) {
       const section = el('section', 'card scenario-review');
-      section.append(el('h2', '', '選んだ動機の振り返り'));
-      section.append(el('p', '', '診断中は伏せていたタイプ対応を、ここで確認できます。行動が同じでも、内側の動機がどこに向いていたかを振り返ってください。'));
+      section.append(el('h2', '', '評価した動機の振り返り'));
+      section.append(el('p', '', '診断中は伏せていたタイプ対応と内部得点を、ここで確認できます。それぞれの動機が自分の中でどの程度働いていたかを振り返ってください。'));
       SCENARIOS.forEach(function (scenario, index) {
-        const selection = result.rankings[scenario.id];
-        const first = scenario.options.find(function (option) { return option.id === selection.first; });
-        const second = scenario.options.find(function (option) { return option.id === selection.second; });
         const block = el('section', 'section-card');
         block.append(el('h3', '', 'シナリオ' + (index + 1) + '：' + scenario.title));
-        const list = el('ol');
-        list.append(el('li', '', '1位：タイプ' + first.typeId + ' — ' + first.text));
-        list.append(el('li', '', '2位：タイプ' + second.typeId + ' — ' + second.text));
+        const list = el('ul');
+        scenario.options.forEach(function (option) {
+          const rating = ratingOption(result.ratings[scenario.id][option.id]);
+          list.append(el('li', '', 'タイプ' + option.typeId + '・' + rating.label + '（' + rating.score + '点）— ' + option.text));
+        });
         block.append(list);
         section.append(block);
       });
@@ -930,12 +758,21 @@
       }
       result.wingResults.forEach(function (wingResult) { app.append(renderWingSummary(wingResult)); });
       app.append(renderRadarSection(result));
+      app.append(renderSelfObservation(result.selfObservationScore));
       app.append(renderScenarioReview(result));
-      app.append(el('p', 'notice', 'この結果は、9つのシナリオで選んだ動機から見える傾向の一つです。人を固定的な型として扱うものではありません。'));
+      app.append(el('p', 'notice', 'この結果は、36の動機を独立して評価した回答から見える傾向の一つです。人を固定的な型として扱うものではありません。'));
       app.append(renderAllTypeDetails(result));
       app.append(renderClosingMessage());
       app.append(button('もう一度診断する', 'primary', restartScenario));
       scrollPageTop();
+    }
+
+    function renderSelfObservation(score) {
+      const section = el('section', 'card');
+      section.append(el('h2', '', '自己観察度'));
+      section.append(el('p', 'lead', score + ' / ' + MAX_SELF_OBSERVATION_SCORE + '点'));
+      section.append(el('p', '', '自分の自動的な防衛反応や「今、ここ」への意識を、どの程度自覚しているかを表す別枠指標です。コアタイプとウイングの判定には加算していません。'));
+      return section;
     }
 
     function polarPoint(typeId, factor, radius) {
@@ -960,8 +797,8 @@
         'aria-labelledby': 'radar-title radar-description'
       });
       svg.append(svgEl('title', { id: 'radar-title' }, '9タイプの得点レーダーチャート'));
-      svg.append(svgEl('desc', { id: 'radar-description' }, '各タイプ0点から12点までのシナリオ得点を9本の軸で比較します。'));
-      for (let level = 3; level <= MAX_TYPE_SCORE; level += 3) {
+      svg.append(svgEl('desc', { id: 'radar-description' }, '各タイプ0点から16点までの独立評価得点を9本の軸で比較します。'));
+      for (const level of [4, 8, 12, 16]) {
         const gridPoints = [];
         for (let typeId = 1; typeId <= 9; typeId += 1) {
           gridPoints.push(polarPoint(typeId, level / MAX_TYPE_SCORE, 168));
@@ -1028,7 +865,7 @@
     function renderRadarSection(result) {
       const section = el('section', 'card result-overview');
       section.append(el('h2', '', '9タイプの得点バランス'));
-      section.append(el('p', 'chart-help', '9本の軸はタイプ1〜9、外側ほど得点が高く、目盛りの上限は12点です。下のタイプを押すと、その解説へ移動します。'));
+      section.append(el('p', 'chart-help', '9本の軸はタイプ1〜9、外側ほど得点が高く、目盛りの上限は16点です。下のタイプを押すと、その解説へ移動します。'));
       const wrap = el('div', 'radar-wrap');
       wrap.append(renderRadarChart(result));
       section.append(wrap);
@@ -1125,17 +962,6 @@
       return section;
     }
 
-    function restart() {
-      state = { currentStep: 0, answers: {} };
-      try {
-        sessionStorage.removeItem(STORAGE_KEY);
-        LEGACY_STORAGE_KEYS.forEach(function (key) { sessionStorage.removeItem(key); });
-      } catch (_) {
-        // 保存不可の場合も開始画面へ戻します。
-      }
-      showStart(true);
-    }
-
     function restartScenario() {
       state = emptyScenarioState();
       try {
@@ -1159,3 +985,4 @@
   </script>
 </body>
 </html>
+
