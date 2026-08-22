@@ -1,0 +1,1022 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+  <title>エニアグラム・タイプ診断</title>
+  <style>
+    :root { --ink:#2c2924; --muted:#6c655c; --paper:#fbf7ef; --panel:#fffdf8; --line:#d9cfc1; --accent:#5c7160; --accent-soft:#e7eee7; --warn:#7e452d; --warn-soft:#f9ece5; --focus:#1f5b8f; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--paper); color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif; font-size:16px; line-height:1.7; }
+    button { font:inherit; cursor:pointer; }
+    button:focus-visible { outline:3px solid var(--focus); outline-offset:3px; }
+    .app { width:100%; max-width:860px; margin:0 auto; padding:24px 16px 48px; }
+    .brand { display:flex; justify-content:space-between; align-items:center; gap:12px; border-bottom:1px solid var(--line); padding-bottom:12px; }
+    .brand-name { font-size:14px; letter-spacing:.04em; color:var(--muted); }
+    .version { margin:0; font-size:12px; color:var(--muted); white-space:nowrap; }
+    .screen { margin-top:28px; }
+    h1,h2,h3 { line-height:1.35; }
+    h1 { font-size:30px; margin:0 0 12px; }
+    h2 { font-size:24px; margin:0 0 14px; }
+    h3 { font-size:18px; margin:0; }
+    p { margin:0 0 16px; }
+    .lead { font-size:18px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:20px; margin:16px 0; box-shadow:0 2px 10px rgba(57,43,27,.04); }
+    .notice { background:#f4f0e8; border-left:4px solid #a48458; padding:14px 16px; margin:20px 0; }
+    .privacy { color:var(--muted); font-size:14px; }
+    .primary,.secondary,.answer { min-height:48px; border-radius:10px; border:2px solid transparent; padding:10px 18px; font-weight:700; }
+    .primary { color:#fff; background:var(--accent); width:100%; }
+    .primary:hover { background:#465c4b; }
+    .secondary { color:var(--ink); background:#fff; border-color:var(--line); }
+    .actions { display:flex; gap:12px; justify-content:space-between; margin-top:24px; }
+    .actions .primary { width:auto; margin-left:auto; }
+    .progress-head { display:flex; justify-content:space-between; align-items:baseline; gap:12px; color:var(--muted); font-size:14px; }
+    .progress { height:8px; background:#e9e1d6; border-radius:999px; overflow:hidden; margin:8px 0 24px; }
+    .progress > div { height:100%; background:var(--accent); transition:width .2s ease; }
+    .question-list { display:grid; gap:16px; }
+    fieldset { border:1px solid var(--line); border-radius:12px; padding:16px; margin:0; background:var(--panel); }
+    legend { padding:0 6px; font-weight:700; }
+    .question-text { margin:0 0 14px; }
+    .answer-row { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+    .answer { color:var(--ink); background:#fff; border-color:var(--line); min-height:58px; padding:8px 10px; }
+    .answer[aria-pressed="true"] { background:var(--accent-soft); border-color:var(--accent); color:#213e28; box-shadow:inset 0 0 0 1px var(--accent); }
+    .error { color:#732c22; background:var(--warn-soft); border-left:4px solid var(--warn); padding:12px 14px; margin:16px 0; }
+    .hidden { display:none !important; }
+    .radar-wrap { width:100%; max-width:560px; margin:0 auto; }
+    .radar-svg { display:block; width:100%; height:auto; overflow:visible; }
+    .radar-grid { fill:none; stroke:#d9cfc1; stroke-width:1; }
+    .radar-grid-outer { stroke:#a99b87; stroke-width:1.5; }
+    .radar-axis { stroke:#d9cfc1; stroke-width:1; }
+    .radar-area { fill:rgba(92,113,96,.30); stroke:#4d6953; stroke-width:3; }
+    .radar-dot { fill:#fff; stroke:#4d6953; stroke-width:3; }
+    .radar-dot-top { fill:#4d6953; }
+    .radar-label { fill:#504940; font-size:15px; font-weight:700; text-anchor:middle; dominant-baseline:middle; cursor:pointer; }
+    .radar-label:hover,.radar-label:focus { fill:var(--focus); text-decoration:underline; outline:none; }
+    .radar-label-top { fill:#214b2b; font-size:17px; }
+    .chart-help { color:var(--muted); font-size:14px; }
+    .score-nav { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:16px; }
+    .score-button { min-height:46px; padding:9px 12px; border:1px solid var(--line); border-radius:9px; background:#fff; color:var(--ink); text-align:left; font-weight:700; }
+    .score-button:hover { border-color:var(--accent); background:#f5f8f4; }
+    .score-button.top { border:2px solid var(--accent); background:var(--accent-soft); color:#214b2b; }
+    .self-observation { border-top:5px solid #8b6f98; }
+    .observation-score { font-size:28px; font-weight:800; color:#5d3e6b; margin-bottom:8px; }
+    .type-details { margin:28px 0; }
+    .type-detail { border:1px solid var(--line); border-radius:12px; background:var(--panel); margin:10px 0; overflow:hidden; scroll-margin-top:16px; }
+    .type-detail summary { padding:15px 18px; font-weight:800; cursor:pointer; background:#f8f3ea; }
+    .type-detail summary:focus-visible { outline:3px solid var(--focus); outline-offset:-3px; }
+    .type-detail[open] summary { border-bottom:1px solid var(--line); }
+    .type-detail-body { padding:18px; }
+    .type-illustration { margin:8px auto 20px; max-width:420px; text-align:center; }
+    .illustration-svg { display:block; width:100%; height:auto; border-radius:16px; }
+    .illustration-caption { margin-top:8px; color:var(--muted); font-size:14px; font-weight:700; }
+    .closing-message { border-top:5px solid var(--accent); }
+    .subtitle { color:var(--muted); margin-top:-8px; }
+    .section-card { border-left:4px solid #b5a78f; padding:14px 16px; background:#fffdf9; margin:14px 0; }
+    .runaway { border-left-color:var(--warn); background:#fff9f5; }
+    .runaway-step { border:1px solid #e6cdbf; border-radius:10px; padding:14px; margin-top:12px; background:#fff; }
+    .runaway-step h3 { color:#6d3a28; }
+    .healing { border-left-color:var(--accent); background:#f3f8f2; }
+    .healing strong { display:block; margin-bottom:10px; }
+    .disclaimer { font-size:14px; color:var(--muted); }
+    @media (max-width:520px) {
+      h1 { font-size:26px; }
+      .answer-row { gap:6px; }
+      .answer { font-size:13px; padding:7px 5px; }
+      .score-nav { grid-template-columns:1fr; }
+      .radar-label { font-size:14px; }
+      .radar-label-top { font-size:15px; }
+    }
+    @media (prefers-reduced-motion: reduce) { *,*::before,*::after { scroll-behavior:auto !important; transition:none !important; animation:none !important; } }
+  </style>
+</head>
+<body>
+  <script>
+    // GASの表示倍率固定に備え、実際の画面幅を基準に縮小補正します。
+    (function fixScale() {
+      var iw = window.innerWidth;
+      var sw = window.screen.width;
+      if (sw > 0 && sw < iw) {
+        var zoom = iw / sw;
+        document.body.style.zoom = zoom;
+        document.body.style.width = sw + 'px';
+        document.body.style.maxWidth = sw + 'px';
+        document.body.style.overflowX = 'hidden';
+      }
+    })();
+  </script>
+  <main class="app">
+    <header class="brand"><span class="brand-name">社内研修・自己理解用</span><p class="version" id="app-version"></p></header>
+    <div id="app" class="screen" aria-live="polite"></div>
+  </main>
+
+  <script id="app-data" type="application/json">
+{
+  "questions": [
+    {
+      "id": "Q1",
+      "typeId": 1,
+      "category": "type",
+      "sourceOrder": 1,
+      "text": "自分の個人的な感情や好みを脇に置き、「何をするのが最善か」を客観的に見極めようとすることが多い。"
+    },
+    {
+      "id": "Q2",
+      "typeId": 1,
+      "category": "type",
+      "sourceOrder": 2,
+      "text": "「自分がやらなければ誰もやらない（私が正さなければならない）」という強い責任感から、状況をコントロールしようと必死になりがちだ。"
+    },
+    {
+      "id": "Q3",
+      "typeId": 1,
+      "category": "type",
+      "sourceOrder": 3,
+      "text": "「もしかしたら、他の人にもっといい考えがあるかもしれない」と他者のやり方に委ねることが難しく、自分のやり方で正したくなる。"
+    },
+    {
+      "id": "Q4",
+      "typeId": 2,
+      "category": "type",
+      "sourceOrder": 4,
+      "text": "見返りを期待せず、他者が本当に必要としているものを見抜いてサポートすることに喜びを感じる。"
+    },
+    {
+      "id": "Q5",
+      "typeId": 2,
+      "category": "type",
+      "sourceOrder": 5,
+      "text": "自分のニーズを後回しにしてでも、相手を取り込むために過剰に人の世話を焼いてしまうことがある。"
+    },
+    {
+      "id": "Q6",
+      "typeId": 2,
+      "category": "type",
+      "sourceOrder": 6,
+      "text": "自分が誰かを助けて必要不可欠な存在にならなければ、自分の居場所や安全がないように感じることがある。"
+    },
+    {
+      "id": "Q7",
+      "typeId": 3,
+      "category": "type",
+      "sourceOrder": 7,
+      "text": "人からの評価や「成功したイメージ」を手放すのが怖く、ありのままの自分でいることが難しいと感じる。"
+    },
+    {
+      "id": "Q8",
+      "typeId": 3,
+      "category": "type",
+      "sourceOrder": 8,
+      "text": "成功や関心を得るために自分を強く駆り立て、目標達成やイメージ作りに没頭してしまう。"
+    },
+    {
+      "id": "Q9",
+      "typeId": 3,
+      "category": "type",
+      "sourceOrder": 9,
+      "text": "「もしかしたら、自分についての周りの意見や評価は、そんなに重要ではないかもしれない」と割り切るのが苦手だ。"
+    },
+    {
+      "id": "Q10",
+      "typeId": 4,
+      "category": "type",
+      "sourceOrder": 10,
+      "text": "人間の心の暗闇や苦しみ、悲しみを恐れずに直視し、それらを芸術や表現など「価値あるもの」に変えたいと思う。"
+    },
+    {
+      "id": "Q11",
+      "typeId": 4,
+      "category": "type",
+      "sourceOrder": 11,
+      "text": "想像力を通じて寂しさや切なさなどの特定の感情をあえて強め、空想や感情の世界に浸り込んでしまうことがある。"
+    },
+    {
+      "id": "Q12",
+      "typeId": 4,
+      "category": "type",
+      "sourceOrder": 12,
+      "text": "自分が周囲の人々から「本当の意味で理解されていない」という孤独感や、平凡な存在に埋もれる恐怖を強く感じる。"
+    },
+    {
+      "id": "Q13",
+      "typeId": 5,
+      "category": "type",
+      "sourceOrder": 13,
+      "text": "特定の考え方に執着せず、偏見のない心で物事の全体像や隠れた構造を明晰に理解するのが得意だ。"
+    },
+    {
+      "id": "Q14",
+      "typeId": 5,
+      "category": "type",
+      "sourceOrder": 14,
+      "text": "現実に行動を起こす前に、「もっと知識や準備が必要だ」と感じて、情報を集めるために頭の中に引きこもりがちだ。"
+    },
+    {
+      "id": "Q15",
+      "typeId": 5,
+      "category": "type",
+      "sourceOrder": 15,
+      "text": "他人と関わることで、自分の時間やエネルギーが奪われて圧倒されてしまうのではないかという不安がある。"
+    },
+    {
+      "id": "Q16",
+      "typeId": 6,
+      "category": "type",
+      "sourceOrder": 16,
+      "text": "リスクや脅威、隠れた問題をいち早く察知し、トラブルを未然に防ぐことが得意である。"
+    },
+    {
+      "id": "Q17",
+      "typeId": 6,
+      "category": "type",
+      "sourceOrder": 17,
+      "text": "「自分一人では決められない、確かな保証が欲しい」と感じて、決断を疑い、外のルールや他人の意見に依存してしまう。"
+    },
+    {
+      "id": "Q18",
+      "typeId": 6,
+      "category": "type",
+      "sourceOrder": 18,
+      "text": "「もしかしたら、起こり得るすべての問題をあらかじめ予測しなくても大丈夫かもしれない」と考えるのが難しい。"
+    },
+    {
+      "id": "Q19",
+      "typeId": 7,
+      "category": "type",
+      "sourceOrder": 19,
+      "text": "人生を無条件に肯定し、ありふれた日常の中にも純粋な喜びや驚きを見出し、周囲に活力を与えることができる。"
+    },
+    {
+      "id": "Q20",
+      "typeId": 7,
+      "category": "type",
+      "sourceOrder": 20,
+      "text": "今の状況にすぐ不満を感じて、退屈を避けるために次の楽しい予定や新しい刺激で頭をいっぱいにしがちだ。"
+    },
+    {
+      "id": "Q21",
+      "typeId": 7,
+      "category": "type",
+      "sourceOrder": 21,
+      "text": "幸福や新しい体験を次々と求めすぎるあまり、一つの体験を深く味わう前に別のことに手を出してとっ散らかることが多い。"
+    },
+    {
+      "id": "Q22",
+      "typeId": 8,
+      "category": "type",
+      "sourceOrder": 22,
+      "text": "自分の活力や意志の力を、自己の利益や支配のためではなく、弱い者を守りサポートするために使いたい。"
+    },
+    {
+      "id": "Q23",
+      "typeId": 8,
+      "category": "type",
+      "sourceOrder": 23,
+      "text": "世界と闘わなければならないと感じ、「力で状況をねじ伏せ、自分の手でものにしなければならない」と思う。"
+    },
+    {
+      "id": "Q24",
+      "typeId": 8,
+      "category": "type",
+      "sourceOrder": 24,
+      "text": "他人にコントロールされたり、自分の弱みを見せたりすることへの強い警戒感や恐れがある。"
+    },
+    {
+      "id": "Q25",
+      "typeId": 9,
+      "category": "type",
+      "sourceOrder": 25,
+      "text": "葛藤を抱える人々の間に入って、双方の意見を受け入れながら、深い安心感や調和をもたらすのが得意だ。"
+    },
+    {
+      "id": "Q26",
+      "typeId": 9,
+      "category": "type",
+      "sourceOrder": 26,
+      "text": "衝突や面倒なことを避けるために、表面的に周囲に合わせ、自分の本当の欲求を軽視してしまいやすい。"
+    },
+    {
+      "id": "Q27",
+      "typeId": 9,
+      "category": "type",
+      "sourceOrder": 27,
+      "text": "内面の平穏をかき乱されることを極度に恐れ、問題解決を先延ばしにしたり、頑固に無視したりすることがある。"
+    },
+    {
+      "id": "Q28",
+      "typeId": null,
+      "category": "selfObservation",
+      "sourceOrder": 28,
+      "text": "自分の今の性格やよくある行動パターンは、子ども時代の自分を守るための「ギプス（心の鎧）」のように感じることがある。"
+    },
+    {
+      "id": "Q29",
+      "typeId": null,
+      "category": "selfObservation",
+      "sourceOrder": 29,
+      "text": "頭の中で「こうすべきだ」「こうしなければ愛されない・安全ではない」と絶えず自分を縛る「内なる厳しい声（超自我）」が聞こえる。"
+    },
+    {
+      "id": "Q30",
+      "typeId": null,
+      "category": "selfObservation",
+      "sourceOrder": 30,
+      "text": "過去の後悔や未来の不安に引きずられがちで、ただ「今、ここ」の瞬間にリラックスして留まることが難しい。"
+    }
+  ],
+  "typeResults": {
+    "1": {
+      "typeId": 1,
+      "nameJa": "改革する人",
+      "nameEn": "The Reformer",
+      "subtitle": "曇りのない「見きわめ」の力と、真理の体現者",
+      "essence": "並外れた判断力と知恵（叡智）を持っています。単に善悪のルールで裁くのではなく、個人的な感情や好みを完全に脇に置き、目の前の現実をあるがままに受け入れた上で「いかなる状況にあっても、何をするのが最善か」を正確に見きわめる卓越した客観性を発揮します。自分の理想や考えを他者に無理に押し付けようとはせず、自らが「真理の証人（手本）」として誠実に生き、その崇高で理にかなった姿を見せることで、周囲の人々に「より良く生きる方法」を深く教え導くことができます。",
+      "warningSignal": "「私がやらなければ誰もやらない（私が正さなければならない）」という、強い個人的責任感を感じ、状況をコントロールして正そうと必死になり始めたときは、心のギプス（性格の防衛）に囚われ始めている警告サインです。",
+      "innerCommand": "「常に正しくあれ。いかなる間違いも犯してはならない。堕落するな、手をもぎ取られても義務を果たせ」",
+      "tragedy": "「完璧さ」や「正しさ」という自分の強みに過剰に執着するあまり、自分や他人の些細な間違い、プロセスの非効率さが許せなくなります。怒りを抱えながら「私がすべてを正さなければ」と状況をコントロールしようとし続けた結果、周囲は息苦しさを感じて反発し、離れていきます。その結果、最も恐れていた「不和と混乱（悪にまみれた状況）」を、自らの完璧主義によって引き寄せてしまいます。",
+      "healing": "「もしかしたら、ほかの人にもっといい考えがあるかもしれない」と、自分のやり方へのこだわりを緩め、他者に委ねてみる。"
+    },
+    "2": {
+      "typeId": 2,
+      "nameJa": "助ける人",
+      "nameEn": "The Helper",
+      "subtitle": "無条件の愛と、人の可能性を花開かせる力",
+      "essence": "見返りをいっさい期待せずに、自分自身に対しても他者に対しても「無条件の愛」を与えることができます。エゴや私心がまったくないため、他者が心の奥底で本当に必要としているものをはっきりと見抜き、それを的確に提供することができます。また、人々が自分自身でも気づいていないような長所や肯定的な資質を見つけ出し、温かく励まし育てる「親のような極めて慈悲深い役目」を果たします。自らの善行をアピールすることなく、他者の幸せと成長を自分のことのように無条件に喜べる存在です。",
+      "warningSignal": "「人のところへ出向いていかなければ（私が誰かを助けなければ居場所がない）」と感じ、自分のニーズを完全に後回しにして、他者の世話を焼き始めたときは警告サインです。",
+      "innerCommand": "「優しく、思いやり深くあれ。常に人を助け、他人のために自分を犠牲にせよ。自分の欲しいものを求めてはならない」",
+      "tragedy": "「他者を助けて必要とされる存在になれば、愛される」という思い込みから、相手を取り込むために過剰におせっかいを焼き、頼まれてもいない世話を押し付けます。その裏で、自分の本当の欲求を抑圧しているため、ストレスが高まると「鉛の法則」が発動し、「こんなにやってあげたのに！」という怒りや支配的な態度（最もされて嫌なこと）を他者に向けてしまいます。その結果、相手から煙たがられて拒絶され、最も恐れていた「誰からも愛されず、見捨てられる」という結末を自ら招きます。",
+      "healing": "「他者に与えるのと同じ温かい愛を、まず自分自身に向けてもいい。私はただ存在しているだけで、愛される価値がある」と信じ、自分の限界と欲求を素直に受け入れる。"
+    },
+    "3": {
+      "typeId": 3,
+      "nameJa": "達成する人",
+      "nameEn": "The Achiever",
+      "subtitle": "本物の価値の「体現」と、人々の意欲を引き出す力",
+      "essence": "人からの評価や地位、目に見える「成功したイメージ」への執着を完全に手放し、自分のありのままの限界を受け入れた上で「真正な自己（飾らない素の自分）」で世界と関わることができます。社会的に価値のある素晴らしい資質を自らの生き方で体現する、まさに「人間の理想像」となります。自分自身の才能を最大限に発揮するだけでなく、周囲の人々が「自分にはできない」と思い込んでいた限界を突破し、最高の状態を達成できるよう、強力に意欲を引き出しインスピレーションを与える卓越した指導力を持ちます。",
+      "warningSignal": "「自分の価値を証明しなければ（結果を出さなければ誰も自分を認めない）」と焦り、成功や関心を得るために自分を駆り立て、地位の獲得や「イメージ作り」に没頭し始めたときは警告サインです。",
+      "innerCommand": "「有能であれ。常に勝者であれ。価値ある成果を出し続け、人から賞賛されなければならない。感情や弱さは邪魔だ」",
+      "tragedy": "成功や価値あるイメージに執着するあまり、中身（実質）を伴わない「いかに成功しているように見せるか」という虚飾（仮面のメンテナンス）に必死になります。自分の内面の本当の感情を麻痺させ、時にもっともらしい嘘や誇張に手を染めた結果、周囲から「嘘くさい」「信用できない」と見透かされます。結果として、最も恐れていた「メッキが剥がれ、周囲から拒絶される」という結末を自らの手で引き寄せてしまいます。",
+      "healing": "「もしかしたら、私についての人の意見（評価）は、そんなに重要ではないかもしれない」とつぶやき、立ち止まって自分の本当の感情を感じる。"
+    },
+    "4": {
+      "typeId": 4,
+      "nameJa": "個性的な人",
+      "nameEn": "The Individualist",
+      "subtitle": "痛みを美に変える「創造性」と、深淵な直感力",
+      "essence": "人間の心の暗闇、苦しみ、悲しみ、そして自己の中にある矛盾を何一つ恐れることなく直視する勇気を持っています。自らのきわめて個人的で痛ましい経験のすべてを、普遍的な美や価値を持つ「何か価値あるもの（芸術、表現、言葉）」へと変容させる、驚異的な自己救済的・自己創造的な力を持っています。無意識や深い直感とつながっているため、他者には見えない人間性の深淵に触れることができ、他の人なら参ってしまうような困難な体験も深く消化し、静かな力で耐えながら、人々の心を根底から揺さぶり、感動させることができます。",
+      "warningSignal": "「この激しい感情を味わわなければ（退屈な現実に埋もれてはいけない）」と感じ、想像力を使って過去の傷や切ない気分をあえて強め、空想や感情の世界に引きこもり始めたときは警告サインです。",
+      "innerCommand": "「ユニークで、他とは違う存在であれ。自分自身の感情に常に忠実であれ。平凡で俗っぽいものに染まってはならない」",
+      "tragedy": "「自分が特別で繊細な人間であり続ければ、自分の存在意義を失わない」という防衛から、自らの傷や欠落感に執着します。「どうせ誰も私を理解してくれない」と殻に閉じこもり、「私は傷ついているから、特別扱いされて当然だ」という態度（鉛の法則による他者への甘えと攻撃）を周囲にぶつけます。その結果、周囲は疲れ果てて離れていき、最も恐れていた「誰からも理解されず、見捨てられて、孤立無援になる」という現実を自ら創り出してしまいます。",
+      "healing": "「私の感情は移ろいやすい天気のようなものであり、感情そのものが私という存在ではない。私は現実の世界と今すぐつながっていい」と、空想のベールを剥ぎ、今ここの現実に身を投じる。"
+    },
+    "5": {
+      "typeId": 5,
+      "nameJa": "調べる人",
+      "nameEn": "The Investigator",
+      "subtitle": "世界を見通す「明晰さ」と、革新的な発見を生む力",
+      "essence": "いかなる特定の先入観や視点にも執着しない、完全に偏見のない心（無執着）を持っています。これにより、物事の全体と細部、そして多様な対立する視点を同時に把握する並外れた理解力を持ちます。この極めて明晰な「内なる知」によって、複雑な現象の奥にある真の構造を読み解き、しばしば時代の先を行く先駆的な発見や、これまでにない全く新しい世界の見方を社会に提示し、人類に驚くべき知的発展や、歴史の流れを塗り替えるような天才的な革新をもたらす力を持っています。",
+      "warningSignal": "「現実に対処するためには、もっと多くの知識と完璧な準備が必要だ」と感じ、現実の世界からエネルギーを引いて、実際に行動する前に情報を集めようと頭の中に引きこもり始めたときは警告サインです。",
+      "innerCommand": "「賢く、有能であれ。すべてを頭で理解し、分析せよ。他人に依存したり、無防備に感情やエネルギーを奪われてはならない」",
+      "tragedy": "「世界の仕組みを理解し、自分のリソース（時間・エネルギー）を他者から守れば、圧倒されずに安全に生きられる」という防衛から、行動を起こすことや他者と関わることを拒絶します。知識の収集に埋没し、秘密主義になって孤立を深めた結果、実世界への適応力が失われます。その結果、最も恐れていた「実生活において、何も実行できない圧倒的に無能で無力な状態」に、自らを追い込んでしまいます。",
+      "healing": "「私には、今すぐこの世界に関わり、行動を起こすための十分な能力とリソースがすでに備わっている」と自分を信頼し、頭から身体（今、ここ）に意識を下ろす。"
+    },
+    "6": {
+      "typeId": 6,
+      "nameJa": "忠実な人",
+      "nameEn": "The Loyalist",
+      "subtitle": "真の「勇気」と、安全で強固なコミュニティを築く力",
+      "essence": "人生が本来持っている不確実性や不安から一切逃げることなく正面から向き合ったとき、自らの「内なる導き」に気づき、揺るぎない自己信頼と驚くべき勇気を発揮します。隠れたリスクや脅威を瞬時に察知し、未然に防ぐ生まれながらのトラブルシューターです。単に権力者に追従したり、自分が支配者になろうとするのではなく、多様な才能を持つ人々が、共通の利益と信頼のために力を合わせる「平等主義の精神」を育み、強固で安全な共同体（コミュニティ）を築き上げる力を持ちます。",
+      "warningSignal": "「自分一人では決められない。絶対に裏切らない確かな保証や、頼るべきルールが欲しい」と感じ、自分の決断を疑い、自分の外の権威やルールに依存し始めたときは警告サインです。",
+      "innerCommand": "「安全を確保せよ。他者の期待やルールに忠実であれ。常に最悪の事態を想定して警戒を解くな。自分を信じるな」",
+      "tragedy": "不安を打ち消し安全を確保する（強み）ために、周囲のあらゆる人を「裏切り者ではないか」と疑い、猜疑心むき出しで警戒します。自分の不安から周囲を問い詰め、他者に対して忠誠心を過剰にテストしたりするため、周囲は疲弊し、彼らを避けるようになります。結果として、最も恐れていた「本当に支えを失い、誰からも信用されず、完全に孤立して危険にさらされる」という状況を自ら招きます。",
+      "healing": "「もしかしたら、起こり得るあらゆる問題を予測（シミュレーション）しなくてもいいかもしれない」と頭の中の防衛の声を休め、深い呼吸とともに自分の内なる安全を感じる。"
+    },
+    "7": {
+      "typeId": 7,
+      "nameJa": "熱中する人",
+      "nameEn": "The Enthusiast",
+      "subtitle": "尽きない「喜び」の体現と、多様な経験を統合する力",
+      "essence": "人生を無条件に肯定し、日常の何気ない出来事や目の前の現実の中にも、計り知れない驚異や美しさを見出すことができる「忘我の感謝」の境地に達します。極めて機敏な頭脳と圧倒的な好奇心を持ち、多種多様な分野の知識やスキルを驚異的なスピードで習得します。それらを創造的に融合させることで、前例のない素晴らしい達成を生み出す「ルネサンス的教養人」となります。その純粋な生きる喜びと熱意は、周囲の人々に自然と伝染し、世界を明るい活力で満たします。",
+      "warningSignal": "「今の状況は退屈だ。もっといいものが他にあるはずだ」と目の前の現実に不満を抱き、次の楽しい予定や新しい刺激で頭をいっぱいにして焦り始めたときは警告サインです。",
+      "innerCommand": "「常に幸福であれ。人生を最大限楽しめ。退屈や痛み、ネガティブな感情を直視してはならない。動き続けよ」",
+      "tragedy": "「常に楽しい予定をキープしていれば、痛みや欠乏感に苦しむことはない」という防衛から、次から次へと新しい予定、プロジェクト、刺激を貪るように詰め込み、とっ散らかります。一つのことに深くコミットすることを避けて放り出し続けた結果、どの体験も表面的なままで終わり、心はいつまでも満たされません。結果として、最も避けたかった「焦燥感、そしてどれだけ手に入れても満たされない極限の欠乏感（苦痛）」の中に、自ら囚われることになります。",
+      "healing": "「今、この瞬間にある現実は、退屈や痛みも含めてすべて完璧に満ち足りている。私はここを離れる必要はない」と、未来への逃避を止め、今ここに深く留まる。"
+    },
+    "8": {
+      "typeId": 8,
+      "nameJa": "挑戦する人",
+      "nameEn": "The Challenger",
+      "subtitle": "他者を力づける「度量の大きさ」と、英雄的な実行力",
+      "essence": "内に秘めた絶大な活力と不屈の意志を、己の野心や支配のためではなく、より大きな善や弱き者を守るために使うとき、真に無私無欲な「圧倒的な度量の大きさ」を発揮します。他者が内に隠し持っている本来の力や可能性を一目で見抜き、彼らが自立して強くなれるよう、安全な環境（保護）を提供し、果敢な挑戦の機会を与える卓越したエンパワーメントの力を持ちます。困難な局面でも恐れることなく決断を下し、英雄的な偉業や建設的なプロジェクトを力強く成し遂げる、自然なリーダーです。",
+      "warningSignal": "「世界は敵対的だ。立ち向かって、自分の力で状況をねじ伏せ、自分の手でものにしなければコントロールされる」と感じ、世界と闘うように強がって力み始めたときは警告サインです。",
+      "innerCommand": "「強くあれ。誰にも主導権を渡すな。他人にコントロールされたり、弱みを見せたりしてはならない。力で支配せよ」",
+      "tragedy": "「自分が圧倒的な力を持ち、状況を支配していれば、誰からも傷つけられない」という防衛から、自分の「傷つきやすさ（弱さ）」を排除し、他者を力でねじ伏せようとします。その結果、周囲に「威圧的な支配者」としての恐怖や警戒心を与え、周囲を敵に回してしまいます。結果として、最も恐れていた「他者からの報復（攻撃）を受け、力によって引きずり下ろされて破滅する」という現実を自ら招きます。",
+      "healing": "「私の内側にある優しさや傷つきやすさは弱さではなく、人と真につながるための強さである。世界を力でねじ伏せる必要はない」と、握りしめた拳を開き、他者に心を開く。"
+    },
+    "9": {
+      "typeId": 9,
+      "nameJa": "平和をもたらす人",
+      "nameEn": "The Peacemaker",
+      "subtitle": "すべてを包み込む「受容」と、深い調和を生み出す力",
+      "essence": "他者と完全に一体化し、包み込むことができる、極めて豊かで温かい受容力を持っています。このため、周囲の人々に「自分はありのままでここにいていいんだ」という計り知れない安心感を与えます。善と悪、悲しみと喜びといった、一見対立する矛盾をそのまま受け入れ、争う人々の間に静かに入り込んで葛藤を解消し、新たな次元での統合（調和）をもたらす天性の調停者です。自らの存在のすべてを使って「今、ここ」に根を下ろしたとき、世界にあふれる大いなる生命力と一体になり、不屈でダイナミックな平和を体現します。",
+      "warningSignal": "「波風を立てるくらいなら、相手に合わせよう」と、衝突や葛藤を避けるために表面的に周囲に同調し、自分の本当の欲求を軽視してやり過ごし始めたときは警告サインです。",
+      "innerCommand": "「和やかであれ。平穏を保て。衝突や葛藤を絶対に起こすな。自分の主張をして全体の和を乱してはならない」",
+      "tragedy": "「自分の存在を主張せず、他者に同調して波風を立てなければ、平穏でいられる」という防衛から、現実の面倒な問題から完全に意識をそらし、自分の本音を麻痺させます。周囲に合わせる一方で、内面では無意識の怒りを溜め込み、頑固な無視や先延ばし（受動的攻撃）を行い始めます。結果として、現実の人間関係や仕事のトラブルが修復不可能なほどに悪化し、最も守りたかった「平穏」が根底から崩壊し、最も恐れていた「周囲との決裂（つながりの喪失）」を、自らの怠惰によって引き寄せてしまいます。",
+      "healing": "「私の存在、私の欲求、私の意見には、この世界において絶対的な価値がある。私は今、ここで自らの声を上げていい」と、自らの力を取り戻し、現実に積極的に関わる。"
+    }
+  },
+  "selfObservationFeedback": {
+    "high": {
+      "label": "4〜6点（高い囚われ度と気づきの兆し）",
+      "text": "あなたは自分の性格の自動的なパターン（心のギプス）に強く縛られていると感じているか、あるいはそれに対して非常に自覚的です。今こそ、そのギプスを手放し、本来の自由を取り戻す絶好のタイミングです。"
+    },
+    "standard": {
+      "label": "2〜3点（標準的な状態）",
+      "text": "日常のストレスによって自動操縦になることもあれば、冷静に自分をコントロールできることもある、標準的な状態です。日々の「自己観察」を増やすことで、より自由な選択肢が増えます。"
+    },
+    "low": {
+      "label": "0〜1点（高い客観性、または未自覚）",
+      "text": "自分の性格パターンをすでにかなり手放せていて心が自由な状態か、あるいはまだ自分の無意識の「クセ」に気づいていない可能性があります。各タイプの「トランス状態のサイン」を読んで、当てはまる点がないか確認してみましょう。"
+    }
+  },
+  "closingMessage": {
+    "title": "診断を終えたあなたへ",
+    "paragraphs": [
+      "エニアグラムの究極の目的は、あなたを特定の「タイプ」という箱に分類してレッテルを貼ることではありません。",
+      "あなたが「これが自分の性格だ」と思い込んでいるものは、実は子ども時代に自分を守るために身につけた「心のギプス（鎧）」のようなものです。この診断で明らかになったあなたの「自動操縦（トランス状態）のパターン」や「自己成就的予言（悲劇のシナリオ）」は、あなたが無意識のうちにそのギプスにしがみついて、自らを制限してしまっていることを示しています。",
+      "大切なのは、その自動的なパターンが暴走しそうになったまさに「その瞬間」に、自分の心の動きを客観的にキャッチ（自己観察）し、「立ち止まる（停止実習）」ことです。",
+      "自分のやり方に執着するのをやめ、各タイプの「癒しの態度」を自分に許し、思考や感情の騒がしさを静めて「今、ここ（プレゼンス）」に無防備に留まるとき、古い防衛の鎧は自然と外れます。そのとき初めて、あなたの中に眠っている「唯一無二の至高の才能」が、木が自然に花を咲かせるように開花し始めるのです。"
+    ]
+  }
+}
+  </script>
+  <script>
+    'use strict';
+
+    const APP_VERSION = 'v0.3.1';
+    const STORAGE_KEY = 'enneagramApp:v2:state';
+    const LEGACY_STORAGE_KEY = 'enneagramApp:v1:state';
+    const QUESTIONS_PER_STEP = 10;
+    const TOTAL_STEPS = 3;
+    const MAX_TYPE_SCORE = 6;
+    const DISPLAY_ORDER = [
+      'Q1', 'Q16', 'Q7', 'Q28', 'Q22',
+      'Q13', 'Q4', 'Q19', 'Q10', 'Q25',
+      'Q17', 'Q8', 'Q23', 'Q14', 'Q5',
+      'Q20', 'Q11', 'Q26', 'Q2', 'Q29',
+      'Q18', 'Q9', 'Q24', 'Q15', 'Q6',
+      'Q21', 'Q12', 'Q27', 'Q3', 'Q30'
+    ];
+    const ANSWER_OPTIONS = [
+      { value: 2, label: 'はい' },
+      { value: 1, label: 'どちらともいえない' },
+      { value: 0, label: 'いいえ' }
+    ];
+    const APP_DATA = JSON.parse(document.getElementById('app-data').textContent);
+    const QUESTIONS = APP_DATA.questions;
+    const TYPE_RESULTS = APP_DATA.typeResults;
+    const app = document.getElementById('app');
+    const orderedQuestions = DISPLAY_ORDER.map(function (id) {
+      return QUESTIONS.find(function (question) { return question.id === id; });
+    });
+    let state = { currentStep: 0, answers: {} };
+
+    // 原稿や固定表示順が壊れた場合、誤った診断を始めさせません。
+    function validateData() {
+      const ids = QUESTIONS.map(function (question) { return question.id; });
+      const typeCounts = {};
+      const selfObservationCount = QUESTIONS.filter(function (question) {
+        return question.category === 'selfObservation' && question.typeId === null;
+      }).length;
+      QUESTIONS.filter(function (question) { return question.typeId !== null; }).forEach(function (question) {
+        typeCounts[question.typeId] = (typeCounts[question.typeId] || 0) + 1;
+      });
+      const validTypeCounts = Array.from({ length: 9 }, function (_, index) {
+        return typeCounts[index + 1] === 3;
+      }).every(Boolean);
+      const dataIsValid = QUESTIONS.length === 30 &&
+        new Set(ids).size === 30 &&
+        DISPLAY_ORDER.length === 30 &&
+        new Set(DISPLAY_ORDER).size === 30 &&
+        DISPLAY_ORDER.every(function (id) { return ids.includes(id); }) &&
+        Object.keys(TYPE_RESULTS).length === 9 &&
+        validTypeCounts &&
+        selfObservationCount === 3 &&
+        APP_DATA.selfObservationFeedback &&
+        APP_DATA.closingMessage;
+      if (!dataIsValid || orderedQuestions.some(function (question) { return !question; })) {
+        throw new Error('診断データに不備があります。管理者へ連絡してください。');
+      }
+    }
+
+    function isAnswerValue(value) {
+      return Number.isInteger(value) && value >= 0 && value <= 2;
+    }
+
+    function normalizeState(candidate) {
+      if (!candidate ||
+          candidate.schemaVersion !== 2 ||
+          !Number.isInteger(candidate.currentStep) ||
+          candidate.currentStep < 0 ||
+          candidate.currentStep >= TOTAL_STEPS ||
+          !candidate.answers ||
+          typeof candidate.answers !== 'object' ||
+          Array.isArray(candidate.answers)) return null;
+      const validIds = new Set(QUESTIONS.map(function (question) { return question.id; }));
+      for (const entry of Object.entries(candidate.answers)) {
+        if (!validIds.has(entry[0]) || !isAnswerValue(entry[1])) return null;
+      }
+      return { currentStep: candidate.currentStep, answers: candidate.answers };
+    }
+
+    // 保存できない環境でも、画面上の診断は続けられます。
+    function loadState() {
+      try {
+        sessionStorage.removeItem(LEGACY_STORAGE_KEY);
+        return normalizeState(JSON.parse(sessionStorage.getItem(STORAGE_KEY))) || { currentStep: 0, answers: {} };
+      } catch (_) {
+        return { currentStep: 0, answers: {} };
+      }
+    }
+
+    function saveState() {
+      try {
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
+          schemaVersion: 2,
+          currentStep: state.currentStep,
+          answers: state.answers
+        }));
+      } catch (_) {
+        // 一時保存不可でも診断は継続します。
+      }
+    }
+
+    function clearApp() { app.replaceChildren(); }
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function button(text, className, handler) {
+      const node = el('button', className, text);
+      node.type = 'button';
+      node.addEventListener('click', handler);
+      return node;
+    }
+
+    function svgEl(tag, attributes, text) {
+      const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+      Object.entries(attributes || {}).forEach(function (entry) {
+        node.setAttribute(entry[0], String(entry[1]));
+      });
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function setVersion() {
+      document.getElementById('app-version').textContent = APP_VERSION;
+    }
+
+    function answeredCount() {
+      return Object.keys(state.answers).length;
+    }
+
+    function showError(message) {
+      const node = el('div', 'error', message);
+      node.setAttribute('role', 'alert');
+      return node;
+    }
+
+    function scrollPageTop() {
+      requestAnimationFrame(function () {
+        window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+      });
+    }
+
+    function showStart(shouldScrollTop) {
+      clearApp();
+      app.append(el('h1', '', 'エニアグラム・タイプ診断'));
+      app.append(el('p', 'lead', '30の質問から、普段の「無意識のクセ」と自己観察の傾向を振り返る診断です。'));
+      const card = el('section', 'card');
+      card.append(el('h2', '', '回答するときの目安'));
+      card.append(el('p', '', 'これまでの人生の大半における「素の自分」を思い浮かべ、「はい」「どちらともいえない」「いいえ」から最も近いものを選んでください。'));
+      card.append(el('p', '', '全30問を、10問ずつ3ステップで進めます。質問順はタイプが見えにくい固定の混在順です。診断のたびに変わることはありません。'));
+      app.append(card);
+      app.append(el('p', 'privacy', '回答内容はこの端末内で一時的に扱われ、サーバーには送信されません。結果の共有は任意です。'));
+      app.append(button(answeredCount() > 0 ? '診断を続ける' : '診断を始める', 'primary', function () {
+        showQuestions(undefined, true);
+      }));
+      if (shouldScrollTop) scrollPageTop();
+    }
+
+    function showQuestions(errorMessage, shouldScrollTop) {
+      clearApp();
+      const start = state.currentStep * QUESTIONS_PER_STEP;
+      const stepQuestions = orderedQuestions.slice(start, start + QUESTIONS_PER_STEP);
+      const progressHead = el('div', 'progress-head');
+      progressHead.append(el('span', '', 'ステップ ' + (state.currentStep + 1) + ' / ' + TOTAL_STEPS));
+      progressHead.append(el('span', '', '回答済み ' + answeredCount() + ' / 30'));
+      app.append(progressHead);
+      const progress = el('div', 'progress');
+      const progressBar = el('div');
+      progressBar.style.width = ((answeredCount() / 30) * 100) + '%';
+      progress.append(progressBar);
+      app.append(progress);
+      app.append(el('h1', '', 'あなたの傾向について教えてください'));
+      app.append(el('p', '', '今の役割ではなく、普段の自然な自分に最も近いものを選んでください。'));
+      if (errorMessage) app.append(showError(errorMessage));
+      const list = el('div', 'question-list');
+      stepQuestions.forEach(function (question, offset) {
+        const displayNumber = start + offset + 1;
+        const fieldset = el('fieldset');
+        fieldset.id = 'question-' + question.id;
+        fieldset.append(el('legend', '', '質問 ' + displayNumber));
+        fieldset.append(el('p', 'question-text', question.text));
+        const row = el('div', 'answer-row');
+        ANSWER_OPTIONS.forEach(function (option) {
+          const answerButton = button(option.label, 'answer', function () {
+            state.answers[question.id] = option.value;
+            saveState();
+            showQuestions(undefined, false);
+          });
+          answerButton.setAttribute('aria-pressed', String(state.answers[question.id] === option.value));
+          answerButton.setAttribute('aria-label', '質問 ' + displayNumber + '：' + option.label);
+          row.append(answerButton);
+        });
+        fieldset.append(row);
+        list.append(fieldset);
+      });
+      app.append(list);
+      const actions = el('div', 'actions');
+      if (state.currentStep > 0) {
+        actions.append(button('戻る', 'secondary', function () {
+          state.currentStep -= 1;
+          saveState();
+          showQuestions(undefined, true);
+        }));
+      }
+      const isLastStep = state.currentStep === TOTAL_STEPS - 1;
+      actions.append(button(isLastStep ? '診断結果を見る' : '次へ', 'primary', function () {
+        proceed(isLastStep);
+      }));
+      app.append(actions);
+      if (shouldScrollTop) scrollPageTop();
+    }
+
+    function proceed(isLastStep) {
+      const start = state.currentStep * QUESTIONS_PER_STEP;
+      const firstUnanswered = orderedQuestions.slice(start, start + QUESTIONS_PER_STEP).find(function (question) {
+        return !isAnswerValue(state.answers[question.id]);
+      });
+      if (firstUnanswered) {
+        showQuestions('このステップには未回答の質問があります。最初の未回答へ移動しました。', false);
+        requestAnimationFrame(function () {
+          document.getElementById('question-' + firstUnanswered.id).scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+        return;
+      }
+      if (isLastStep) {
+        const missing = orderedQuestions.filter(function (question) {
+          return !isAnswerValue(state.answers[question.id]);
+        });
+        if (missing.length) {
+          showQuestions('未回答が ' + missing.length + ' 問あります。すべての質問に回答してください。', false);
+          return;
+        }
+        showResults(calculateResult(state.answers, QUESTIONS));
+      } else {
+        state.currentStep += 1;
+        saveState();
+        showQuestions(undefined, true);
+      }
+    }
+
+    function calculateResult(answers, questions) {
+      if (questions.some(function (question) { return !isAnswerValue(answers[question.id]); })) {
+        throw new Error('未回答があるため診断できません。');
+      }
+      const scores = { 1:0, 2:0, 3:0, 4:0, 5:0, 6:0, 7:0, 8:0, 9:0 };
+      let selfObservationScore = 0;
+      questions.forEach(function (question) {
+        if (question.typeId === null) {
+          selfObservationScore += answers[question.id];
+        } else {
+          scores[question.typeId] += answers[question.id];
+        }
+      });
+      const topScore = Math.max.apply(null, Object.values(scores));
+      const topTypes = Object.keys(scores).map(Number).filter(function (typeId) {
+        return scores[typeId] === topScore;
+      });
+      return {
+        status: topTypes.length === 1 ? 'single' : 'tie',
+        scores: scores,
+        topScore: topScore,
+        topTypes: topTypes,
+        selfObservationScore: selfObservationScore
+      };
+    }
+
+    function showResults(result) {
+      clearApp();
+      app.append(el('h1', '', '診断結果'));
+      if (result.status === 'single') {
+        const type = TYPE_RESULTS[result.topTypes[0]];
+        app.append(el('p', 'lead', '最も高かったのは「タイプ' + type.typeId + '：' + type.nameJa + '」です。'));
+      } else {
+        const names = result.topTypes.map(function (typeId) { return 'タイプ' + typeId; }).join('・');
+        app.append(el('p', 'lead', '最高点は「' + names + '」の同点でした。'));
+        app.append(el('div', 'notice', 'これらの要素をバランスよく持っているか、ストレス時や成長時に移行する関係性の可能性があります。それぞれの解説を読み、より「素の自分」にフィットするものを確かめてください。'));
+      }
+      app.append(renderRadarSection(result));
+      app.append(renderSelfObservation(result.selfObservationScore));
+      app.append(el('p', 'notice', 'この結果は、30問への回答から見える傾向の一つです。人を固定的な型として扱うものではありません。'));
+      app.append(renderAllTypeDetails(result));
+      app.append(renderClosingMessage());
+      app.append(button('もう一度診断する', 'primary', restart));
+      scrollPageTop();
+    }
+
+    function polarPoint(typeId, factor, radius) {
+      const angle = -Math.PI / 2 + ((typeId - 1) * Math.PI * 2 / 9);
+      return {
+        x: 260 + Math.cos(angle) * radius * factor,
+        y: 260 + Math.sin(angle) * radius * factor
+      };
+    }
+
+    function pointsAttribute(points) {
+      return points.map(function (point) {
+        return point.x.toFixed(2) + ',' + point.y.toFixed(2);
+      }).join(' ');
+    }
+
+    function renderRadarChart(result) {
+      const svg = svgEl('svg', {
+        class: 'radar-svg',
+        viewBox: '0 0 520 520',
+        role: 'img',
+        'aria-labelledby': 'radar-title radar-description'
+      });
+      svg.append(svgEl('title', { id: 'radar-title' }, '9タイプの得点レーダーチャート'));
+      svg.append(svgEl('desc', { id: 'radar-description' }, '各タイプ0点から6点までの得点を9本の軸で比較します。'));
+      for (let level = 1; level <= MAX_TYPE_SCORE; level += 1) {
+        const gridPoints = [];
+        for (let typeId = 1; typeId <= 9; typeId += 1) {
+          gridPoints.push(polarPoint(typeId, level / MAX_TYPE_SCORE, 168));
+        }
+        svg.append(svgEl('polygon', {
+          points: pointsAttribute(gridPoints),
+          class: level === MAX_TYPE_SCORE ? 'radar-grid radar-grid-outer' : 'radar-grid'
+        }));
+      }
+      for (let typeId = 1; typeId <= 9; typeId += 1) {
+        const end = polarPoint(typeId, 1, 168);
+        svg.append(svgEl('line', {
+          x1: 260, y1: 260, x2: end.x, y2: end.y, class: 'radar-axis'
+        }));
+      }
+      const scorePoints = [];
+      for (let typeId = 1; typeId <= 9; typeId += 1) {
+        scorePoints.push(polarPoint(typeId, result.scores[typeId] / MAX_TYPE_SCORE, 168));
+      }
+      svg.append(svgEl('polygon', { points: pointsAttribute(scorePoints), class: 'radar-area' }));
+      scorePoints.forEach(function (point, index) {
+        svg.append(svgEl('circle', {
+          cx: point.x, cy: point.y, r: 5,
+          class: result.topTypes.includes(index + 1) ? 'radar-dot radar-dot-top' : 'radar-dot'
+        }));
+      });
+      for (let typeId = 1; typeId <= 9; typeId += 1) {
+        const labelPoint = polarPoint(typeId, 1, 205);
+        const label = svgEl('text', {
+          x: labelPoint.x,
+          y: labelPoint.y,
+          class: result.topTypes.includes(typeId) ? 'radar-label radar-label-top' : 'radar-label',
+          tabindex: '0',
+          role: 'link',
+          'aria-label': 'タイプ' + typeId + '、' + TYPE_RESULTS[typeId].nameJa + '、' + result.scores[typeId] + '点。解説へ移動'
+        }, 'T' + typeId + ' ' + result.scores[typeId]);
+        label.addEventListener('click', function () { jumpToType(typeId); });
+        label.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            jumpToType(typeId);
+          }
+        });
+        svg.append(label);
+      }
+      return svg;
+    }
+
+    function scoreRanking(scores) {
+      const sortedTypeIds = Object.keys(scores).map(Number).sort(function (a, b) {
+        return scores[b] - scores[a] || a - b;
+      });
+      let previousScore = null;
+      let previousRank = 0;
+      return sortedTypeIds.map(function (typeId, index) {
+        const score = scores[typeId];
+        const rank = index > 0 && score === previousScore ? previousRank : index + 1;
+        previousScore = score;
+        previousRank = rank;
+        return { typeId: typeId, score: score, rank: rank };
+      });
+    }
+
+    function renderRadarSection(result) {
+      const section = el('section', 'card result-overview');
+      section.append(el('h2', '', '9タイプの得点バランス'));
+      section.append(el('p', 'chart-help', '9本の軸はタイプ1〜9、外側ほど得点が高く、満点は6点です。下のタイプを押すと、その解説へ移動します。'));
+      const wrap = el('div', 'radar-wrap');
+      wrap.append(renderRadarChart(result));
+      section.append(wrap);
+      const nav = el('div', 'score-nav');
+      scoreRanking(result.scores).forEach(function (item) {
+        const type = TYPE_RESULTS[item.typeId];
+        const scoreButton = button(
+          item.rank + '位　タイプ' + item.typeId + ' ' + type.nameJa + '　' + item.score + '点',
+          result.topTypes.includes(item.typeId) ? 'score-button top' : 'score-button',
+          function () { jumpToType(item.typeId); }
+        );
+        nav.append(scoreButton);
+      });
+      section.append(nav);
+      return section;
+    }
+
+    function renderSelfObservation(score) {
+      const feedback = score >= 4
+        ? APP_DATA.selfObservationFeedback.high
+        : score >= 2
+          ? APP_DATA.selfObservationFeedback.standard
+          : APP_DATA.selfObservationFeedback.low;
+      const section = el('section', 'card self-observation');
+      section.append(el('h2', '', '自己観察の必要度'));
+      section.append(el('p', 'observation-score', score + ' / 6点'));
+      section.append(el('h3', '', feedback.label));
+      section.append(el('p', '', feedback.text));
+      section.append(el('p', 'chart-help', 'この得点はタイプ判定やレーダーチャートには含めていません。'));
+      return section;
+    }
+
+    // 外部画像に依存せず、各タイプの特徴を象徴するオリジナル図を描きます。
+    function renderTypeIllustration(type) {
+      const illustrations = {
+        1: { color:'#526c5c', soft:'#e4eee7', caption:'より良く整える、公正なまなざし' },
+        2: { color:'#a65a63', soft:'#f6e5e8', caption:'思いやりで人を支える、温かな心' },
+        3: { color:'#9a6d2f', soft:'#f5ead7', caption:'目標を形にし、前へ進む力' },
+        4: { color:'#76558e', soft:'#ede4f3', caption:'深い感情を、意味ある表現へ変える' },
+        5: { color:'#426b78', soft:'#deedf0', caption:'静かに観察し、本質を見抜く' },
+        6: { color:'#59658f', soft:'#e4e8f4', caption:'先を読み、備えと信頼で守る' },
+        7: { color:'#c4782d', soft:'#faecd9', caption:'可能性を見つけ、喜びへ飛び込む' },
+        8: { color:'#99483d', soft:'#f3dfdc', caption:'力強く道を切り開き、弱い者を守る' },
+        9: { color:'#5c7f70', soft:'#e2eee9', caption:'違いを包み、穏やかな調和をつくる' }
+      };
+      const meta = illustrations[type.typeId];
+      const figure = el('figure', 'type-illustration');
+      const svg = svgEl('svg', {
+        class: 'illustration-svg', viewBox: '0 0 360 190', role: 'img',
+        'aria-label': 'タイプ' + type.typeId + '「' + type.nameJa + '」のイメージイラスト'
+      });
+      svg.append(svgEl('rect', { x:0, y:0, width:360, height:190, rx:18, fill:meta.soft }));
+      svg.append(svgEl('circle', { cx:180, cy:92, r:70, fill:'#fffdf8', opacity:.92 }));
+      const stroke = { fill:'none', stroke:meta.color, 'stroke-width':7, 'stroke-linecap':'round', 'stroke-linejoin':'round' };
+
+      if (type.typeId === 1) {
+        svg.append(svgEl('line', Object.assign({ x1:180, y1:45, x2:180, y2:137 }, stroke)));
+        svg.append(svgEl('line', Object.assign({ x1:123, y1:69, x2:237, y2:69 }, stroke)));
+        svg.append(svgEl('path', Object.assign({ d:'M120 74 Q130 111 148 74' }, stroke)));
+        svg.append(svgEl('path', Object.assign({ d:'M212 74 Q222 111 240 74' }, stroke)));
+        svg.append(svgEl('line', Object.assign({ x1:151, y1:139, x2:209, y2:139 }, stroke)));
+      } else if (type.typeId === 2) {
+        svg.append(svgEl('path', { d:'M180 126 C145 101 130 85 130 66 C130 43 158 38 180 61 C202 38 230 43 230 66 C230 85 215 101 180 126 Z', fill:meta.color }));
+        svg.append(svgEl('path', Object.assign({ d:'M105 126 Q143 151 178 133' }, stroke)));
+        svg.append(svgEl('path', Object.assign({ d:'M255 126 Q217 151 182 133' }, stroke)));
+      } else if (type.typeId === 3) {
+        svg.append(svgEl('polygon', { points:'105,139 173,51 245,139', fill:meta.soft, stroke:meta.color, 'stroke-width':7, 'stroke-linejoin':'round' }));
+        svg.append(svgEl('line', Object.assign({ x1:173, y1:51, x2:173, y2:25 }, stroke)));
+        svg.append(svgEl('path', { d:'M177 27 L226 39 L177 53 Z', fill:meta.color }));
+        svg.append(svgEl('path', Object.assign({ d:'M132 109 L160 86 L178 99 L204 70' }, stroke)));
+      } else if (type.typeId === 4) {
+        svg.append(svgEl('path', { d:'M185 39 C136 54 132 127 187 143 C154 113 157 70 185 39 Z', fill:meta.color }));
+        svg.append(svgEl('path', Object.assign({ d:'M208 76 C229 60 248 77 239 95 C231 112 210 119 201 136' }, stroke)));
+        svg.append(svgEl('path', { d:'M111 62 L118 78 L136 80 L122 91 L126 109 L111 99 L96 109 L100 91 L86 80 L104 78 Z', fill:meta.color }));
+      } else if (type.typeId === 5) {
+        svg.append(svgEl('path', Object.assign({ d:'M102 54 Q142 44 177 65 L177 139 Q142 119 102 128 Z' }, stroke)));
+        svg.append(svgEl('path', Object.assign({ d:'M177 65 Q212 44 252 54 L252 128 Q212 119 177 139' }, stroke)));
+        svg.append(svgEl('circle', { cx:219, cy:91, r:24, fill:'#fffdf8', stroke:meta.color, 'stroke-width':7 }));
+        svg.append(svgEl('line', Object.assign({ x1:236, y1:108, x2:258, y2:130 }, stroke)));
+      } else if (type.typeId === 6) {
+        svg.append(svgEl('path', { d:'M180 35 L239 58 L230 112 Q217 142 180 154 Q143 142 130 112 L121 58 Z', fill:meta.soft, stroke:meta.color, 'stroke-width':7, 'stroke-linejoin':'round' }));
+        svg.append(svgEl('path', Object.assign({ d:'M150 91 L171 112 L213 70' }, stroke)));
+        [132,180,228].forEach(function (x) { svg.append(svgEl('circle', { cx:x, cy:158, r:8, fill:meta.color })); });
+      } else if (type.typeId === 7) {
+        svg.append(svgEl('circle', { cx:180, cy:78, r:31, fill:meta.color }));
+        for (let ray = 0; ray < 8; ray += 1) {
+          const angle = ray * Math.PI / 4;
+          svg.append(svgEl('line', Object.assign({
+            x1:180 + Math.cos(angle) * 43, y1:78 + Math.sin(angle) * 43,
+            x2:180 + Math.cos(angle) * 62, y2:78 + Math.sin(angle) * 62
+          }, stroke)));
+        }
+        svg.append(svgEl('path', Object.assign({ d:'M105 150 Q145 112 181 143 Q218 169 258 125' }, stroke)));
+      } else if (type.typeId === 8) {
+        svg.append(svgEl('path', { d:'M191 28 L133 97 L170 97 L151 157 L229 75 L191 75 Z', fill:meta.color }));
+        svg.append(svgEl('path', Object.assign({ d:'M104 137 Q180 166 256 137' }, stroke)));
+        svg.append(svgEl('path', Object.assign({ d:'M115 119 L139 131 M245 119 L221 131' }, stroke)));
+      } else {
+        svg.append(svgEl('circle', { cx:150, cy:88, r:44, fill:meta.soft, stroke:meta.color, 'stroke-width':7 }));
+        svg.append(svgEl('circle', { cx:210, cy:88, r:44, fill:meta.soft, stroke:meta.color, 'stroke-width':7 }));
+        svg.append(svgEl('path', Object.assign({ d:'M105 139 Q180 172 255 139' }, stroke)));
+        svg.append(svgEl('path', Object.assign({ d:'M180 54 L180 128' }, stroke)));
+      }
+
+      svg.append(svgEl('circle', { cx:41, cy:38, r:20, fill:meta.color }));
+      svg.append(svgEl('text', { x:41, y:39, fill:'#fff', 'font-size':18, 'font-weight':800, 'text-anchor':'middle', 'dominant-baseline':'middle' }, String(type.typeId)));
+      figure.append(svg);
+      figure.append(el('figcaption', 'illustration-caption', meta.caption));
+      return figure;
+    }
+
+    function paragraphSection(title, text, className) {
+      const section = el('section', 'section-card ' + (className || ''));
+      section.append(el('h3', '', title));
+      section.append(el('p', '', text));
+      return section;
+    }
+
+    function renderTypeDetail(type, open) {
+      const details = el('details', 'type-detail');
+      details.id = 'type-detail-' + type.typeId;
+      details.open = Boolean(open);
+      const summary = el('summary', '', 'タイプ' + type.typeId + '：' + type.nameJa + '（' + type.nameEn + '）');
+      details.append(summary);
+      const body = el('div', 'type-detail-body');
+      body.append(el('p', 'subtitle', '〜' + type.subtitle + '〜'));
+      body.append(renderTypeIllustration(type));
+      body.append(paragraphSection('唯一無二の至高の才能', type.essence));
+      body.append(paragraphSection('自動操縦（トランス状態）に陥るサイン', type.warningSignal));
+      body.append(paragraphSection('内なる「超自我の行進命令」', type.innerCommand));
+      body.append(paragraphSection('強みが裏目に出る悲劇（自己成就的予言）', type.tragedy, 'runaway'));
+      body.append(paragraphSection('心の鎧を脱ぐための「癒しの態度」', type.healing, 'healing'));
+      details.append(body);
+      return details;
+    }
+
+    function renderAllTypeDetails(result) {
+      const section = el('section', 'type-details');
+      section.append(el('h2', '', '各タイプの特徴'));
+      section.append(el('p', 'chart-help', '見たいタイプを開いて読めます。レーダーチャート下の得点一覧からも移動できます。'));
+      for (let typeId = 1; typeId <= 9; typeId += 1) {
+        section.append(renderTypeDetail(TYPE_RESULTS[typeId], typeId === result.topTypes[0]));
+      }
+      return section;
+    }
+
+    function jumpToType(typeId) {
+      const target = document.getElementById('type-detail-' + typeId);
+      if (!target) return;
+      target.open = true;
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      requestAnimationFrame(function () {
+        const summary = target.querySelector('summary');
+        if (summary) summary.focus({ preventScroll: true });
+      });
+    }
+
+    function renderClosingMessage() {
+      const section = el('section', 'card closing-message');
+      section.append(el('h2', '', APP_DATA.closingMessage.title));
+      APP_DATA.closingMessage.paragraphs.forEach(function (paragraph) {
+        section.append(el('p', '', paragraph));
+      });
+      return section;
+    }
+
+    function restart() {
+      state = { currentStep: 0, answers: {} };
+      try {
+        sessionStorage.removeItem(STORAGE_KEY);
+        sessionStorage.removeItem(LEGACY_STORAGE_KEY);
+      } catch (_) {
+        // 保存不可の場合も開始画面へ戻します。
+      }
+      showStart(true);
+    }
+
+    try {
+      validateData();
+      state = loadState();
+      setVersion();
+      showStart();
+    } catch (error) {
+      clearApp();
+      app.append(showError(error.message));
+    }
+  </script>
+</body>
+</html>
