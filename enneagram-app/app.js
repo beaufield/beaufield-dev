@@ -1,11 +1,12 @@
 'use strict';
 
-const STORAGE_KEY = 'enneagramApp:v11:state';
+const STORAGE_KEY = 'enneagramApp:v12:state';
 const LEGACY_STORAGE_KEYS = [
   'enneagramApp:v1:state', 'enneagramApp:v2:state', 'enneagramApp:v3:state',
   'enneagramApp:v4:state', 'enneagramApp:v5:state', 'enneagramApp:v6:state',
   'enneagramApp:v7:state', 'enneagramApp:v8:state', 'enneagramApp:v9:state',
-  'enneagramApp:v10:state'
+  'enneagramApp:v10:state',
+  'enneagramApp:v11:state'
 ];
 const MODE_CONFIG = {
   standard: { name:'精度優先・標準版', count:78, typeItemsPerType:8, maxTypeScore:32 },
@@ -157,7 +158,7 @@ function isRatingValue(value) {
 }
 
 function normalizeState(candidate) {
-  if (!candidate || candidate.schemaVersion !== 11 || !MODE_CONFIG[candidate.mode] ||
+  if (!candidate || candidate.schemaVersion !== 12 || !MODE_CONFIG[candidate.mode] ||
       !Number.isInteger(candidate.currentIndex) || candidate.currentIndex < 0 ||
       candidate.currentIndex >= selectedOrder(candidate.mode).length ||
       !candidate.answers || typeof candidate.answers !== 'object' || Array.isArray(candidate.answers)) return null;
@@ -182,7 +183,7 @@ function loadState() {
 function saveState() {
   try {
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
-      schemaVersion:11,
+      schemaVersion:12,
       mode:state.mode,
       currentIndex:state.currentIndex,
       answers:state.answers
