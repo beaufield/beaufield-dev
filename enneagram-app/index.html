@@ -42,6 +42,7 @@
     .progress { height:12px; background:#c8c8c5; border:2px solid var(--ink); overflow:hidden; margin:8px 0 28px; transform:skewX(-18deg); }
     .progress > div { height:100%; background:repeating-linear-gradient(135deg,var(--accent) 0,var(--accent) 10px,#111 10px,#111 15px); transition:width .2s ease; }
     .scenario-card { padding-top:30px; }
+    .scenario-card h1 { font-size:clamp(24px,4vw,36px); }
     .scenario-card::before,.self-observation-card::before { content:"◆"; position:absolute; top:-20px; left:calc(50% - 22px); display:grid; place-items:center; width:44px; height:44px; color:#fff; background:var(--ink); border:3px solid var(--accent); transform:rotate(45deg); font-size:0; }
     .scenario-number { display:inline-block; color:#fff; background:var(--ink); border-left:7px solid var(--accent); padding:5px 12px; font-size:13px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
     .scenario-prompt { border-top:2px solid var(--ink); padding-top:16px; font-size:18px; font-weight:900; }
@@ -62,6 +63,14 @@
     .self-question { margin:18px 0; }
     .scenario-review { border-left:10px solid var(--accent); }
     .scenario-review ul { padding-left:22px; }
+    .mode-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; align-items:stretch; }
+    .mode-card { display:flex; flex-direction:column; margin:0; }
+    .mode-card .primary { margin-top:auto; }
+    .candidate-card { border-top:10px solid var(--accent); }
+    .facet-list { margin:16px 0; padding-left:22px; font-weight:800; }
+    .wing-reference { margin-bottom:0; }
+    .answer-review ol { padding-left:24px; }
+    .answer-review li { margin-bottom:12px; }
     .error { color:#fff; background:var(--warn); border:3px solid var(--ink); padding:12px 14px; margin:18px 0; font-weight:900; }
     .hidden { display:none !important; }
     .radar-wrap { width:100%; max-width:560px; margin:0 auto; }
@@ -118,6 +127,7 @@
       .actions { gap:8px; }
       .primary,.secondary { padding:9px 12px; font-size:14px; }
       .score-nav { grid-template-columns:1fr; }
+      .mode-grid { grid-template-columns:1fr; }
       .radar-label { font-size:14px; }
       .radar-label-top { font-size:15px; }
     }
@@ -150,66 +160,96 @@
 
   <script id="app-data" type="application/json">
 {
-  "scenarios": [
-    {"id":"S1","title":"プライベートで旅行やお出かけの計画を立てる時","prompt":"以下の4つの「心の声」それぞれについて、あなたの本音に近い度合いを5段階で評価してください。","options":[
-      {"id":"A","typeId":1,"text":"時間やマナー、移動ルートに無駄がなく、誰もが「良かった」と思える整ったスケジュールを事前にきちんと組んでおきたい。"},
-      {"id":"B","typeId":5,"text":"あまり周囲に振り回されず、事前にその土地の面白そうなマイナー情報を一人でじっくり調べて、静かに自分のペースで味わいたい。"},
-      {"id":"C","typeId":6,"text":"「もし道に迷ったら」「もし店が閉まっていたら」とリスクを考え、対策や代わりの候補を事前にいくつか手元に揃えて安心したい。"},
-      {"id":"D","typeId":7,"text":"細かい計画に縛られるとつまらないので、その時の気分や面白そうな直感に従って、何が起こるか分からないワクワク感を楽しみたい。"}
-    ]},
-    {"id":"S2","title":"身近な人から「最近ちょっと落ち込んでいて…」と打ち明けられた時","prompt":"以下の4つの「心の声」それぞれについて、あなたの本音に近い度合いを5段階で評価してください。","options":[
-      {"id":"A","typeId":2,"text":"「自分がこの人を元気にしなきゃ」と強く感じ、相手が少しでも前を向けるような温かいアドバイスや、自分にできるサポートをすぐに差し出したくなる。"},
-      {"id":"B","typeId":4,"text":"簡単に「分かるよ」などと言わず、相手の抱える深い憂鬱さや心の痛みにただ耳を傾け、その重苦しい空気感に一緒にじっと留まろうとする。"},
-      {"id":"C","typeId":8,"text":"ウジウジ悩むよりも「現状をどう突破するか」が大切だと思うので、相手が自分で決断し、前進するためのエネルギーを強く引き出してあげたくなる。"},
-      {"id":"D","typeId":9,"text":"あれこれ口出しせず、ただ「そのままでいいよ、なんとかなる」と相手の存在をそのまま優しく受け入れ、お互いの心が落ち着くような穏やかな時間を過ごしたい。"}
-    ]},
-    {"id":"S3","title":"プライベートで新しい趣味や習い事を始めようとする時","prompt":"以下の4つの「心の声」それぞれについて、あなたの本音に近い度合いを5段階で評価してください。","options":[
-      {"id":"A","typeId":3,"text":"やるからには人より上手くなりたい、何かの形（スコア、作品、資格など）で自分の実力が目に見える成果として残るようにしたい。"},
-      {"id":"B","typeId":5,"text":"誰かとワイワイやるより、まずは一人でその趣味の仕組みや専門的な本質を徹底的に調べ、頭の中で「すべてが繋がった」という知的興奮を感じたい。"},
-      {"id":"C","typeId":7,"text":"面白そうな体験に次々と手を広げて、その分野の「楽しいところ」を軽快に味わいたい（飽きたらすぐに別の楽しそうなことを探せばいい）。"},
-      {"id":"D","typeId":8,"text":"周囲のペースや誰かの指示に従うのが嫌なので、自分のペースとやり方を自分で開拓し、自分の意志でそのジャンルを完全に乗りこなしたい。"}
-    ]},
-    {"id":"S4","title":"親しい人との約束を、相手から直前に「急用ができて…」とキャンセルされた時","prompt":"以下の4つの「心の声」それぞれについて、あなたの本音に近い度合いを5段階で評価してください。","options":[
-      {"id":"A","typeId":1,"text":"「約束を破るというのは、人として不誠実だ」というイライラが湧き、頭の中で相手のルーズさやマナーの甘さを厳しく批判してしまう。"},
-      {"id":"B","typeId":2,"text":"「自分が何か気に障ることをしたのだろうか、嫌われたのかな」と不安になり、すぐに相手を気遣うメッセージを送って、相手の役に立とうとする。"},
-      {"id":"C","typeId":4,"text":"「所詮、自分はその程度の存在なんだ」と自分の存在の軽さを感じて寂しくなり、一人の部屋でその切なく取り残されたような感情を静かに味わい続けてしまう。"},
-      {"id":"D","typeId":6,"text":"「本当に急用なのか？裏に別の理由があるのでは？」と疑念がよぎり、今後の関係に危険がないか、相手の本当のトーンを慎重に測ろうとする。"}
-    ]},
-    {"id":"S5","title":"久しぶりに自分の部屋を片付ける時","prompt":"以下の4つの「心の声」それぞれについて、あなたの本音に近い度合いを5段階で評価してください。","options":[
-      {"id":"A","typeId":1,"text":"すべての物の定位置が論理的に決まっていて、引き出しの中まで「正しい状態」に完璧に整っていないと、頭がモヤモヤして落ち着かない。"},
-      {"id":"B","typeId":3,"text":"自分の部屋はセンスを表す場所だと思うので、いつ誰が入ってきても「洗練されていて、私生活もスマートでデキる人」に見えるように演出したい。"},
-      {"id":"C","typeId":5,"text":"余計な持ち物の整理や管理に自分のエネルギーを奪われたくないので、極限まで物を減らし、自分の思考を邪魔しない「静かでミニマルな聖域」にしておきたい。"},
-      {"id":"D","typeId":9,"text":"途中で面倒になると「まあ、生活に支障はないし、今のままでも十分にリラックスできるからこれでいいか」と、ざっと片付けてすぐのんびりモードに戻る。"}
-    ]},
-    {"id":"S6","title":"SNSなどで、他人の楽しそうなプライベートの投稿を目にした時","prompt":"以下の4つの「心の声」それぞれについて、あなたの本音に近い度合いを5段階で評価してください。","options":[
-      {"id":"A","typeId":3,"text":"「自分も負けていられない、もっと自分の生き方や輝いている瞬間を周囲に見せて、魅力的な存在だと認めてもらいたい」と刺激を受ける。"},
-      {"id":"B","typeId":4,"text":"「あの人たちにはあって、自分には欠けている決定的な何か」を痛烈に感じてしまい、自分の寂しさや、世間に馴染めない特別な個性を意識して切なくなる。"},
-      {"id":"C","typeId":6,"text":"「本当にこんなに幸せなのだろうか？」「何か別の意図や見栄があるのでは？」と、その裏にある本音やリスクを無意識に勘ぐってしまう。"},
-      {"id":"D","typeId":7,"text":"素晴らしい体験や楽しそうな場所を目にすると、羨ましがるよりも「次は自分がもっと楽しい計画を立てて、ワクワクする体験をしよう！」と考え始める。"}
-    ]},
-    {"id":"S7","title":"大切にしていた身の回りのものを、うっかりどこかに失くしてしまった時","prompt":"以下の4つの「心の声」それぞれについて、あなたの本音に近い度合いを5段階で評価してください。","options":[
-      {"id":"A","typeId":1,"text":"「なぜあそこできちんと確認しなかったのか！」と自分の不注意さが許せず、自分のだらしなさに対してしばらく強い自己批判が止まらなくなる。"},
-      {"id":"B","typeId":5,"text":"感情的に悔やんでもエネルギーを無駄に消耗するだけなので、ただ「紛失という客観的な事実」として頭の中で感情を切り離し、静かに次の現実的な手段を考える。"},
-      {"id":"C","typeId":8,"text":"失くしたという事実に激しくイライラし、状況に振り回されるのが嫌なので、すぐに「新しい、もっと強力なものを自分の手で手に入れよう」とエネルギーを湧き立たせる。"},
-      {"id":"D","typeId":9,"text":"ショックや怒りで心が波立つのを避けたいので、「まあ、寿命だったんだ。形あるものはいつか壊れるしね」と自分を納得させて、穏やかな平穏を保とうとする。"}
-    ]},
-    {"id":"S8","title":"親しい仲間内でのカジュアルな集まり（食事会やイベントなど）での過ごし方","prompt":"以下の4つの「心の声」それぞれについて、あなたの本音に近い度合いを5段階で評価してください。","options":[
-      {"id":"A","typeId":2,"text":"グラスが空いていないか、誰かが寂しそうにしていないかを常に気にかけ、みんなが心地よく過ごせるように甲斐甲斐しくケアすることに自分の存在意義を感じる。"},
-      {"id":"B","typeId":3,"text":"会話の中で、自分の体験や話が「スマートで、ユーモアがあり、感心されるような内容」になるように意識して、その場を魅力的にリードしたい。"},
-      {"id":"C","typeId":7,"text":"面白いエピソードや冗談を次々と投げかけて、その場をパッと明るい雰囲気にし、みんなで笑って楽しい体験を共有することに全力を尽くしたい。"},
-      {"id":"D","typeId":9,"text":"自分が目立ったり主張したりすることはせず、ただみんなの楽しそうな声を聴きながら、その穏やかで調和した一体感に包まれてリラックスしていたい。"}
-    ]},
-    {"id":"S9","title":"衣服や身の回りのものを自分のために購入する時の選び方","prompt":"以下の4つの「心の声」それぞれについて、あなたの本音に近い度合いを5段階で評価してください。","options":[
-      {"id":"A","typeId":2,"text":"周囲の人から「優しそうで、話しかけやすい、温かい人」という良い印象を持ってもらえるような、相手への配慮を感じさせる選択を無意識にする。"},
-      {"id":"B","typeId":4,"text":"世間の流行や他の人と被るものは絶対に避け、自分の内なる複雑な感性やストーリーを表現してくれる「自分だけの特別な一点」にこだわりたい。"},
-      {"id":"C","typeId":6,"text":"周囲から浮いてしまって警戒されるような奇抜なものは避け、どんな場でも失礼にならず、長く使っても問題のない「確かな信頼性」があるものを選ぶ。"},
-      {"id":"D","typeId":8,"text":"周囲の意見やトレンドなど一切気にせず、自分が主導権を持って「これが自分の力強さと尊厳を一番引き立てる」と直感したタフなものを堂々と選ぶ。"}
-    ]}
+  "typeQuestions": [
+    {"id":"T1-01","typeId":1,"facet":"根元的恐れ","text":"自分が間違った存在だと感じることを強く避けたい。"},
+    {"id":"T1-02","typeId":1,"facet":"恐れへの反応","text":"自分の欠点に気づくと、厳しく正したくなる。"},
+    {"id":"T1-03","typeId":1,"facet":"根元的欲求","text":"自分が正しいと納得できる選択をしたい。"},
+    {"id":"T1-04","typeId":1,"facet":"満足条件","text":"物事があるべき状態になっていると安心する。"},
+    {"id":"T1-05","typeId":1,"facet":"戦略","text":"「すべきこと」を優先しやすい。"},
+    {"id":"T1-06","typeId":1,"facet":"回避","text":"怒りをそのまま表すことには抵抗がある。"},
+    {"id":"T1-07","typeId":1,"facet":"注意の向き","text":"不完全なところへ注意が向きやすい。"},
+    {"id":"T1-08","typeId":1,"facet":"自動反応","text":"休む前に、気になる不備を直しておきたい。"},
+    {"id":"T2-01","typeId":2,"facet":"根元的恐れ","text":"人から愛されない自分になることを強く避けたい。"},
+    {"id":"T2-02","typeId":2,"facet":"恐れへの反応","text":"人の関心が自分から離れると不安になる。"},
+    {"id":"T2-03","typeId":2,"facet":"根元的欲求","text":"相手に必要とされると、自分の大切さを感じる。"},
+    {"id":"T2-04","typeId":2,"facet":"満足条件","text":"愛情を向けることで人とのつながりを感じたい。"},
+    {"id":"T2-05","typeId":2,"facet":"戦略","text":"相手の役に立つことで、心の距離を近づけたい。"},
+    {"id":"T2-06","typeId":2,"facet":"回避","text":"自分の希望を先に出すことには抵抗がある。"},
+    {"id":"T2-07","typeId":2,"facet":"注意の向き","text":"人の望みを察することに意識が向きやすい。"},
+    {"id":"T2-08","typeId":2,"facet":"自動反応","text":"人に必要とされる側でいたい。"},
+    {"id":"T3-01","typeId":3,"facet":"根元的恐れ","text":"自分に本来の価値がないと感じることを強く避けたい。"},
+    {"id":"T3-02","typeId":3,"facet":"恐れへの反応","text":"失敗で自分のイメージが傷つくことが怖い。"},
+    {"id":"T3-03","typeId":3,"facet":"根元的欲求","text":"成果が出ると、自分の価値を感じやすい。"},
+    {"id":"T3-04","typeId":3,"facet":"満足条件","text":"周囲から高く評価される自分でいたい。"},
+    {"id":"T3-05","typeId":3,"facet":"戦略","text":"最短で結果へ近づく方法を探しやすい。"},
+    {"id":"T3-06","typeId":3,"facet":"回避","text":"立ち止まって自分の気持ちを見ることには抵抗がある。"},
+    {"id":"T3-07","typeId":3,"facet":"注意の向き","text":"周囲が評価する姿に自分を合わせやすい。"},
+    {"id":"T3-08","typeId":3,"facet":"自動反応","text":"何も進んでいない時間には焦りを感じる。"},
+    {"id":"T4-01","typeId":4,"facet":"根元的恐れ","text":"自分に固有の存在意義がないことを強く恐れる。"},
+    {"id":"T4-02","typeId":4,"facet":"恐れへの反応","text":"自分だけ何かが欠けているように感じる。"},
+    {"id":"T4-03","typeId":4,"facet":"根元的欲求","text":"自分らしさを感じられる選択をしたい。"},
+    {"id":"T4-04","typeId":4,"facet":"満足条件","text":"自分の深い気持ちを理解されることを望む。"},
+    {"id":"T4-05","typeId":4,"facet":"戦略","text":"人から離れることで、自分の気持ちを確かめやすい。"},
+    {"id":"T4-06","typeId":4,"facet":"回避","text":"平凡な人として扱われることには抵抗がある。"},
+    {"id":"T4-07","typeId":4,"facet":"注意の向き","text":"手に入らないものへ心が向きやすい。"},
+    {"id":"T4-08","typeId":4,"facet":"自動反応","text":"強い感情が、自分を知る手がかりになる。"},
+    {"id":"T5-01","typeId":5,"facet":"根元的恐れ","text":"自分に対処する能力がない状態を強く避けたい。"},
+    {"id":"T5-02","typeId":5,"facet":"恐れへの反応","text":"分からないまま関わると、自分の力が足りなくなる気がする。"},
+    {"id":"T5-03","typeId":5,"facet":"根元的欲求","text":"対処できる知識を身につけておきたい。"},
+    {"id":"T5-04","typeId":5,"facet":"満足条件","text":"十分に理解できていると安心する。"},
+    {"id":"T5-05","typeId":5,"facet":"戦略","text":"一人で考えられる距離を取ることで安全を保ちたい。"},
+    {"id":"T5-06","typeId":5,"facet":"回避","text":"自分のニーズを表に出すことには抵抗がある。"},
+    {"id":"T5-07","typeId":5,"facet":"注意の向き","text":"距離を取って状況を観察しやすい。"},
+    {"id":"T5-08","typeId":5,"facet":"自動反応","text":"人に使うエネルギーを小さく保ちたい。"},
+    {"id":"T6-01","typeId":6,"facet":"根元的恐れ","text":"支えも導きもない状態を強く避けたい。"},
+    {"id":"T6-02","typeId":6,"facet":"恐れへの反応","text":"危険の兆しを見落としていないかが気になる。"},
+    {"id":"T6-03","typeId":6,"facet":"根元的欲求","text":"信頼できる基準があると安心する。"},
+    {"id":"T6-04","typeId":6,"facet":"満足条件","text":"頼れるつながりがあると落ち着く。"},
+    {"id":"T6-05","typeId":6,"facet":"戦略","text":"期待されることを果たせば、安全でいられると感じる。"},
+    {"id":"T6-06","typeId":6,"facet":"回避","text":"自分の判断だけに頼ることには不安がある。"},
+    {"id":"T6-07","typeId":6,"facet":"注意の向き","text":"相手を信じる前に、確かめておきたい。"},
+    {"id":"T6-08","typeId":6,"facet":"自動反応","text":"決めた後も、見落としを考え直しやすい。"},
+    {"id":"T7-01","typeId":7,"facet":"根元的恐れ","text":"苦痛から逃れられない状態を強く避けたい。"},
+    {"id":"T7-02","typeId":7,"facet":"恐れへの反応","text":"苦しい気持ちが続くと次の可能性へ意識を移したくなる。"},
+    {"id":"T7-03","typeId":7,"facet":"根元的欲求","text":"楽しみの選択肢があると安心する。"},
+    {"id":"T7-04","typeId":7,"facet":"満足条件","text":"新しい刺激があると、満たされた気持ちになる。"},
+    {"id":"T7-05","typeId":7,"facet":"戦略","text":"満足につながる選択肢を自分から増やしたい。"},
+    {"id":"T7-06","typeId":7,"facet":"回避","text":"退屈な状態にとどまることには抵抗がある。"},
+    {"id":"T7-07","typeId":7,"facet":"注意の向き","text":"先にある楽しみへ心が向きやすい。"},
+    {"id":"T7-08","typeId":7,"facet":"自動反応","text":"一つに決めると、自由が減るように感じる。"},
+    {"id":"T8-01","typeId":8,"facet":"根元的恐れ","text":"人に傷つけられる立場になることを強く避けたい。"},
+    {"id":"T8-02","typeId":8,"facet":"恐れへの反応","text":"他人に主導権を握られることには抵抗がある。"},
+    {"id":"T8-03","typeId":8,"facet":"根元的欲求","text":"自分を守れる強さを持っていたい。"},
+    {"id":"T8-04","typeId":8,"facet":"満足条件","text":"自分の人生を自分で動かせると安心する。"},
+    {"id":"T8-05","typeId":8,"facet":"戦略","text":"人の許可を待たずに必要なものを取りに行きたい。"},
+    {"id":"T8-06","typeId":8,"facet":"回避","text":"弱みを人に見せることには抵抗がある。"},
+    {"id":"T8-07","typeId":8,"facet":"注意の向き","text":"相手が信用できるか、反応を確かめたくなる。"},
+    {"id":"T8-08","typeId":8,"facet":"自動反応","text":"危険を感じると、前に出て対処したくなる。"},
+    {"id":"T9-01","typeId":9,"facet":"根元的恐れ","text":"大切な人とのつながりが切れることを強く避けたい。"},
+    {"id":"T9-02","typeId":9,"facet":"恐れへの反応","text":"自分の望みを強く出すと、関係が乱れる気がする。"},
+    {"id":"T9-03","typeId":9,"facet":"根元的欲求","text":"心の平穏が保たれていると安心する。"},
+    {"id":"T9-04","typeId":9,"facet":"満足条件","text":"周囲との間に波風がない状態を望む。"},
+    {"id":"T9-05","typeId":9,"facet":"戦略","text":"相手に合わせることで、つながりを保ちたい。"},
+    {"id":"T9-06","typeId":9,"facet":"回避","text":"問題を大きく扱うことには抵抗がある。"},
+    {"id":"T9-07","typeId":9,"facet":"注意の向き","text":"自分の望みを後回しにしやすい。"},
+    {"id":"T9-08","typeId":9,"facet":"自動反応","text":"怒りをはっきり自覚することには抵抗がある。"}
   ],
-  "selfObservationQuestions": [
-    {"id":"Q37","text":"自分が普段「自分の性格（強み）」だと思っているものが、実は過去に自分を守るために身につけたパターンであり、今は自分を不自由にしていると感じることがある。"},
-    {"id":"Q38","text":"自動的な防衛反応（不安、イライラなど）が起きているまさにその瞬間に気づき、直ちにその行動を「中止」する練習をしている。"},
-    {"id":"Q39","text":"過去の記憶や未来の不安に引きずられず、ただ「今、ここ（プレゼンス）」の現実に無防備に留まることが、いかに困難で重要であるかを感じている。"}
+  "crossCheckQuestions": [
+    {"id":"C-01","axis":"center","key":"autonomy","label":"自立","text":"自分の人生を自分の意志で方向づけられることが最も大切だ。"},
+    {"id":"C-02","axis":"center","key":"attention","label":"関心","text":"人から関心を向けられることで、自分の価値を確かめやすい。"},
+    {"id":"C-03","axis":"center","key":"security","label":"安全","text":"支えや見通しがあることで、これからに対処できると感じる。"},
+    {"id":"S-01","axis":"strategy","key":"demand","label":"要求する","text":"必要なものは、こちらから求めに行くほうだ。"},
+    {"id":"S-02","axis":"strategy","key":"effort","label":"努力する","text":"必要なものは、求められることを果たして得ようとする。"},
+    {"id":"S-03","axis":"strategy","key":"withdraw","label":"退く","text":"必要なものは、人から離れて自分の内側で見つけようとする。"}
+  ],
+  "orders": {
+    "standard":["T3-06","T5-04","T9-01","T8-02","T5-01","T6-06","T9-08","T4-05","T1-07","T2-04","T7-03","T8-05","T1-01","T3-04","T7-06","T6-05","T2-03","T8-08","T1-06","T5-03","T8-03","T4-07","T9-04","T5-08","T3-07","T4-02","T1-03","T2-08","C-03","T7-08","T6-02","T9-03","T5-02","C-02","T9-06","T7-04","T5-07","T4-06","T8-06","T2-01","T5-06","T3-08","T6-03","T5-05","T3-05","T2-06","T4-08","T7-01","T2-02","T6-04","T8-04","T2-05","S-03","S-02","T8-07","T3-03","T4-04","T6-07","T1-08","T9-05","T8-01","T6-08","T7-05","T4-03","S-01","T3-01","T2-07","T1-04","T7-07","T6-01","T7-02","T9-02","T3-02","T1-02","T9-07","T4-01","C-01","T1-05"],
+    "short":["T4-01","T3-03","T6-05","T9-05","S-03","T4-03","T2-03","T6-08","T1-03","T5-05","T2-01","T6-01","T7-08","T5-08","T7-01","T9-01","T8-08","T7-03","T5-03","T4-05","T5-01","T3-01","S-01","T7-05","T8-03","T9-08","T2-05","T8-01","S-02","T8-05","T9-03","T1-05","C-01","T3-05","T1-08","T2-08","T6-03","C-02","T4-08","T1-01","T3-08","C-03"]
+  },
+  "reflectionQuestions": [
+    "上位候補のうち、最も避けようとしている恐れはどれでしたか？",
+    "その恐れを避けるために、普段どのような反応を繰り返していますか？",
+    "その反応を使わなくてもよいとしたら、どんな選択ができそうですか？"
   ],
   "typeResults": {
     "1": {
@@ -323,688 +363,7 @@
   }
 }
   </script>
-  <script>
-    'use strict';
-
-    const APP_VERSION = 'v2.3.0';
-    const STORAGE_KEY = 'enneagramApp:v8:state';
-    const LEGACY_STORAGE_KEYS = [
-      'enneagramApp:v1:state', 'enneagramApp:v2:state', 'enneagramApp:v3:state',
-      'enneagramApp:v4:state', 'enneagramApp:v5:state', 'enneagramApp:v6:state',
-      'enneagramApp:v7:state'
-    ];
-    const MAX_TYPE_SCORE = 16;
-    const MAX_SELF_OBSERVATION_SCORE = 12;
-    const RATING_OPTIONS = [
-      { value:'veryClose', score:4, label:'かなり近い' },
-      { value:'close', score:2, label:'まあ近い' },
-      { value:'neutral', score:1, label:'どちらでもない' },
-      { value:'notVeryClose', score:0, label:'あまり近くない' },
-      { value:'notClose', score:0, label:'まったく近くない' }
-    ];
-    const SELF_OBSERVATION_OPTIONS = RATING_OPTIONS;
-    const RATING_SCORE_MAP = Object.fromEntries(RATING_OPTIONS.map(function (option) {
-      return [option.value, option.score];
-    }));
-    const APP_DATA = JSON.parse(document.getElementById('app-data').textContent);
-    const SCENARIOS = APP_DATA.scenarios;
-    const SELF_OBSERVATION_QUESTIONS = APP_DATA.selfObservationQuestions;
-    const TYPE_RESULTS = APP_DATA.typeResults;
-    const TYPE_CHARACTER_FILES = {
-      1:'type-01-reformer-v1.png', 2:'type-02-helper-v1.png', 3:'type-03-achiever-v1.png',
-      4:'type-04-individualist-v1.png', 5:'type-05-investigator-v1.png', 6:'type-06-loyalist-v1.png',
-      7:'type-07-enthusiast-v1.png', 8:'type-08-challenger-v1.png', 9:'type-09-peacemaker-v1.png'
-    };
-    const app = document.getElementById('app');
-    let state = emptyScenarioState();
-
-    function clearApp() { app.replaceChildren(); }
-
-    function el(tag, className, text) {
-      const node = document.createElement(tag);
-      if (className) node.className = className;
-      if (text !== undefined) node.textContent = text;
-      return node;
-    }
-
-    function button(text, className, handler) {
-      const node = el('button', className, text);
-      node.type = 'button';
-      node.addEventListener('click', handler);
-      return node;
-    }
-
-    function svgEl(tag, attributes, text) {
-      const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
-      Object.entries(attributes || {}).forEach(function (entry) {
-        node.setAttribute(entry[0], String(entry[1]));
-      });
-      if (text !== undefined) node.textContent = text;
-      return node;
-    }
-
-    function setVersion() {
-      document.getElementById('app-version').textContent = APP_VERSION;
-    }
-
-    function showError(message) {
-      const node = el('div', 'error', message);
-      node.setAttribute('role', 'alert');
-      return node;
-    }
-
-    function scrollPageTop() {
-      requestAnimationFrame(function () {
-        window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
-      });
-    }
-
-    function renderWingSummary(wingResult) {
-      const core = TYPE_RESULTS[wingResult.coreType];
-      const section = el('section', 'card wing-card');
-      section.append(el('h2', '', wingResult.wingLabel + '：' + core.nameJa));
-      if (wingResult.balanced) {
-        section.append(el('p', 'lead', 'コアタイプ' + wingResult.coreType + '「' + core.nameJa + '」に隣接するタイプ' + wingResult.wingAType + 'とタイプ' + wingResult.wingBType + 'のシナリオ得点が同点です。両方の影響をバランスよく持つ可能性があります。'));
-      } else {
-        const wing = TYPE_RESULTS[wingResult.wingType];
-        section.append(el('p', 'lead', 'コアタイプ' + wingResult.coreType + '「' + core.nameJa + '」に、タイプ' + wingResult.wingType + '「' + wing.nameJa + '」の影響が強く加わる傾向です。'));
-      }
-      section.append(renderTypeIllustration(core));
-      section.append(el('h3', '', '隣接タイプによるウイング判定'));
-      section.append(el('p', '', 'タイプ' + wingResult.wingAType + '側 ' + wingResult.wingAScore + '点 ／ タイプ' + wingResult.wingBType + '側 ' + wingResult.wingBScore + '点'));
-      return section;
-    }
-
-    // 第4版: 4つの動機を互いに比較せず、一つずつ5段階で独立評価します。
-    function emptyScenarioState() {
-      return { currentScenario: 0, ratings: {}, selfObservationAnswers: {} };
-    }
-
-    function validateScenarioData() {
-      const expectedMappings = [
-        [1, 5, 6, 7], [2, 4, 8, 9], [3, 5, 7, 8],
-        [1, 2, 4, 6], [1, 3, 5, 9], [3, 4, 6, 7],
-        [1, 5, 8, 9], [2, 3, 7, 9], [2, 4, 6, 8]
-      ];
-      const typeCounts = {};
-      SCENARIOS.forEach(function (scenario) {
-        scenario.options.forEach(function (option) {
-          typeCounts[option.typeId] = (typeCounts[option.typeId] || 0) + 1;
-        });
-      });
-      const valid = Array.isArray(SCENARIOS) && SCENARIOS.length === 9 &&
-        SCENARIOS.every(function (scenario, index) {
-          return scenario.id === 'S' + (index + 1) && scenario.title && scenario.prompt &&
-            Array.isArray(scenario.options) && scenario.options.length === 4 &&
-            scenario.options.every(function (option, optionIndex) {
-              return option.id === String.fromCharCode(65 + optionIndex) &&
-                option.typeId === expectedMappings[index][optionIndex] && option.text;
-            });
-        }) &&
-        Array.from({ length: 9 }, function (_, index) { return typeCounts[index + 1] === 4; }).every(Boolean) &&
-        Array.isArray(SELF_OBSERVATION_QUESTIONS) && SELF_OBSERVATION_QUESTIONS.length === 3 &&
-        SELF_OBSERVATION_QUESTIONS.every(function (question, index) {
-          return question.id === 'Q' + (index + 37) && question.text;
-        }) &&
-        Object.keys(TYPE_RESULTS).length === 9 &&
-        Object.keys(TYPE_CHARACTER_FILES).length === 9 &&
-        APP_DATA.closingMessage;
-      if (!valid) throw new Error('診断データに不備があります。管理者へ連絡してください。');
-    }
-
-    function isRatingValue(value) {
-      return Object.prototype.hasOwnProperty.call(RATING_SCORE_MAP, value);
-    }
-
-    function optionExists(scenario, optionId) {
-      return scenario.options.some(function (option) { return option.id === optionId; });
-    }
-
-    function normalizeScenarioState(candidate) {
-      if (!candidate || candidate.schemaVersion !== 8 ||
-          !Number.isInteger(candidate.currentScenario) ||
-          candidate.currentScenario < 0 || candidate.currentScenario > SCENARIOS.length ||
-          !candidate.ratings || typeof candidate.ratings !== 'object' || Array.isArray(candidate.ratings) ||
-          !candidate.selfObservationAnswers || typeof candidate.selfObservationAnswers !== 'object' ||
-          Array.isArray(candidate.selfObservationAnswers)) return null;
-      const normalized = emptyScenarioState();
-      normalized.currentScenario = candidate.currentScenario;
-      for (const entry of Object.entries(candidate.ratings)) {
-        const scenario = SCENARIOS.find(function (item) { return item.id === entry[0]; });
-        const scenarioRatings = entry[1];
-        if (!scenario || !scenarioRatings || typeof scenarioRatings !== 'object' || Array.isArray(scenarioRatings)) return null;
-        normalized.ratings[scenario.id] = {};
-        for (const ratingEntry of Object.entries(scenarioRatings)) {
-          if (!optionExists(scenario, ratingEntry[0]) || !isRatingValue(ratingEntry[1])) return null;
-          normalized.ratings[scenario.id][ratingEntry[0]] = ratingEntry[1];
-        }
-      }
-      const selfIds = new Set(SELF_OBSERVATION_QUESTIONS.map(function (question) { return question.id; }));
-      for (const entry of Object.entries(candidate.selfObservationAnswers)) {
-        if (!selfIds.has(entry[0]) || !isRatingValue(entry[1])) return null;
-        normalized.selfObservationAnswers[entry[0]] = entry[1];
-      }
-      return normalized;
-    }
-
-    function loadScenarioState() {
-      try {
-        LEGACY_STORAGE_KEYS.forEach(function (key) { sessionStorage.removeItem(key); });
-        return normalizeScenarioState(JSON.parse(sessionStorage.getItem(STORAGE_KEY))) || emptyScenarioState();
-      } catch (_) {
-        return emptyScenarioState();
-      }
-    }
-
-    function saveScenarioState() {
-      try {
-        sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
-          schemaVersion: 8,
-          currentScenario: state.currentScenario,
-          ratings: state.ratings,
-          selfObservationAnswers: state.selfObservationAnswers
-        }));
-      } catch (_) {
-        // 一時保存不可でも診断は継続します。
-      }
-    }
-
-    function completeMotiveCount() {
-      return SCENARIOS.reduce(function (total, scenario) {
-        const scenarioRatings = state.ratings[scenario.id] || {};
-        return total + scenario.options.filter(function (option) {
-          return isRatingValue(scenarioRatings[option.id]);
-        }).length;
-      }, 0);
-    }
-
-    function completeScenarioCount() {
-      return SCENARIOS.filter(function (scenario) {
-        const scenarioRatings = state.ratings[scenario.id] || {};
-        return scenario.options.every(function (option) { return isRatingValue(scenarioRatings[option.id]); });
-      }).length;
-    }
-
-    function completeSelfObservationCount() {
-      return SELF_OBSERVATION_QUESTIONS.filter(function (question) {
-        return isRatingValue(state.selfObservationAnswers[question.id]);
-      }).length;
-    }
-
-    function showScenarioStart(shouldScrollTop) {
-      clearApp();
-      app.append(el('h1', '', 'エニアグラム・タイプ診断'));
-      app.append(el('p', 'lead', '9つの日常シーンにある36の「心の声」を一つずつ評価し、無意識に繰り返す防衛パターンからコアタイプとウイングを見つける診断です。'));
-      const card = el('section', 'card');
-      card.append(el('h2', '', '回答方法'));
-      card.append(el('p', '', '各シーンの4つの心の声すべてについて、本音に近い度合いを5段階で個別に選びます。心の声同士を順位付けする必要はありません。すべて同じ回答にすることもできます。'));
-      card.append(el('p', '', '見栄えのよい答えではなく、これまでの人生で無意識に繰り返してきた心の動きに近いものを選ぶのがコツです。'));
-      app.append(card);
-      app.append(el('p', 'privacy', '回答内容はこの端末内で一時的に扱われ、サーバーには送信されません。結果の共有は任意です。'));
-      const hasProgress = completeMotiveCount() > 0 || completeSelfObservationCount() > 0;
-      app.append(button(hasProgress ? '診断を続ける' : '診断を始める', 'primary', function () {
-        if (state.currentScenario === SCENARIOS.length) showSelfObservation(undefined, true);
-        else showScenario(undefined, true);
-      }));
-      if (shouldScrollTop) scrollPageTop();
-    }
-
-    function renderRatingActions(options, selectedValue, onSelect, ariaPrefix) {
-      const actions = el('div', 'rating-actions');
-      options.forEach(function (option) {
-        const ratingButton = button(option.label, 'rating-button', function () { onSelect(option.value); });
-        ratingButton.setAttribute('aria-pressed', String(selectedValue === option.value));
-        ratingButton.setAttribute('aria-label', ariaPrefix + '：' + option.label);
-        actions.append(ratingButton);
-      });
-      return actions;
-    }
-
-    function showScenario(errorMessage, shouldScrollTop) {
-      clearApp();
-      const scenario = SCENARIOS[state.currentScenario];
-      const scenarioRatings = state.ratings[scenario.id] || {};
-      const answeredInScenario = scenario.options.filter(function (option) {
-        return isRatingValue(scenarioRatings[option.id]);
-      }).length;
-      const progressHead = el('div', 'progress-head');
-      progressHead.append(el('span', '', 'シナリオ ' + (state.currentScenario + 1) + ' / ' + SCENARIOS.length));
-      progressHead.append(el('span', '', '回答済み ' + completeMotiveCount() + ' / 36'));
-      app.append(progressHead);
-      const progress = el('div', 'progress');
-      const progressBar = el('div');
-      progressBar.style.width = ((completeMotiveCount() / 36) * 100) + '%';
-      progress.append(progressBar);
-      app.append(progress);
-      const card = el('section', 'card scenario-card');
-      card.append(el('p', 'scenario-number', 'シナリオ ' + (state.currentScenario + 1)));
-      card.append(el('h1', '', scenario.title));
-      card.append(el('p', 'scenario-prompt', scenario.prompt));
-      card.append(el('div', 'answer-summary', 'このシーンの回答：' + answeredInScenario + ' / 4'));
-      if (errorMessage) card.append(showError(errorMessage));
-      const list = el('div', 'option-list');
-      scenario.options.forEach(function (option) {
-        const optionCard = el('article', 'motive-option');
-        if (isRatingValue(scenarioRatings[option.id])) optionCard.classList.add('answered');
-        optionCard.append(el('div', 'option-label', '心の声 ' + option.id));
-        optionCard.append(el('p', 'option-text', option.text));
-        optionCard.append(renderRatingActions(
-          RATING_OPTIONS,
-          scenarioRatings[option.id],
-          function (value) { selectScenarioRating(scenario.id, option.id, value); },
-          '心の声' + option.id
-        ));
-        list.append(optionCard);
-      });
-      card.append(list);
-      app.append(card);
-      const actions = el('div', 'actions');
-      if (state.currentScenario > 0) {
-        actions.append(button('戻る', 'secondary', function () {
-          state.currentScenario -= 1;
-          saveScenarioState();
-          showScenario(undefined, true);
-        }));
-      }
-      actions.append(button('次へ', 'primary', proceedScenario));
-      app.append(actions);
-      if (shouldScrollTop) scrollPageTop();
-    }
-
-    function selectScenarioRating(scenarioId, optionId, value) {
-      if (!isRatingValue(value)) return;
-      if (!state.ratings[scenarioId]) state.ratings[scenarioId] = {};
-      state.ratings[scenarioId][optionId] = value;
-      saveScenarioState();
-      showScenario(undefined, false);
-    }
-
-    function proceedScenario() {
-      const scenario = SCENARIOS[state.currentScenario];
-      const scenarioRatings = state.ratings[scenario.id] || {};
-      const missing = scenario.options.filter(function (option) {
-        return !isRatingValue(scenarioRatings[option.id]);
-      });
-      if (missing.length) {
-        showScenario('未回答の心の声が ' + missing.length + ' 件あります。4つすべてを評価してください。', false);
-        return;
-      }
-      if (state.currentScenario === SCENARIOS.length - 1) {
-        if (completeScenarioCount() !== SCENARIOS.length) {
-          showScenario('未回答のシナリオがあります。全36件の心の声を評価してください。', false);
-          return;
-        }
-        state.currentScenario = SCENARIOS.length;
-        saveScenarioState();
-        showSelfObservation(undefined, true);
-      } else {
-        state.currentScenario += 1;
-        saveScenarioState();
-        showScenario(undefined, true);
-      }
-    }
-
-    function showSelfObservation(errorMessage, shouldScrollTop) {
-      clearApp();
-      const answered = completeSelfObservationCount();
-      const progressHead = el('div', 'progress-head');
-      progressHead.append(el('span', '', '質問 37〜39 / 全39問'));
-      progressHead.append(el('span', '', '回答済み ' + (36 + answered) + ' / 39'));
-      app.append(progressHead);
-      const progress = el('div', 'progress');
-      const progressBar = el('div');
-      progressBar.style.width = (((36 + answered) / 39) * 100) + '%';
-      progress.append(progressBar);
-      app.append(progress);
-      const card = el('section', 'card self-observation-card');
-      card.append(el('h1', '', '質問 37〜39'));
-      card.append(el('p', '', 'それぞれ、普段の自分にどのくらい近いかを選んでください。'));
-      card.append(el('div', 'answer-summary', 'このページの回答：' + answered + ' / 3'));
-      if (errorMessage) card.append(showError(errorMessage));
-      SELF_OBSERVATION_QUESTIONS.forEach(function (question, index) {
-        const questionCard = el('section', 'self-question');
-        if (isRatingValue(state.selfObservationAnswers[question.id])) questionCard.classList.add('answered');
-        questionCard.append(el('div', 'option-label', '質問 ' + (index + 37)));
-        questionCard.append(el('p', 'option-text', question.text));
-        questionCard.append(renderRatingActions(
-          SELF_OBSERVATION_OPTIONS,
-          state.selfObservationAnswers[question.id],
-          function (value) {
-            state.selfObservationAnswers[question.id] = value;
-            saveScenarioState();
-            showSelfObservation(undefined, false);
-          },
-          '質問' + (index + 37)
-        ));
-        card.append(questionCard);
-      });
-      app.append(card);
-      const actions = el('div', 'actions');
-      actions.append(button('戻る', 'secondary', function () {
-        state.currentScenario = SCENARIOS.length - 1;
-        saveScenarioState();
-        showScenario(undefined, true);
-      }));
-      actions.append(button('診断結果を見る', 'primary', function () {
-        if (completeSelfObservationCount() !== SELF_OBSERVATION_QUESTIONS.length) {
-          showSelfObservation('未回答の質問があります。3問すべてに回答してください。', false);
-          return;
-        }
-        showScenarioResults(calculateScenarioDiagnosis(state.ratings, state.selfObservationAnswers));
-      }));
-      app.append(actions);
-      if (shouldScrollTop) scrollPageTop();
-    }
-
-    function calculateScenarioDiagnosis(ratings, selfObservationAnswers) {
-      const scores = { 1:0, 2:0, 3:0, 4:0, 5:0, 6:0, 7:0, 8:0, 9:0 };
-      SCENARIOS.forEach(function (scenario) {
-        const scenarioRatings = ratings[scenario.id] || {};
-        scenario.options.forEach(function (option) {
-          const rating = scenarioRatings[option.id];
-          if (!isRatingValue(rating)) throw new Error('未回答の心の声があるため診断できません。');
-          scores[option.typeId] += RATING_SCORE_MAP[rating];
-        });
-      });
-      const selfObservationScore = SELF_OBSERVATION_QUESTIONS.reduce(function (total, question) {
-        const rating = selfObservationAnswers[question.id];
-        if (!isRatingValue(rating)) throw new Error('未回答の質問があるため診断できません。');
-        return total + RATING_SCORE_MAP[rating];
-      }, 0);
-      const topScore = Math.max.apply(null, Object.values(scores));
-      const topTypes = Object.keys(scores).map(Number).filter(function (typeId) {
-        return scores[typeId] === topScore;
-      });
-      return {
-        status: topTypes.length === 1 ? 'single' : 'tie',
-        scores: scores,
-        topScore: topScore,
-        topTypes: topTypes,
-        ratings: ratings,
-        selfObservationScore: selfObservationScore,
-        wingResults: topTypes.map(function (coreType) { return determineScenarioWing(coreType, scores); })
-      };
-    }
-
-    function determineScenarioWing(coreType, scores) {
-      const leftType = coreType === 1 ? 9 : coreType - 1;
-      const rightType = coreType === 9 ? 1 : coreType + 1;
-      const leftScore = scores[leftType];
-      const rightScore = scores[rightType];
-      const balanced = leftScore === rightScore;
-      const wingType = balanced ? null : (leftScore > rightScore ? leftType : rightType);
-      return {
-        coreType: coreType,
-        wingType: wingType,
-        wingLabel: balanced ? coreType + '-両' : coreType + 'w' + wingType,
-        wingAType: leftType,
-        wingBType: rightType,
-        wingAScore: leftScore,
-        wingBScore: rightScore,
-        balanced: balanced
-      };
-    }
-
-    function ratingOption(value) {
-      return RATING_OPTIONS.find(function (option) { return option.value === value; });
-    }
-
-    function renderScenarioReview(result) {
-      const section = el('section', 'card scenario-review');
-      section.append(el('h2', '', '評価した動機の振り返り'));
-      section.append(el('p', '', '診断中は伏せていたタイプ対応と内部得点を、ここで確認できます。それぞれの動機が自分の中でどの程度働いていたかを振り返ってください。'));
-      SCENARIOS.forEach(function (scenario, index) {
-        const block = el('section', 'section-card');
-        block.append(el('h3', '', 'シナリオ' + (index + 1) + '：' + scenario.title));
-        const list = el('ul');
-        scenario.options.forEach(function (option) {
-          const rating = ratingOption(result.ratings[scenario.id][option.id]);
-          list.append(el('li', '', 'タイプ' + option.typeId + '・' + rating.label + '（' + rating.score + '点）— ' + option.text));
-        });
-        block.append(list);
-        section.append(block);
-      });
-      return section;
-    }
-
-    function showScenarioResults(result) {
-      clearApp();
-      app.append(el('h1', '', '診断結果'));
-      if (result.status === 'single') {
-        const wingResult = result.wingResults[0];
-        app.append(el('p', 'lead', 'あなたの診断タイプは「' + wingResult.wingLabel + '：' + TYPE_RESULTS[wingResult.coreType].nameJa + '」です。'));
-      } else {
-        const names = result.wingResults.map(function (wingResult) {
-          return wingResult.wingLabel + '（' + TYPE_RESULTS[wingResult.coreType].nameJa + '）';
-        }).join('・');
-        app.append(el('div', 'notice', 'コアタイプが同点でした。すべての同率候補を表示します：' + names));
-      }
-      result.wingResults.forEach(function (wingResult) { app.append(renderWingSummary(wingResult)); });
-      app.append(renderRadarSection(result));
-      app.append(renderSelfObservation(result.selfObservationScore));
-      app.append(renderScenarioReview(result));
-      app.append(el('p', 'notice', 'この結果は、36の動機を独立して評価した回答から見える傾向の一つです。人を固定的な型として扱うものではありません。'));
-      app.append(renderAllTypeDetails(result));
-      app.append(renderClosingMessage());
-      app.append(button('もう一度診断する', 'primary', restartScenario));
-      scrollPageTop();
-    }
-
-    function renderSelfObservation(score) {
-      const section = el('section', 'card');
-      section.append(el('h2', '', '自己観察度'));
-      section.append(el('p', 'lead', score + ' / ' + MAX_SELF_OBSERVATION_SCORE + '点'));
-      section.append(el('p', '', '自分の自動的な防衛反応や「今、ここ」への意識を、どの程度自覚しているかを表す別枠指標です。コアタイプとウイングの判定には加算していません。'));
-      return section;
-    }
-
-    function polarPoint(typeId, factor, radius) {
-      const angle = -Math.PI / 2 + ((typeId - 1) * Math.PI * 2 / 9);
-      return {
-        x: 260 + Math.cos(angle) * radius * factor,
-        y: 260 + Math.sin(angle) * radius * factor
-      };
-    }
-
-    function pointsAttribute(points) {
-      return points.map(function (point) {
-        return point.x.toFixed(2) + ',' + point.y.toFixed(2);
-      }).join(' ');
-    }
-
-    function renderRadarChart(result) {
-      const svg = svgEl('svg', {
-        class: 'radar-svg',
-        viewBox: '0 0 520 520',
-        role: 'img',
-        'aria-labelledby': 'radar-title radar-description'
-      });
-      svg.append(svgEl('title', { id: 'radar-title' }, '9タイプの得点レーダーチャート'));
-      svg.append(svgEl('desc', { id: 'radar-description' }, '各タイプ0点から16点までの独立評価得点を9本の軸で比較します。'));
-      for (const level of [4, 8, 12, 16]) {
-        const gridPoints = [];
-        for (let typeId = 1; typeId <= 9; typeId += 1) {
-          gridPoints.push(polarPoint(typeId, level / MAX_TYPE_SCORE, 168));
-        }
-        svg.append(svgEl('polygon', {
-          points: pointsAttribute(gridPoints),
-          class: level === MAX_TYPE_SCORE ? 'radar-grid radar-grid-outer' : 'radar-grid'
-        }));
-      }
-      for (let typeId = 1; typeId <= 9; typeId += 1) {
-        const end = polarPoint(typeId, 1, 168);
-        svg.append(svgEl('line', {
-          x1: 260, y1: 260, x2: end.x, y2: end.y, class: 'radar-axis'
-        }));
-      }
-      const scorePoints = [];
-      for (let typeId = 1; typeId <= 9; typeId += 1) {
-        scorePoints.push(polarPoint(typeId, result.scores[typeId] / MAX_TYPE_SCORE, 168));
-      }
-      svg.append(svgEl('polygon', { points: pointsAttribute(scorePoints), class: 'radar-area' }));
-      scorePoints.forEach(function (point, index) {
-        svg.append(svgEl('circle', {
-          cx: point.x, cy: point.y, r: 5,
-          class: result.topTypes.includes(index + 1) ? 'radar-dot radar-dot-top' : 'radar-dot'
-        }));
-      });
-      for (let typeId = 1; typeId <= 9; typeId += 1) {
-        const labelPoint = polarPoint(typeId, 1, 205);
-        const label = svgEl('text', {
-          x: labelPoint.x,
-          y: labelPoint.y,
-          class: result.topTypes.includes(typeId) ? 'radar-label radar-label-top' : 'radar-label',
-          tabindex: '0',
-          role: 'link',
-          'aria-label': 'タイプ' + typeId + '、' + TYPE_RESULTS[typeId].nameJa + '、' + result.scores[typeId] + '点。解説へ移動'
-        }, 'T' + typeId + ' ' + result.scores[typeId]);
-        label.addEventListener('click', function () { jumpToType(typeId); });
-        label.addEventListener('keydown', function (event) {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            jumpToType(typeId);
-          }
-        });
-        svg.append(label);
-      }
-      return svg;
-    }
-
-    function scoreRanking(scores) {
-      const sortedTypeIds = Object.keys(scores).map(Number).sort(function (a, b) {
-        return scores[b] - scores[a] || a - b;
-      });
-      let previousScore = null;
-      let previousRank = 0;
-      return sortedTypeIds.map(function (typeId, index) {
-        const score = scores[typeId];
-        const rank = index > 0 && score === previousScore ? previousRank : index + 1;
-        previousScore = score;
-        previousRank = rank;
-        return { typeId: typeId, score: score, rank: rank };
-      });
-    }
-
-    function renderRadarSection(result) {
-      const section = el('section', 'card result-overview');
-      section.append(el('h2', '', '9タイプの得点バランス'));
-      section.append(el('p', 'chart-help', '9本の軸はタイプ1〜9、外側ほど得点が高く、目盛りの上限は16点です。下のタイプを押すと、その解説へ移動します。'));
-      const wrap = el('div', 'radar-wrap');
-      wrap.append(renderRadarChart(result));
-      section.append(wrap);
-      const nav = el('div', 'score-nav');
-      scoreRanking(result.scores).forEach(function (item) {
-        const type = TYPE_RESULTS[item.typeId];
-        const scoreButton = button(
-          item.rank + '位　タイプ' + item.typeId + ' ' + type.nameJa + '　' + item.score + '点',
-          result.topTypes.includes(item.typeId) ? 'score-button top' : 'score-button',
-          function () { jumpToType(item.typeId); }
-        );
-        nav.append(scoreButton);
-      });
-      section.append(nav);
-      return section;
-    }
-
-    // プロジェクト内のオリジナル人物イラストを各タイプへ対応させます。
-    function renderTypeIllustration(type) {
-      const illustrations = {
-        1:'より良く整える、公正なまなざし',
-        2:'思いやりで人を支える、温かな心',
-        3:'目標を形にし、前へ進む力',
-        4:'深い感情を、意味ある表現へ変える',
-        5:'静かに観察し、本質を見抜く',
-        6:'先を読み、備えと信頼で守る',
-        7:'可能性を見つけ、喜びへ飛び込む',
-        8:'力強く道を切り開き、弱い者を守る',
-        9:'違いを包み、穏やかな調和をつくる'
-      };
-      const figure = el('figure', 'type-illustration');
-      const image = el('img', 'illustration-img');
-      image.src = 'assets/characters-v1/' + TYPE_CHARACTER_FILES[type.typeId];
-      image.alt = 'タイプ' + type.typeId + '「' + type.nameJa + '」を表す人物イラスト';
-      image.loading = 'lazy';
-      image.decoding = 'async';
-      figure.append(image);
-      figure.append(el('figcaption', 'illustration-caption', illustrations[type.typeId]));
-      return figure;
-    }
-
-    function paragraphSection(title, text, className) {
-      const section = el('section', 'section-card ' + (className || ''));
-      section.append(el('h3', '', title));
-      section.append(el('p', '', text));
-      return section;
-    }
-
-    function renderTypeDetail(type, open) {
-      const details = el('details', 'type-detail');
-      details.id = 'type-detail-' + type.typeId;
-      details.open = Boolean(open);
-      const summary = el('summary', '', 'タイプ' + type.typeId + '：' + type.nameJa + '（' + type.nameEn + '）');
-      details.append(summary);
-      const body = el('div', 'type-detail-body');
-      body.append(el('p', 'subtitle', '〜' + type.subtitle + '〜'));
-      body.append(renderTypeIllustration(type));
-      body.append(paragraphSection('唯一無二の至高の才能', type.essence));
-      body.append(paragraphSection('自動操縦（トランス状態）に陥るサイン', type.warningSignal));
-      body.append(paragraphSection('内なる「超自我の行進命令」', type.innerCommand));
-      body.append(paragraphSection('強みが裏目に出る悲劇（自己成就的予言）', type.tragedy, 'runaway'));
-      body.append(paragraphSection('心の鎧を脱ぐための「癒しの態度」', type.healing, 'healing'));
-      details.append(body);
-      return details;
-    }
-
-    function renderAllTypeDetails(result) {
-      const section = el('section', 'type-details');
-      section.append(el('h2', '', '各タイプの特徴'));
-      section.append(el('p', 'chart-help', '見たいタイプを開いて読めます。レーダーチャート下の得点一覧からも移動できます。'));
-      for (let typeId = 1; typeId <= 9; typeId += 1) {
-        section.append(renderTypeDetail(TYPE_RESULTS[typeId], result.topTypes.includes(typeId)));
-      }
-      return section;
-    }
-
-    function jumpToType(typeId) {
-      const target = document.getElementById('type-detail-' + typeId);
-      if (!target) return;
-      target.open = true;
-      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      requestAnimationFrame(function () {
-        const summary = target.querySelector('summary');
-        if (summary) summary.focus({ preventScroll: true });
-      });
-    }
-
-    function renderClosingMessage() {
-      const section = el('section', 'card closing-message');
-      section.append(el('h2', '', APP_DATA.closingMessage.title));
-      APP_DATA.closingMessage.paragraphs.forEach(function (paragraph) {
-        section.append(el('p', '', paragraph));
-      });
-      return section;
-    }
-
-    function restartScenario() {
-      state = emptyScenarioState();
-      try {
-        sessionStorage.removeItem(STORAGE_KEY);
-        LEGACY_STORAGE_KEYS.forEach(function (key) { sessionStorage.removeItem(key); });
-      } catch (_) {
-        // 保存不可の場合も開始画面へ戻します。
-      }
-      showScenarioStart(true);
-    }
-
-    try {
-      validateScenarioData();
-      state = loadScenarioState();
-      setVersion();
-      showScenarioStart();
-    } catch (error) {
-      clearApp();
-      app.append(showError(error.message));
-    }
-  </script>
+  <script>const APP_VERSION = 'v2.4.0';</script>
+  <script src="app.js"></script>
 </body>
 </html>
