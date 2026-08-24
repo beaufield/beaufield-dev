@@ -1,10 +1,10 @@
 'use strict';
 
-const STORAGE_KEY = 'enneagramApp:v9:state';
+const STORAGE_KEY = 'enneagramApp:v10:state';
 const LEGACY_STORAGE_KEYS = [
   'enneagramApp:v1:state', 'enneagramApp:v2:state', 'enneagramApp:v3:state',
   'enneagramApp:v4:state', 'enneagramApp:v5:state', 'enneagramApp:v6:state',
-  'enneagramApp:v7:state', 'enneagramApp:v8:state'
+  'enneagramApp:v7:state', 'enneagramApp:v8:state', 'enneagramApp:v9:state'
 ];
 const MODE_CONFIG = {
   standard: { name:'精度優先・標準版', count:78, typeItemsPerType:8, maxTypeScore:32 },
@@ -21,10 +21,10 @@ const RATING_SCORE_MAP = Object.fromEntries(RATING_OPTIONS.map(function (option)
   return [option.value, option.score];
 }));
 const FACET_GROUPS = {
-  core: { label:'核（恐れ・欲求）', suffixes:['01','03'] },
-  defense: { label:'防衛（反応・回避）', suffixes:['02','06'] },
-  acquisition: { label:'獲得（満足・戦略）', suffixes:['04','05'] },
-  automatic: { label:'自動性（注意・自動反応）', suffixes:['07','08'] }
+  core: { label:'核（恐れ・欲求）' },
+  defense: { label:'防衛（反応・回避）' },
+  acquisition: { label:'獲得（満足・戦略）' },
+  automatic: { label:'自動性（注意・自動反応）' }
 };
 const TYPE_CORES = {
   1:{ fear:'自分が悪く、欠陥のある存在であること', desire:'高潔でありたい' },
@@ -105,41 +105,43 @@ function selectedOrder(mode) {
 
 function validateData() {
   const expectedIds = new Set();
-  const typeCounts = {};
   TYPE_QUESTIONS.forEach(function (question) {
     expectedIds.add(question.id);
-    typeCounts[question.typeId] = (typeCounts[question.typeId] || 0) + 1;
   });
   CROSS_QUESTIONS.forEach(function (question) { expectedIds.add(question.id); });
-  const typeDataValid = Array.isArray(TYPE_QUESTIONS) && TYPE_QUESTIONS.length === 72 &&
+  const typeDataValid = Array.isArray(TYPE_QUESTIONS) && TYPE_QUESTIONS.length === 108 &&
     TYPE_QUESTIONS.every(function (question) {
-      return /^T[1-9]-0[1-8]$/.test(question.id) &&
-        question.typeId === Number(question.id.slice(1, 2)) && question.facet && question.text;
-    }) && Array.from({ length:9 }, function (_, index) {
-      return typeCounts[index + 1] === 8;
-    }).every(Boolean);
-  const crossValid = Array.isArray(CROSS_QUESTIONS) && CROSS_QUESTIONS.length === 6 &&
-    CROSS_QUESTIONS.every(function (question) {
-      return /^[CS]-0[1-3]$/.test(question.id) && question.axis && question.key && question.label && question.text;
+      return /^(ST[1-9]-0[1-8]|SH[1-9]-0[1-4])$/.test(question.id) &&
+        MODE_CONFIG[question.version] && question.typeId >= 1 && question.typeId <= 9 &&
+        FACET_GROUPS[question.facetGroup] && question.facet && question.text;
     });
-  const ordersValid = Object.keys(MODE_CONFIG).every(function (mode) {
+  const crossValid = Array.isArray(CROSS_QUESTIONS) && CROSS_QUESTIONS.length === 12 &&
+    CROSS_QUESTIONS.every(function (question) {
+      return /^(SC|SS|HC|HS)-0[1-3]$/.test(question.id) && MODE_CONFIG[question.version] &&
+        question.axis && question.key && question.label && question.text;
+    });
+  const modeDataValid = Object.keys(MODE_CONFIG).every(function (mode) {
     const order = selectedOrder(mode);
-    return Array.isArray(order) && order.length === MODE_CONFIG[mode].count &&
-      new Set(order).size === order.length && order.every(function (id) { return expectedIds.has(id); });
+    const modeQuestions = TYPE_QUESTIONS.filter(function (question) { return question.version === mode; });
+    const modeCross = CROSS_QUESTIONS.filter(function (question) { return question.version === mode; });
+    const expectedModeIds = new Set(modeQuestions.concat(modeCross).map(function (question) { return question.id; }));
+    const typeCounts = {};
+    modeQuestions.forEach(function (question) {
+      typeCounts[question.typeId] = (typeCounts[question.typeId] || 0) + 1;
+    });
+    return modeQuestions.length === MODE_CONFIG[mode].typeItemsPerType * 9 && modeCross.length === 6 &&
+      Array.from({ length:9 }, function (_, index) {
+        return typeCounts[index + 1] === MODE_CONFIG[mode].typeItemsPerType;
+      }).every(Boolean) && Array.isArray(order) && order.length === MODE_CONFIG[mode].count &&
+      new Set(order).size === order.length && order.every(function (id) {
+        return expectedModeIds.has(id) && ALL_QUESTIONS.get(id).version === mode;
+      }) && order.every(function (id) { return expectedIds.has(id); }) &&
+      expectedModeIds.size === order.length;
   });
-  const standardSet = new Set(selectedOrder('standard'));
-  const shortTypeCounts = {};
-  selectedOrder('short').forEach(function (id) {
-    const question = ALL_QUESTIONS.get(id);
-    if (question.typeId) shortTypeCounts[question.typeId] = (shortTypeCounts[question.typeId] || 0) + 1;
-  });
-  const balanceValid = standardSet.size === expectedIds.size &&
-    Array.from(expectedIds).every(function (id) { return standardSet.has(id); }) &&
-    Array.from({ length:9 }, function (_, index) { return shortTypeCounts[index + 1] === 4; }).every(Boolean);
   const supportingValid = APP_DATA.reflectionQuestions.length === 3 &&
     Object.keys(TYPE_RESULTS).length === 9 && Object.keys(TYPE_CHARACTER_FILES).length === 9 &&
     APP_DATA.closingMessage;
-  if (!typeDataValid || !crossValid || !ordersValid || !balanceValid || !supportingValid) {
+  if (expectedIds.size !== 120 || !typeDataValid || !crossValid || !modeDataValid || !supportingValid) {
     throw new Error('診断データに不備があります。管理者へ連絡してください。');
   }
 }
@@ -149,7 +151,7 @@ function isRatingValue(value) {
 }
 
 function normalizeState(candidate) {
-  if (!candidate || candidate.schemaVersion !== 9 || !MODE_CONFIG[candidate.mode] ||
+  if (!candidate || candidate.schemaVersion !== 10 || !MODE_CONFIG[candidate.mode] ||
       !Number.isInteger(candidate.currentIndex) || candidate.currentIndex < 0 ||
       candidate.currentIndex >= selectedOrder(candidate.mode).length ||
       !candidate.answers || typeof candidate.answers !== 'object' || Array.isArray(candidate.answers)) return null;
@@ -174,7 +176,7 @@ function loadState() {
 function saveState() {
   try {
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
-      schemaVersion:9,
+      schemaVersion:10,
       mode:state.mode,
       currentIndex:state.currentIndex,
       answers:state.answers
@@ -185,9 +187,9 @@ function saveState() {
 }
 
 function answeredCount() {
-  return Object.keys(state.answers).filter(function (id) {
-    return selectedOrder(state.mode).includes(id) && isRatingValue(state.answers[id]);
-  }).length;
+  return selectedOrder(state.mode).reduce(function (total, id) {
+    return total + (isRatingValue(state.answers[id]) ? 1 : 0);
+  }, 0);
 }
 
 function beginMode(mode) {
@@ -226,7 +228,7 @@ function showStart(shouldScrollTop) {
   app.append(guide);
   const modes = el('div', 'mode-grid');
   modes.append(renderModeCard('standard', '9タイプを各8側面から確認する72問と、判定を別角度から確かめる6問で、候補を詳しく比較します。'));
-  modes.append(renderModeCard('short', '各タイプの恐れ・欲求・戦略・自動反応を1問ずつ確認する36問と、共通のクロスチェック6問で傾向を見ます。'));
+  modes.append(renderModeCard('short', '日常の具体的な場面で、各タイプの恐れ・欲求・戦略・自動反応を確認する独自36問と、6問のクロスチェックで傾向を見ます。'));
   app.append(modes);
   app.append(el('p', 'privacy', '回答内容はこの端末のセッション内だけで一時保存され、外部へ送信されません。結果はタイプを確定するものではなく、自己観察の候補です。'));
   if (shouldScrollTop) scrollPageTop();
@@ -234,14 +236,26 @@ function showStart(shouldScrollTop) {
 
 function renderRatingActions(question, selectedValue) {
   const actions = el('div', 'rating-actions');
+  const ratingButtons = [];
   RATING_OPTIONS.forEach(function (option) {
     const node = button(option.label, 'rating-button', function () {
       state.answers[question.id] = option.value;
+      ratingButtons.forEach(function (ratingButton) {
+        ratingButton.setAttribute('aria-pressed', String(ratingButton === node));
+      });
+      const optionCard = actions.closest('.motive-option');
+      if (optionCard) optionCard.classList.add('answered');
+      const progressBar = document.querySelector('.progress > div');
+      if (progressBar) {
+        progressBar.style.width = ((answeredCount() / selectedOrder(state.mode).length) * 100) + '%';
+      }
+      const error = document.querySelector('.scenario-card .error');
+      if (error) error.remove();
       saveState();
-      showQuestion(false);
     });
     node.setAttribute('aria-pressed', String(selectedValue === option.value));
     node.setAttribute('aria-label', question.text + '：' + option.label);
+    ratingButtons.push(node);
     actions.append(node);
   });
   return actions;
@@ -310,11 +324,8 @@ function proceedQuestion() {
   showResults(calculateDiagnosis());
 }
 
-function facetGroupFor(questionId) {
-  const suffix = questionId.slice(-2);
-  return Object.keys(FACET_GROUPS).find(function (key) {
-    return FACET_GROUPS[key].suffixes.includes(suffix);
-  });
+function facetGroupFor(question) {
+  return question.facetGroup;
 }
 
 function scoreRanking(scores) {
@@ -375,7 +386,7 @@ function calculateDiagnosis() {
     const score = RATING_SCORE_MAP[answer];
     if (question.typeId) {
       scores[question.typeId] += score;
-      const facetGroup = facetGroupFor(question.id);
+      const facetGroup = facetGroupFor(question);
       facetScores[question.typeId][facetGroup].score += score;
       facetScores[question.typeId][facetGroup].max += 4;
       facetScores[question.typeId][facetGroup].count += 1;
