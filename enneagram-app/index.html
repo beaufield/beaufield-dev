@@ -66,6 +66,10 @@
     .mode-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; align-items:stretch; }
     .mode-card { display:flex; flex-direction:column; margin:0; }
     .mode-card .primary { margin-top:auto; }
+    .role-off-card { border-top:10px solid var(--accent); }
+    .role-off-scenes { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:20px 0; }
+    .role-off-scenes p { display:grid; place-items:center; min-height:96px; margin:0; padding:14px; color:#fff; background:var(--ink); border-bottom:7px solid var(--accent); text-align:center; font-weight:900; }
+    .life-domain { display:inline-block; margin:0 0 14px; padding:4px 10px; color:var(--ink); background:var(--accent-soft); border:2px solid var(--ink); font-size:13px; font-weight:900; }
     .candidate-card { border-top:10px solid var(--accent); }
     .facet-list { margin:16px 0; padding-left:22px; font-weight:800; }
     .wing-reference { margin-bottom:0; }
@@ -128,6 +132,8 @@
       .primary,.secondary { padding:9px 12px; font-size:14px; }
       .score-nav { grid-template-columns:1fr; }
       .mode-grid { grid-template-columns:1fr; }
+      .role-off-scenes { grid-template-columns:1fr; }
+      .role-off-scenes p { min-height:68px; }
       .radar-label { font-size:14px; }
       .radar-label-top { font-size:15px; }
     }
@@ -160,9 +166,1216 @@
 
   <script id="app-data" type="application/json">
 {
-  "typeQuestions": [{"id":"ST1-01","version":"standard","typeId":1,"facet":"根元的恐れ","facetGroup":"core","text":"自分の判断ミスで人に迷惑をかけたと分かると、失敗したこと以上に、自分のあり方が間違っていたように感じる。"},{"id":"ST1-02","version":"standard","typeId":1,"facet":"恐れへの反応","facetGroup":"defense","text":"自分の間違いに気づいた後は、頭の中で何度も自分を責めてしまう。"},{"id":"ST1-03","version":"standard","typeId":1,"facet":"根元的欲求","facetGroup":"core","text":"誰も見ていなくても、自分が正しいと思える選択をしたい。"},{"id":"ST1-04","version":"standard","typeId":1,"facet":"満足条件","facetGroup":"acquisition","text":"やるべき手順を抜かさず終えられると安心する。"},{"id":"ST1-05","version":"standard","typeId":1,"facet":"戦略","facetGroup":"acquisition","text":"休みたい気持ちがあっても、先に「やるべきこと」を終えようとする。"},{"id":"ST1-06","version":"standard","typeId":1,"facet":"回避","facetGroup":"defense","text":"腹が立ったとき、「怒っている」と認めるより、相手の間違いを指摘したくなる。"},{"id":"ST1-07","version":"standard","typeId":1,"facet":"注意の向き","facetGroup":"automatic","text":"全体がうまくできていても、一つの不備が先に目に入る。"},{"id":"ST1-08","version":"standard","typeId":1,"facet":"自動反応","facetGroup":"automatic","text":"休もうとしたときに未完了のことを思い出すと、先に終えないと落ち着かない。"},{"id":"ST2-01","version":"standard","typeId":2,"facet":"根元的恐れ","facetGroup":"core","text":"親しい人からの反応が薄いと、自分はもう大切にされていないのではと不安になる。"},{"id":"ST2-02","version":"standard","typeId":2,"facet":"恐れへの反応","facetGroup":"defense","text":"人の関心が自分から離れたと感じると、相手の役に立つことを探し始める。"},{"id":"ST2-03","version":"standard","typeId":2,"facet":"根元的欲求","facetGroup":"core","text":"誰かに頼られると、自分が大切な存在だと感じる。"},{"id":"ST2-04","version":"standard","typeId":2,"facet":"満足条件","facetGroup":"acquisition","text":"自分の気遣いで相手が喜ぶと、その人とのつながりを強く感じる。"},{"id":"ST2-05","version":"standard","typeId":2,"facet":"戦略","facetGroup":"acquisition","text":"自分の希望を伝える前に、相手が何を望んでいるかを考える。"},{"id":"ST2-06","version":"standard","typeId":2,"facet":"回避","facetGroup":"defense","text":"何をしてほしいか聞かれても、相手の負担になりそうだと希望を言いにくい。"},{"id":"ST2-07","version":"standard","typeId":2,"facet":"注意の向き","facetGroup":"automatic","text":"人が集まると、困っていそうな人がいないかに目が向く。"},{"id":"ST2-08","version":"standard","typeId":2,"facet":"自動反応","facetGroup":"automatic","text":"疲れていても、頼まれると相手をがっかりさせたくなくて断りにくい。"},{"id":"ST3-01","version":"standard","typeId":3,"facet":"根元的恐れ","facetGroup":"core","text":"人前で失敗すると、その出来事だけでなく自分の価値まで下がったように感じる。"},{"id":"ST3-02","version":"standard","typeId":3,"facet":"恐れへの反応","facetGroup":"defense","text":"うまくいかなかったとき、落ち込む前に挽回する方法を考え始める。"},{"id":"ST3-03","version":"standard","typeId":3,"facet":"根元的欲求","facetGroup":"core","text":"目標を達成すると、自分には価値があると感じやすい。"},{"id":"ST3-04","version":"standard","typeId":3,"facet":"満足条件","facetGroup":"acquisition","text":"人から高く評価されたと分かると、安心する。"},{"id":"ST3-05","version":"standard","typeId":3,"facet":"戦略","facetGroup":"acquisition","text":"何かを始めるとき、最も早く成果につながる方法を選びたくなる。"},{"id":"ST3-06","version":"standard","typeId":3,"facet":"回避","facetGroup":"defense","text":"つらい気持ちが出てきても、予定を入れて動き続けようとする。"},{"id":"ST3-07","version":"standard","typeId":3,"facet":"注意の向き","facetGroup":"automatic","text":"その場で評価されている人物像に、自分の見せ方を合わせる。"},{"id":"ST3-08","version":"standard","typeId":3,"facet":"自動反応","facetGroup":"automatic","text":"成果につながらない時間が続くと、焦りを感じる。"},{"id":"ST4-01","version":"standard","typeId":4,"facet":"根元的恐れ","facetGroup":"core","text":"「ほかの人と同じだ」と言われると、自分の存在意義が薄くなったように感じる。"},{"id":"ST4-02","version":"standard","typeId":4,"facet":"恐れへの反応","facetGroup":"defense","text":"周囲の人が満たされて見えると、自分にだけ大切な何かが欠けているように感じる。"},{"id":"ST4-03","version":"standard","typeId":4,"facet":"根元的欲求","facetGroup":"core","text":"人に理解されにくくても、自分らしいと感じる選択をしたい。"},{"id":"ST4-04","version":"standard","typeId":4,"facet":"満足条件","facetGroup":"acquisition","text":"複雑な気持ちを単純化せず理解してもらえると、深く満たされる。"},{"id":"ST4-05","version":"standard","typeId":4,"facet":"戦略","facetGroup":"acquisition","text":"気持ちが揺れたとき、人から離れて一人で本心を確かめたくなる。"},{"id":"ST4-06","version":"standard","typeId":4,"facet":"回避","facetGroup":"defense","text":"平凡に見える選択を、自分らしくないと感じて避けやすい。"},{"id":"ST4-07","version":"standard","typeId":4,"facet":"注意の向き","facetGroup":"automatic","text":"今あるものより、手に入っていないもののほうが心に残りやすい。"},{"id":"ST4-08","version":"standard","typeId":4,"facet":"自動反応","facetGroup":"automatic","text":"強い感情が湧くと、それが本当の自分を示しているように感じる。"},{"id":"ST5-01","version":"standard","typeId":5,"facet":"根元的恐れ","facetGroup":"core","text":"よく分からないことへ急に対応を求められると、自分には対処できないのではと不安になる。"},{"id":"ST5-02","version":"standard","typeId":5,"facet":"恐れへの反応","facetGroup":"defense","text":"準備していない場へ加わる前に、まず必要な情報を集めたくなる。"},{"id":"ST5-03","version":"standard","typeId":5,"facet":"根元的欲求","facetGroup":"core","text":"仕組みを十分に理解できると、自分なら対処できると感じる。"},{"id":"ST5-04","version":"standard","typeId":5,"facet":"満足条件","facetGroup":"acquisition","text":"誰にも入られない自分だけの時間が確保されると安心する。"},{"id":"ST5-05","version":"standard","typeId":5,"facet":"戦略","facetGroup":"acquisition","text":"実際に動く前に、必要な知識をできるだけ集めておきたい。"},{"id":"ST5-06","version":"standard","typeId":5,"facet":"回避","facetGroup":"defense","text":"自分が何を必要としているかを、その場ですぐ人に伝えるのは難しい。"},{"id":"ST5-07","version":"standard","typeId":5,"facet":"注意の向き","facetGroup":"automatic","text":"人が話し合っている場では、参加するより少し離れて全体を観察しやすい。"},{"id":"ST5-08","version":"standard","typeId":5,"facet":"自動反応","facetGroup":"automatic","text":"人と長く一緒にいた後は、一人にならないと気力が戻りにくい。"},{"id":"ST6-01","version":"standard","typeId":6,"facet":"根元的恐れ","facetGroup":"core","text":"頼れる基準がないまま決めるとき、間違った方向へ進むのではと不安になる。"},{"id":"ST6-02","version":"standard","typeId":6,"facet":"恐れへの反応","facetGroup":"defense","text":"決める前に、うまくいかなかった場合を先に考える。"},{"id":"ST6-03","version":"standard","typeId":6,"facet":"根元的欲求","facetGroup":"core","text":"迷ったときに確認できる信頼できる基準があると安心する。"},{"id":"ST6-04","version":"standard","typeId":6,"facet":"満足条件","facetGroup":"acquisition","text":"困ったときに頼れる人がいると、落ち着いて行動できる。"},{"id":"ST6-05","version":"standard","typeId":6,"facet":"戦略","facetGroup":"acquisition","text":"求められたことをきちんと果たすことで、周囲との安全なつながりを保とうとする。"},{"id":"ST6-06","version":"standard","typeId":6,"facet":"回避","facetGroup":"defense","text":"自分の判断だけで進めると、見落としがある気がして落ち着かない。"},{"id":"ST6-07","version":"standard","typeId":6,"facet":"注意の向き","facetGroup":"automatic","text":"相手の言葉と態度が一致しているかを、信じる前に確かめたくなる。"},{"id":"ST6-08","version":"standard","typeId":6,"facet":"自動反応","facetGroup":"automatic","text":"一度決めた後も、ほかの危険を見落としていないか考え直す。"},{"id":"ST7-01","version":"standard","typeId":7,"facet":"根元的恐れ","facetGroup":"core","text":"苦しい状況から離れる方法が見つからないと、閉じ込められたように感じる。"},{"id":"ST7-02","version":"standard","typeId":7,"facet":"恐れへの反応","facetGroup":"defense","text":"つらい気持ちが続くと、次に楽しめる予定を考えて気分を変えたくなる。"},{"id":"ST7-03","version":"standard","typeId":7,"facet":"根元的欲求","facetGroup":"core","text":"一つがだめでも別の選択肢があると思えると安心する。"},{"id":"ST7-04","version":"standard","typeId":7,"facet":"満足条件","facetGroup":"acquisition","text":"初めての体験を予定しているとき、満たされた気持ちになる。"},{"id":"ST7-05","version":"standard","typeId":7,"facet":"戦略","facetGroup":"acquisition","text":"一つに絞るより、楽しめそうな選択肢をいくつも残しておきたい。"},{"id":"ST7-06","version":"standard","typeId":7,"facet":"回避","facetGroup":"defense","text":"重い気持ちのまま話し続ける場から、早く離れたくなる。"},{"id":"ST7-07","version":"standard","typeId":7,"facet":"注意の向き","facetGroup":"automatic","text":"今していることより、この先の楽しみへ意識が向きやすい。"},{"id":"ST7-08","version":"standard","typeId":7,"facet":"自動反応","facetGroup":"automatic","text":"一つを選んだ後、ほかの可能性を失った気がして落ち着かない。"},{"id":"ST8-01","version":"standard","typeId":8,"facet":"根元的恐れ","facetGroup":"core","text":"人に決められた通りに動かされると、自分を守れない立場になったように感じる。"},{"id":"ST8-02","version":"standard","typeId":8,"facet":"恐れへの反応","facetGroup":"defense","text":"強く押しつけられると、考える前に押し返したくなる。"},{"id":"ST8-03","version":"standard","typeId":8,"facet":"根元的欲求","facetGroup":"core","text":"必要なときに自分を守れる強さを持っていたい。"},{"id":"ST8-04","version":"standard","typeId":8,"facet":"満足条件","facetGroup":"acquisition","text":"大事なことを自分で決められると安心する。"},{"id":"ST8-05","version":"standard","typeId":8,"facet":"戦略","facetGroup":"acquisition","text":"必要なものがあると、許可を待つより自分から取りに行く。"},{"id":"ST8-06","version":"standard","typeId":8,"facet":"回避","facetGroup":"defense","text":"傷ついたときでも、それを人に知られることには抵抗がある。"},{"id":"ST8-07","version":"standard","typeId":8,"facet":"注意の向き","facetGroup":"automatic","text":"相手が信用できるか確かめるために、あえて強く出て反応を見ることがある。"},{"id":"ST8-08","version":"standard","typeId":8,"facet":"自動反応","facetGroup":"automatic","text":"理不尽に押さえつけられている人を見ると、前に出て止めたくなる。"},{"id":"ST9-01","version":"standard","typeId":9,"facet":"根元的恐れ","facetGroup":"core","text":"親しい人と意見がぶつかると、関係まで切れてしまうように感じる。"},{"id":"ST9-02","version":"standard","typeId":9,"facet":"恐れへの反応","facetGroup":"defense","text":"相手と望みが違うとき、自分の希望を引っ込めて合わせやすい。"},{"id":"ST9-03","version":"standard","typeId":9,"facet":"根元的欲求","facetGroup":"core","text":"周囲に対立がないと、心から安心できる。"},{"id":"ST9-04","version":"standard","typeId":9,"facet":"満足条件","facetGroup":"acquisition","text":"気を使わず同じ時間を過ごせる人と一緒にいると満たされる。"},{"id":"ST9-05","version":"standard","typeId":9,"facet":"戦略","facetGroup":"acquisition","text":"自分の希望より相手の希望を選ぶことで、つながりを保とうとする。"},{"id":"ST9-06","version":"standard","typeId":9,"facet":"回避","facetGroup":"defense","text":"問題を話し合うと波風が立ちそうなとき、後回しにしたくなる。"},{"id":"ST9-07","version":"standard","typeId":9,"facet":"注意の向き","facetGroup":"automatic","text":"何をしたいか聞かれると、自分の希望より先に周囲の意見を考える。"},{"id":"ST9-08","version":"standard","typeId":9,"facet":"自動反応","facetGroup":"automatic","text":"腹が立っても、別のことをしているうちに気にしないようにする。"},{"id":"SH1-01","version":"short","typeId":1,"facet":"恐れ","facetGroup":"core","text":"約束した時間に遅れたとき、遅れた事実以上に「きちんとできない自分はよくない」と自分を責める。"},{"id":"SH1-02","version":"short","typeId":1,"facet":"欲求","facetGroup":"core","text":"誰も確認しない小さなことでも、自分が正しいと思うやり方を守れないと落ち着かない。"},{"id":"SH1-03","version":"short","typeId":1,"facet":"戦略","facetGroup":"acquisition","text":"やりたいことがあっても、先に「やるべきこと」を終える。"},{"id":"SH1-04","version":"short","typeId":1,"facet":"自動反応","facetGroup":"automatic","text":"ほぼ完成しているものを見ても、最初に直すべき箇所を見つける。"},{"id":"SH2-01","version":"short","typeId":2,"facet":"恐れ","facetGroup":"core","text":"親しい人の反応が急にそっけなくなると、嫌われたのではないかと不安になる。"},{"id":"SH2-02","version":"short","typeId":2,"facet":"欲求","facetGroup":"core","text":"誰かから「あなたが必要だ」と頼られると、自分の価値を強く感じる。"},{"id":"SH2-03","version":"short","typeId":2,"facet":"戦略","facetGroup":"acquisition","text":"人との距離を縮めたいとき、その人が困っていることを手伝おうとする。"},{"id":"SH2-04","version":"short","typeId":2,"facet":"自動反応","facetGroup":"automatic","text":"自分が疲れていても、頼まれると断ったら嫌われる気がして引き受けてしまう。"},{"id":"SH3-01","version":"short","typeId":3,"facet":"恐れ","facetGroup":"core","text":"人前で失敗すると、自分まで価値のない人に見られた気がする。"},{"id":"SH3-02","version":"short","typeId":3,"facet":"欲求","facetGroup":"core","text":"目に見える成果を出したとき、自分には価値があると実感する。"},{"id":"SH3-03","version":"short","typeId":3,"facet":"戦略","facetGroup":"acquisition","text":"初めてのことでも、最も早く結果が出そうな方法を探す。"},{"id":"SH3-04","version":"short","typeId":3,"facet":"自動反応","facetGroup":"automatic","text":"休んでいて何も進んでいないと、時間を無駄にしているようで焦る。"},{"id":"SH4-01","version":"short","typeId":4,"facet":"恐れ","facetGroup":"core","text":"周囲に溶け込んでいるときでも、自分だけは本当には理解されていないと感じることがある。"},{"id":"SH4-02","version":"short","typeId":4,"facet":"欲求","facetGroup":"core","text":"人に好かれる選択より、自分らしいと感じる選択をしたい。"},{"id":"SH4-03","version":"short","typeId":4,"facet":"戦略","facetGroup":"acquisition","text":"気持ちが揺れたとき、一人になることで本当の気持ちを確かめる。"},{"id":"SH4-04","version":"short","typeId":4,"facet":"自動反応","facetGroup":"automatic","text":"今あるものより、まだ手に入っていないものに強くひかれる。"},{"id":"SH5-01","version":"short","typeId":5,"facet":"恐れ","facetGroup":"core","text":"急に意見を求められると、知識が足りないまま答えることが怖い。"},{"id":"SH5-02","version":"short","typeId":5,"facet":"欲求","facetGroup":"core","text":"仕組みを自分なりに理解できると、ようやく行動する自信が出る。"},{"id":"SH5-03","version":"short","typeId":5,"facet":"戦略","facetGroup":"acquisition","text":"知らないことへ関わる前に、一人で調べる時間を取りたい。"},{"id":"SH5-04","version":"short","typeId":5,"facet":"自動反応","facetGroup":"automatic","text":"人と長く関わった後は、一人の時間を取らないと疲れが抜けにくい。"},{"id":"SH6-01","version":"short","typeId":6,"facet":"恐れ","facetGroup":"core","text":"頼れる基準がないまま決めると、危険を見落とすのではと不安になる。"},{"id":"SH6-02","version":"short","typeId":6,"facet":"欲求","facetGroup":"core","text":"信頼できる人に確認してもらえると、自分の判断に安心できる。"},{"id":"SH6-03","version":"short","typeId":6,"facet":"戦略","facetGroup":"acquisition","text":"安全を保つために、引き受けた約束をきちんと守る。"},{"id":"SH6-04","version":"short","typeId":6,"facet":"自動反応","facetGroup":"automatic","text":"一度決めた後も、「別の問題が起きるかもしれない」と考え直す。"},{"id":"SH7-01","version":"short","typeId":7,"facet":"恐れ","facetGroup":"core","text":"つらい気持ちから離れられないと、逃げ道がないように感じる。"},{"id":"SH7-02","version":"short","typeId":7,"facet":"欲求","facetGroup":"core","text":"先に楽しみな予定があると、今のつらさにも耐えやすい。"},{"id":"SH7-03","version":"short","typeId":7,"facet":"戦略","facetGroup":"acquisition","text":"一つに決めず、いつでも別の選択へ移れる状態を残しておく。"},{"id":"SH7-04","version":"short","typeId":7,"facet":"自動反応","facetGroup":"automatic","text":"嫌なことを考え続けるより、次の楽しいことへ気持ちを切り替える。"},{"id":"SH8-01","version":"short","typeId":8,"facet":"恐れ","facetGroup":"core","text":"人から一方的に指図されると、自分を守るために強く反発する。"},{"id":"SH8-02","version":"short","typeId":8,"facet":"欲求","facetGroup":"core","text":"自分の進む方向を自分で決められると、安心する。"},{"id":"SH8-03","version":"short","typeId":8,"facet":"戦略","facetGroup":"acquisition","text":"欲しいものがはっきりしているとき、遠慮せず自分から取りに行く。"},{"id":"SH8-04","version":"short","typeId":8,"facet":"自動反応","facetGroup":"automatic","text":"傷ついていても、弱いと思われないよう平気な顔をする。"},{"id":"SH9-01","version":"short","typeId":9,"facet":"恐れ","facetGroup":"core","text":"親しい人と意見が違うと、関係が壊れないよう自分の希望を引っ込める。"},{"id":"SH9-02","version":"short","typeId":9,"facet":"欲求","facetGroup":"core","text":"周囲で誰も対立していないと安心する。"},{"id":"SH9-03","version":"short","typeId":9,"facet":"戦略","facetGroup":"acquisition","text":"一緒にいる人が望む流れに合わせることで、場の平和を保つ。"},{"id":"SH9-04","version":"short","typeId":9,"facet":"自動反応","facetGroup":"automatic","text":"腹が立っても、そのことを考えないよう別のことをしてやり過ごす。"}],
-  "crossCheckQuestions": [{"id":"SC-01","version":"standard","axis":"center","key":"autonomy","label":"自立","text":"大切な選択で周囲と意見が違うとき、自分で方向を決められることが最も重要だ。"},{"id":"SC-02","version":"standard","axis":"center","key":"attention","label":"関心","text":"人と関わる場では、自分に関心が向けられているかが最も気になる。"},{"id":"SC-03","version":"standard","axis":"center","key":"security","label":"安全","text":"先が読めない状況では、困ったときに頼れる支えがあることを最も重要だと感じる。"},{"id":"SS-01","version":"standard","axis":"strategy","key":"demand","label":"要求","text":"必要なものがあるとき、相手や状況に対してはっきり要求する。"},{"id":"SS-02","version":"standard","axis":"strategy","key":"effort","label":"努力","text":"必要なものを得るために、求められていることをきちんと果たす。"},{"id":"SS-03","version":"standard","axis":"strategy","key":"withdraw","label":"退く","text":"必要なものが得られないとき、人から離れて自分の内側に答えを探す。"},{"id":"HC-01","version":"short","axis":"center","key":"autonomy","label":"自立","text":"大事な予定を決めるとき、周囲と意見が違っても自分で決められることを最優先する。"},{"id":"HC-02","version":"short","axis":"center","key":"attention","label":"関心","text":"人と過ごした後は、相手が自分にどれだけ関心を向けていたかが気になる。"},{"id":"HC-03","version":"short","axis":"center","key":"security","label":"安全","text":"初めてのことを始める前は、困ったときの支えがあるかを最優先で確かめる。"},{"id":"HS-01","version":"short","axis":"strategy","key":"demand","label":"要求","text":"欲しいものがあるとき、相手が気づくのを待たず自分から求める。"},{"id":"HS-02","version":"short","axis":"strategy","key":"effort","label":"努力","text":"欲しいものを得るために、まず相手から期待されていることを果たす。"},{"id":"HS-03","version":"short","axis":"strategy","key":"withdraw","label":"退く","text":"迷ったときは人から離れ、一人で考えて答えを見つける。"}],
-  "orders": {"standard":["ST3-06","ST5-04","ST9-01","ST8-02","ST5-01","ST6-06","ST9-08","ST4-05","ST1-07","ST2-04","ST7-03","ST8-05","ST1-01","ST3-04","ST7-06","ST6-05","ST2-03","ST8-08","ST1-06","ST5-03","ST8-03","ST4-07","ST9-04","ST5-08","ST3-07","ST4-02","ST1-03","ST2-08","SC-03","ST7-08","ST6-02","ST9-03","ST5-02","SC-02","ST9-06","ST7-04","ST5-07","ST4-06","ST8-06","ST2-01","ST5-06","ST3-08","ST6-03","ST5-05","ST3-05","ST2-06","ST4-08","ST7-01","ST2-02","ST6-04","ST8-04","ST2-05","SS-03","SS-02","ST8-07","ST3-03","ST4-04","ST6-07","ST1-08","ST9-05","ST8-01","ST6-08","ST7-05","ST4-03","SS-01","ST3-01","ST2-07","ST1-04","ST7-07","ST6-01","ST7-02","ST9-02","ST3-02","ST1-02","ST9-07","ST4-01","SC-01","ST1-05"],"short":["SH4-01","SH3-02","SH6-03","SH9-03","HS-03","SH4-02","SH2-02","SH6-04","SH1-02","SH5-03","SH2-01","SH6-01","SH7-04","SH5-04","SH7-01","SH9-01","SH8-04","SH7-02","SH5-02","SH4-03","SH5-01","SH3-01","HS-01","SH7-03","SH8-02","SH9-04","SH2-03","SH8-01","HS-02","SH8-03","SH9-02","SH1-03","HC-01","SH3-03","SH1-04","SH2-04","SH6-02","HC-02","SH4-04","SH1-01","SH3-04","HC-03"]},
+  "typeQuestions": [
+    {
+      "id": "ST1-01",
+      "version": "standard",
+      "typeId": 1,
+      "facet": "根元的恐れ",
+      "facetGroup": "core",
+      "text": "親しい人との約束に遅れたとき、迷惑をかけたこと以上に「きちんとできない自分はよくない」と自分を責める。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST1-02",
+      "version": "standard",
+      "typeId": 1,
+      "facet": "恐れへの反応",
+      "facetGroup": "defense",
+      "text": "親しい人から自分の間違いを指摘されると、「正しくできなかった」と頭の中で何度も自分を責め続ける。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST1-03",
+      "version": "standard",
+      "typeId": 1,
+      "facet": "根元的欲求",
+      "facetGroup": "core",
+      "text": "自分だけで使うものを選ぶときも、自分が正しいと思える方を選ばないと落ち着かない。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST1-04",
+      "version": "standard",
+      "typeId": 1,
+      "facet": "満足条件",
+      "facetGroup": "acquisition",
+      "text": "家で一人の日も、決めていた順番どおりに用事をきちんと終えられると安心する。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST1-05",
+      "version": "standard",
+      "typeId": 1,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "自由に使える時間でも、やりたいことより先に「やるべきこと」を終えようとする。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST1-06",
+      "version": "standard",
+      "typeId": 1,
+      "facet": "回避",
+      "facetGroup": "defense",
+      "text": "親しい人に腹が立つと、自分の怒りを認めるより相手のよくない点を指摘したくなる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST1-07",
+      "version": "standard",
+      "typeId": 1,
+      "facet": "注意の向き",
+      "facetGroup": "automatic",
+      "text": "休日の支度がほぼ整っていても、一つだけ整っていない所が最初に気になる。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST1-08",
+      "version": "standard",
+      "typeId": 1,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "家で休もうとしたときに途中の用事を思い出すと、先にきちんと終えないと落ち着かない。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST2-01",
+      "version": "standard",
+      "typeId": 2,
+      "facet": "根元的恐れ",
+      "facetGroup": "core",
+      "text": "親しい人の反応がいつもより冷たいと、自分はもう大切にされていないのではと不安になる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST2-02",
+      "version": "standard",
+      "typeId": 2,
+      "facet": "恐れへの反応",
+      "facetGroup": "defense",
+      "text": "親しい人から急に距離を置かれたように感じると、その人の役に立てることを探し始める。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST2-03",
+      "version": "standard",
+      "typeId": 2,
+      "facet": "根元的欲求",
+      "facetGroup": "core",
+      "text": "親しい人から頼られると、自分がその人にとって大切な存在だと感じる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST2-04",
+      "version": "standard",
+      "typeId": 2,
+      "facet": "満足条件",
+      "facetGroup": "acquisition",
+      "text": "自分で考えた小さな贈り物で身近な人が喜ぶと、深いつながりを感じる。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST2-05",
+      "version": "standard",
+      "typeId": 2,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "休日の過ごし方を決めるときも、自分より親しい人が喜ぶ方を先に考える。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST2-06",
+      "version": "standard",
+      "typeId": 2,
+      "facet": "回避",
+      "facetGroup": "defense",
+      "text": "一人で自分の望みが分かっていても、親しい人に伝える段になると負担をかけそうで言いにくい。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST2-07",
+      "version": "standard",
+      "typeId": 2,
+      "facet": "注意の向き",
+      "facetGroup": "automatic",
+      "text": "親しい人たちの集まりに加わると、楽しめていない人がいないか最初に気になる。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST2-08",
+      "version": "standard",
+      "typeId": 2,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "家で休んでいるときでも親しい人から頼まれると、断れば嫌われる気がして引き受けてしまう。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST3-01",
+      "version": "standard",
+      "typeId": 3,
+      "facet": "根元的恐れ",
+      "facetGroup": "core",
+      "text": "自分のために始めたことがうまくならないと、そのことだけでなく自分の価値まで下がったように感じる。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST3-02",
+      "version": "standard",
+      "typeId": 3,
+      "facet": "恐れへの反応",
+      "facetGroup": "defense",
+      "text": "気軽に参加した遊びで失敗すると、落ち込む前に次はうまく見せる方法を考え始める。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST3-03",
+      "version": "standard",
+      "typeId": 3,
+      "facet": "根元的欲求",
+      "facetGroup": "core",
+      "text": "誰にも頼まれていないことでも、上達が形になると自分には価値があると感じる。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST3-04",
+      "version": "standard",
+      "typeId": 3,
+      "facet": "満足条件",
+      "facetGroup": "acquisition",
+      "text": "親しい人から「すごい」と褒められると、自分の価値を認められたようで安心する。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST3-05",
+      "version": "standard",
+      "typeId": 3,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "好きで始めたことでも、最も早く上達できそうなやり方を選びたくなる。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST3-06",
+      "version": "standard",
+      "typeId": 3,
+      "facet": "回避",
+      "facetGroup": "defense",
+      "text": "家で一人につらい気持ちでいると、自分の価値を保つため何か形に残ることを始める。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST3-07",
+      "version": "standard",
+      "typeId": 3,
+      "facet": "注意の向き",
+      "facetGroup": "automatic",
+      "text": "親しい人たちと過ごすときも、どんな自分なら魅力的に見えるかが気になる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST3-08",
+      "version": "standard",
+      "typeId": 3,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "自由に使えた一日が何も形に残らず終わると、時間を無駄にしたようで焦る。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST4-01",
+      "version": "standard",
+      "typeId": 4,
+      "facet": "根元的恐れ",
+      "facetGroup": "core",
+      "text": "親しい人から「ほかの人と同じだ」と言われると、自分の存在意義が薄くなったように感じる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST4-02",
+      "version": "standard",
+      "typeId": 4,
+      "facet": "恐れへの反応",
+      "facetGroup": "defense",
+      "text": "身近な人の楽しそうな近況を偶然聞くと、自分にだけ大切な何かが欠けているように感じる。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST4-03",
+      "version": "standard",
+      "typeId": 4,
+      "facet": "根元的欲求",
+      "facetGroup": "core",
+      "text": "自分のために何かを選ぶとき、人に好かれるものより自分らしいと感じるものを選びたい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST4-04",
+      "version": "standard",
+      "typeId": 4,
+      "facet": "満足条件",
+      "facetGroup": "acquisition",
+      "text": "親しい人に複雑な気持ちを単純化せず受け止めてもらえると、深く満たされる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST4-05",
+      "version": "standard",
+      "typeId": 4,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "気持ちが揺れたとき、一人で過ごしながら本当の気持ちを確かめたくなる。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST4-06",
+      "version": "standard",
+      "typeId": 4,
+      "facet": "回避",
+      "facetGroup": "defense",
+      "text": "自分のための選択でも、ありふれて見えるものは自分らしくないと感じて避けやすい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST4-07",
+      "version": "standard",
+      "typeId": 4,
+      "facet": "注意の向き",
+      "facetGroup": "automatic",
+      "text": "自分のために欲しかったものが手に入らないと、自分に欠けている大切なもののように強く心へ残る。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST4-08",
+      "version": "standard",
+      "typeId": 4,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "一人でいるときに強い感情が湧くと、それが本当の自分を示しているように感じる。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST5-01",
+      "version": "standard",
+      "typeId": 5,
+      "facet": "根元的恐れ",
+      "facetGroup": "core",
+      "text": "親しい人との会話で知らない話題について急に意見を聞かれると、分からないまま答えることが怖い。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST5-02",
+      "version": "standard",
+      "typeId": 5,
+      "facet": "恐れへの反応",
+      "facetGroup": "defense",
+      "text": "親しい人から急に誘われると、加わる前に自分の気力をどれくらい使いそうか知りたくなる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST5-03",
+      "version": "standard",
+      "typeId": 5,
+      "facet": "根元的欲求",
+      "facetGroup": "core",
+      "text": "休日に自分が興味を持ったことを十分に理解できると、自分なら扱えると感じる。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST5-04",
+      "version": "standard",
+      "typeId": 5,
+      "facet": "満足条件",
+      "facetGroup": "acquisition",
+      "text": "家で誰にも入られない一人の時間が確保されると安心する。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST5-05",
+      "version": "standard",
+      "typeId": 5,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "新しく好きなことを始める前に、一人で詳しく調べる時間を取りたい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST5-06",
+      "version": "standard",
+      "typeId": 5,
+      "facet": "回避",
+      "facetGroup": "defense",
+      "text": "親しい人から何を望んでいるか聞かれても、その場ですぐ自分の必要を伝えるのは難しい。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST5-07",
+      "version": "standard",
+      "typeId": 5,
+      "facet": "注意の向き",
+      "facetGroup": "automatic",
+      "text": "親しい人たちの集まりへ急に加わると、会話に入る前に少し離れて全体を観察する。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST5-08",
+      "version": "standard",
+      "typeId": 5,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "親しい人と長く過ごした後は、一人にならないと気力が戻りにくい。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST6-01",
+      "version": "standard",
+      "typeId": 6,
+      "facet": "根元的恐れ",
+      "facetGroup": "core",
+      "text": "初めて行く場所で頼れる案内がないと、困ったことが起きるのではと不安になる。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST6-02",
+      "version": "standard",
+      "typeId": 6,
+      "facet": "恐れへの反応",
+      "facetGroup": "defense",
+      "text": "一人で外出の予定を考えるとき、楽しみより先に困りそうなことを思い浮かべる。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST6-03",
+      "version": "standard",
+      "typeId": 6,
+      "facet": "根元的欲求",
+      "facetGroup": "core",
+      "text": "初めて使うものを自分のために選ぶとき、信頼できる人の勧めがあると安心する。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST6-04",
+      "version": "standard",
+      "typeId": 6,
+      "facet": "満足条件",
+      "facetGroup": "acquisition",
+      "text": "困ったときに必ず助けてくれる親しい人がいると、落ち着いていられる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST6-05",
+      "version": "standard",
+      "typeId": 6,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "親しい人との約束をきちんと守ることで、その人とのつながりは安全だと感じる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST6-06",
+      "version": "standard",
+      "typeId": 6,
+      "facet": "回避",
+      "facetGroup": "defense",
+      "text": "自分のための大切な選択を一人だけで決めると、間違いがある気がして落ち着かない。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST6-07",
+      "version": "standard",
+      "typeId": 6,
+      "facet": "注意の向き",
+      "facetGroup": "automatic",
+      "text": "私生活で初めて親しくなる人について、言葉と態度が一致しているかを信じる前に確かめたくなる。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST6-08",
+      "version": "standard",
+      "typeId": 6,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "一人で決めた後も、危ない点を残していないか何度も考え直す。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST7-01",
+      "version": "standard",
+      "typeId": 7,
+      "facet": "根元的恐れ",
+      "facetGroup": "core",
+      "text": "楽しみにしていた私生活の予定がなくなり代わりも見つからないと、閉じ込められたように感じる。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST7-02",
+      "version": "standard",
+      "typeId": 7,
+      "facet": "恐れへの反応",
+      "facetGroup": "defense",
+      "text": "家で一人につらい気持ちが続くと、次に楽しめることを考えて気分を変えたくなる。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST7-03",
+      "version": "standard",
+      "typeId": 7,
+      "facet": "根元的欲求",
+      "facetGroup": "core",
+      "text": "自由に使える時間に楽しみの候補がいくつもあると安心する。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST7-04",
+      "version": "standard",
+      "typeId": 7,
+      "facet": "満足条件",
+      "facetGroup": "acquisition",
+      "text": "親しい人と初めての遊びを予定していると、すでに満たされた気持ちになる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST7-05",
+      "version": "standard",
+      "typeId": 7,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "休日の過ごし方を一つに決めず、楽しめそうな候補をいくつも残しておきたい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST7-06",
+      "version": "standard",
+      "typeId": 7,
+      "facet": "回避",
+      "facetGroup": "defense",
+      "text": "親しい人との会話が重い気持ちのまま続くと、明るい話へ変えたくなる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST7-07",
+      "version": "standard",
+      "typeId": 7,
+      "facet": "注意の向き",
+      "facetGroup": "automatic",
+      "text": "休日を楽しんでいる最中に予定外のことが起きると、次に楽しめることへ意識を移しやすい。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST7-08",
+      "version": "standard",
+      "typeId": 7,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "一人で一つの過ごし方を選んだ後、ほかの楽しみを失った気がして落ち着かない。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST8-01",
+      "version": "standard",
+      "typeId": 8,
+      "facet": "根元的恐れ",
+      "facetGroup": "core",
+      "text": "親しい人に自分の過ごし方を一方的に決められると、自分を守れない立場になったように感じる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST8-02",
+      "version": "standard",
+      "typeId": 8,
+      "facet": "恐れへの反応",
+      "facetGroup": "defense",
+      "text": "私生活の予定を急に押しつけられると、考える前に強く押し返したくなる。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST8-03",
+      "version": "standard",
+      "typeId": 8,
+      "facet": "根元的欲求",
+      "facetGroup": "core",
+      "text": "自分のための大切な選択では、誰にも動かされず自分を守れる強さを持っていたい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST8-04",
+      "version": "standard",
+      "typeId": 8,
+      "facet": "満足条件",
+      "facetGroup": "acquisition",
+      "text": "自由に使える時間を自分の意思で決められると安心する。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST8-05",
+      "version": "standard",
+      "typeId": 8,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "自分のために本当に欲しいものは、周囲の同意を待つより自分から手に入れたい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST8-06",
+      "version": "standard",
+      "typeId": 8,
+      "facet": "回避",
+      "facetGroup": "defense",
+      "text": "親しい人に傷つけられたときでも、傷ついた自分を見せることには抵抗がある。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST8-07",
+      "version": "standard",
+      "typeId": 8,
+      "facet": "注意の向き",
+      "facetGroup": "automatic",
+      "text": "初めて会う人が信用できるか確かめるため、あえて率直に出て反応を見ることがある。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST8-08",
+      "version": "standard",
+      "typeId": 8,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "一人で静かに過ごしている時間を無理に乱されると、すぐにはっきり断りたくなる。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST9-01",
+      "version": "standard",
+      "typeId": 9,
+      "facet": "根元的恐れ",
+      "facetGroup": "core",
+      "text": "親しい人と意見がぶつかると、その人とのつながりまで切れてしまうように感じる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST9-02",
+      "version": "standard",
+      "typeId": 9,
+      "facet": "恐れへの反応",
+      "facetGroup": "defense",
+      "text": "親しい人との予定が食い違うと、自分の希望を引っ込めて相手に合わせやすい。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST9-03",
+      "version": "standard",
+      "typeId": 9,
+      "facet": "根元的欲求",
+      "facetGroup": "core",
+      "text": "家で一人、身近な人との間に波風がないと心から安心する。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST9-04",
+      "version": "standard",
+      "typeId": 9,
+      "facet": "満足条件",
+      "facetGroup": "acquisition",
+      "text": "自分のために選んだ場所で、何も急がずゆったり過ごせると満たされる。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST9-05",
+      "version": "standard",
+      "typeId": 9,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "親しい人とのつながりを保つため、自分より相手が望む過ごし方を選びやすい。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST9-06",
+      "version": "standard",
+      "typeId": 9,
+      "facet": "回避",
+      "facetGroup": "defense",
+      "text": "親しい人に不満を伝えると関係が悪くなりそうなら、言わずに後回しにしたくなる。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST9-07",
+      "version": "standard",
+      "typeId": 9,
+      "facet": "注意の向き",
+      "facetGroup": "automatic",
+      "text": "休日に何をしたいか聞かれると、自分の希望が分からず一緒にいる人へ合わせやすい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST9-08",
+      "version": "standard",
+      "typeId": 9,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "家で一人のときに腹が立っても、別のことをしているうちに気にしないようにする。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH1-01",
+      "version": "short",
+      "typeId": 1,
+      "facet": "恐れ",
+      "facetGroup": "core",
+      "text": "親しい人との約束を忘れたとき、相手への迷惑以上に「だめな自分だ」と自分を責める。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "SH1-02",
+      "version": "short",
+      "typeId": 1,
+      "facet": "欲求",
+      "facetGroup": "core",
+      "text": "親しい人と意見が違っても、自分が正しいと思える選択を曲げると落ち着かない。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SH1-03",
+      "version": "short",
+      "typeId": 1,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "休日でも、楽しむ前に自分が「やるべきだ」と思うことを終える。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SH1-04",
+      "version": "short",
+      "typeId": 1,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "家で一人で休んでいても、整っていない所に気づくと直すまで気になる。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH2-01",
+      "version": "short",
+      "typeId": 2,
+      "facet": "恐れ",
+      "facetGroup": "core",
+      "text": "親しい人の反応が急に冷たくなると、嫌われたのではないかと不安になる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SH2-02",
+      "version": "short",
+      "typeId": 2,
+      "facet": "欲求",
+      "facetGroup": "core",
+      "text": "親しい人から急に頼られると、自分が必要な存在だと強く感じる。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "SH2-03",
+      "version": "short",
+      "typeId": 2,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "休日の過ごし方でも、親しい人が喜ぶ方を選ぶことで心の距離を近づけようとする。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SH2-04",
+      "version": "short",
+      "typeId": 2,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "家で休んでいるときでも親しい人から頼まれると、断れば嫌われる気がして引き受ける。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH3-01",
+      "version": "short",
+      "typeId": 3,
+      "facet": "恐れ",
+      "facetGroup": "core",
+      "text": "好きで始めたことが上達しないと、自分まで価値のない人になったように感じる。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SH3-02",
+      "version": "short",
+      "typeId": 3,
+      "facet": "欲求",
+      "facetGroup": "core",
+      "text": "誰にも頼まれていないことでも、上達が目に見えると自分の価値を実感する。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH3-03",
+      "version": "short",
+      "typeId": 3,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "気軽な遊びで負けたとき、次は早くうまく見せられる方法をすぐ考える。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "SH3-04",
+      "version": "short",
+      "typeId": 3,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "親しい人と過ごしていても、魅力的な自分に見えているかが気になる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SH4-01",
+      "version": "short",
+      "typeId": 4,
+      "facet": "恐れ",
+      "facetGroup": "core",
+      "text": "親しい人の中に溶け込んでいても、本当の自分だけは理解されていないと感じる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SH4-02",
+      "version": "short",
+      "typeId": 4,
+      "facet": "欲求",
+      "facetGroup": "core",
+      "text": "自分のために選ぶものは、人に好かれるものより自分らしいものにしたい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SH4-03",
+      "version": "short",
+      "typeId": 4,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "気持ちが揺れたとき、一人になることで本当の気持ちを確かめる。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH4-04",
+      "version": "short",
+      "typeId": 4,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "自分のために欲しかったものが手に入らないと、自分に欠けた大切なもののようにひかれ続ける。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "SH5-01",
+      "version": "short",
+      "typeId": 5,
+      "facet": "恐れ",
+      "facetGroup": "core",
+      "text": "親しい人との会話で知らないことを急に聞かれると、知識が足りない自分をさらすのが怖い。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "SH5-02",
+      "version": "short",
+      "typeId": 5,
+      "facet": "欲求",
+      "facetGroup": "core",
+      "text": "一人で興味のあることを十分に理解できると、自分なら扱えると感じる。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH5-03",
+      "version": "short",
+      "typeId": 5,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "自分の楽しみを新しく始める前に、一人で詳しく調べる時間を取りたい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SH5-04",
+      "version": "short",
+      "typeId": 5,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "親しい人と長く過ごした後は、一人の時間を取らないと気力が戻りにくい。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SH6-01",
+      "version": "short",
+      "typeId": 6,
+      "facet": "恐れ",
+      "facetGroup": "core",
+      "text": "休日に初めての場所へ出かけるとき、頼れる案内がないと困ったことが起きそうで不安になる。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "SH6-02",
+      "version": "short",
+      "typeId": 6,
+      "facet": "欲求",
+      "facetGroup": "core",
+      "text": "いつでも頼れる親しい人がいると、自分の選択に安心できる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SH6-03",
+      "version": "short",
+      "typeId": 6,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "自分のための大切な選択でも、信頼できる人に確かめてから決めたい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SH6-04",
+      "version": "short",
+      "typeId": 6,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "一人で何かを決めた後も、危ない点が残っていないか何度も考え直す。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH7-01",
+      "version": "short",
+      "typeId": 7,
+      "facet": "恐れ",
+      "facetGroup": "core",
+      "text": "楽しみにしていた私生活の予定がなくなり代わりもないと、閉じ込められたように感じる。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "SH7-02",
+      "version": "short",
+      "typeId": 7,
+      "facet": "欲求",
+      "facetGroup": "core",
+      "text": "自由に使える時間に楽しみの候補がいくつもあると、満たされた気持ちになる。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SH7-03",
+      "version": "short",
+      "typeId": 7,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "家で一人につらい気持ちが続くと、次に楽しめることを考えて気分を変える。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH7-04",
+      "version": "short",
+      "typeId": 7,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "親しい人との重い会話が続くと、明るい話へ変えたくなる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SH8-01",
+      "version": "short",
+      "typeId": 8,
+      "facet": "恐れ",
+      "facetGroup": "core",
+      "text": "親しい人に自分の過ごし方を一方的に決められると、支配されたように感じる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SH8-02",
+      "version": "short",
+      "typeId": 8,
+      "facet": "欲求",
+      "facetGroup": "core",
+      "text": "自分のための大切な選択では、誰にも動かされず自分で決めたい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SH8-03",
+      "version": "short",
+      "typeId": 8,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "私生活の予定を急に押しつけられると、すぐにはっきり押し返す。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "SH8-04",
+      "version": "short",
+      "typeId": 8,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "一人で過ごす時間を無理に乱されると、自分の領域を守るため強く断る。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH9-01",
+      "version": "short",
+      "typeId": 9,
+      "facet": "恐れ",
+      "facetGroup": "core",
+      "text": "親しい人と意見がぶつかると、その人とのつながりまで切れそうで不安になる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SH9-02",
+      "version": "short",
+      "typeId": 9,
+      "facet": "欲求",
+      "facetGroup": "core",
+      "text": "家で一人、親しい人との間に気がかりがないと穏やかでいられる。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH9-03",
+      "version": "short",
+      "typeId": 9,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "休日の過ごし方は、自分より一緒にいる人が望む方へ合わせやすい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SH9-04",
+      "version": "short",
+      "typeId": 9,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "親しい人に急な不満を感じても、波風を避けるため気にしないようにする。",
+      "lifeDomain": "D"
+    }
+  ],
+  "crossCheckQuestions": [
+    {
+      "id": "SC-01",
+      "version": "standard",
+      "axis": "center",
+      "key": "autonomy",
+      "label": "自立",
+      "text": "自由に使える一日の過ごし方では、親しい人と意見が違っても自分で決められることが最も大切だ。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SC-02",
+      "version": "standard",
+      "axis": "center",
+      "key": "attention",
+      "label": "関心",
+      "text": "親しい人と過ごすとき、自分にどれだけ関心が向けられているかが最も気になる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SC-03",
+      "version": "standard",
+      "axis": "center",
+      "key": "security",
+      "label": "安全",
+      "text": "初めての場所へ出かけるとき、困ったら頼れる相手がいることを最も大切にする。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "SS-01",
+      "version": "standard",
+      "axis": "strategy",
+      "key": "demand",
+      "label": "要求",
+      "text": "親しい人と過ごし方が食い違ったとき、遠慮せず自分の希望を伝える。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SS-02",
+      "version": "standard",
+      "axis": "strategy",
+      "key": "effort",
+      "label": "努力",
+      "text": "自分の望みを親しい人に受け入れてほしいとき、先に相手が喜ぶことをする。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SS-03",
+      "version": "standard",
+      "axis": "strategy",
+      "key": "withdraw",
+      "label": "退く",
+      "text": "自分の望みが受け入れられないとき、一人になって自分の中で折り合いをつける。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "HC-01",
+      "version": "short",
+      "axis": "center",
+      "key": "autonomy",
+      "label": "自立",
+      "text": "一人で自由に過ごせる日は、誰にも決められず自分の意思で選べることが最も大切だ。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "HC-02",
+      "version": "short",
+      "axis": "center",
+      "key": "attention",
+      "label": "関心",
+      "text": "親しい人と会った後、自分に十分な関心を向けてもらえたかが最も心に残る。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "HC-03",
+      "version": "short",
+      "axis": "center",
+      "key": "security",
+      "label": "安全",
+      "text": "初めてのことを私生活で試す前に、困ったとき頼れる相手がいるかを最も気にする。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "HS-01",
+      "version": "short",
+      "axis": "strategy",
+      "key": "demand",
+      "label": "要求",
+      "text": "親しい人に望むことがあるとき、相手が気づくのを待たず自分から伝える。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "HS-02",
+      "version": "short",
+      "axis": "strategy",
+      "key": "effort",
+      "label": "努力",
+      "text": "自分の望みを受け入れてほしいとき、先に親しい人が喜ぶことをする。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "HS-03",
+      "version": "short",
+      "axis": "strategy",
+      "key": "withdraw",
+      "label": "退く",
+      "text": "親しい人と望みが合わないとき、一人になって自分の中に答えを探す。",
+      "lifeDomain": "A"
+    }
+  ],
+  "orders": {
+    "standard": [
+      "ST3-06",
+      "ST5-04",
+      "ST9-01",
+      "ST8-02",
+      "ST5-01",
+      "ST6-06",
+      "ST9-08",
+      "ST4-05",
+      "ST1-07",
+      "ST2-04",
+      "ST7-03",
+      "ST8-05",
+      "ST1-01",
+      "ST3-04",
+      "ST7-06",
+      "ST6-05",
+      "ST2-03",
+      "ST8-08",
+      "ST1-06",
+      "ST5-03",
+      "ST8-03",
+      "ST4-07",
+      "ST9-04",
+      "ST5-08",
+      "ST3-07",
+      "ST4-02",
+      "ST1-03",
+      "ST2-08",
+      "SC-03",
+      "ST7-08",
+      "ST6-02",
+      "ST9-03",
+      "ST5-02",
+      "SC-02",
+      "ST9-06",
+      "ST7-04",
+      "ST5-07",
+      "ST4-06",
+      "ST8-06",
+      "ST2-01",
+      "ST5-06",
+      "ST3-08",
+      "ST6-03",
+      "ST5-05",
+      "ST3-05",
+      "ST2-06",
+      "ST4-08",
+      "ST7-01",
+      "ST2-02",
+      "ST6-04",
+      "ST8-04",
+      "ST2-05",
+      "SS-03",
+      "SS-02",
+      "ST8-07",
+      "ST3-03",
+      "ST4-04",
+      "ST6-07",
+      "ST1-08",
+      "ST9-05",
+      "ST8-01",
+      "ST6-08",
+      "ST7-05",
+      "ST4-03",
+      "SS-01",
+      "ST3-01",
+      "ST2-07",
+      "ST1-04",
+      "ST7-07",
+      "ST6-01",
+      "ST7-02",
+      "ST9-02",
+      "ST3-02",
+      "ST1-02",
+      "ST9-07",
+      "ST4-01",
+      "SC-01",
+      "ST1-05"
+    ],
+    "short": [
+      "SH4-01",
+      "SH3-02",
+      "SH6-03",
+      "SH9-03",
+      "HS-03",
+      "SH4-02",
+      "SH2-02",
+      "SH6-04",
+      "SH1-02",
+      "SH5-03",
+      "SH2-01",
+      "SH6-01",
+      "SH7-04",
+      "SH5-04",
+      "SH7-01",
+      "SH9-01",
+      "SH8-04",
+      "SH7-02",
+      "SH5-02",
+      "SH4-03",
+      "SH5-01",
+      "SH3-01",
+      "HS-01",
+      "SH7-03",
+      "SH8-02",
+      "SH9-04",
+      "SH2-03",
+      "SH8-01",
+      "HS-02",
+      "SH8-03",
+      "SH9-02",
+      "SH1-03",
+      "HC-01",
+      "SH3-03",
+      "SH1-04",
+      "SH2-04",
+      "SH6-02",
+      "HC-02",
+      "SH4-04",
+      "SH1-01",
+      "SH3-04",
+      "HC-03"
+    ]
+  },
   "reflectionQuestions": [
     "上位候補のうち、最も避けようとしている恐れはどれでしたか？",
     "その恐れを避けるために、普段どのような反応を繰り返していますか？",
@@ -280,7 +1493,7 @@
   }
 }
   </script>
-  <script>const APP_VERSION = 'v2.5.1';</script>
-  <script src="app.js?v=2.5.1"></script>
+  <script>const APP_VERSION = 'v2.6.0';</script>
+  <script src="app.js?v=2.6.0"></script>
 </body>
 </html>
