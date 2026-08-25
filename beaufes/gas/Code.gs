@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.16.0';
+const VERSION  = '0.17.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -405,6 +405,9 @@ function doPost(e) {
       // 🆕 名札印刷badges.html用（S3）。🔒 認証必須（_requireSession・上記以外は認証なしのまま）
       case 'listBadges':        return _jsonResponse(listBadges(data));
       case 'listSpareBadges':   return _jsonResponse(listSpareBadges(data));
+      // 🆕 v0.17.0 申込者一覧 admin.html 用。🔒 認証必須（_requireSession）
+      case 'listApplications':  return _jsonResponse(listApplications(data));
+      case 'setTantou':         return _jsonResponse(setTantou(data));
       default:                  return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
@@ -1799,14 +1802,15 @@ function setupSheets() {
   let appSh = ss.getSheetByName(SHEET_APPLICATIONS);
   if (!appSh) {
     appSh = ss.insertSheet(SHEET_APPLICATIONS);
-    appSh.getRange(1, 1, 1, 22).setValues([[
+    appSh.getRange(1, 1, 1, 23).setValues([[
       'app_id', 'created_at', 'updated_at', 'source',
       'salon_name', 'staff_name', 'email', 'email_norm', 'phone', 'area', // areaは2026-08-06にフォームから削除・列は維持（空文字のみ）
       'has_transaction', 'address', 'referrer', 'agree_capability',
       'line_friend_id', 'line_user_id',
       'ticket_token', 'status', 'checked_in_at', 'note',
       'business_type',          // 🆕 U列（§4-1-2・v0.5.0で追加）
-      'request_id'              // 🆕 V列（v0.13.0・§2-2 冪等キー）
+      'request_id',             // 🆕 V列（v0.13.0・§2-2 冪等キー）
+      'tantou'                  // 🆕 W列（v0.17.0・営業担当・admin.htmlからのみ書き込む）
     ]]);
     appSh.setFrozenRows(1);
     appSh.setColumnWidth(1, 110);
@@ -2143,4 +2147,178 @@ function testAuthSheetAccess() {
     const sh = ss.getSheetByName(n);
     Logger.log(n + ': ' + (sh ? sh.getLastRow() + '行' : '🔴 シートが無い'));
   });
+}
+
+// ============================================================
+// 🆕 v0.17.0（2026-08-26）: 申込者一覧 admin.html 用（閲覧＋担当欄）
+//
+// ・閲覧（listApplications）と担当欄の書き込み（setTantou）だけを足した最小版。
+//   申込フォーム側の経路（apply / applyLiff / updateApplication / getPass / resendPass）には
+//   一切手を入れていない。担当は applications の W列（＝A〜V の 22 列の次）にのみ書く。
+// ・🔴 setTantou は updated_at（C列）を触らない。updated_at は「申込内容が更新された時刻」で
+//   badges.html の日付フィルタ（date_field=updated_at）が参照するため、担当の付け替えで
+//   動かすと名札の抽出条件が壊れる。
+// ・担当者の選択肢は config シートの `tantou_list`（例: `前島,佐藤,田中`）で管理する。
+//   コードを触らずスプレッドシート側だけで増減できる（seedTantouList() でも投入可）。
+// ・認証は badges.html と同じ beaufield-auth の共通セッション（_requireSession）。
+// ============================================================
+
+const COL_TANTOU = 23; // applications の W列（1始まり）
+
+// applications シートに W列（tantou）を用意する。無ければ列とヘッダーを作る。
+// 既存の本番シートは A〜V の 22 列で作られているため、この関数が実質のマイグレーションを兼ねる
+// （他の _ensure*Sheet 系と同じ「呼ばれた時に自己修復する」方式・§0-1）。
+function _ensureTantouColumn(sh) {
+  if (sh.getMaxColumns() < COL_TANTOU) {
+    sh.insertColumnsAfter(sh.getMaxColumns(), COL_TANTOU - sh.getMaxColumns());
+  }
+  const head = String(sh.getRange(1, COL_TANTOU).getValue() || '').trim();
+  if (!head) sh.getRange(1, COL_TANTOU).setValue('tantou');
+  return sh;
+}
+
+// config の tantou_list を配列にして返す。区切りはカンマ（全角・読点・改行も許容）。
+function _parseTantouList(cfg) {
+  const raw = String((cfg || {}).tantou_list || '');
+  const normalized = raw
+    .split('、').join(',')   // 、
+    .split('，').join(',')   // ，
+    .split('\r').join(',')
+    .split('\n').join(',');
+  const out = [];
+  normalized.split(',').forEach(function (s) {
+    const t = String(s).trim();
+    if (t && out.indexOf(t) < 0) out.push(t);
+  });
+  return out;
+}
+
+// 申込一覧を返す（doPost: action=listApplications）。data: { session_token }
+// 🔴 絞り込み・集計は画面側で行う（件数が数百なので全件返して即時フィルタするほうが速く、
+//    GAS側の分岐も増えない）。ticket_token は返さない（入場パスの鍵そのものなので一覧に不要）。
+function listApplications(data) {
+  const auth = _requireSession(data);
+  if (!auth.ok) return _err(auth.error);
+  _checkProps();
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh = _ensureTantouColumn(_getSheet(ss, SHEET_APPLICATIONS));
+  const rows = sh.getDataRange().getValues();
+  const cfg  = _getConfig();
+
+  const list = [];
+  for (let i = 1; i < rows.length; i++) {
+    if (!rows[i][0]) continue;
+    list.push({
+      app_id:          String(rows[i][0]),
+      created_at:      String(rows[i][1]),
+      created_key:     _dateKey(rows[i][1]),
+      updated_at:      String(rows[i][2]),
+      source:          String(rows[i][3]),
+      salon_name:      String(rows[i][4]),
+      staff_name:      String(rows[i][5]),
+      email:           String(rows[i][6]),
+      phone:           String(rows[i][8]),
+      has_transaction: String(rows[i][10]),
+      address:         String(rows[i][11]),
+      referrer:        String(rows[i][12]),
+      has_line:        !!String(rows[i][14] || ''),
+      status:          String(rows[i][17]),
+      checked_in_at:   String(rows[i][18] || ''),
+      note:            String(rows[i][19] || ''),
+      business_type:   String(rows[i][20] || ''),
+      tantou:          String(rows[i][COL_TANTOU - 1] || '')
+    });
+  }
+
+  list.sort(function (a, b) { return a.app_id < b.app_id ? -1 : (a.app_id > b.app_id ? 1 : 0); });
+
+  return _ok({
+    total:            list.length,
+    tantou_list:      _parseTantouList(cfg),
+    business_types:   BUSINESS_TYPE_OPTIONS,
+    server_version:   VERSION,
+    viewer:           auth.session.name || auth.session.user_id || '',
+    applications:     list
+  });
+}
+
+// 担当をまとめて設定する（doPost: action=setTantou）。
+// data: { session_token, app_ids: 'F2026-0001,F2026-0002', tantou: '前島' }
+// tantou が空文字なら「未割当に戻す」。app_id は F2026-0001 形式でカンマを含まない。
+function setTantou(data) {
+  const auth = _requireSession(data);
+  if (!auth.ok) return _err(auth.error);
+  _checkProps();
+
+  const rawIds = Array.isArray(data.app_ids) ? data.app_ids.join(',') : String(data.app_ids || '');
+  const appIds = [];
+  rawIds.split(',').forEach(function (s) {
+    const t = String(s).trim();
+    if (t && appIds.indexOf(t) < 0) appIds.push(t);
+  });
+  if (!appIds.length)     return _err('担当を設定する申込が選ばれていません');
+  if (appIds.length > 500) return _err('一度に設定できるのは500件までです');
+
+  const tantou = String(data.tantou || '').trim();
+  const allowed = _parseTantouList(_getConfig());
+  // 🔴 リストに無い名前は弾く。ここを緩めると表記ゆれ（「前島」「前島崇志」）で集計が割れる。
+  if (tantou && allowed.indexOf(tantou) < 0) {
+    return _err('config シートの tantou_list にない担当者です: ' + tantou);
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sh = _ensureTantouColumn(_getSheet(ss, SHEET_APPLICATIONS));
+    const rows = sh.getDataRange().getValues();
+    if (rows.length < 2) return _err('申込データがありません');
+
+    const want = {};
+    appIds.forEach(function (id) { want[id] = true; });
+
+    // 🔴 W列を丸ごと読み込み→書き戻す（1行ずつのsetValueだと件数分の書き込みが走るため）。
+    //    対象外の行は今の値をそのまま書き戻すので内容は変わらない。
+    //    ロック中に追記された行があっても、書き戻す範囲は読み込んだ行数までなので踏まない。
+    const col = [];
+    const seen = {};
+    let updated = 0;
+    for (let i = 1; i < rows.length; i++) {
+      const id  = String(rows[i][0] || '');
+      let value = String(rows[i][COL_TANTOU - 1] || '');
+      if (id && want[id]) { value = tantou; seen[id] = true; updated++; }
+      col.push([value]);
+    }
+    sh.getRange(2, COL_TANTOU, col.length, 1).setValues(col);
+
+    const notFound = appIds.filter(function (id) { return !seen[id]; });
+    return _ok({ updated: updated, tantou: tantou, not_found: notFound });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 【手動実行用】config シートに tantou_list を投入する。
+// GASエディタの関数選択で seedTantouList を選び ▷実行（引数なしなら既定値が入る）。
+// 既に値が入っている場合は上書きしない（運用中の設定を潰さないため）。
+// 担当者の増減はスプレッドシートの config シートを直接編集すればよい。
+function seedTantouList(namesCsv) {
+  _checkProps();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh = _getSheet(ss, SHEET_CONFIG);
+  const rows = sh.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === 'tantou_list') {
+      if (String(rows[i][1] || '').trim()) {
+        Logger.log('tantou_list は既に設定済みです: ' + rows[i][1]);
+        return;
+      }
+      sh.getRange(i + 1, 2).setValue(String(namesCsv || ''));
+      Logger.log('tantou_list を更新しました: ' + namesCsv);
+      return;
+    }
+  }
+  sh.appendRow(['tantou_list', String(namesCsv || '')]);
+  Logger.log('tantou_list を追加しました: ' + namesCsv);
 }
