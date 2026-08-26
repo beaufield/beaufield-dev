@@ -39,8 +39,16 @@
     background: linear-gradient(135deg, var(--main), var(--main-dark));
     color: #fff;
     padding: 16px 20px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
   }
   header.appHeader h1 { margin: 0; font-size: 17px; }
+  /* ポータルのタイルは app_name 1つにつき1枚しか置けないため、社員用の2画面は
+     ヘッダーの相互リンクで行き来する（印刷時は header ごと .noprint で消える） */
+  header.appHeader a.navLink {
+    color: #fff; font-size: 13px; text-decoration: none; white-space: nowrap;
+    border: 1px solid rgba(255,255,255,.6); border-radius: 999px; padding: 5px 12px;
+  }
+  header.appHeader a.navLink:hover { background: rgba(255,255,255,.18); }
 
   .wrap { max-width: 900px; margin: 0 auto; padding: 16px 16px 60px; }
 
@@ -190,7 +198,10 @@
 </head>
 <body>
 
-<header class="appHeader noprint"><h1>ビューフェス2026 名札印刷（社員用）</h1></header>
+<header class="appHeader noprint">
+  <h1>ビューフェス2026 名札印刷（社員用）</h1>
+  <a class="navLink" href="admin.html">📋 申込者一覧へ</a>
+</header>
 
 <div class="wrap noprint">
 
@@ -302,7 +313,7 @@
 // 設計は 名札印刷_badges設計.md を正とする（本ファイルは実装のみ・設計は変更しない）
 // 版数の定義はこの APP_VERSION 1箇所だけ（AGENTS.md バージョン管理ルール）
 // ============================================================
-const APP_VERSION = '0.1.1';
+const APP_VERSION = '0.1.2';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 const SESSION_KEY = 'bf_session'; // ポータルと共通（§2-4）
