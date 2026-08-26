@@ -717,6 +717,9 @@
     .prop-mg-total     { font-size: 13px; font-weight: 700; text-align: right; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
     .prop-mg-total.ok  { color: #2e7d32; }
     .prop-mg-total.ng  { color: #c62828; }
+    /* 単独発注グループの「この系列だけで発注画面へ」（v1.65.0） */
+    .prop-mg-solo-btn  { width:100%; margin-top:10px; }
+    .prop-mg-solo-note { margin-top:4px; font-size:11px; color:var(--text-light); line-height:1.4; }
     .prop-mg-rest-btn  { width: 100%; margin-top: 8px; padding: 7px; font-size: 12px; border: 1px dashed var(--border); border-radius: 6px; background: transparent; color: var(--text-light); cursor: pointer; }
     /* 不足しているのに今回配分されなかった商品（折りたたまず必ず出す） */
     .prop-mg-short      { margin-top: 8px; border-left: 3px solid #ef9a9a; padding-left: 8px; }
@@ -1346,7 +1349,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.64.0'; // テキスト出力が「出力中...」で固まる不具合を修正（クリップボード書き込みの強制打ち切り）＋履歴の更新ボタンで未確定保存を先に片付ける
+const APP_VERSION    = 'v1.65.0'; // 提案タブ: 千代田化学ミルフィシリーズを単独発注できるボタンを追加（他商品との混在ガードつき）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -5806,6 +5809,15 @@ function renderProposalList() {
 =================================================== */
 const MG_DAYS_PER_MONTH = 30.4;   // analyze_demand.py の DAYS_PER_MONTH と必ず揃える
 
+/* === MG SOLO ORDER (test:mg-solo) === */
+// 単独発注グループ（v1.65.0）。この系列は単独で発注単位を満たせるため、同じ仕入先の
+// 他商品とは同じ発注書に混ぜない運用（千代田化学ミルフィ＝120本単位）。
+// 「発注グループ設定」シートに列を足す案もあるが、GASデプロイが必要になるうえ
+// 対象が1系列しかないため、当面はここで持つ。増えたらシート列に移す。
+const MG_SOLO_GROUPS = ['MILFY'];
+function mgIsSolo(groupId) { return MG_SOLO_GROUPS.includes(groupId); }
+/* === /MG SOLO ORDER === */
+
 function mgStatusById(groupId) {
   return (proposalsData.groupStatus || []).find(s => s.groupId === groupId) || null;
 }
@@ -6099,6 +6111,15 @@ function renderMgBlock(groupId, supplierCode, renderItem) {
       ${shortNoAlloc.map(p => renderItem(p, supplierCode)).join('')}
     </div>` : '';
 
+  // 単独発注グループ（v1.65.0）: この系列だけでカートを作る導線。千代田化学ミルフィのように
+  // 系列単独で発注単位を満たせて、他商品と同じ発注書にしない運用の系列に出す
+  const soloBtn = mgIsSolo(groupId)
+    ? `<button class="btn btn-primary prop-mg-solo-btn"
+         onclick="startOrderFromMgGroup('${escAttr(groupId)}','${escAttr(supplierCode)}')">
+         🛒 ${escHtml(st.groupName)}だけで発注画面へ</button>
+       <div class="prop-mg-solo-note">この系列は単独で${unit}本の発注を組むため、他の商品とは別の発注書にします</div>`
+    : '';
+
   return `
   <div class="prop-mg${st.due ? ' due' : ''}" data-group-id="${escAttr(groupId)}" data-group-unit="${unit}">
     <div class="prop-mg-head">
@@ -6118,6 +6139,7 @@ function renderMgBlock(groupId, supplierCode, renderItem) {
       ${propMgOpenRest.has(groupId) ? rest.map(p => renderItem(p, supplierCode)).join('') : ''}
       ${restBtn}
       <div class="prop-mg-total"></div>
+      ${soloBtn}
     </div>
   </div>`;
 }
@@ -6850,12 +6872,11 @@ async function restoreLotOverride(code) {
 }
 
 // チェック済みの提案をカートに積んで発注フロー（商品入力ステップ）へ
-function startOrderFromProposals(supplierCode) {
-  const group = document.getElementById('prop-group-' + supplierCode);
-  if (!group) return;
-
+// 指定 DOM 配下のチェック済み .prop-item を picked 配列にする（v1.65.0）
+/* === MG SOLO ORDER (test:mg-solo) === */
+function collectPickedFrom(rootEl, supplierCode) {
   const picked = [];
-  group.querySelectorAll('.prop-item').forEach(el => {
+  rootEl.querySelectorAll('.prop-item').forEach(el => {
     if (!el.querySelector('.prop-check').checked) return;
     const code = el.dataset.code;
     const p = proposalsData.proposals.find(x => x.code === code && x.supplierCode === supplierCode);
@@ -6868,6 +6889,69 @@ function startOrderFromProposals(supplierCode) {
     if (qty < 1) return;
     picked.push({ p, qty });
   });
+  return picked;
+}
+
+function startOrderFromProposals(supplierCode) {
+  const group = document.getElementById('prop-group-' + supplierCode);
+  if (!group) return;
+
+  let picked = collectPickedFrom(group, supplierCode);
+  if (picked.length === 0) { showToast('商品にチェックを入れてください', 'error'); return; }
+
+  // 単独発注グループの混在ガード（v1.65.0）。ミルフィのように単独で発注単位を満たす系列は
+  // 同じ仕入先の他商品と同じ発注書にしない運用のため、混ざったまま進ませない
+  const soloPicked  = picked.filter(x => x.p.groupId && mgIsSolo(x.p.groupId));
+  const otherPicked = picked.filter(x => !(x.p.groupId && mgIsSolo(x.p.groupId)));
+  if (soloPicked.length > 0 && otherPicked.length > 0) {
+    const names = [...new Set(soloPicked.map(x => {
+      const s = mgStatusById(x.p.groupId); return s ? s.groupName : x.p.groupId;
+    }))].join('・');
+    if (!confirm(`${names}は単独で発注する運用のため、他の商品と同じ発注書にはできません。\n\n` +
+                 `${names}（${soloPicked.length}件）を外して、他の${otherPicked.length}件だけで発注画面へ進みますか？\n` +
+                 `※${names}は、この後もう一度この画面から「${names}だけで発注画面へ」で発注してください`)) return;
+    picked = otherPicked;
+    showToast(`${names}${soloPicked.length}件はカートに入れていません。あとで系列ごとに発注してください`, 'success');
+  }
+
+  startOrderWithPicked(supplierCode, picked);
+}
+
+// 単独発注グループ（ミルフィ等）だけでカートを作る（v1.65.0）。
+// 仕入先カード全体ではなく、そのグループの .prop-mg ブロック配下のチェック行だけを拾う
+function startOrderFromMgGroup(groupId, supplierCode) {
+  if (propMgSkipped.has(groupId)) {
+    showToast('「今回はこの系列を発注しない」が有効です。解除してから発注してください', 'error');
+    return;
+  }
+  const group = document.getElementById('prop-group-' + supplierCode);
+  const mgEl  = group && group.querySelector(`.prop-mg[data-group-id="${groupId}"]`);
+  if (!mgEl) { showToast('系列のブロックが見つかりません。🔄更新してからやり直してください', 'error'); return; }
+
+  const st   = mgStatusById(groupId);
+  const unit = (st && st.groupUnit) || 0;
+  const picked = collectPickedFrom(mgEl, supplierCode);
+  if (picked.length === 0) {
+    showToast(`${st ? st.groupName : '系列'}の商品にチェックを入れてください（「今すぐ${unit}本を組む」で自動配分できます）`, 'error');
+    return;
+  }
+  // 発注単位の倍数チェック。updatePropMgTotal と同じ考え方で、止めずに確認だけ取る
+  //（手で数量を変えたい運用がある。強制ブロックにすると逃げ道が無くなる）
+  const total = picked.reduce((s, x) => s + x.qty, 0);
+  if (unit > 0 && total % unit !== 0) {
+    const over  = total % unit;
+    const short = unit - over;
+    if (!confirm(`合計${total}本は${unit}本単位になっていません（あと${short}本で${
+      Math.ceil(total / unit) * unit}本 ／ ${over}本減らすと${Math.floor(total / unit) * unit}本）。\n` +
+      `このまま発注画面へ進みますか？`)) return;
+  }
+  startOrderWithPicked(supplierCode, picked, st ? st.groupName : '系列');
+}
+
+// 提案タブから発注画面へ送る共通処理（v1.65.0で startOrderFromProposals から切り出し）。
+// picked: [{ p: 提案行, qty: 発注数 }]。仕入先カード全体からでも、まとめ発注グループ
+// ブロック単体からでも、ここに流し込めば以降はまったく同じ経路で動く
+function startOrderWithPicked(supplierCode, picked, toastLabel) {
   if (picked.length === 0) { showToast('商品にチェックを入れてください', 'error'); return; }
 
   if (cartItems.length > 0 &&
@@ -6909,8 +6993,9 @@ function startOrderFromProposals(supplierCode) {
   showStep('step-input');
   renderItemList();
   updateInventoryCartBtn();
-  showToast(`提案から${cartItems.length}件をカートに追加しました`, 'success');
+  showToast(`${toastLabel || '提案'}から${cartItems.length}件をカートに追加しました`, 'success');
 }
+/* === /MG SOLO ORDER === */
 
 // 参照カウント方式（同時2本まで通信できるため、片方の完了でもう片方の
 // ローディング表示を消してしまわないようにする）
