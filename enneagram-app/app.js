@@ -1,12 +1,12 @@
 'use strict';
 
-const STORAGE_KEY = 'enneagramApp:v12:state';
+const STORAGE_KEY = 'enneagramApp:v13:state';
 const LEGACY_STORAGE_KEYS = [
   'enneagramApp:v1:state', 'enneagramApp:v2:state', 'enneagramApp:v3:state',
   'enneagramApp:v4:state', 'enneagramApp:v5:state', 'enneagramApp:v6:state',
   'enneagramApp:v7:state', 'enneagramApp:v8:state', 'enneagramApp:v9:state',
   'enneagramApp:v10:state',
-  'enneagramApp:v11:state'
+  'enneagramApp:v11:state', 'enneagramApp:v12:state'
 ];
 const MODE_CONFIG = {
   standard: { name:'精度優先・標準版', count:78, typeItemsPerType:8, maxTypeScore:32 },
@@ -158,7 +158,7 @@ function isRatingValue(value) {
 }
 
 function normalizeState(candidate) {
-  if (!candidate || candidate.schemaVersion !== 12 || !MODE_CONFIG[candidate.mode] ||
+  if (!candidate || candidate.schemaVersion !== 13 || !MODE_CONFIG[candidate.mode] ||
       !Number.isInteger(candidate.currentIndex) || candidate.currentIndex < 0 ||
       candidate.currentIndex >= selectedOrder(candidate.mode).length ||
       !candidate.answers || typeof candidate.answers !== 'object' || Array.isArray(candidate.answers)) return null;
@@ -183,7 +183,7 @@ function loadState() {
 function saveState() {
   try {
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
-      schemaVersion:12,
+      schemaVersion:13,
       mode:state.mode,
       currentIndex:state.currentIndex,
       answers:state.answers
@@ -221,7 +221,7 @@ function showRoleOffWarmup(shouldScrollTop) {
   scenes.append(el('p', '', '親しい人と気楽に過ごした時間'));
   scenes.append(el('p', '', '自分のためだけに何かを選んだ時間'));
   card.append(scenes);
-  card.append(el('p', 'scenario-prompt', '立場上そうすべき自分ではなく、誰にも指示されなくても繰り返す心の動きで答えます。'));
+  card.append(el('p', 'scenario-prompt', 'どの文も成熟した心の使い方です。理想ではなく、私生活で自然に優先する方向で答えます。'));
   app.append(card);
   const actions = el('div', 'actions');
   actions.append(button('版の選択へ戻る', 'secondary', function () { showStart(true); }));
@@ -253,7 +253,7 @@ function showStart(shouldScrollTop) {
   const guide = el('section', 'card');
   guide.append(el('h2', '', '答えるときの基準'));
   guide.append(el('p', '', '診断を始める前に、家で一人の時間、親しい人との時間、自分のための選択を思い出します。'));
-  guide.append(el('p', '', '仕事上そうすべき自分ではなく、誰にも指示されなくても繰り返す心の動きで答えてください。'));
+  guide.append(el('p', '', 'どの文も良し悪しを決めるものではありません。理想の自分ではなく、私生活で自然に繰り返す心の動きで答えてください。'));
   app.append(guide);
   const modes = el('div', 'mode-grid');
   modes.append(renderModeCard('standard', '9タイプを各8側面から確認する72問と、判定を別角度から確かめる6問で、候補を詳しく比較します。'));
@@ -311,7 +311,7 @@ function showQuestion(shouldScrollTop, errorMessage) {
   card.append(el('p', 'scenario-number', 'QUESTION ' + (state.currentIndex + 1)));
   card.append(el('p', 'life-domain', '生活場面：' + LIFE_DOMAIN_LABELS[question.lifeDomain]));
   card.append(el('h1', '', question.text));
-  card.append(el('p', 'scenario-prompt', 'この心の動きは、普段の自分にどの程度当てはまりますか？'));
+  card.append(el('p', 'scenario-prompt', '理想ではなく、普段の自分が自然にこの方向を優先する度合いは？'));
   if (errorMessage) card.append(showError(errorMessage));
   const optionCard = el('article', 'motive-option');
   if (isRatingValue(state.answers[question.id])) optionCard.classList.add('answered');
@@ -729,3 +729,4 @@ try {
   clearApp();
   app.append(showError(error.message));
 }
+
