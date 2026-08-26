@@ -1,0 +1,1218 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- 🔴 名簿画面なので検索エンジンに拾わせない（badges.html と同じ扱い） -->
+<meta name="robots" content="noindex,nofollow">
+<title>ビューフェス2026 申込者一覧（社員用）</title>
+<style>
+  :root {
+    --main: #5BC8E8;
+    --main-dark: #2fa8cc;
+    --text: #333;
+    --bg: #f7fafc;
+    --border: #e0e6ea;
+    --error: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  header.appHeader {
+    background: linear-gradient(135deg, var(--main), var(--main-dark));
+    color: #fff;
+    padding: 16px 20px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  }
+  header.appHeader h1 { margin: 0; font-size: 17px; }
+  /* ポータルのタイルは app_name 1つにつき1枚しか置けないため、社員用の2画面は
+     ヘッダーの相互リンクで行き来する（apps シートの beaufes 行は admin.html を指す） */
+  header.appHeader a.navLink {
+    color: #fff; font-size: 13px; text-decoration: none; white-space: nowrap;
+    border: 1px solid rgba(255,255,255,.6); border-radius: 999px; padding: 5px 12px;
+  }
+  header.appHeader a.navLink:hover,
+  header.appHeader button.navLink:hover { background: rgba(255,255,255,.18); }
+  header.appHeader button.navLink {
+    color: #fff; font-size: 13px; white-space: nowrap; background: transparent;
+    border: 1px solid rgba(255,255,255,.6); border-radius: 999px; padding: 5px 12px;
+    font-family: inherit; cursor: pointer;
+  }
+  .headActions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  /* 申込フォームQRのモーダル */
+  .modalOverlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 50;
+    display: flex; align-items: center; justify-content: center; padding: 16px;
+  }
+  .modalOverlay[hidden] { display: none; }
+  .modalCard {
+    background: #fff; border-radius: 12px; padding: 20px; max-width: 340px; width: 100%;
+    text-align: center; box-shadow: 0 6px 24px rgba(0,0,0,.25);
+  }
+  .modalCard h2 { margin: 0 0 4px; font-size: 16px; }
+  .modalCard .modalNote { font-size: 12px; color: #666; margin-bottom: 14px; }
+  #qrBox { display: block; margin: 0 auto; width: 100%; max-width: 240px; }
+  #qrBox svg { display: block; width: 100%; height: auto; }
+  .qrUrl {
+    font-size: 11px; color: #666; word-break: break-all; margin: 12px 0 16px; line-height: 1.6;
+  }
+  .modalCard button {
+    padding: 10px 22px; font-size: 14px; font-weight: bold; border: none; border-radius: 8px;
+    cursor: pointer; color: #fff; background: var(--main-dark); font-family: inherit;
+  }
+
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 16px 16px 60px; }
+
+  .mockBanner {
+    display: none;
+    background: #fee2e2; color: #991b1b; border: 1px solid #fecaca;
+    border-radius: 8px; padding: 10px 14px; font-size: 13px; font-weight: bold; margin-bottom: 14px;
+  }
+
+  .gateCard {
+    background: #fff; border-radius: 12px; padding: 28px 22px; max-width: 480px; margin: 40px auto;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08); line-height: 1.9; text-align: center;
+  }
+  .gateCard a { color: var(--main-dark); font-weight: bold; }
+  .gateCard .btn {
+    display: inline-block; margin-top: 14px; padding: 10px 20px;
+    font-size: 14px; font-weight: bold; color: #fff; background: var(--main-dark);
+    border: none; border-radius: 8px; cursor: pointer; text-decoration: none;
+  }
+
+  .panel {
+    background: #fff; border-radius: 12px; padding: 18px 20px; margin-bottom: 18px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  }
+  .panel .row { margin-bottom: 14px; }
+  .panel .row:last-child { margin-bottom: 0; }
+  .panel label.rowLabel { display: block; font-weight: bold; font-size: 13px; margin-bottom: 6px; color: #555; }
+  .panel .choices { display: flex; flex-wrap: wrap; gap: 10px 16px; font-size: 14px; }
+  .panel .choices label { display: flex; align-items: center; gap: 5px; }
+  .panel input[type=date], .panel input[type=search], .panel select {
+    padding: 7px 8px; font-size: 14px; border: 1px solid var(--border); border-radius: 6px;
+    background: #fff; color: var(--text);
+  }
+  .panel input[type=search] { width: 260px; max-width: 100%; }
+  .panel .dateRange { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; }
+  .panel .btnRow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+  .panel button {
+    padding: 10px 18px; font-size: 14px; font-weight: bold; border-radius: 8px; cursor: pointer;
+    border: none; color: #fff; background: var(--main-dark);
+  }
+  .panel button:disabled { opacity: .5; cursor: default; }
+  .panel button.secondary { background: #fff; color: var(--main-dark); border: 1px solid var(--main-dark); }
+  .statusLine { font-size: 13px; color: #555; }
+  .warnLine {
+    display: none; margin-top: 8px; font-size: 13px; color: #92400e; background: #fffbeb;
+    border: 1px solid #fde68a; border-radius: 6px; padding: 8px 10px; line-height: 1.7;
+  }
+  .errLine {
+    display: none; margin-top: 8px; font-size: 13px; color: var(--error); background: #fef2f2;
+    border: 1px solid #fecaca; border-radius: 6px; padding: 8px 10px; line-height: 1.7;
+  }
+  .versionLine { font-size: 11px; color: #ccc; text-align: center; margin-top: 20px; }
+
+  /* ------------------------------------------------------------
+     担当別サマリー（クリックでその担当に絞り込む）
+     ------------------------------------------------------------ */
+  /* 🔴 スマホで必ず横3列になるよう grid で列数を固定する
+     （flex + min-width だと端末幅次第で2列に折り返されてしまう） */
+  .summaryGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  @media (min-width: 720px) {
+    .summaryGrid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  }
+  .sumChip {
+    border: 1px solid var(--border); background: #fff; border-radius: 10px;
+    padding: 7px 9px; cursor: pointer; text-align: left; min-width: 0;
+    font-family: inherit; color: var(--text);
+  }
+  .sumChip:hover { border-color: var(--main-dark); }
+  .sumChip.active { border-color: var(--main-dark); background: #eaf8fd; }
+  .sumChip .chipName {
+    display: block; font-size: 11px; color: #666; margin-bottom: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .sumChip .chipCount { display: block; font-size: 19px; font-weight: bold; line-height: 1.2; }
+  .sumChip .chipSub { display: block; font-size: 11px; color: #888; margin-top: 2px; }
+  .sumChip.unassigned .chipCount { color: #b45309; }
+
+  /* ------------------------------------------------------------
+     一覧テーブル
+     ------------------------------------------------------------ */
+  .tableWrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table.list { border-collapse: collapse; width: 100%; font-size: 13px; white-space: nowrap; }
+  table.list th, table.list td {
+    border-bottom: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: middle;
+  }
+  table.list thead th {
+    position: sticky; top: 0; background: #f1f6f9; z-index: 1; font-size: 12px; color: #555;
+  }
+  table.list thead th.sortable { cursor: pointer; user-select: none; }
+  table.list thead th.sortable:hover { color: var(--main-dark); }
+  table.list tbody tr:hover { background: #f9fdff; }
+  table.list tbody tr.selected { background: #eaf8fd; }
+  table.list td.wrapCell { white-space: normal; min-width: 160px; }
+  table.list td.num { text-align: right; }
+  .rowSaveMark { font-size: 12px; margin-left: 6px; color: #16a34a; }
+  .rowSaveMark.err { color: var(--error); }
+  .rowSaveMark.busy { color: #888; }
+  select.tantouSelect { padding: 4px 6px; font-size: 13px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+  select.tantouSelect.unassigned { color: #b45309; }
+  .badge {
+    display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border);
+  }
+  .badge.cancelled { background: #fef2f2; color: #991b1b; border-color: #fecaca; }
+  .badge.liff { background: #ecfdf5; color: #065f46; border-color: #a7f3d0; }
+  .emptyLine { padding: 24px 4px; color: #888; font-size: 14px; }
+
+  /* 検索・絞り込みパネルの開閉 */
+  .panelHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  #filterBody { margin-top: 14px; }
+  #filterBody[hidden] { display: none; }
+
+  .bulkBar {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    background: #f1f6f9; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+    margin-bottom: 12px; font-size: 13px;
+  }
+  .bulkBar select { padding: 6px 8px; font-size: 13px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+  .bulkBar button { padding: 7px 14px; font-size: 13px; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; color: #fff; background: var(--main-dark); }
+  .bulkBar button:disabled { opacity: .5; cursor: default; }
+  .bulkBar button.secondary { background: #fff; color: var(--main-dark); border: 1px solid var(--main-dark); }
+</style>
+</head>
+<body>
+
+<header class="appHeader">
+  <h1>ビューフェス2026 申込者一覧（社員用）</h1>
+  <div class="headActions">
+    <a class="navLink" href="badges.html">🖨 名札印刷へ</a>
+    <button type="button" class="navLink" id="qrBtn">📱 申込フォームQR</button>
+  </div>
+</header>
+
+<!-- 申込フォームのQR（その場でお客様に読み取ってもらう用） -->
+<div class="modalOverlay" id="qrModal" hidden>
+  <div class="modalCard" role="dialog" aria-modal="true" aria-labelledby="qrModalTitle">
+    <h2 id="qrModalTitle">申込フォームQR</h2>
+    <div class="modalNote">お客様にこの画面を読み取ってもらってください</div>
+    <div id="qrBox"></div>
+    <div class="qrUrl" id="qrUrl"></div>
+    <button type="button" id="qrCloseBtn">閉じる</button>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="mockBanner" id="mockBanner">⚠ モック表示中（ダミーデータ・GAS未接続）</div>
+
+  <!-- 未ログイン・権限なしのときはこれだけを出し、下のUIは一切出さない（badges.html と同じ） -->
+  <div class="gateCard" id="gateCard" style="display:none;">
+    <div id="gateText"></div>
+    <a class="btn" href="https://beaufield.github.io/beaufield-dev/">ポータルを開く</a>
+  </div>
+
+  <div id="app" style="display:none;">
+    <div class="panel">
+      <div class="row statusLine" id="loginStatusLine"></div>
+
+      <div class="row">
+        <label class="rowLabel">担当別の申込件数（クリックでその担当に絞り込み）</label>
+        <div class="summaryGrid" id="summaryGrid"></div>
+        <div class="statusLine" id="tantouConfigHint" style="display:none; margin-top:8px;"></div>
+      </div>
+
+      <div class="row">
+        <div class="btnRow">
+          <button id="fetchBtn" type="button">最新の申込を取得</button>
+          <button id="csvBtn" type="button" class="secondary" disabled>CSVダウンロード</button>
+          <span class="statusLine" id="fetchStatusLine"></span>
+        </div>
+        <div class="warnLine" id="fetchWarning"></div>
+        <div class="errLine" id="fetchError"></div>
+      </div>
+    </div>
+
+    <div class="panel" id="filterPanel" style="display:none;">
+      <div class="panelHead">
+        <button type="button" class="secondary" id="filterToggle" aria-expanded="true" aria-controls="filterBody">🔎 検索・絞り込み ▾</button>
+        <span class="statusLine" id="filterStatusLine"></span>
+      </div>
+
+      <div id="filterBody">
+      <div class="row">
+        <label class="rowLabel" for="q">検索（サロン名・お名前・メール・電話・住所・紹介者・備考）</label>
+        <input type="search" id="q" placeholder="例: 青島 / tanaka@ / 090">
+      </div>
+
+      <div class="row">
+        <label class="rowLabel">業態</label>
+        <div class="choices" id="businessTypeChoices"></div>
+      </div>
+
+      <div class="row">
+        <label class="rowLabel">お取引</label>
+        <div class="choices">
+          <label><input type="radio" name="trade" value="all" checked> すべて</label>
+          <label><input type="radio" name="trade" value="yes"> 既存（お取引あり）</label>
+          <label><input type="radio" name="trade" value="no"> 新規</label>
+        </div>
+      </div>
+
+      <div class="row">
+        <label class="rowLabel">担当</label>
+        <div class="choices">
+          <select id="tantouFilter"></select>
+        </div>
+      </div>
+
+      <div class="row">
+        <label class="rowLabel">申込日（空なら全期間）</label>
+        <div class="dateRange">
+          <input type="date" id="dateFrom"> 〜 <input type="date" id="dateTo">
+        </div>
+      </div>
+
+      <div class="row">
+        <label class="rowLabel">状態・経路</label>
+        <div class="choices">
+          <label><input type="checkbox" id="showCancelled"> キャンセル済みも表示する</label>
+          <label><input type="checkbox" id="onlyUnassigned"> 担当が未割当のものだけ</label>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="btnRow">
+          <button id="resetBtn" type="button" class="secondary">絞り込みを解除</button>
+        </div>
+      </div>
+      </div><!-- /#filterBody -->
+    </div>
+
+    <div class="panel" id="listPanel" style="display:none;">
+      <div class="bulkBar">
+        <span id="selectedCountLine">0件を選択中</span>
+        <select id="bulkTantou"></select>
+        <button id="bulkApplyBtn" type="button" disabled>選択した申込にまとめて設定</button>
+        <button id="selectAllBtn" type="button" class="secondary">表示中をすべて選択</button>
+        <button id="clearSelBtn" type="button" class="secondary">選択解除</button>
+        <span class="statusLine" id="bulkStatusLine"></span>
+      </div>
+      <div class="errLine" id="bulkError"></div>
+
+      <div class="tableWrap">
+        <table class="list" id="listTable">
+          <thead id="listHead"></thead>
+          <tbody id="listBody"></tbody>
+        </table>
+      </div>
+      <div class="emptyLine" id="emptyLine" style="display:none;">該当する申込がありません。</div>
+    </div>
+
+    <div class="versionLine" id="versionLine"></div>
+  </div>
+</div>
+
+<script src="lib/qrcode.min.js"></script>
+<script>
+// ============================================================
+// admin.html（申込者一覧・社員用・閲覧＋担当欄のみ）
+// 認証・GAS通信ルールは badges.html からそのまま移植している（自分で別方式にしないこと）
+// 版数の定義はこの APP_VERSION 1箇所だけ（AGENTS.md バージョン管理ルール）
+// ============================================================
+const APP_VERSION = '0.1.4';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
+const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
+// お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
+const FORM_URL = 'https://beaufield.github.io/beaufield-dev/beaufes/';
+const SESSION_KEY = 'bf_session'; // ポータルと共通
+
+// GAS通信ルール（badges.html §2-5 と同じ）
+const FETCH_TIMEOUT_MS = 10000;
+const MAX_ATTEMPTS     = 6;
+const RETRY_WAIT_MS    = [1000, 2000, 3000, 5000, 8000];
+const TRANSPORT_ERROR_PATTERN = /^(不明なアクション|INVALID_REQUEST)/;
+
+const UNASSIGNED = '__unassigned__';
+
+function el(id) { return document.getElementById(id); }
+function qs(name) { return new URLSearchParams(location.search).get(name); }
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+function isMock() { return qs('mock') === '1'; }
+
+// ------------------------------------------------------------
+// セッション（beaufield-authの共通セッションを読むだけ。発行はポータル側の役目）
+// ------------------------------------------------------------
+function getSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    if (Date.now() > s.expires) { localStorage.removeItem(SESSION_KEY); return null; }
+    return s;
+  } catch (e) { return null; }
+}
+
+// ------------------------------------------------------------
+// GASへのPOST
+// ------------------------------------------------------------
+async function postOnce(params) {
+  const ctrl  = new AbortController();
+  const timer = setTimeout(function () { ctrl.abort(); }, FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      body: new URLSearchParams(params),
+      redirect: 'follow',
+      signal: ctrl.signal
+    });
+    if (!res.ok) throw new Error('HTTP_' + res.status);
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new Error('NON_JSON');
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function postWithRetry(params, onProgress) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      if (onProgress) onProgress(attempt + 1, MAX_ATTEMPTS);
+      await sleep(RETRY_WAIT_MS[attempt - 1] || 8000);
+    }
+    try {
+      const json = await postOnce(params);
+      if (json && json.success === false && TRANSPORT_ERROR_PATTERN.test(String(json.error || ''))) {
+        lastErr = json.error;
+        continue; // 輸送路の破損とみなしリトライ
+      }
+      return json;
+    } catch (e) {
+      lastErr = e && e.message ? e.message : String(e);
+    }
+  }
+  throw new Error(lastErr || 'UNKNOWN');
+}
+
+// ------------------------------------------------------------
+// 画面の出し分け
+// ------------------------------------------------------------
+function showGate(html) {
+  el('gateText').innerHTML = html;
+  el('gateCard').style.display = 'block';
+  el('app').style.display = 'none';
+}
+function showApp() {
+  el('gateCard').style.display = 'none';
+  el('app').style.display = 'block';
+}
+
+const LOGIN_REQUIRED_HTML =
+  'ログインが必要です。ポータルからログインしてください。';
+
+// 🆕 GAS v0.18.0 から、認証エラーは理由別のコードで返る（Code.gs の _requireSession）。
+// 「ログインし直せば直るのか」「権限を足す必要があるのか」を画面で言い切れるようにするため。
+const AUTH_ERROR_HTML = {
+  NO_TOKEN:
+    'ログイン情報がサーバーに届きませんでした。ポータルからログインし直してください。<br><br>' +
+    '<b>ログインし直しても同じ表示が出る場合は不具合です</b>（前島さんに連絡してください）。',
+  SESSION_INVALID:
+    'ログインの有効期限が切れています。ポータルからログインし直してください。',
+  USER_INACTIVE:
+    'このアカウントは現在利用停止になっています（前島さんに連絡してください）。',
+  NO_ROLE:
+    '<b>ログインは有効ですが、この画面を使う権限がありません。</b><br><br>' +
+    '権限管理アプリで、ご自分の <code>beaufes</code> を <code>user</code>（または <code>admin</code>）に' +
+    'してください（前島さんに連絡してください）。'
+};
+
+// 認証エラーならゲートを出して true を返す。それ以外は false（呼び出し側が通常のエラー表示をする）
+function showAuthGate(code) {
+  if (code === 'AUTH_TRANSIENT') return false; // 一時障害はゲートでなくエラー行で出す
+  const html = AUTH_ERROR_HTML[code];
+  if (!html) return false;
+  showGate(html);
+  return true;
+}
+
+// ------------------------------------------------------------
+// 状態
+// ------------------------------------------------------------
+const state = {
+  apps: [],           // サーバーから取得した全申込
+  tantouList: [],     // config の tantou_list
+  businessTypes: [],
+  filtered: [],
+  selected: {},       // app_id -> true
+  sortKey: 'app_id',
+  sortAsc: true
+};
+
+// ------------------------------------------------------------
+// 業態チェックボックス
+// ------------------------------------------------------------
+function buildBusinessTypeChoices(types) {
+  const box = el('businessTypeChoices');
+  box.textContent = '';
+  const frag = document.createDocumentFragment();
+  types.concat(['未設定']).forEach(function (label) {
+    const value = (label === '未設定') ? '__empty__' : label;
+    const lb = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'btFilter';
+    cb.value = value;
+    cb.addEventListener('change', applyFilters);
+    lb.appendChild(cb);
+    lb.appendChild(document.createTextNode(' ' + label));
+    frag.appendChild(lb);
+  });
+  box.appendChild(frag);
+}
+
+// ------------------------------------------------------------
+// 担当プルダウン（絞り込み用・行内用・一括用）
+// ------------------------------------------------------------
+function fillTantouFilter() {
+  const sel = el('tantouFilter');
+  sel.textContent = '';
+  const opts = [['', 'すべて'], [UNASSIGNED, '未割当']];
+  state.tantouList.forEach(function (t) { opts.push([t, t]); });
+  opts.forEach(function (pair) {
+    const o = document.createElement('option');
+    o.value = pair[0];
+    o.textContent = pair[1];
+    sel.appendChild(o);
+  });
+  sel.addEventListener('change', applyFilters);
+}
+
+function fillBulkTantou() {
+  const sel = el('bulkTantou');
+  sel.textContent = '';
+  const first = document.createElement('option');
+  first.value = '';
+  first.textContent = '（未割当に戻す）';
+  sel.appendChild(first);
+  state.tantouList.forEach(function (t) {
+    const o = document.createElement('option');
+    o.value = t;
+    o.textContent = t;
+    sel.appendChild(o);
+  });
+  sel.disabled = state.tantouList.length === 0;
+}
+
+function makeRowSelect(app) {
+  const sel = document.createElement('select');
+  sel.className = 'tantouSelect';
+  const first = document.createElement('option');
+  first.value = '';
+  first.textContent = '― 未割当 ―';
+  sel.appendChild(first);
+
+  state.tantouList.forEach(function (t) {
+    const o = document.createElement('option');
+    o.value = t;
+    o.textContent = t;
+    sel.appendChild(o);
+  });
+  // 🔴 config から消された担当者が既に入っている行でも、その値を選択肢に残す。
+  //    残さないとプルダウンが勝手に「未割当」表示になり、シートの実データとズレる。
+  if (app.tantou && state.tantouList.indexOf(app.tantou) < 0) {
+    const o = document.createElement('option');
+    o.value = app.tantou;
+    o.textContent = app.tantou + '（リスト外）';
+    sel.appendChild(o);
+  }
+  sel.value = app.tantou || '';
+  sel.className = 'tantouSelect' + (app.tantou ? '' : ' unassigned');
+  sel.disabled = state.tantouList.length === 0;
+  return sel;
+}
+
+// ------------------------------------------------------------
+// 取得
+// ------------------------------------------------------------
+async function fetchApplications() {
+  const btn = el('fetchBtn');
+  el('fetchError').style.display = 'none';
+  el('fetchWarning').style.display = 'none';
+  btn.disabled = true;
+  el('fetchStatusLine').textContent = '取得中…';
+
+  try {
+    let data;
+    if (isMock()) {
+      data = generateMockData();
+      await sleep(200);
+    } else {
+      const session = getSession();
+      if (!session) { showGate(LOGIN_REQUIRED_HTML); return; }
+      // 🔴 GASの doPost は POST本文を `data` パラメータのJSONからしか読まない（Code.gs の doPost）。
+      //    session_token をフラットなフォーム項目で送ると、サーバーには一切届かず必ず
+      //    SESSION_INVALID になる（v0.1.1までの実際のバグ）。この形を崩さないこと。
+      const json = await postWithRetry(
+        { action: 'listApplications', data: JSON.stringify({ session_token: session.token || '' }) },
+        function (n, max) { el('fetchStatusLine').textContent = '再試行中… (' + n + '/' + max + ')'; }
+      );
+      if (!json || json.success !== true) {
+        const err = String((json && json.error) || 'UNKNOWN');
+        if (showAuthGate(err)) return;
+        if (err === 'AUTH_TRANSIENT') {
+          throw new Error('認証シートを読めませんでした（Google側の一時的な不調の可能性）。少し待ってからもう一度お試しください。');
+        }
+        throw new Error(err);
+      }
+      data = json.data;
+    }
+
+    applyFetchResult(data);
+  } catch (e) {
+    el('fetchError').textContent = '取得に失敗しました: ' + (e && e.message ? e.message : String(e));
+    el('fetchError').style.display = 'block';
+    el('fetchStatusLine').textContent = '';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function applyFetchResult(data) {
+  state.apps = Array.isArray(data.applications) ? data.applications : [];
+  state.tantouList = Array.isArray(data.tantou_list) ? data.tantou_list : [];
+  state.businessTypes = Array.isArray(data.business_types) ? data.business_types : [];
+  state.selected = {};
+
+  buildBusinessTypeChoices(state.businessTypes);
+  fillTantouFilter();
+  fillBulkTantou();
+
+  el('filterPanel').style.display = 'block';
+  el('listPanel').style.display = 'block';
+  el('csvBtn').disabled = false;
+  el('fetchStatusLine').textContent = '全' + state.apps.length + '件を取得（' + nowLabel() + ' 時点）';
+
+  const hint = el('tantouConfigHint');
+  if (state.tantouList.length === 0) {
+    hint.textContent = '⚠ 担当者リストが未設定です。スプレッドシートの config シートに key=tantou_list / value=「（担当者名をカンマ区切りで）」の行を追加すると、担当の入力ができるようになります。';
+    hint.style.display = 'block';
+  } else {
+    hint.style.display = 'none';
+  }
+
+  applyFilters();
+}
+
+function nowLabel() {
+  const d = new Date();
+  function p(n) { return ('0' + n).slice(-2); }
+  return p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+// ------------------------------------------------------------
+// 絞り込み
+// ------------------------------------------------------------
+function checkedBusinessTypes() {
+  const out = [];
+  document.querySelectorAll('.btFilter').forEach(function (cb) { if (cb.checked) out.push(cb.value); });
+  return out;
+}
+
+function applyFilters() {
+  const q = String(el('q').value || '').trim().toLowerCase();
+  const bts = checkedBusinessTypes();
+  const wantAllBt = bts.length === 0;
+  const wantEmptyBt = bts.indexOf('__empty__') >= 0;
+  const tradeEl = document.querySelector('input[name=trade]:checked');
+  const trade = tradeEl ? tradeEl.value : 'all';
+  const tantouSel = el('tantouFilter').value;
+  const from = String(el('dateFrom').value || '');
+  const to   = String(el('dateTo').value || '');
+  const showCancelled = el('showCancelled').checked;
+  const onlyUnassigned = el('onlyUnassigned').checked;
+
+  state.filtered = state.apps.filter(function (a) {
+    if (!showCancelled && a.status !== 'confirmed') return false;
+    if (onlyUnassigned && a.tantou) return false;
+
+    if (!wantAllBt) {
+      const known = state.businessTypes.indexOf(a.business_type) >= 0;
+      const ok = known ? (bts.indexOf(a.business_type) >= 0) : wantEmptyBt;
+      if (!ok) return false;
+    }
+    if (trade !== 'all' && a.has_transaction !== trade) return false;
+
+    if (tantouSel === UNASSIGNED) { if (a.tantou) return false; }
+    else if (tantouSel) { if (a.tantou !== tantouSel) return false; }
+
+    if (from && String(a.created_key || '') < from) return false;
+    if (to   && String(a.created_key || '') > to)   return false;
+
+    if (q) {
+      const hay = [a.salon_name, a.staff_name, a.email, a.phone, a.address, a.referrer, a.note, a.app_id]
+        .join(' ').toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+
+  sortFiltered();
+  renderSummary();
+  renderTable();
+
+  // 🔴 パネルを畳んでいるときは中身が見えないので、絞り込み中かどうかをこの行に出す
+  el('filterStatusLine').textContent =
+    '表示 ' + state.filtered.length + '件 / 全' + state.apps.length + '件' +
+    (hasActiveFilter() ? '・絞り込み中' : '');
+}
+
+function hasActiveFilter() {
+  return !!(
+    String(el('q').value || '').trim() ||
+    checkedBusinessTypes().length ||
+    (document.querySelector('input[name=trade]:checked') || {}).value !== 'all' ||
+    el('tantouFilter').value ||
+    el('dateFrom').value ||
+    el('dateTo').value ||
+    el('showCancelled').checked ||
+    el('onlyUnassigned').checked
+  );
+}
+
+function sortFiltered() {
+  const key = state.sortKey;
+  const dir = state.sortAsc ? 1 : -1;
+  state.filtered.sort(function (a, b) {
+    const av = String(a[key] || '');
+    const bv = String(b[key] || '');
+    if (av === bv) return a.app_id < b.app_id ? -1 : 1;
+    return av < bv ? -dir : dir;
+  });
+}
+
+// ------------------------------------------------------------
+// 申込フォームQR（画像を置かず、pass.html / badges.html と同じ自前ホストの
+// lib/qrcode.min.js で生成する。外部APIに依存しない・拡大しても粗くならない）
+// ------------------------------------------------------------
+let qrRendered = false;
+
+function openQrModal() {
+  if (!qrRendered) {
+    const qr = qrcode(0, 'M'); // 0=自動バージョン・'M'は pass.html / badges.html と同じ設定
+    qr.addData(FORM_URL);
+    qr.make();
+    el('qrBox').innerHTML = qr.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
+    el('qrUrl').textContent = FORM_URL;
+    qrRendered = true;
+  }
+  el('qrModal').hidden = false;
+  document.body.style.overflow = 'hidden'; // お客様に見せている間、背景がスクロールしないようにする
+}
+
+function closeQrModal() {
+  el('qrModal').hidden = true;
+  document.body.style.overflow = '';
+}
+
+// ------------------------------------------------------------
+// 検索・絞り込みパネルの開閉（既定はスマホ=畳む・PC=開く。以後は端末ごとに記憶する）
+// ------------------------------------------------------------
+const FILTER_OPEN_KEY = 'bf_admin_filter_open';
+
+function defaultFilterOpen() {
+  try {
+    const v = localStorage.getItem(FILTER_OPEN_KEY);
+    if (v === '1') return true;
+    if (v === '0') return false;
+  } catch (e) {} // プライベートブラウズ等で読めなくても既定値で動く
+  return window.matchMedia('(min-width: 720px)').matches;
+}
+
+function setFilterOpen(open, persist) {
+  el('filterBody').hidden = !open;
+  el('filterToggle').textContent = '🔎 検索・絞り込み ' + (open ? '▾' : '▸');
+  el('filterToggle').setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (persist) {
+    try { localStorage.setItem(FILTER_OPEN_KEY, open ? '1' : '0'); } catch (e) {}
+  }
+}
+
+function resetFilters() {
+  el('q').value = '';
+  document.querySelectorAll('.btFilter').forEach(function (cb) { cb.checked = false; });
+  const t = document.querySelector('input[name=trade][value=all]');
+  if (t) t.checked = true;
+  el('tantouFilter').value = '';
+  el('dateFrom').value = '';
+  el('dateTo').value = '';
+  el('showCancelled').checked = false;
+  el('onlyUnassigned').checked = false;
+  applyFilters();
+}
+
+// ------------------------------------------------------------
+// 担当別サマリー
+// ------------------------------------------------------------
+function renderSummary() {
+  // 🔴 サマリーは「絞り込み前の全件」ではなく、キャンセルを除いた母集団で数える。
+  //    担当フィルタだけは無視する（担当で絞ったら全部1本になってしまうため）。
+  const showCancelled = el('showCancelled').checked;
+  const base = state.apps.filter(function (a) { return showCancelled || a.status === 'confirmed'; });
+
+  const counts = {};
+  let unassigned = 0;
+  base.forEach(function (a) {
+    if (a.tantou) counts[a.tantou] = (counts[a.tantou] || 0) + 1;
+    else unassigned++;
+  });
+
+  const grid = el('summaryGrid');
+  grid.textContent = '';
+  const cur = el('tantouFilter').value;
+
+  function chip(name, label, count, sub, extraClass) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'sumChip' + (extraClass ? ' ' + extraClass : '') + (cur === name ? ' active' : '');
+    const n = document.createElement('span'); n.className = 'chipName'; n.textContent = label;
+    const c = document.createElement('span'); c.className = 'chipCount'; c.textContent = String(count);
+    b.appendChild(n); b.appendChild(c);
+    if (sub) { const s = document.createElement('span'); s.className = 'chipSub'; s.textContent = sub; b.appendChild(s); }
+    b.addEventListener('click', function () {
+      el('tantouFilter').value = (cur === name) ? '' : name; // もう一度押したら解除
+      el('onlyUnassigned').checked = false;
+      applyFilters();
+    });
+    return b;
+  }
+
+  // 合計（担当フィルタ解除）
+  const all = document.createElement('button');
+  all.type = 'button';
+  all.className = 'sumChip' + (cur === '' ? ' active' : '');
+  const an = document.createElement('span'); an.className = 'chipName'; an.textContent = '全体';
+  const ac = document.createElement('span'); ac.className = 'chipCount'; ac.textContent = String(base.length);
+  all.appendChild(an); all.appendChild(ac);
+  all.addEventListener('click', function () { el('tantouFilter').value = ''; applyFilters(); });
+  grid.appendChild(all);
+
+  state.tantouList.forEach(function (t) {
+    grid.appendChild(chip(t, t, counts[t] || 0, ''));
+  });
+  // config から消えた担当者が実データに残っている場合も出す（数が合わなくなるため）
+  Object.keys(counts).forEach(function (t) {
+    if (state.tantouList.indexOf(t) < 0) grid.appendChild(chip(t, t + '（リスト外）', counts[t], ''));
+  });
+
+  grid.appendChild(chip(UNASSIGNED, '未割当', unassigned, '', 'unassigned'));
+}
+
+// ------------------------------------------------------------
+// 一覧テーブル
+// ------------------------------------------------------------
+const COLUMNS = [
+  { key: '',              label: '',        sortable: false },
+  { key: 'app_id',        label: '受付番号', sortable: true },
+  { key: 'created_key',   label: '申込日',   sortable: true },
+  { key: 'salon_name',    label: 'サロン名', sortable: true },
+  { key: 'staff_name',    label: 'お名前',   sortable: true },
+  { key: 'business_type', label: '業態',     sortable: true },
+  { key: 'has_transaction', label: 'お取引', sortable: true },
+  { key: 'tantou',        label: '担当',     sortable: true },
+  { key: 'phone',         label: '電話',     sortable: false },
+  { key: 'email',         label: 'メール',   sortable: false },
+  { key: 'referrer',      label: '紹介者',   sortable: false },
+  { key: 'note',          label: '備考',     sortable: false },
+  { key: 'status',        label: '状態',     sortable: true }
+];
+
+function renderHead() {
+  const head = el('listHead');
+  head.textContent = '';
+  const tr = document.createElement('tr');
+  COLUMNS.forEach(function (col) {
+    const th = document.createElement('th');
+    if (col.key === '') {
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.id = 'headCheck';
+      cb.title = '表示中をすべて選択';
+      cb.addEventListener('change', function () {
+        if (cb.checked) selectAllVisible(); else clearSelection();
+      });
+      th.appendChild(cb);
+    } else {
+      let label = col.label;
+      if (col.sortable && state.sortKey === col.key) label += state.sortAsc ? ' ▲' : ' ▼';
+      th.textContent = label;
+      if (col.sortable) {
+        th.className = 'sortable';
+        th.addEventListener('click', function () {
+          if (state.sortKey === col.key) state.sortAsc = !state.sortAsc;
+          else { state.sortKey = col.key; state.sortAsc = true; }
+          sortFiltered();
+          renderTable();
+        });
+      }
+    }
+    tr.appendChild(th);
+  });
+  head.appendChild(tr);
+}
+
+function tdText(text, cls) {
+  const td = document.createElement('td');
+  td.textContent = text == null ? '' : String(text);
+  if (cls) td.className = cls;
+  return td;
+}
+
+function renderTable() {
+  renderHead();
+  const body = el('listBody');
+  body.textContent = '';
+
+  el('emptyLine').style.display = state.filtered.length ? 'none' : 'block';
+
+  const frag = document.createDocumentFragment();
+  state.filtered.forEach(function (a) {
+    const tr = document.createElement('tr');
+    tr.dataset.appId = a.app_id;
+    if (state.selected[a.app_id]) tr.className = 'selected';
+
+    // 選択チェックボックス
+    const tdCb = document.createElement('td');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!state.selected[a.app_id];
+    cb.addEventListener('change', function () {
+      if (cb.checked) state.selected[a.app_id] = true;
+      else delete state.selected[a.app_id];
+      tr.className = cb.checked ? 'selected' : '';
+      updateSelectionUI();
+    });
+    tdCb.appendChild(cb);
+    tr.appendChild(tdCb);
+
+    tr.appendChild(tdText(a.app_id));
+    tr.appendChild(tdText(a.created_key));
+    tr.appendChild(tdText(a.salon_name, 'wrapCell'));
+    tr.appendChild(tdText(a.staff_name));
+    tr.appendChild(tdText(a.business_type));
+    tr.appendChild(tdText(a.has_transaction === 'yes' ? '既存' : (a.has_transaction === 'no' ? '新規' : '')));
+
+    // 担当（その場で保存）
+    const tdT = document.createElement('td');
+    const sel = makeRowSelect(a);
+    const mark = document.createElement('span');
+    mark.className = 'rowSaveMark';
+    sel.addEventListener('change', function () {
+      saveTantou([a.app_id], sel.value, mark, sel);
+    });
+    tdT.appendChild(sel);
+    tdT.appendChild(mark);
+    tr.appendChild(tdT);
+
+    tr.appendChild(tdText(a.phone));
+    tr.appendChild(tdText(a.email, 'wrapCell'));
+    tr.appendChild(tdText(a.referrer));
+    tr.appendChild(tdText(a.note, 'wrapCell'));
+
+    const tdS = document.createElement('td');
+    if (a.status !== 'confirmed') {
+      const b = document.createElement('span');
+      b.className = 'badge cancelled';
+      b.textContent = a.status || '不明';
+      tdS.appendChild(b);
+    } else if (a.source === 'liff') {
+      const b = document.createElement('span');
+      b.className = 'badge liff';
+      b.textContent = 'LINE';
+      tdS.appendChild(b);
+    } else {
+      tdS.textContent = '—';
+    }
+    tr.appendChild(tdS);
+
+    frag.appendChild(tr);
+  });
+  body.appendChild(frag);
+
+  updateSelectionUI();
+}
+
+// ------------------------------------------------------------
+// 選択（一括設定用）
+// ------------------------------------------------------------
+function selectedIds() {
+  return Object.keys(state.selected);
+}
+function selectAllVisible() {
+  state.filtered.forEach(function (a) { state.selected[a.app_id] = true; });
+  renderTable();
+}
+function clearSelection() {
+  state.selected = {};
+  renderTable();
+}
+function updateSelectionUI() {
+  const n = selectedIds().length;
+  el('selectedCountLine').textContent = n + '件を選択中';
+  el('bulkApplyBtn').disabled = (n === 0) || state.tantouList.length === 0;
+  const head = el('headCheck');
+  if (head) head.checked = (n > 0 && n >= state.filtered.length);
+}
+
+// ------------------------------------------------------------
+// 担当の保存
+// ------------------------------------------------------------
+async function saveTantou(appIds, tantou, mark, selEl) {
+  if (isMock()) {
+    appIds.forEach(function (id) {
+      const a = state.apps.filter(function (x) { return x.app_id === id; })[0];
+      if (a) a.tantou = tantou;
+    });
+    if (mark) { mark.className = 'rowSaveMark'; mark.textContent = '✓'; }
+    renderSummary();
+    return { updated: appIds.length };
+  }
+
+  const session = getSession();
+  if (!session) { showGate(LOGIN_REQUIRED_HTML); return null; }
+
+  if (mark) { mark.className = 'rowSaveMark busy'; mark.textContent = '保存中…'; }
+  if (selEl) selEl.disabled = true;
+
+  try {
+    // 🔴 上と同じ理由で、必ず data パラメータのJSONにまとめて送る
+    const json = await postWithRetry({
+      action: 'setTantou',
+      data: JSON.stringify({
+        session_token: session.token || '',
+        app_ids: appIds.join(','),
+        tantou: tantou
+      })
+    });
+    if (!json || json.success !== true) {
+      const err = String((json && json.error) || 'UNKNOWN');
+      if (showAuthGate(err)) return null;
+      throw new Error(err);
+    }
+
+    // 手元のデータにも反映（再取得しない＝1件変えるたびに全件取り直さない）
+    appIds.forEach(function (id) {
+      const a = state.apps.filter(function (x) { return x.app_id === id; })[0];
+      if (a) a.tantou = tantou;
+    });
+    if (mark) { mark.className = 'rowSaveMark'; mark.textContent = '✓'; }
+    if (selEl) selEl.className = 'tantouSelect' + (tantou ? '' : ' unassigned');
+    renderSummary();
+    return json.data;
+  } catch (e) {
+    if (mark) { mark.className = 'rowSaveMark err'; mark.textContent = '✗ 保存失敗'; }
+    // 🔴 保存に失敗したらプルダウンの見た目を元の値に戻す。
+    //    画面だけ変わったまま残ると「入れたはずの担当が入っていない」事故になる。
+    if (selEl) {
+      const a = state.apps.filter(function (x) { return x.app_id === appIds[0]; })[0];
+      selEl.value = (a && a.tantou) || '';
+    }
+    alert('担当の保存に失敗しました: ' + (e && e.message ? e.message : String(e)));
+    return null;
+  } finally {
+    if (selEl) selEl.disabled = false;
+  }
+}
+
+async function bulkApply() {
+  const ids = selectedIds();
+  if (!ids.length) return;
+  const tantou = el('bulkTantou').value;
+  const label = tantou || '未割当';
+  if (!confirm(ids.length + '件の担当を「' + label + '」に設定します。よろしいですか？')) return;
+
+  const btn = el('bulkApplyBtn');
+  btn.disabled = true;
+  el('bulkError').style.display = 'none';
+  el('bulkStatusLine').textContent = '保存中…';
+
+  const res = await saveTantou(ids, tantou, null, null);
+  if (res) {
+    el('bulkStatusLine').textContent = res.updated + '件を「' + label + '」に設定しました';
+    if (res.not_found && res.not_found.length) {
+      el('bulkError').textContent = '見つからなかった申込があります: ' + res.not_found.join(', ') + '（画面が古い可能性があります。再取得してください）';
+      el('bulkError').style.display = 'block';
+    }
+    state.selected = {};
+    applyFilters();
+  } else {
+    el('bulkStatusLine').textContent = '';
+  }
+  btn.disabled = false;
+  updateSelectionUI();
+}
+
+// ------------------------------------------------------------
+// CSVダウンロード（絞り込み後の表示中データ）
+// ------------------------------------------------------------
+const CSV_HEADERS = [
+  ['app_id', '受付番号'], ['created_at', '申込日時'], ['updated_at', '更新日時'],
+  ['salon_name', 'サロン名'], ['staff_name', 'お名前'], ['email', 'メール'], ['phone', '電話'],
+  ['business_type', '業態'], ['has_transaction', 'お取引'], ['address', '住所'], ['referrer', '紹介者'],
+  ['tantou', '担当'], ['status', '状態'], ['source', '経路'], ['checked_in_at', '入場時刻'], ['note', '備考']
+];
+
+function csvCell(v) {
+  const s = (v == null) ? '' : String(v);
+  // 🔴 セル内の " は "" にエスケープしたうえで全体を " で囲む（CSVの決まり）
+  return '"' + s.split('"').join('""') + '"';
+}
+
+// 表示中（絞り込み後）のデータからCSV本文を組み立てる。
+// 🔴 改行はCRLF（Excel向け）。BOMは書き出し側で付ける
+function buildCsv() {
+  const rows = [];
+  rows.push(CSV_HEADERS.map(function (h) { return csvCell(h[1]); }).join(','));
+  state.filtered.forEach(function (a) {
+    rows.push(CSV_HEADERS.map(function (h) {
+      let v = a[h[0]];
+      if (h[0] === 'has_transaction') v = (v === 'yes') ? '既存' : (v === 'no' ? '新規' : '');
+      return csvCell(v);
+    }).join(','));
+  });
+  return rows.join('\r\n') + '\r\n';
+}
+
+function downloadCsv() {
+  // 🔴 Excelで開いたときに文字化けしないようBOM付きUTF-8
+  const blob = new Blob(['﻿' + buildCsv()], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const d = new Date();
+  function p(n) { return ('0' + n).slice(-2); }
+  a.href = url;
+  a.download = 'beaufes_applications_' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+}
+
+// ------------------------------------------------------------
+// モック（?mock=1・ログイン不要・GAS未接続で画面だけ確認する用）
+// ------------------------------------------------------------
+function generateMockData() {
+  const bts = ['美容室', '理容室', 'エステサロン', 'ネイルサロン', 'アイサロン', 'その他'];
+  // 🔴 実在の社員名は書かない（GITHUB-RULES.md）。担当欄の見た目確認はこれで足りる
+  const tantou = ['担当A', '担当B', '担当C'];
+  const apps = [];
+  for (let i = 1; i <= 37; i++) {
+    const day = 1 + (i % 20);
+    const key = '2026-09-' + ('0' + day).slice(-2);
+    apps.push({
+      // 🔴 F2026-形式にしない（本物との混同防止。badges.html のモックと同じ方針）
+      app_id: 'MOCK-' + ('000' + i).slice(-3),
+      created_at: key + ' 10:' + ('0' + (i % 60)).slice(-2) + ':00',
+      created_key: key,
+      updated_at: key + ' 10:00:00',
+      source: (i % 5 === 0) ? 'liff' : 'web',
+      salon_name: '【見本】サンプルサロン' + i,
+      staff_name: 'テスト 太郎' + i,
+      email: 'sample' + i + '@example.com',
+      phone: '0000-00-' + ('0000' + i).slice(-4),
+      has_transaction: (i % 3 === 0) ? 'no' : 'yes',
+      address: (i % 3 === 0) ? '宮崎市青島2-12-11' : '',
+      referrer: (i % 3 === 0) ? '紹介元サロン' + i : '',
+      has_line: (i % 5 === 0),
+      status: (i % 11 === 0) ? 'cancelled' : 'confirmed',
+      checked_in_at: '',
+      note: (i % 7 === 0) ? '駐車場について問い合わせあり' : '',
+      business_type: (i % 9 === 0) ? '' : bts[i % bts.length],
+      tantou: (i % 4 === 0) ? '' : tantou[i % tantou.length]
+    });
+  }
+  // textContent で描画していること（HTMLとして解釈されないこと）の確認用。
+  // 🔴 スクリプト終了タグの文字列そのものはインラインscriptを閉じてしまうため <\/ でエスケープ必須
+  apps.push({
+    app_id: 'MOCK-999',
+    created_at: '2026-09-21 10:00:00', created_key: '2026-09-21', updated_at: '2026-09-21 10:00:00',
+    source: 'web',
+    salon_name: '<script>alert(1)<\/script>サロン',
+    staff_name: '<b>危険太郎</b>',
+    email: 'xss@example.com', phone: '0000-00-9999',
+    has_transaction: 'yes', address: '', referrer: '', has_line: false,
+    status: 'confirmed', checked_in_at: '', note: '', business_type: '美容室',
+    tantou: ''
+  });
+  return { total: apps.length, tantou_list: tantou, business_types: bts, applications: apps, viewer: 'モック' };
+}
+
+// ------------------------------------------------------------
+// 起動
+// ------------------------------------------------------------
+function init() {
+  el('versionLine').textContent = 'v' + APP_VERSION;
+
+  el('fetchBtn').addEventListener('click', fetchApplications);
+  el('csvBtn').addEventListener('click', downloadCsv);
+  el('resetBtn').addEventListener('click', resetFilters);
+  el('qrBtn').addEventListener('click', openQrModal);
+  el('qrCloseBtn').addEventListener('click', closeQrModal);
+  // 背景をタップしたときも閉じる（カード内のタップでは閉じない）
+  el('qrModal').addEventListener('click', function (ev) {
+    if (ev.target === el('qrModal')) closeQrModal();
+  });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape' && !el('qrModal').hidden) closeQrModal();
+  });
+
+  el('filterToggle').addEventListener('click', function () {
+    setFilterOpen(el('filterBody').hidden, true); // 畳んでいたら開く・開いていたら畳む
+  });
+  setFilterOpen(defaultFilterOpen(), false); // 初期表示は記憶または画面幅で決める（保存はしない）
+  el('bulkApplyBtn').addEventListener('click', bulkApply);
+  el('selectAllBtn').addEventListener('click', selectAllVisible);
+  el('clearSelBtn').addEventListener('click', clearSelection);
+
+  el('q').addEventListener('input', applyFilters);
+  el('dateFrom').addEventListener('change', applyFilters);
+  el('dateTo').addEventListener('change', applyFilters);
+  el('showCancelled').addEventListener('change', applyFilters);
+  el('onlyUnassigned').addEventListener('change', applyFilters);
+  document.querySelectorAll('input[name=trade]').forEach(function (r) {
+    r.addEventListener('change', applyFilters);
+  });
+
+  if (isMock()) {
+    el('mockBanner').style.display = 'block';
+    el('loginStatusLine').textContent = 'モック表示中（ログイン不要・GAS未接続）';
+    showApp();
+    fetchApplications();
+    return;
+  }
+
+  const session = getSession();
+  if (!session) {
+    showGate(LOGIN_REQUIRED_HTML);
+    return;
+  }
+  el('loginStatusLine').textContent = (session.name || session.user_id || '') + ' でログイン中';
+  showApp();
+  fetchApplications(); // 開いた時点で自動取得する（見るだけの画面なので1手減らす）
+}
+
+init();
+</script>
+</body>
+</html>
