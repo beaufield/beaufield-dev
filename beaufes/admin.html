@@ -40,10 +40,6 @@
 
   .wrap { max-width: 1280px; margin: 0 auto; padding: 16px 16px 60px; }
 
-  .noticeBar {
-    background: #fff7ed; color: #9a3412; border: 1px solid #fed7aa;
-    border-radius: 8px; padding: 10px 14px; font-size: 13px; line-height: 1.7; margin-bottom: 14px;
-  }
   .mockBanner {
     display: none;
     background: #fee2e2; color: #991b1b; border: 1px solid #fecaca;
@@ -97,16 +93,24 @@
   /* ------------------------------------------------------------
      担当別サマリー（クリックでその担当に絞り込む）
      ------------------------------------------------------------ */
-  .summaryGrid { display: flex; flex-wrap: wrap; gap: 10px; }
+  /* 🔴 スマホで必ず横3列になるよう grid で列数を固定する
+     （flex + min-width だと端末幅次第で2列に折り返されてしまう） */
+  .summaryGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  @media (min-width: 720px) {
+    .summaryGrid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  }
   .sumChip {
     border: 1px solid var(--border); background: #fff; border-radius: 10px;
-    padding: 8px 14px; cursor: pointer; text-align: left; min-width: 116px;
+    padding: 7px 9px; cursor: pointer; text-align: left; min-width: 0;
     font-family: inherit; color: var(--text);
   }
   .sumChip:hover { border-color: var(--main-dark); }
   .sumChip.active { border-color: var(--main-dark); background: #eaf8fd; }
-  .sumChip .chipName { display: block; font-size: 12px; color: #666; margin-bottom: 2px; }
-  .sumChip .chipCount { display: block; font-size: 20px; font-weight: bold; line-height: 1.2; }
+  .sumChip .chipName {
+    display: block; font-size: 11px; color: #666; margin-bottom: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .sumChip .chipCount { display: block; font-size: 19px; font-weight: bold; line-height: 1.2; }
   .sumChip .chipSub { display: block; font-size: 11px; color: #888; margin-top: 2px; }
   .sumChip.unassigned .chipCount { color: #b45309; }
 
@@ -139,6 +143,11 @@
   .badge.liff { background: #ecfdf5; color: #065f46; border-color: #a7f3d0; }
   .emptyLine { padding: 24px 4px; color: #888; font-size: 14px; }
 
+  /* 検索・絞り込みパネルの開閉 */
+  .panelHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  #filterBody { margin-top: 14px; }
+  #filterBody[hidden] { display: none; }
+
   .bulkBar {
     display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
     background: #f1f6f9; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
@@ -168,10 +177,6 @@
   </div>
 
   <div id="app" style="display:none;">
-    <div class="noticeBar">
-      🔒 この画面はお客様の氏名・メール・電話番号を含みます。画面共有・スクリーンショットの取り扱いに注意し、使い終わったら閉じてください。
-    </div>
-
     <div class="panel">
       <div class="row statusLine" id="loginStatusLine"></div>
 
@@ -193,6 +198,12 @@
     </div>
 
     <div class="panel" id="filterPanel" style="display:none;">
+      <div class="panelHead">
+        <button type="button" class="secondary" id="filterToggle" aria-expanded="true" aria-controls="filterBody">🔎 検索・絞り込み ▾</button>
+        <span class="statusLine" id="filterStatusLine"></span>
+      </div>
+
+      <div id="filterBody">
       <div class="row">
         <label class="rowLabel" for="q">検索（サロン名・お名前・メール・電話・住所・紹介者・備考）</label>
         <input type="search" id="q" placeholder="例: 青島 / tanaka@ / 090">
@@ -237,9 +248,9 @@
       <div class="row">
         <div class="btnRow">
           <button id="resetBtn" type="button" class="secondary">絞り込みを解除</button>
-          <span class="statusLine" id="filterStatusLine"></span>
         </div>
       </div>
+      </div><!-- /#filterBody -->
     </div>
 
     <div class="panel" id="listPanel" style="display:none;">
@@ -272,7 +283,7 @@
 // 認証・GAS通信ルールは badges.html からそのまま移植している（自分で別方式にしないこと）
 // 版数の定義はこの APP_VERSION 1箇所だけ（AGENTS.md バージョン管理ルール）
 // ============================================================
-const APP_VERSION = '0.1.2';
+const APP_VERSION = '0.1.3';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 const SESSION_KEY = 'bf_session'; // ポータルと共通
@@ -615,7 +626,23 @@ function applyFilters() {
   renderSummary();
   renderTable();
 
-  el('filterStatusLine').textContent = '表示 ' + state.filtered.length + '件 / 全' + state.apps.length + '件';
+  // 🔴 パネルを畳んでいるときは中身が見えないので、絞り込み中かどうかをこの行に出す
+  el('filterStatusLine').textContent =
+    '表示 ' + state.filtered.length + '件 / 全' + state.apps.length + '件' +
+    (hasActiveFilter() ? '・絞り込み中' : '');
+}
+
+function hasActiveFilter() {
+  return !!(
+    String(el('q').value || '').trim() ||
+    checkedBusinessTypes().length ||
+    (document.querySelector('input[name=trade]:checked') || {}).value !== 'all' ||
+    el('tantouFilter').value ||
+    el('dateFrom').value ||
+    el('dateTo').value ||
+    el('showCancelled').checked ||
+    el('onlyUnassigned').checked
+  );
 }
 
 function sortFiltered() {
@@ -627,6 +654,29 @@ function sortFiltered() {
     if (av === bv) return a.app_id < b.app_id ? -1 : 1;
     return av < bv ? -dir : dir;
   });
+}
+
+// ------------------------------------------------------------
+// 検索・絞り込みパネルの開閉（既定はスマホ=畳む・PC=開く。以後は端末ごとに記憶する）
+// ------------------------------------------------------------
+const FILTER_OPEN_KEY = 'bf_admin_filter_open';
+
+function defaultFilterOpen() {
+  try {
+    const v = localStorage.getItem(FILTER_OPEN_KEY);
+    if (v === '1') return true;
+    if (v === '0') return false;
+  } catch (e) {} // プライベートブラウズ等で読めなくても既定値で動く
+  return window.matchMedia('(min-width: 720px)').matches;
+}
+
+function setFilterOpen(open, persist) {
+  el('filterBody').hidden = !open;
+  el('filterToggle').textContent = '🔎 検索・絞り込み ' + (open ? '▾' : '▸');
+  el('filterToggle').setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (persist) {
+    try { localStorage.setItem(FILTER_OPEN_KEY, open ? '1' : '0'); } catch (e) {}
+  }
 }
 
 function resetFilters() {
@@ -1047,6 +1097,10 @@ function init() {
   el('fetchBtn').addEventListener('click', fetchApplications);
   el('csvBtn').addEventListener('click', downloadCsv);
   el('resetBtn').addEventListener('click', resetFilters);
+  el('filterToggle').addEventListener('click', function () {
+    setFilterOpen(el('filterBody').hidden, true); // 畳んでいたら開く・開いていたら畳む
+  });
+  setFilterOpen(defaultFilterOpen(), false); // 初期表示は記憶または画面幅で決める（保存はしない）
   el('bulkApplyBtn').addEventListener('click', bulkApply);
   el('selectAllBtn').addEventListener('click', selectAllVisible);
   el('clearSelBtn').addEventListener('click', clearSelection);
