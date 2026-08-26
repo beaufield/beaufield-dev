@@ -1,0 +1,1500 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+  <title>エニアグラム・タイプ診断</title>
+  <style>
+    :root { --ink:#111; --muted:#5f5f63; --paper:#efefed; --panel:#fff; --line:#111; --accent:#ff4f19; --accent-soft:#ffe2d7; --warn:#9d2300; --warn-soft:#fff0ea; --focus:#0057ff; }
+    * { box-sizing:border-box; }
+    body {
+      margin:0; color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+      font-size:16px; line-height:1.7; background-color:var(--paper);
+      background-image:linear-gradient(60deg,rgba(255,255,255,.7) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.7) 75%),linear-gradient(120deg,rgba(255,255,255,.55) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.55) 75%);
+      background-size:72px 124px; background-position:0 0,36px 62px;
+    }
+    button { font:inherit; cursor:pointer; }
+    button:focus-visible { outline:4px solid var(--focus); outline-offset:4px; }
+    .app { width:100%; max-width:940px; margin:0 auto; padding:0 20px 64px; }
+    .brand { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:0 -20px; padding:22px 28px; color:#fff; background:var(--ink); border-bottom:6px solid var(--accent); }
+    .brand-name { display:flex; align-items:center; gap:10px; font-family:Impact,"Arial Black","Yu Gothic",sans-serif; font-size:17px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
+    .brand-name::before { content:""; display:inline-block; width:18px; height:18px; background:var(--accent); transform:rotate(45deg); box-shadow:inset 0 0 0 4px var(--ink),0 0 0 2px var(--accent); }
+    .version { margin:0; padding:3px 9px; color:#fff; border:1px solid #fff; font-size:12px; font-weight:900; letter-spacing:.08em; white-space:nowrap; }
+    .screen { margin-top:34px; }
+    h1,h2,h3 { line-height:1.25; font-weight:900; letter-spacing:.01em; }
+    h1 { font-size:clamp(28px,5vw,48px); margin:0 0 16px; }
+    h2 { font-size:clamp(22px,3.8vw,34px); margin:0 0 16px; }
+    h3 { font-size:18px; margin:0; }
+    p { margin:0 0 16px; }
+    .lead { max-width:760px; font-size:20px; font-weight:800; }
+    .card { position:relative; background:var(--panel); border:2px solid var(--line); border-radius:0; padding:24px; margin:22px 0; box-shadow:8px 8px 0 var(--ink); clip-path:polygon(0 0,calc(100% - 18px) 0,100% 18px,100% 100%,18px 100%,0 calc(100% - 18px)); }
+    .notice { color:#fff; background:var(--ink); border-left:8px solid var(--accent); padding:16px 18px; margin:24px 0; font-weight:700; }
+    .privacy { color:var(--muted); font-size:14px; font-weight:700; }
+    .primary,.secondary,.rating-button { min-height:52px; border:2px solid var(--ink); border-radius:0; padding:11px 18px; font-weight:900; }
+    .primary { color:#fff; background:var(--ink); width:100%; clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px)); }
+    .primary:hover { color:var(--ink); background:var(--accent); }
+    .secondary { color:var(--ink); background:#fff; }
+    .secondary:hover { background:#d8d8d5; }
+    .actions { display:flex; gap:14px; justify-content:space-between; margin-top:30px; }
+    .actions .primary { width:auto; margin-left:auto; }
+    .progress-head { display:flex; justify-content:space-between; align-items:baseline; gap:12px; color:var(--ink); font-size:13px; font-weight:900; letter-spacing:.08em; text-transform:uppercase; }
+    .progress { height:12px; background:#c8c8c5; border:2px solid var(--ink); overflow:hidden; margin:8px 0 28px; transform:skewX(-18deg); }
+    .progress > div { height:100%; background:repeating-linear-gradient(135deg,var(--accent) 0,var(--accent) 10px,#111 10px,#111 15px); transition:width .2s ease; }
+    .scenario-card { padding-top:30px; }
+    .scenario-card h1 { font-size:clamp(24px,4vw,36px); }
+    .scenario-card::before,.self-observation-card::before { content:"◆"; position:absolute; top:-20px; left:calc(50% - 22px); display:grid; place-items:center; width:44px; height:44px; color:#fff; background:var(--ink); border:3px solid var(--accent); transform:rotate(45deg); font-size:0; }
+    .scenario-number { display:inline-block; color:#fff; background:var(--ink); border-left:7px solid var(--accent); padding:5px 12px; font-size:13px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
+    .scenario-prompt { border-top:2px solid var(--ink); padding-top:16px; font-size:18px; font-weight:900; }
+    .answer-summary { padding:10px 14px; color:#fff; background:var(--ink); margin:18px 0; font-size:13px; font-weight:900; letter-spacing:.06em; }
+    .option-list { display:grid; gap:20px; }
+    .motive-option,.self-question { border:2px solid var(--line); border-radius:0; padding:18px; background:#fff; box-shadow:4px 4px 0 #b9b9b5; }
+    .motive-option.answered,.self-question.answered { border-color:var(--accent); box-shadow:5px 5px 0 var(--accent); }
+    .option-label { display:inline-block; color:#fff; background:var(--ink); padding:2px 9px; font-size:12px; font-weight:900; letter-spacing:.1em; }
+    .option-text { margin:12px 0 18px; font-size:17px; font-weight:700; }
+    .rating-actions { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:7px; align-items:stretch; }
+    .rating-button { min-width:0; min-height:68px; color:#fff; background:var(--ink); border-color:var(--ink); padding:8px 6px; font-size:13px; line-height:1.35; }
+    .rating-button:nth-child(1),.rating-button:nth-child(2) { clip-path:polygon(0 0,calc(100% - 10px) 0,100% 50%,calc(100% - 10px) 100%,0 100%); }
+    .rating-button:nth-child(3) { aspect-ratio:1; max-width:72px; justify-self:center; border-radius:50%; padding:5px; }
+    .rating-button:nth-child(4),.rating-button:nth-child(5) { clip-path:polygon(10px 0,100% 0,100% 100%,10px 100%,0 50%); }
+    .rating-button:hover { color:var(--ink); background:#d8d8d5; }
+    .rating-button[aria-pressed="true"] { color:var(--ink); border-color:var(--ink); background:var(--accent); box-shadow:inset 0 0 0 3px #fff; }
+    .self-observation-card { padding-top:30px; }
+    .self-question { margin:18px 0; }
+    .scenario-review { border-left:10px solid var(--accent); }
+    .scenario-review ul { padding-left:22px; }
+    .mode-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; align-items:stretch; }
+    .mode-card { display:flex; flex-direction:column; margin:0; }
+    .mode-card .primary { margin-top:auto; }
+    .role-off-card { border-top:10px solid var(--accent); }
+    .role-off-scenes { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:20px 0; }
+    .role-off-scenes p { display:grid; place-items:center; min-height:96px; margin:0; padding:14px; color:#fff; background:var(--ink); border-bottom:7px solid var(--accent); text-align:center; font-weight:900; }
+    .life-domain { display:inline-block; margin:0 0 14px; padding:4px 10px; color:var(--ink); background:var(--accent-soft); border:2px solid var(--ink); font-size:13px; font-weight:900; }
+    .candidate-card { border-top:10px solid var(--accent); }
+    .facet-list { margin:16px 0; padding-left:22px; font-weight:800; }
+    .wing-reference { margin-bottom:0; }
+    .answer-review ol { padding-left:24px; }
+    .answer-review li { margin-bottom:12px; }
+    .error { color:#fff; background:var(--warn); border:3px solid var(--ink); padding:12px 14px; margin:18px 0; font-weight:900; }
+    .hidden { display:none !important; }
+    .radar-wrap { width:100%; max-width:560px; margin:0 auto; }
+    .radar-svg { display:block; width:100%; height:auto; overflow:visible; }
+    .radar-grid { fill:none; stroke:#b2b2ae; stroke-width:1; }
+    .radar-grid-outer { stroke:#111; stroke-width:2; }
+    .radar-axis { stroke:#c5c5c1; stroke-width:1; }
+    .radar-area { fill:rgba(255,79,25,.28); stroke:#111; stroke-width:3; }
+    .radar-dot { fill:#fff; stroke:#111; stroke-width:3; }
+    .radar-dot-top { fill:var(--accent); }
+    .radar-label { fill:#111; font-size:15px; font-weight:900; text-anchor:middle; dominant-baseline:middle; cursor:pointer; }
+    .radar-label:hover,.radar-label:focus { fill:var(--focus); text-decoration:underline; outline:none; }
+    .radar-label-top { fill:#c52f00; font-size:17px; }
+    .chart-help { color:var(--muted); font-size:14px; font-weight:700; }
+    .score-nav { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:18px; }
+    .score-button { min-height:48px; padding:10px 12px; border:2px solid var(--line); border-radius:0; background:#fff; color:var(--ink); text-align:left; font-weight:900; }
+    .score-button:hover { color:#fff; background:var(--ink); }
+    .score-button.top { border-color:var(--ink); background:var(--accent); box-shadow:4px 4px 0 var(--ink); }
+    .wing-card { border-top:10px solid var(--accent); }
+    .type-details { margin:34px 0; }
+    .type-detail { border:2px solid var(--line); border-radius:0; background:var(--panel); margin:12px 0; overflow:hidden; scroll-margin-top:16px; }
+    .type-detail summary { padding:16px 18px; font-weight:900; cursor:pointer; background:#fff; }
+    .type-detail summary::marker { color:var(--accent); }
+    .type-detail summary:focus-visible { outline:4px solid var(--focus); outline-offset:-4px; }
+    .type-detail[open] summary { color:#fff; background:var(--ink); border-bottom:5px solid var(--accent); }
+    .type-detail-body { padding:20px; }
+    .type-illustration { margin:8px auto 22px; max-width:420px; text-align:center; }
+    .illustration-img { display:block; width:100%; max-height:460px; object-fit:contain; border:2px solid var(--ink); border-radius:0; background:#efefed; box-shadow:7px 7px 0 var(--ink); }
+    .illustration-caption { margin-top:12px; color:var(--muted); font-size:14px; font-weight:900; }
+    .closing-message { border-top:10px solid var(--accent); }
+    .subtitle { color:var(--muted); margin-top:-8px; font-weight:700; }
+    .section-card { border-left:7px solid #111; padding:15px 17px; background:#f5f5f2; margin:16px 0; }
+    .runaway { border-left-color:var(--warn); background:#fff2ed; }
+    .runaway-step { border:2px solid #111; border-radius:0; padding:14px; margin-top:12px; background:#fff; }
+    .runaway-step h3 { color:var(--warn); }
+    .healing { border-left-color:var(--accent); background:var(--accent-soft); }
+    .healing strong { display:block; margin-bottom:10px; }
+    .disclaimer { font-size:14px; color:var(--muted); }
+    @media (max-width:520px) {
+      .app { padding:0 10px 42px; }
+      .brand { margin:0 -10px; padding:17px 16px; border-bottom-width:5px; }
+      .brand-name { font-size:12px; letter-spacing:.08em; }
+      .brand-name::before { width:14px; height:14px; }
+      .screen { margin-top:26px; }
+      h1 { font-size:28px; }
+      .lead { font-size:17px; }
+      .card { padding:17px 14px; box-shadow:5px 5px 0 var(--ink); clip-path:polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,12px 100%,0 calc(100% - 12px)); }
+      .scenario-card,.self-observation-card { padding-top:26px; }
+      .option-text { font-size:15px; line-height:1.6; }
+      .motive-option,.self-question { padding:13px 10px; box-shadow:3px 3px 0 #b9b9b5; }
+      .rating-actions { grid-template-columns:repeat(5,minmax(0,1fr)); gap:3px; }
+      .rating-button { min-height:76px; padding:5px 2px; font-size:11px; line-height:1.3; word-break:normal; }
+      .rating-button:nth-child(3) { width:54px; max-width:100%; }
+      .actions { gap:8px; }
+      .primary,.secondary { padding:9px 12px; font-size:14px; }
+      .score-nav { grid-template-columns:1fr; }
+      .mode-grid { grid-template-columns:1fr; }
+      .role-off-scenes { grid-template-columns:1fr; }
+      .role-off-scenes p { min-height:68px; }
+      .radar-label { font-size:14px; }
+      .radar-label-top { font-size:15px; }
+    }
+    @media (max-width:360px) {
+      .rating-button { min-height:80px; font-size:10px; }
+      .rating-button:nth-child(3) { width:48px; }
+    }
+    @media (prefers-reduced-motion: reduce) { *,*::before,*::after { scroll-behavior:auto !important; transition:none !important; animation:none !important; } }
+  </style>
+</head>
+<body>
+  <script>
+    // GASの表示倍率固定に備え、実際の画面幅を基準に縮小補正します。
+    (function fixScale() {
+      var iw = window.innerWidth;
+      var sw = window.screen.width;
+      if (sw > 0 && sw < iw) {
+        var zoom = iw / sw;
+        document.body.style.zoom = zoom;
+        document.body.style.width = sw + 'px';
+        document.body.style.maxWidth = sw + 'px';
+        document.body.style.overflowX = 'hidden';
+      }
+    })();
+  </script>
+  <main class="app">
+    <header class="brand"><span class="brand-name">ENNEAGRAM / INNER PATTERN</span><p class="version" id="app-version"></p></header>
+    <div id="app" class="screen" aria-live="polite"></div>
+  </main>
+
+  <script id="app-data" type="application/json">
+{
+  "typeQuestions": [
+    {
+      "id": "ST1-01",
+      "version": "standard",
+      "typeId": 1,
+      "facet": "根元的恐れ",
+      "facetGroup": "core",
+      "text": "休日の予定が自分の不注意でずれると、早く整え直したい気持ちが続く。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST1-02",
+      "version": "standard",
+      "typeId": 1,
+      "facet": "恐れへの反応",
+      "facetGroup": "defense",
+      "text": "親しい人から改善点を伝えられると、納得できる形まで丁寧に振り返る。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST1-03",
+      "version": "standard",
+      "typeId": 1,
+      "facet": "根元的欲求",
+      "facetGroup": "core",
+      "text": "自分のための選択でも、自分の中で筋が通る方を選ぶと気持ちが収まる。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST1-04",
+      "version": "standard",
+      "typeId": 1,
+      "facet": "満足条件",
+      "facetGroup": "acquisition",
+      "text": "家で一人の日も、決めた流れで用事を済ませると心からくつろげる。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST1-05",
+      "version": "standard",
+      "typeId": 1,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "自分のための自由な時間ほど、気になる用事を終えてから楽しみたい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST1-06",
+      "version": "standard",
+      "typeId": 1,
+      "facet": "回避",
+      "facetGroup": "defense",
+      "text": "親しい人と考えが違うと、感情より互いに納得できる整え方へ意識が向く。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST1-07",
+      "version": "standard",
+      "typeId": 1,
+      "facet": "注意の向き",
+      "facetGroup": "automatic",
+      "text": "休日の支度がほぼ整っていても、一つの乱れが先に目へ入る。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST1-08",
+      "version": "standard",
+      "typeId": 1,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "家で一人で休む前に、途中の用事を一つ整えると気持ちを切り替えやすい。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST2-01",
+      "version": "standard",
+      "typeId": 2,
+      "facet": "根元的恐れ",
+      "facetGroup": "core",
+      "text": "親しい人の反応がいつもより冷たいと、自然に声をかけて距離を確かめたい。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST2-02",
+      "version": "standard",
+      "typeId": 2,
+      "facet": "恐れへの反応",
+      "facetGroup": "defense",
+      "text": "親しい人との距離を感じると、自分にできる温かな働きかけを探す。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST2-03",
+      "version": "standard",
+      "typeId": 2,
+      "facet": "根元的欲求",
+      "facetGroup": "core",
+      "text": "親しい人から声をかけられると、自分との時間を望んでくれたことがうれしい。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST2-04",
+      "version": "standard",
+      "typeId": 2,
+      "facet": "満足条件",
+      "facetGroup": "acquisition",
+      "text": "自分で選んだ小さな贈り物を身近な人が喜ぶと、つながりが深まったと感じる。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST2-05",
+      "version": "standard",
+      "typeId": 2,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "休日の過ごし方では、自分の希望と親しい人の喜ぶ顔を一緒に考える。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST2-06",
+      "version": "standard",
+      "typeId": 2,
+      "facet": "回避",
+      "facetGroup": "defense",
+      "text": "家で一人で望みを考えるときも、親しい人へ伝わりやすい言い方を選びたい。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST2-07",
+      "version": "standard",
+      "typeId": 2,
+      "facet": "注意の向き",
+      "facetGroup": "automatic",
+      "text": "親しい人たちの集まりでは、まだ場になじめていない人へ自然に気づく。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST2-08",
+      "version": "standard",
+      "typeId": 2,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "家で休んでいるときも、親しい人を支えられる頼みなら力になりたい。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST3-01",
+      "version": "standard",
+      "typeId": 3,
+      "facet": "根元的恐れ",
+      "facetGroup": "core",
+      "text": "好きで始めたことが伸びないと、自分なりの上達が見える方法をすぐ探す。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST3-02",
+      "version": "standard",
+      "typeId": 3,
+      "facet": "恐れへの反応",
+      "facetGroup": "defense",
+      "text": "気軽な遊びで失敗すると、次はよりうまくできる方法へ気持ちが向く。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST3-03",
+      "version": "standard",
+      "typeId": 3,
+      "facet": "根元的欲求",
+      "facetGroup": "core",
+      "text": "誰にも頼まれていないことでも、目に見える手応えが残ると自信につながる。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST3-04",
+      "version": "standard",
+      "typeId": 3,
+      "facet": "満足条件",
+      "facetGroup": "acquisition",
+      "text": "親しい人からよい反応をもらうと、自分の持ち味が生きたようで気持ちが上がる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST3-05",
+      "version": "standard",
+      "typeId": 3,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "自分のために始めたことでも、遠回りせず早く手応えを得たい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST3-06",
+      "version": "standard",
+      "typeId": 3,
+      "facet": "回避",
+      "facetGroup": "defense",
+      "text": "家で一人につらい気持ちでいると、前へ進める小さな行動で調子を戻したい。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST3-07",
+      "version": "standard",
+      "typeId": 3,
+      "facet": "注意の向き",
+      "facetGroup": "automatic",
+      "text": "親しい人と過ごすときも、相手に届きやすい見せ方や話し方へ自然に変える。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST3-08",
+      "version": "standard",
+      "typeId": 3,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "自由に使えた一日に形の残る体験があると、充実して過ごせたと感じる。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST4-01",
+      "version": "standard",
+      "typeId": 4,
+      "facet": "根元的恐れ",
+      "facetGroup": "core",
+      "text": "親しい人には、ほかの誰とも違う自分の細かな感覚まで知ってほしい。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST4-02",
+      "version": "standard",
+      "typeId": 4,
+      "facet": "恐れへの反応",
+      "facetGroup": "defense",
+      "text": "身近な人の楽しそうな近況を聞くと、自分が本当に望むものへ心が向く。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST4-03",
+      "version": "standard",
+      "typeId": 4,
+      "facet": "根元的欲求",
+      "facetGroup": "core",
+      "text": "自分のために何かを選ぶとき、人気より自分の感覚に響く方を選びたい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST4-04",
+      "version": "standard",
+      "typeId": 4,
+      "facet": "満足条件",
+      "facetGroup": "acquisition",
+      "text": "親しい人に気持ちの細かな違いまで受け止めてもらうと、深く通じたと感じる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST4-05",
+      "version": "standard",
+      "typeId": 4,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "家で一人気持ちが揺れたとき、急いで変えず心の意味を確かめたい。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST4-06",
+      "version": "standard",
+      "typeId": 4,
+      "facet": "回避",
+      "facetGroup": "defense",
+      "text": "自分のための身近な物でも、自分の感覚が表れる選び方を大切にする。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST4-07",
+      "version": "standard",
+      "typeId": 4,
+      "facet": "注意の向き",
+      "facetGroup": "automatic",
+      "text": "自分のために望んだものが得られないと、その特別な意味をしばらく味わう。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST4-08",
+      "version": "standard",
+      "typeId": 4,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "一人で強い感情が湧くと、その中にある自分だけの意味を言葉や形にしたい。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST5-01",
+      "version": "standard",
+      "typeId": 5,
+      "facet": "根元的恐れ",
+      "facetGroup": "core",
+      "text": "親しい人から知らないことを急に聞かれると、考える時間を取ってから答えたい。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST5-02",
+      "version": "standard",
+      "typeId": 5,
+      "facet": "恐れへの反応",
+      "facetGroup": "defense",
+      "text": "親しい人から急に誘われると、自分の時間をどれほど使うか先に確かめる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST5-03",
+      "version": "standard",
+      "typeId": 5,
+      "facet": "根元的欲求",
+      "facetGroup": "core",
+      "text": "休日に興味を持ったことを、自分の中で扱えるところまで理解すると落ち着く。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST5-04",
+      "version": "standard",
+      "typeId": 5,
+      "facet": "満足条件",
+      "facetGroup": "acquisition",
+      "text": "家で誰にも入り込まれない一人の時間が戻ると、考える余裕が満ちてくる。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST5-05",
+      "version": "standard",
+      "typeId": 5,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "好きで新しいことを始める前に、一人で全体像をつかんでおきたい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST5-06",
+      "version": "standard",
+      "typeId": 5,
+      "facet": "回避",
+      "facetGroup": "defense",
+      "text": "親しい人から自分の望みを聞かれると、少し考えてから言葉にしたい。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST5-07",
+      "version": "standard",
+      "typeId": 5,
+      "facet": "注意の向き",
+      "facetGroup": "automatic",
+      "text": "親しい人たちの集まりへ急に加わると、まず少し離れて場の様子をつかむ。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST5-08",
+      "version": "standard",
+      "typeId": 5,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "親しい人と長く過ごした後は、一人の時間で考えを整理すると調子が戻る。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST6-01",
+      "version": "standard",
+      "typeId": 6,
+      "facet": "根元的恐れ",
+      "facetGroup": "core",
+      "text": "初めて行く場所では、困りそうな点と動き方が見えると安心して楽しめる。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST6-02",
+      "version": "standard",
+      "typeId": 6,
+      "facet": "恐れへの反応",
+      "facetGroup": "defense",
+      "text": "一人で休日の予定を考えるとき、変更時の動き方も用意すると気持ちが軽い。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST6-03",
+      "version": "standard",
+      "typeId": 6,
+      "facet": "根元的欲求",
+      "facetGroup": "core",
+      "text": "初めて使うものを自分のために選ぶとき、経験した人の見方も確かめたい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST6-04",
+      "version": "standard",
+      "typeId": 6,
+      "facet": "満足条件",
+      "facetGroup": "acquisition",
+      "text": "困ったときに連絡できる親しい人を思い浮かべると、落ち着いて進める。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST6-05",
+      "version": "standard",
+      "typeId": 6,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "親しい人と約束を守り合えると、次も変わらず関われるという安心が深まる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST6-06",
+      "version": "standard",
+      "typeId": 6,
+      "facet": "回避",
+      "facetGroup": "defense",
+      "text": "自分のための大切な選択ほど、見落としを確かめて納得してから決めたい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST6-07",
+      "version": "standard",
+      "typeId": 6,
+      "facet": "注意の向き",
+      "facetGroup": "automatic",
+      "text": "私生活で初めて親しくなる人は、言葉と行動が続けて一致するかを見る。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST6-08",
+      "version": "standard",
+      "typeId": 6,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "一人で何かを決めた後も、別の問題がないか確かめると落ち着いて動ける。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST7-01",
+      "version": "standard",
+      "typeId": 7,
+      "facet": "根元的恐れ",
+      "facetGroup": "core",
+      "text": "楽しみにした休日の予定がなくなると、次に楽しめる可能性をすぐ探したくなる。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST7-02",
+      "version": "standard",
+      "typeId": 7,
+      "facet": "恐れへの反応",
+      "facetGroup": "defense",
+      "text": "家で一人につらい気持ちが続くと、見方や過ごし方を変えて明るさを取り戻す。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST7-03",
+      "version": "standard",
+      "typeId": 7,
+      "facet": "根元的欲求",
+      "facetGroup": "core",
+      "text": "自由に使える時間に選べる過ごし方がいくつか浮かぶと、気分が軽くなる。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST7-04",
+      "version": "standard",
+      "typeId": 7,
+      "facet": "満足条件",
+      "facetGroup": "acquisition",
+      "text": "親しい人と初めての遊びを予定すると、始まる前から想像して心が弾む。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST7-05",
+      "version": "standard",
+      "typeId": 7,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "休日の過ごし方は、気分や発見に合わせて変えられる余地を残したい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST7-06",
+      "version": "standard",
+      "typeId": 7,
+      "facet": "回避",
+      "facetGroup": "defense",
+      "text": "親しい人との重い話でも、別の見方やこれからの可能性を一緒に探したい。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST7-07",
+      "version": "standard",
+      "typeId": 7,
+      "facet": "注意の向き",
+      "facetGroup": "automatic",
+      "text": "休日に予定外のことが起きると、そこから生まれる別の面白さへ目が向く。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST7-08",
+      "version": "standard",
+      "typeId": 7,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "一人で過ごす日も、途中で新しい選択肢を加えられると生き生きする。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST8-01",
+      "version": "standard",
+      "typeId": 8,
+      "facet": "根元的恐れ",
+      "facetGroup": "core",
+      "text": "親しい人と過ごし方を決めるとき、自分にも選ぶ余地があることを大切にする。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST8-02",
+      "version": "standard",
+      "typeId": 8,
+      "facet": "恐れへの反応",
+      "facetGroup": "defense",
+      "text": "私生活の予定を急に頼まれると、引き受ける前に自分の境界をはっきり伝える。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST8-03",
+      "version": "standard",
+      "typeId": 8,
+      "facet": "根元的欲求",
+      "facetGroup": "core",
+      "text": "自分のための大切な選択では、周囲の都合に動かされず自分で決めたい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST8-04",
+      "version": "standard",
+      "typeId": 8,
+      "facet": "満足条件",
+      "facetGroup": "acquisition",
+      "text": "自由に使える時間の始め方も終わり方も、一人で決められると落ち着く。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST8-05",
+      "version": "standard",
+      "typeId": 8,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "自分のために本当に望むものは、周囲の返事を待たず自分から動いてつかむ。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST8-06",
+      "version": "standard",
+      "typeId": 8,
+      "facet": "回避",
+      "facetGroup": "defense",
+      "text": "親しい人に傷つけられたとき、自分を守りながら必要なことを率直に伝えたい。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST8-07",
+      "version": "standard",
+      "typeId": 8,
+      "facet": "注意の向き",
+      "facetGroup": "automatic",
+      "text": "初めて会う人には、自分の考えを明確に伝えて相手の率直さも確かめる。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST8-08",
+      "version": "standard",
+      "typeId": 8,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "一人で静かに過ごす時間を乱されると、必要な境界をすぐ明確にしたくなる。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST9-01",
+      "version": "standard",
+      "typeId": 9,
+      "facet": "根元的恐れ",
+      "facetGroup": "core",
+      "text": "親しい人と意見が違っても、つながりを保てる共通点や落ち着く形を探す。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST9-02",
+      "version": "standard",
+      "typeId": 9,
+      "facet": "恐れへの反応",
+      "facetGroup": "defense",
+      "text": "親しい人との予定が食い違うと、双方が無理なく過ごせる案を選びたい。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST9-03",
+      "version": "standard",
+      "typeId": 9,
+      "facet": "根元的欲求",
+      "facetGroup": "core",
+      "text": "家で一人、身近な人との間に引っかかりがないと自然に体の力が抜ける。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "ST9-04",
+      "version": "standard",
+      "typeId": 9,
+      "facet": "満足条件",
+      "facetGroup": "acquisition",
+      "text": "自分のために選んだ場所では、決め続けずその場の流れを味わうと満たされる。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST9-05",
+      "version": "standard",
+      "typeId": 9,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "親しい人と過ごすとき、相手と自分のペースがなじむ流れを大切にする。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "ST9-06",
+      "version": "standard",
+      "typeId": 9,
+      "facet": "回避",
+      "facetGroup": "defense",
+      "text": "親しい人への不満は、関係を荒らさない時と伝え方を選んで話したい。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "ST9-07",
+      "version": "standard",
+      "typeId": 9,
+      "facet": "注意の向き",
+      "facetGroup": "automatic",
+      "text": "休日に何をしたいか聞かれると、一緒にいる人も自分もくつろげる案を選ぶ。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "ST9-08",
+      "version": "standard",
+      "typeId": 9,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "家で一人のときに腹が立つと、気持ちを落ち着けてから大事な点を確かめる。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH1-01",
+      "version": "short",
+      "typeId": 1,
+      "facet": "恐れ",
+      "facetGroup": "core",
+      "text": "親しい人との約束を忘れると、早く埋め合わせて関係を整えたくなる。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "SH1-02",
+      "version": "short",
+      "typeId": 1,
+      "facet": "欲求",
+      "facetGroup": "core",
+      "text": "親しい人と意見が違っても、自分の中で筋が通る選択を大切にする。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SH1-03",
+      "version": "short",
+      "typeId": 1,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "休日でも、気になる用事を一つ整えてから自由な時間を楽しむ。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SH1-04",
+      "version": "short",
+      "typeId": 1,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "家で一人で休んでいても、一か所の乱れを見つけると目が戻る。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH2-01",
+      "version": "short",
+      "typeId": 2,
+      "facet": "恐れ",
+      "facetGroup": "core",
+      "text": "親しい人の反応が急に冷たくなると、自然に声をかけて距離を戻したくなる。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SH2-02",
+      "version": "short",
+      "typeId": 2,
+      "facet": "欲求",
+      "facetGroup": "core",
+      "text": "親しい人から急に声をかけられると、自分を思い出してくれたことがうれしい。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "SH2-03",
+      "version": "short",
+      "typeId": 2,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "休日の過ごし方では、親しい人の喜ぶ顔も自分の望みと同じく考える。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SH2-04",
+      "version": "short",
+      "typeId": 2,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "親しい人を支えられるなら、家で休んでいても頼みに応えたい。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH3-01",
+      "version": "short",
+      "typeId": 3,
+      "facet": "恐れ",
+      "facetGroup": "core",
+      "text": "好きで始めたことが伸びないと、上達が見えるやり方をすぐ探したくなる。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SH3-02",
+      "version": "short",
+      "typeId": 3,
+      "facet": "欲求",
+      "facetGroup": "core",
+      "text": "誰にも頼まれていなくても、手応えの見えるものを残せると自信が深まる。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH3-03",
+      "version": "short",
+      "typeId": 3,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "気軽な遊びで負けると、次はよりうまくできる方法へ気持ちが向く。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "SH3-04",
+      "version": "short",
+      "typeId": 3,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "親しい人と過ごすときも、相手に届きやすい話し方へ自然に変える。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SH4-01",
+      "version": "short",
+      "typeId": 4,
+      "facet": "恐れ",
+      "facetGroup": "core",
+      "text": "親しい人には、自分の気持ちの細かな違いまで受け止めてほしい。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SH4-02",
+      "version": "short",
+      "typeId": 4,
+      "facet": "欲求",
+      "facetGroup": "core",
+      "text": "自分のために選ぶものは、人気より自分の感覚に響く方を大切にする。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SH4-03",
+      "version": "short",
+      "typeId": 4,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "家で一人気持ちが揺れたとき、急いで変えず心の意味を確かめる。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH4-04",
+      "version": "short",
+      "typeId": 4,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "自分のために望んだものが得られないと、特別な意味が心に長く残る。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "SH5-01",
+      "version": "short",
+      "typeId": 5,
+      "facet": "恐れ",
+      "facetGroup": "core",
+      "text": "親しい人から知らないことを急に聞かれると、考える時間を取ってから答える。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "SH5-02",
+      "version": "short",
+      "typeId": 5,
+      "facet": "欲求",
+      "facetGroup": "core",
+      "text": "一人で興味のあることを、扱えるところまで理解すると落ち着く。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH5-03",
+      "version": "short",
+      "typeId": 5,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "一人で全体像を思い描いてから、好きなことへ取りかかりたい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SH5-04",
+      "version": "short",
+      "typeId": 5,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "考えを整理する一人の時間で、自分のペースを戻したい。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SH6-01",
+      "version": "short",
+      "typeId": 6,
+      "facet": "恐れ",
+      "facetGroup": "core",
+      "text": "休日に初めての場所へ行くとき、困った場合の動き方が見えると安心する。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "SH6-02",
+      "version": "short",
+      "typeId": 6,
+      "facet": "欲求",
+      "facetGroup": "core",
+      "text": "困ったときに連絡できる親しい人を思うと、自分の選択を進めやすい。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SH6-03",
+      "version": "short",
+      "typeId": 6,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "自分のための大切な選択は、経験した人の見方も確かめてから決めたい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SH6-04",
+      "version": "short",
+      "typeId": 6,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "一人で決めた後も、別の問題がないか確かめると落ち着いて動ける。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH7-01",
+      "version": "short",
+      "typeId": 7,
+      "facet": "恐れ",
+      "facetGroup": "core",
+      "text": "楽しみにした休日の予定が消えると、次に楽しめる可能性をすぐ探したくなる。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "SH7-02",
+      "version": "short",
+      "typeId": 7,
+      "facet": "欲求",
+      "facetGroup": "core",
+      "text": "自分のための自由な時間に、選べる過ごし方がいくつかあると気分が軽い。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SH7-03",
+      "version": "short",
+      "typeId": 7,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "家で一人につらい気持ちが続くと、見方や過ごし方を変えて明るさを戻す。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH7-04",
+      "version": "short",
+      "typeId": 7,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "親しい人との重い話でも、別の見方やこれからの可能性を一緒に探す。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SH8-01",
+      "version": "short",
+      "typeId": 8,
+      "facet": "恐れ",
+      "facetGroup": "core",
+      "text": "親しい人と過ごし方を決めるとき、自分の希望を選べる余地も残したい。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SH8-02",
+      "version": "short",
+      "typeId": 8,
+      "facet": "欲求",
+      "facetGroup": "core",
+      "text": "自分だけの大切な選択では、周囲の都合に動かされず自分で決めたい。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SH8-03",
+      "version": "short",
+      "typeId": 8,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "私生活の予定を急に頼まれると、引き受ける前に自分の境界を伝える。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "SH8-04",
+      "version": "short",
+      "typeId": 8,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "一人で過ごす時間を乱されると、必要な境界をすぐ明確にしたくなる。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH9-01",
+      "version": "short",
+      "typeId": 9,
+      "facet": "恐れ",
+      "facetGroup": "core",
+      "text": "親しい人と意見が違っても、つながりを保てる落ち着く形を探す。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SH9-02",
+      "version": "short",
+      "typeId": 9,
+      "facet": "欲求",
+      "facetGroup": "core",
+      "text": "家で一人、身近な人との間に引っかかりがないと自然に力が抜ける。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "SH9-03",
+      "version": "short",
+      "typeId": 9,
+      "facet": "戦略",
+      "facetGroup": "acquisition",
+      "text": "休日の過ごし方では、一緒にいる人も自分もくつろげる案を選ぶ。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SH9-04",
+      "version": "short",
+      "typeId": 9,
+      "facet": "自動反応",
+      "facetGroup": "automatic",
+      "text": "親しい人への不満は、関係を荒らさない時と伝え方を選んで話す。",
+      "lifeDomain": "D"
+    }
+  ],
+  "crossCheckQuestions": [
+    {
+      "id": "SC-01",
+      "version": "standard",
+      "axis": "center",
+      "key": "autonomy",
+      "label": "自立",
+      "text": "自分のための自由な一日は、親しい人と希望が違っても選べる余地を大切にする。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SC-02",
+      "version": "standard",
+      "axis": "center",
+      "key": "attention",
+      "label": "関心",
+      "text": "親しい人と過ごした後は、何をしたかより相手との距離や反応が心に残る。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SC-03",
+      "version": "standard",
+      "axis": "center",
+      "key": "security",
+      "label": "安全",
+      "text": "初めての場所へ行くとき、困った場合の動き方が見えることを大切にする。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "SS-01",
+      "version": "standard",
+      "axis": "strategy",
+      "key": "demand",
+      "label": "要求",
+      "text": "親しい人と望みが違うとき、まず自分の案を率直に伝える。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "SS-02",
+      "version": "standard",
+      "axis": "strategy",
+      "key": "effort",
+      "label": "努力",
+      "text": "自分の案を親しい人へ伝える前に、相手の望むことへ一度動いてみる。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "SS-03",
+      "version": "standard",
+      "axis": "strategy",
+      "key": "withdraw",
+      "label": "退く",
+      "text": "自分の案が受け入れられないとき、一人で考える時間を取る。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "HC-01",
+      "version": "short",
+      "axis": "center",
+      "key": "autonomy",
+      "label": "自立",
+      "text": "一人で自由に過ごせる日は、自分で選び直せる余地を大切にする。",
+      "lifeDomain": "A"
+    },
+    {
+      "id": "HC-02",
+      "version": "short",
+      "axis": "center",
+      "key": "attention",
+      "label": "関心",
+      "text": "親しい人と会った後は、したことより相手との距離や反応が心に残る。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "HC-03",
+      "version": "short",
+      "axis": "center",
+      "key": "security",
+      "label": "安全",
+      "text": "初めてのことを私生活で試す前に、困った場合の動き方を確かめる。",
+      "lifeDomain": "D"
+    },
+    {
+      "id": "HS-01",
+      "version": "short",
+      "axis": "strategy",
+      "key": "demand",
+      "label": "要求",
+      "text": "親しい人に望むことがあるとき、自分の案を率直に伝える。",
+      "lifeDomain": "B"
+    },
+    {
+      "id": "HS-02",
+      "version": "short",
+      "axis": "strategy",
+      "key": "effort",
+      "label": "努力",
+      "text": "自分の案を受け入れてほしいとき、先に親しい人の望むことへ動く。",
+      "lifeDomain": "C"
+    },
+    {
+      "id": "HS-03",
+      "version": "short",
+      "axis": "strategy",
+      "key": "withdraw",
+      "label": "退く",
+      "text": "親しい人と望みが合わないとき、一人で考える時間を取る。",
+      "lifeDomain": "A"
+    }
+  ],
+  "orders": {
+    "standard": [
+      "ST4-05",
+      "ST8-01",
+      "ST2-07",
+      "ST6-03",
+      "ST1-04",
+      "ST7-06",
+      "ST3-02",
+      "ST9-04",
+      "ST5-08",
+      "ST8-02",
+      "ST4-06",
+      "ST5-01",
+      "SS-02",
+      "ST9-05",
+      "ST3-03",
+      "ST7-07",
+      "ST1-05",
+      "ST6-04",
+      "ST2-08",
+      "ST1-06",
+      "ST7-08",
+      "ST3-04",
+      "ST9-06",
+      "ST5-02",
+      "ST4-07",
+      "SC-03",
+      "ST8-03",
+      "ST2-01",
+      "ST6-05",
+      "ST7-01",
+      "ST1-07",
+      "ST6-06",
+      "ST2-02",
+      "ST8-04",
+      "ST4-08",
+      "ST5-03",
+      "ST9-07",
+      "ST3-05",
+      "SS-01",
+      "ST5-04",
+      "ST4-01",
+      "ST8-05",
+      "ST2-03",
+      "ST6-07",
+      "ST1-08",
+      "ST7-02",
+      "ST3-06",
+      "ST9-08",
+      "ST4-02",
+      "ST5-05",
+      "ST9-01",
+      "SC-02",
+      "ST3-07",
+      "ST7-03",
+      "ST1-01",
+      "ST6-08",
+      "ST2-04",
+      "ST8-06",
+      "ST6-01",
+      "ST1-02",
+      "ST7-04",
+      "ST3-08",
+      "ST9-02",
+      "ST5-06",
+      "SS-03",
+      "ST4-03",
+      "ST8-07",
+      "ST2-05",
+      "ST1-03",
+      "ST6-02",
+      "ST2-06",
+      "ST8-08",
+      "ST4-04",
+      "ST5-07",
+      "ST9-03",
+      "ST3-01",
+      "ST7-05",
+      "SC-01"
+    ],
+    "short": [
+      "SH4-01",
+      "SH8-01",
+      "SH2-03",
+      "SH6-03",
+      "SH1-04",
+      "SH7-02",
+      "HS-01",
+      "SH3-02",
+      "SH9-04",
+      "SH5-04",
+      "SH8-02",
+      "SH4-02",
+      "SH5-01",
+      "HC-03",
+      "SH9-01",
+      "SH3-03",
+      "SH7-03",
+      "SH1-01",
+      "SH6-04",
+      "SH2-04",
+      "HS-02",
+      "SH1-02",
+      "SH7-04",
+      "SH3-04",
+      "SH9-02",
+      "SH5-02",
+      "SH4-03",
+      "HC-01",
+      "SH8-03",
+      "SH2-01",
+      "SH6-01",
+      "SH7-01",
+      "SH1-03",
+      "SH6-02",
+      "HS-03",
+      "SH2-02",
+      "SH8-04",
+      "SH4-04",
+      "SH5-03",
+      "SH9-03",
+      "SH3-01",
+      "HC-02"
+    ]
+  },
+  "reflectionQuestions": [
+    "上位候補のうち、最も避けようとしている恐れはどれでしたか？",
+    "その恐れを避けるために、普段どのような反応を繰り返していますか？",
+    "その反応を使わなくてもよいとしたら、どんな選択ができそうですか？"
+  ],
+  "typeResults": {
+    "1": {
+      "typeId": 1,
+      "nameJa": "改革する人",
+      "nameEn": "The Reformer",
+      "subtitle": "曇りのない「見きわめ」の力と、真理の体現者",
+      "essence": "並外れた判断力と知恵（叡智）を持っています。単に善悪のルールで裁くのではなく、個人的な感情や好みを完全に脇に置き、目の前の現実をあるがままに受け入れた上で「いかなる状況にあっても、何をするのが最善か」を正確に見きわめる卓越した客観性を発揮します。自分の理想や考えを他者に無理に押し付けようとはせず、自らが「真理の証人（手本）」として誠実に生き、その崇高で理にかなった姿を見せることで、周囲の人々に「より良く生きる方法」を深く教え導くことができます。",
+      "warningSignal": "「私がやらなければ誰もやらない（私が正さなければならない）」という、強い個人的責任感を感じ、状況をコントロールして正そうと必死になり始めたときは、心のギプス（性格の防衛）に囚われ始めている警告サインです。",
+      "innerCommand": "「常に正しくあれ。いかなる間違いも犯してはならない。堕落するな、手をもぎ取られても義務を果たせ」",
+      "tragedy": "「完璧さ」や「正しさ」という自分の強みに過剰に執着するあまり、自分や他人の些細な間違い、プロセスの非効率さが許せなくなります。怒りを抱えながら「私がすべてを正さなければ」と状況をコントロールしようとし続けた結果、周囲は息苦しさを感じて反発し、離れていきます。その結果、最も恐れていた「不和と混乱（悪にまみれた状況）」を、自らの完璧主義によって引き寄せてしまいます。",
+      "healing": "「もしかしたら、ほかの人にもっといい考えがあるかもしれない」と、自分のやり方へのこだわりを緩め、他者に委ねてみる。"
+    },
+    "2": {
+      "typeId": 2,
+      "nameJa": "助ける人",
+      "nameEn": "The Helper",
+      "subtitle": "無条件の愛と、人の可能性を花開かせる力",
+      "essence": "見返りをいっさい期待せずに、自分自身に対しても他者に対しても「無条件の愛」を与えることができます。エゴや私心がまったくないため、他者が心の奥底で本当に必要としているものをはっきりと見抜き、それを的確に提供することができます。また、人々が自分自身でも気づいていないような長所や肯定的な資質を見つけ出し、温かく励まし育てる「親のような極めて慈悲深い役目」を果たします。自らの善行をアピールすることなく、他者の幸せと成長を自分のことのように無条件に喜べる存在です。",
+      "warningSignal": "「人のところへ出向いていかなければ（私が誰かを助けなければ居場所がない）」と感じ、自分のニーズを完全に後回しにして、他者の世話を焼き始めたときは警告サインです。",
+      "innerCommand": "「優しく、思いやり深くあれ。常に人を助け、他人のために自分を犠牲にせよ。自分の欲しいものを求めてはならない」",
+      "tragedy": "「他者を助けて必要とされる存在になれば、愛される」という思い込みから、相手を取り込むために過剰におせっかいを焼き、頼まれてもいない世話を押し付けます。その裏で、自分の本当の欲求を抑圧しているため、ストレスが高まると「鉛の法則」が発動し、「こんなにやってあげたのに！」という怒りや支配的な態度（最もされて嫌なこと）を他者に向けてしまいます。その結果、相手から煙たがられて拒絶され、最も恐れていた「誰からも愛されず、見捨てられる」という結末を自ら招きます。",
+      "healing": "「他者に与えるのと同じ温かい愛を、まず自分自身に向けてもいい。私はただ存在しているだけで、愛される価値がある」と信じ、自分の限界と欲求を素直に受け入れる。"
+    },
+    "3": {
+      "typeId": 3,
+      "nameJa": "達成する人",
+      "nameEn": "The Achiever",
+      "subtitle": "本物の価値の「体現」と、人々の意欲を引き出す力",
+      "essence": "人からの評価や地位、目に見える「成功したイメージ」への執着を完全に手放し、自分のありのままの限界を受け入れた上で「真正な自己（飾らない素の自分）」で世界と関わることができます。社会的に価値のある素晴らしい資質を自らの生き方で体現する、まさに「人間の理想像」となります。自分自身の才能を最大限に発揮するだけでなく、周囲の人々が「自分にはできない」と思い込んでいた限界を突破し、最高の状態を達成できるよう、強力に意欲を引き出しインスピレーションを与える卓越した指導力を持ちます。",
+      "warningSignal": "「自分の価値を証明しなければ（結果を出さなければ誰も自分を認めない）」と焦り、成功や関心を得るために自分を駆り立て、地位の獲得や「イメージ作り」に没頭し始めたときは警告サインです。",
+      "innerCommand": "「有能であれ。常に勝者であれ。価値ある成果を出し続け、人から賞賛されなければならない。感情や弱さは邪魔だ」",
+      "tragedy": "成功や価値あるイメージに執着するあまり、中身（実質）を伴わない「いかに成功しているように見せるか」という虚飾（仮面のメンテナンス）に必死になります。自分の内面の本当の感情を麻痺させ、時にもっともらしい嘘や誇張に手を染めた結果、周囲から「嘘くさい」「信用できない」と見透かされます。結果として、最も恐れていた「メッキが剥がれ、周囲から拒絶される」という結末を自らの手で引き寄せてしまいます。",
+      "healing": "「もしかしたら、私についての人の意見（評価）は、そんなに重要ではないかもしれない」とつぶやき、立ち止まって自分の本当の感情を感じる。"
+    },
+    "4": {
+      "typeId": 4,
+      "nameJa": "個性的な人",
+      "nameEn": "The Individualist",
+      "subtitle": "痛みを美に変える「創造性」と、深淵な直感力",
+      "essence": "人間の心の暗闇、苦しみ、悲しみ、そして自己の中にある矛盾を何一つ恐れることなく直視する勇気を持っています。自らのきわめて個人的で痛ましい経験のすべてを、普遍的な美や価値を持つ「何か価値あるもの（芸術、表現、言葉）」へと変容させる、驚異的な自己救済的・自己創造的な力を持っています。無意識や深い直感とつながっているため、他者には見えない人間性の深淵に触れることができ、他の人なら参ってしまうような困難な体験も深く消化し、静かな力で耐えながら、人々の心を根底から揺さぶり、感動させることができます。",
+      "warningSignal": "「この激しい感情を味わわなければ（退屈な現実に埋もれてはいけない）」と感じ、想像力を使って過去の傷や切ない気分をあえて強め、空想や感情の世界に引きこもり始めたときは警告サインです。",
+      "innerCommand": "「ユニークで、他とは違う存在であれ。自分自身の感情に常に忠実であれ。平凡で俗っぽいものに染まってはならない」",
+      "tragedy": "「自分が特別で繊細な人間であり続ければ、自分の存在意義を失わない」という防衛から、自らの傷や欠落感に執着します。「どうせ誰も私を理解してくれない」と殻に閉じこもり、「私は傷ついているから、特別扱いされて当然だ」という態度（鉛の法則による他者への甘えと攻撃）を周囲にぶつけます。その結果、周囲は疲れ果てて離れていき、最も恐れていた「誰からも理解されず、見捨てられて、孤立無援になる」という現実を自ら創り出してしまいます。",
+      "healing": "「私の感情は移ろいやすい天気のようなものであり、感情そのものが私という存在ではない。私は現実の世界と今すぐつながっていい」と、空想のベールを剥ぎ、今ここの現実に身を投じる。"
+    },
+    "5": {
+      "typeId": 5,
+      "nameJa": "調べる人",
+      "nameEn": "The Investigator",
+      "subtitle": "世界を見通す「明晰さ」と、革新的な発見を生む力",
+      "essence": "いかなる特定の先入観や視点にも執着しない、完全に偏見のない心（無執着）を持っています。これにより、物事の全体と細部、そして多様な対立する視点を同時に把握する並外れた理解力を持ちます。この極めて明晰な「内なる知」によって、複雑な現象の奥にある真の構造を読み解き、しばしば時代の先を行く先駆的な発見や、これまでにない全く新しい世界の見方を社会に提示し、人類に驚くべき知的発展や、歴史の流れを塗り替えるような天才的な革新をもたらす力を持っています。",
+      "warningSignal": "「現実に対処するためには、もっと多くの知識と完璧な準備が必要だ」と感じ、現実の世界からエネルギーを引いて、実際に行動する前に情報を集めようと頭の中に引きこもり始めたときは警告サインです。",
+      "innerCommand": "「賢く、有能であれ。すべてを頭で理解し、分析せよ。他人に依存したり、無防備に感情やエネルギーを奪われてはならない」",
+      "tragedy": "「世界の仕組みを理解し、自分のリソース（時間・エネルギー）を他者から守れば、圧倒されずに安全に生きられる」という防衛から、行動を起こすことや他者と関わることを拒絶します。知識の収集に埋没し、秘密主義になって孤立を深めた結果、実世界への適応力が失われます。その結果、最も恐れていた「実生活において、何も実行できない圧倒的に無能で無力な状態」に、自らを追い込んでしまいます。",
+      "healing": "「私には、今すぐこの世界に関わり、行動を起こすための十分な能力とリソースがすでに備わっている」と自分を信頼し、頭から身体（今、ここ）に意識を下ろす。"
+    },
+    "6": {
+      "typeId": 6,
+      "nameJa": "忠実な人",
+      "nameEn": "The Loyalist",
+      "subtitle": "真の「勇気」と、安全で強固なコミュニティを築く力",
+      "essence": "人生が本来持っている不確実性や不安から一切逃げることなく正面から向き合ったとき、自らの「内なる導き」に気づき、揺るぎない自己信頼と驚くべき勇気を発揮します。隠れたリスクや脅威を瞬時に察知し、未然に防ぐ生まれながらのトラブルシューターです。単に権力者に追従したり、自分が支配者になろうとするのではなく、多様な才能を持つ人々が、共通の利益と信頼のために力を合わせる「平等主義の精神」を育み、強固で安全な共同体（コミュニティ）を築き上げる力を持ちます。",
+      "warningSignal": "「自分一人では決められない。絶対に裏切らない確かな保証や、頼るべきルールが欲しい」と感じ、自分の決断を疑い、自分の外の権威やルールに依存し始めたときは警告サインです。",
+      "innerCommand": "「安全を確保せよ。他者の期待やルールに忠実であれ。常に最悪の事態を想定して警戒を解くな。自分を信じるな」",
+      "tragedy": "不安を打ち消し安全を確保する（強み）ために、周囲のあらゆる人を「裏切り者ではないか」と疑い、猜疑心むき出しで警戒します。自分の不安から周囲を問い詰め、他者に対して忠誠心を過剰にテストしたりするため、周囲は疲弊し、彼らを避けるようになります。結果として、最も恐れていた「本当に支えを失い、誰からも信用されず、完全に孤立して危険にさらされる」という状況を自ら招きます。",
+      "healing": "「もしかしたら、起こり得るあらゆる問題を予測（シミュレーション）しなくてもいいかもしれない」と頭の中の防衛の声を休め、深い呼吸とともに自分の内なる安全を感じる。"
+    },
+    "7": {
+      "typeId": 7,
+      "nameJa": "熱中する人",
+      "nameEn": "The Enthusiast",
+      "subtitle": "尽きない「喜び」の体現と、多様な経験を統合する力",
+      "essence": "人生を無条件に肯定し、日常の何気ない出来事や目の前の現実の中にも、計り知れない驚異や美しさを見出すことができる「忘我の感謝」の境地に達します。極めて機敏な頭脳と圧倒的な好奇心を持ち、多種多様な分野の知識やスキルを驚異的なスピードで習得します。それらを創造的に融合させることで、前例のない素晴らしい達成を生み出す「ルネサンス的教養人」となります。その純粋な生きる喜びと熱意は、周囲の人々に自然と伝染し、世界を明るい活力で満たします。",
+      "warningSignal": "「今の状況は退屈だ。もっといいものが他にあるはずだ」と目の前の現実に不満を抱き、次の楽しい予定や新しい刺激で頭をいっぱいにして焦り始めたときは警告サインです。",
+      "innerCommand": "「常に幸福であれ。人生を最大限楽しめ。退屈や痛み、ネガティブな感情を直視してはならない。動き続けよ」",
+      "tragedy": "「常に楽しい予定をキープしていれば、痛みや欠乏感に苦しむことはない」という防衛から、次から次へと新しい予定、プロジェクト、刺激を貪るように詰め込み、とっ散らかります。一つのことに深くコミットすることを避けて放り出し続けた結果、どの体験も表面的なままで終わり、心はいつまでも満たされません。結果として、最も避けたかった「焦燥感、そしてどれだけ手に入れても満たされない極限の欠乏感（苦痛）」の中に、自ら囚われることになります。",
+      "healing": "「今、この瞬間にある現実は、退屈や痛みも含めてすべて完璧に満ち足りている。私はここを離れる必要はない」と、未来への逃避を止め、今ここに深く留まる。"
+    },
+    "8": {
+      "typeId": 8,
+      "nameJa": "挑戦する人",
+      "nameEn": "The Challenger",
+      "subtitle": "他者を力づける「度量の大きさ」と、英雄的な実行力",
+      "essence": "内に秘めた絶大な活力と不屈の意志を、己の野心や支配のためではなく、より大きな善や弱き者を守るために使うとき、真に無私無欲な「圧倒的な度量の大きさ」を発揮します。他者が内に隠し持っている本来の力や可能性を一目で見抜き、彼らが自立して強くなれるよう、安全な環境（保護）を提供し、果敢な挑戦の機会を与える卓越したエンパワーメントの力を持ちます。困難な局面でも恐れることなく決断を下し、英雄的な偉業や建設的なプロジェクトを力強く成し遂げる、自然なリーダーです。",
+      "warningSignal": "「世界は敵対的だ。立ち向かって、自分の力で状況をねじ伏せ、自分の手でものにしなければコントロールされる」と感じ、世界と闘うように強がって力み始めたときは警告サインです。",
+      "innerCommand": "「強くあれ。誰にも主導権を渡すな。他人にコントロールされたり、弱みを見せたりしてはならない。力で支配せよ」",
+      "tragedy": "「自分が圧倒的な力を持ち、状況を支配していれば、誰からも傷つけられない」という防衛から、自分の「傷つきやすさ（弱さ）」を排除し、他者を力でねじ伏せようとします。その結果、周囲に「威圧的な支配者」としての恐怖や警戒心を与え、周囲を敵に回してしまいます。結果として、最も恐れていた「他者からの報復（攻撃）を受け、力によって引きずり下ろされて破滅する」という現実を自ら招きます。",
+      "healing": "「私の内側にある優しさや傷つきやすさは弱さではなく、人と真につながるための強さである。世界を力でねじ伏せる必要はない」と、握りしめた拳を開き、他者に心を開く。"
+    },
+    "9": {
+      "typeId": 9,
+      "nameJa": "平和をもたらす人",
+      "nameEn": "The Peacemaker",
+      "subtitle": "すべてを包み込む「受容」と、深い調和を生み出す力",
+      "essence": "他者と完全に一体化し、包み込むことができる、極めて豊かで温かい受容力を持っています。このため、周囲の人々に「自分はありのままでここにいていいんだ」という計り知れない安心感を与えます。善と悪、悲しみと喜びといった、一見対立する矛盾をそのまま受け入れ、争う人々の間に静かに入り込んで葛藤を解消し、新たな次元での統合（調和）をもたらす天性の調停者です。自らの存在のすべてを使って「今、ここ」に根を下ろしたとき、世界にあふれる大いなる生命力と一体になり、不屈でダイナミックな平和を体現します。",
+      "warningSignal": "「波風を立てるくらいなら、相手に合わせよう」と、衝突や葛藤を避けるために表面的に周囲に同調し、自分の本当の欲求を軽視してやり過ごし始めたときは警告サインです。",
+      "innerCommand": "「和やかであれ。平穏を保て。衝突や葛藤を絶対に起こすな。自分の主張をして全体の和を乱してはならない」",
+      "tragedy": "「自分の存在を主張せず、他者に同調して波風を立てなければ、平穏でいられる」という防衛から、現実の面倒な問題から完全に意識をそらし、自分の本音を麻痺させます。周囲に合わせる一方で、内面では無意識の怒りを溜め込み、頑固な無視や先延ばし（受動的攻撃）を行い始めます。結果として、現実の人間関係や仕事のトラブルが修復不可能なほどに悪化し、最も守りたかった「平穏」が根底から崩壊し、最も恐れていた「周囲との決裂（つながりの喪失）」を、自らの怠惰によって引き寄せてしまいます。",
+      "healing": "「私の存在、私の欲求、私の意見には、この世界において絶対的な価値がある。私は今、ここで自らの声を上げていい」と、自らの力を取り戻し、現実に積極的に関わる。"
+    }
+  },
+  "closingMessage": {
+    "title": "診断を終えたあなたへ",
+    "paragraphs": [
+      "エニアグラムの究極の目的は、あなたを特定の「タイプ」という箱に分類してレッテルを貼ることではありません。",
+      "あなたが「これが自分の性格だ」と思い込んでいるものは、実は子ども時代に自分を守るために身につけた「心のギプス（鎧）」のようなものです。この診断で明らかになったあなたの「自動操縦（トランス状態）のパターン」や「自己成就的予言（悲劇のシナリオ）」は、あなたが無意識のうちにそのギプスにしがみついて、自らを制限してしまっていることを示しています。",
+      "大切なのは、その自動的なパターンが暴走しそうになったまさに「その瞬間」に、自分の心の動きを客観的にキャッチ（自己観察）し、「立ち止まる（停止実習）」ことです。",
+      "自分のやり方に執着するのをやめ、各タイプの「癒しの態度」を自分に許し、思考や感情の騒がしさを静めて「今、ここ（プレゼンス）」に無防備に留まるとき、古い防衛の鎧は自然と外れます。そのとき初めて、あなたの中に眠っている「唯一無二の至高の才能」が、木が自然に花を咲かせるように開花し始めるのです。"
+    ]
+  }
+}
+  </script>
+  <script>const APP_VERSION = 'v2.8.0';</script>
+  <script src="app.js?v=2.8.0"></script>
+</body>
+</html>
+

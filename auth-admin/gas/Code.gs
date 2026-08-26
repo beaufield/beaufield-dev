@@ -26,7 +26,7 @@
 // ============================================================
 
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION        = 'v1.1.0';
+const VERSION        = 'v1.2.0';
 const APP_NAME        = 'auth-admin';
 const AUTH_SHEET_ID  = _PROPS.getProperty('AUTH_SHEET_ID');
 
@@ -550,6 +550,29 @@ function keepWarm() {
 // ============================================================
 function activateAuthAdminTile() {
   setAppRow('auth-admin', 'https://beaufield.github.io/beaufield-dev/auth-admin/', 'active');
+}
+
+// ============================================================
+// runMigrateRolesDryRun / runMigrateRolesReal: ロール語彙統一（Phase 3 Step 3）を
+// GASエディタから直接実行する。Web経由のmigrateRolesアクションと同じ_migrateRoles()を
+// 呼ぶが、セッション検証は行わない（GASエディタで実行できる時点で本人確認済みとみなす。
+// setupAuthAdminSheets/activateAuthAdminTileと同じ考え方）。
+//
+// 使い方:
+//   1. まず runMigrateRolesDryRun() を実行し、実行ログの変更予定一覧を確認する
+//   2. 内容に問題がなければ runMigrateRolesReal() を実行する（実際に書き込まれる）
+//   3. 実行ログ（表示 → 実行数）を確認する。「applied」の件数が予定件数と一致すればOK
+// ============================================================
+function runMigrateRolesDryRun() {
+  const actor  = _allowedUserIds()[0] || 'gas-editor';
+  const result = _migrateRoles({ request_id: Utilities.getUuid() }, actor);
+  Logger.log(JSON.stringify(result, null, 2));
+}
+
+function runMigrateRolesReal() {
+  const actor  = _allowedUserIds()[0] || 'gas-editor';
+  const result = _migrateRoles({ request_id: Utilities.getUuid(), confirm: 'MIGRATE' }, actor);
+  Logger.log(JSON.stringify(result, null, 2));
 }
 
 // ============================================================
