@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.17.0';
+const VERSION  = '0.18.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -262,7 +262,7 @@ function _checkLineHarnessProps() {
 // 戻り値: { valid:true, user_id, name, is_admin, role } または
 //        { valid:false } または { valid:false, transient:true }（一時障害・負キャッシュしない）
 function validateSession(token) {
-  if (!token) return { valid: false };
+  if (!token) return { valid: false, reason: 'no_token' };
   if (!AUTH_SHEET_ID) return { valid: false, transient: true }; // 未設定はプロパティ不備＝一時的な設定不足として扱う
 
   const cache    = CacheService.getScriptCache();
@@ -292,7 +292,7 @@ function validateSession(token) {
         if (rowExpires < now) {
           // 期限切れ → 行を削除してから拒否
           sh.deleteRow(i + 1);
-          const r = { valid: false };
+          const r = { valid: false, reason: 'expired' };
           cache.put(cacheKey, JSON.stringify(r), 60);
           return r;
         }
@@ -306,7 +306,7 @@ function validateSession(token) {
           if (String(users[j][0]) === rowUserId) { userRow = users[j]; break; }
         }
         if (!userRow || !(userRow[3] === true || userRow[3] === 'TRUE')) {
-          return { valid: false };
+          return { valid: false, reason: 'inactive' };
         }
 
         const roles = rolesSh.getDataRange().getValues();
@@ -317,7 +317,7 @@ function validateSession(token) {
             break;
           }
         }
-        if (!role || role === 'none') return { valid: false };
+        if (!role || role === 'none') return { valid: false, reason: 'no_role' };
 
         const r = {
           valid: true,
@@ -336,7 +336,7 @@ function validateSession(token) {
     return { valid: false, transient: true };
   }
   // ここに到達＝シートは読めたがトークンが見つからなかった＝本物の無効
-  const r = { valid: false };
+  const r = { valid: false, reason: 'not_found' };
   cache.put(cacheKey, JSON.stringify(r), 60);
   return r;
 }
@@ -348,9 +348,24 @@ function validateSession(token) {
 function _requireSession(data) {
   const v = validateSession(String((data && data.session_token) || ''));
   if (v.valid) return { ok: true, session: v };
+
   // 認証シートを読めなかっただけの場合は「ログインし直せ」ではなく「一時障害」として返す。
-  // ここを一緒くたにすると、Google側の一時不調のたびに社員がログアウトさせられる。
-  return { ok: false, error: v.transient ? 'AUTH_TRANSIENT' : 'SESSION_INVALID' };
+  if (v.transient) return { ok: false, error: 'AUTH_TRANSIENT' };
+
+  // 🆕 v0.18.0（2026-08-26）: 「未ログイン」と「権限なし」を区別して返す。
+  // 従来は両方 SESSION_INVALID で、画面側で切り分けられず原因特定に時間がかかった
+  // （名札印刷設計 §5-2 の「区別しない」方針をこの版で変更した）。
+  // 使うのは社員専用画面のアクションだけなので、この粒度なら返してよいと判断している。
+  //   NO_TOKEN       : リクエストに session_token が入っていない（未ログイン、または送り方のバグ）
+  //   SESSION_INVALID: トークンが見つからない・期限切れ（ログインし直せば直る）
+  //   USER_INACTIVE  : users シートで利用停止になっている
+  //   NO_ROLE        : ログインは有効だが user_app_roles に beaufes の行がない（または none）
+  switch (v.reason) {
+    case 'no_token': return { ok: false, error: 'NO_TOKEN' };
+    case 'inactive': return { ok: false, error: 'USER_INACTIVE' };
+    case 'no_role':  return { ok: false, error: 'NO_ROLE' };
+    default:         return { ok: false, error: 'SESSION_INVALID' }; // not_found / expired
+  }
 }
 
 // ============================================================

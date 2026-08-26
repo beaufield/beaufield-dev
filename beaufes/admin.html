@@ -272,7 +272,7 @@
 // 認証・GAS通信ルールは badges.html からそのまま移植している（自分で別方式にしないこと）
 // 版数の定義はこの APP_VERSION 1箇所だけ（AGENTS.md バージョン管理ルール）
 // ============================================================
-const APP_VERSION = '0.1.1';
+const APP_VERSION = '0.1.2';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 const SESSION_KEY = 'bf_session'; // ポータルと共通
@@ -364,11 +364,31 @@ function showApp() {
 
 const LOGIN_REQUIRED_HTML =
   'ログインが必要です。ポータルからログインしてください。';
-// 🔴 SESSION_INVALIDは「未ログイン」と「権限なし」の両方で返る（サーバーは区別して返さない）
-const SESSION_INVALID_HTML =
-  LOGIN_REQUIRED_HTML + '<br><br>' +
-  '<b>すでにログイン済みでこの表示が出る場合は、この画面を使う権限がありません</b>' +
-  '（前島さんに連絡してください）。';
+
+// 🆕 GAS v0.18.0 から、認証エラーは理由別のコードで返る（Code.gs の _requireSession）。
+// 「ログインし直せば直るのか」「権限を足す必要があるのか」を画面で言い切れるようにするため。
+const AUTH_ERROR_HTML = {
+  NO_TOKEN:
+    'ログイン情報がサーバーに届きませんでした。ポータルからログインし直してください。<br><br>' +
+    '<b>ログインし直しても同じ表示が出る場合は不具合です</b>（前島さんに連絡してください）。',
+  SESSION_INVALID:
+    'ログインの有効期限が切れています。ポータルからログインし直してください。',
+  USER_INACTIVE:
+    'このアカウントは現在利用停止になっています（前島さんに連絡してください）。',
+  NO_ROLE:
+    '<b>ログインは有効ですが、この画面を使う権限がありません。</b><br><br>' +
+    '権限管理アプリで、ご自分の <code>beaufes</code> を <code>user</code>（または <code>admin</code>）に' +
+    'してください（前島さんに連絡してください）。'
+};
+
+// 認証エラーならゲートを出して true を返す。それ以外は false（呼び出し側が通常のエラー表示をする）
+function showAuthGate(code) {
+  if (code === 'AUTH_TRANSIENT') return false; // 一時障害はゲートでなくエラー行で出す
+  const html = AUTH_ERROR_HTML[code];
+  if (!html) return false;
+  showGate(html);
+  return true;
+}
 
 // ------------------------------------------------------------
 // 状態
@@ -484,13 +504,16 @@ async function fetchApplications() {
     } else {
       const session = getSession();
       if (!session) { showGate(LOGIN_REQUIRED_HTML); return; }
+      // 🔴 GASの doPost は POST本文を `data` パラメータのJSONからしか読まない（Code.gs の doPost）。
+      //    session_token をフラットなフォーム項目で送ると、サーバーには一切届かず必ず
+      //    SESSION_INVALID になる（v0.1.1までの実際のバグ）。この形を崩さないこと。
       const json = await postWithRetry(
-        { action: 'listApplications', session_token: session.token || '' },
+        { action: 'listApplications', data: JSON.stringify({ session_token: session.token || '' }) },
         function (n, max) { el('fetchStatusLine').textContent = '再試行中… (' + n + '/' + max + ')'; }
       );
       if (!json || json.success !== true) {
         const err = String((json && json.error) || 'UNKNOWN');
-        if (err === 'SESSION_INVALID') { showGate(SESSION_INVALID_HTML); return; }
+        if (showAuthGate(err)) return;
         if (err === 'AUTH_TRANSIENT') {
           throw new Error('認証シートを読めませんでした（Google側の一時的な不調の可能性）。少し待ってからもう一度お試しください。');
         }
@@ -853,15 +876,18 @@ async function saveTantou(appIds, tantou, mark, selEl) {
   if (selEl) selEl.disabled = true;
 
   try {
+    // 🔴 上と同じ理由で、必ず data パラメータのJSONにまとめて送る
     const json = await postWithRetry({
       action: 'setTantou',
-      session_token: session.token || '',
-      app_ids: appIds.join(','),
-      tantou: tantou
+      data: JSON.stringify({
+        session_token: session.token || '',
+        app_ids: appIds.join(','),
+        tantou: tantou
+      })
     });
     if (!json || json.success !== true) {
       const err = String((json && json.error) || 'UNKNOWN');
-      if (err === 'SESSION_INVALID') { showGate(SESSION_INVALID_HTML); return null; }
+      if (showAuthGate(err)) return null;
       throw new Error(err);
     }
 
