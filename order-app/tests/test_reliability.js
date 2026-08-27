@@ -167,6 +167,10 @@ async function testOutboxSnapshotAndRecovery() {
     cartItems: [{ code: 'A', name: 'Item', qty: 1 }],
     orderRequestId: null, revisionBaseOrderNo: null, savedOrderNo: null,
     allHistoryOrders: [], historyDetailCache: {}, sessionStorage: makeStorage(), SS_HIST_CACHE: 'hist-cache',
+    // ⚠️ _completeOrderEntry() が参照する画面側のグローバルは全部ここに置くこと。
+    //    1つでも欠けると ReferenceError が _recoverOrderEntry の catch に飲み込まれ、
+    //    「recovery incomplete」という無関係な失敗に化ける（2026-08-21 v1.64.0で実際に発生）
+    currentScreen: 'order', _historyRefreshing: false, loadHistory: async () => {}, proposalsLoaded: false,
     LS_ORDER_OUTBOX: 'outbox', ORDER_OUTBOX_LIMIT: undefined,
     _generateRequestId: () => 'request-0001',
     showToast() {}, copyToClipboard: async () => true,
