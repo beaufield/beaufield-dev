@@ -97,7 +97,7 @@ function testOrderedCacheAndBuildOrderedByCode() {
   vm.runInContext(`${orderedCacheBlock}\n${buildBlock}\n globalThis.testApi = {
     readLocal: _readOrderedLocal, writeLocal: _writeOrderedLocal,
     record: _recordOrderedLocal, forget: _forgetOrderedLocal,
-    build: buildOrderedByCode
+    build: buildOrderedByCode, reconcile: _reconcileOrderedLocal
   };`, context);
   const api = context.testApi;
 
@@ -154,6 +154,43 @@ function testOrderedCacheAndBuildOrderedByCode() {
   const alive = api.readLocal();
   assert(!alive.some(r => r.orderNo === '20200101-001'), '31-day-old record must be pruned');
   assert(alive.some(r => r.orderNo === '20260816-002'), 'fresh record must remain');
+
+  /* --- v1.66.0: 入荷済みなのに提案から消え続ける不具合の回帰テスト --- */
+  // 実害: 2026-08-16のナプラ発注が入荷して在庫に載った後も、ローカル記録が30日残るせいで
+  //       8/27時点でナプラの提案85件が「発注済み」として隠れていた
+
+  // ケース1: 発注Noの一部だけが入荷済み → 入荷済みの明細だけが解放され、残りは隠れたまま
+  api.writeLocal([
+    { code: 'G', qty: 6, orderDate: '2026-08-16', orderNo: '20260816-012', savedAt: Date.now() - 11 * 86400000 },
+    { code: 'H', qty: 6, orderDate: '2026-08-16', orderNo: '20260816-012', savedAt: Date.now() - 11 * 86400000 }
+  ]);
+  context.proposalsData.pendingOrders = [
+    { code: 'H', qty: 6, orderDate: '2026-08-16', orderNo: '20260816-012', isDelayed: false }
+  ];
+  api.reconcile(); // loadProposals が取得成功のたびに呼ぶ突合
+  map = api.build();
+  assert.strictEqual(map['G'], undefined, 'received line must not be hidden just because the order has other open lines');
+  assert.strictEqual(map['H'].qty, 6, 'still-open line must stay hidden');
+
+  // ケース2: 発注が丸ごと入荷済み（サーバーの入荷待ちに無い）→ ローカル記録ごと落ちる
+  api.writeLocal([
+    { code: 'I', qty: 6, orderDate: '2026-08-16', orderNo: '20260816-012', savedAt: Date.now() - 11 * 86400000 }
+  ]);
+  context.proposalsData.pendingOrders = [];
+  api.reconcile();
+  assert.strictEqual(api.readLocal().length, 0, 'record released by the server must be dropped from local');
+  assert.strictEqual(api.build()['I'], undefined, 'received item must be proposed again');
+
+  // ケース3: 保存直後（猶予5分以内）は、サーバーがまだ発注を拾えていなくても記録を残す
+  api.writeLocal([
+    { code: 'J', qty: 6, orderDate: '2026-08-27', orderNo: '20260827-001', savedAt: Date.now() }
+  ]);
+  context.proposalsData.pendingOrders = [];
+  api.reconcile();
+  assert.strictEqual(api.readLocal().length, 1, 'just-saved record must survive the grace window');
+  assert.strictEqual(api.build()['J'].qty, 6, 'just-saved order must still hide the item');
+  api.writeLocal([]);
+  context.proposalsData.pendingOrders = [];
 }
 
 function makeFakeHistorySheet(rows) {

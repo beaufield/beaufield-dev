@@ -1349,7 +1349,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.65.0'; // 提案タブ: 千代田化学ミルフィシリーズを単独発注できるボタンを追加（他商品との混在ガードつき）
+const APP_VERSION    = 'v1.66.0'; // 提案タブ: 入荷済みの商品がローカル発注記録のせいで最大30日間隠れ続ける不具合を修正
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -3127,7 +3127,12 @@ function _markOrderEntry(entry, status, detail = '') {
 // GASの pendingOrders（リアルタイム集計）はセッション中キャッシュされる提案データの
 // 取得タイミングでしか更新されないため、発注直後に提案タブへ戻っても即座には反映されない。
 // このローカル記録が即時性を担保し、次回の提案再取得で pendingOrders 側に置き換わる
-const ORDERED_KEEP_DAYS = 30; // analyze_demand.py の ORDER_OPEN_CUTOFF_DAYS と合わせる
+// ⚠️ ローカル記録はあくまで「サーバーが発注を認識するまでの数十秒を埋める仮の札」であって、
+//    入荷したかどうかを判断する権限は持たない。入荷済みの判定はGASの pendingOrders が唯一の正で、
+//    提案の再取得に成功したら reconcileOrderedLocal() でサーバーの判断に必ず従わせる（v1.66.0）。
+//    この日数はサーバーへ一度も繋がらないまま放置された記録を掃除するための上限にすぎない
+const ORDERED_KEEP_DAYS = 30; // GAS側の入荷待ち上限（リードタイム＋計上ラグ＋PENDING_GRACE_DAYS）と同等
+const ORDERED_LOCAL_GRACE_MS = 5 * 60 * 1000; // 保存直後の猶予。この間はサーバーに無くても記録を残す
 
 function _readOrderedLocal() {
   let rows = [];
@@ -3156,6 +3161,18 @@ function _recordOrderedLocal(entry, orderNo) {
 }
 function _forgetOrderedLocal(orderNo) {
   _writeOrderedLocal(_readOrderedLocal().filter(r => r.orderNo !== orderNo));
+}
+// 提案データの取得に成功した直後に呼ぶ（v1.66.0）。サーバーの pendingOrders に無い明細は
+// 「入荷済み・または猶予切れでサーバーが手放した」ということなので、ローカル記録からも落とす。
+// これをやらないと、入荷して在庫に載った商品が最大30日間まるごと提案タブから消える
+// （2026-08-27 ナプラ85件が提案から見えなくなった不具合の原因）
+function _reconcileOrderedLocal() {
+  const serverLines = new Set((proposalsData.pendingOrders || []).map(x => x.orderNo + '|' + x.code));
+  const graceLimit = Date.now() - ORDERED_LOCAL_GRACE_MS;
+  const rows = _readOrderedLocal();
+  // 保存直後（猶予内）の記録だけは、サーバーがまだ発注を拾えていない可能性があるので残す
+  const alive = rows.filter(r => serverLines.has(r.orderNo + '|' + r.code) || r.savedAt > graceLimit);
+  if (alive.length !== rows.length) _writeOrderedLocal(alive);
 }
 /* === /ORDERED CACHE === */
 
@@ -5289,10 +5306,12 @@ function buildOrderedByCode() {
     if (orderDate > cur.orderDate) { cur.orderDate = orderDate; cur.orderNo = orderNo; }
   };
   (proposalsData.pendingOrders || []).forEach(x => put(x.code, x.qty || 0, x.orderDate || '', x.orderNo || '', x.isDelayed));
-  // ローカル記録は pendingOrders と重複しうるので、同じ発注Noは二重計上しない
-  const seenOrderNos = new Set((proposalsData.pendingOrders || []).map(x => x.orderNo));
+  // ローカル記録は pendingOrders と重複しうるので、同じ明細（発注No＋商品コード）は二重計上しない。
+  // ⚠️ 発注No単位で突き合わせてはいけない（v1.66.0）。1明細でも入荷済みになると発注Noごと
+  //    「サーバーに無い」判定になり、その発注の全商品がローカル記録だけで隠れ続ける
+  const seenLines = new Set((proposalsData.pendingOrders || []).map(x => x.orderNo + '|' + x.code));
   _readOrderedLocal().forEach(r => {
-    if (seenOrderNos.has(r.orderNo)) return;
+    if (seenLines.has(r.orderNo + '|' + r.code)) return;
     put(r.code, r.qty, r.orderDate, r.orderNo, false);
   });
   return map;
@@ -5526,6 +5545,9 @@ async function loadProposals(force = false) {
         groupStatus:  res.groupStatus  || [],
         orderGroups:  res.orderGroups  || []
       };
+      // サーバーが手放した発注はローカル記録からも落とす（v1.66.0）。
+      // buildOrderedByCode() より前に行う必要がある（落とす前に読むと隠れたままになる）
+      _reconcileOrderedLocal();
       // 発注済み（仕入未計上）の商品も既定でチェックOFFにする（v1.62.0）。
       // buildOrderedByCode() は proposalsData.pendingOrders を見るため、代入後に行う必要がある
       const orderedByCodeAtLoad = buildOrderedByCode();
