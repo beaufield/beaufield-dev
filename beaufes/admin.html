@@ -128,20 +128,31 @@
   @media (min-width: 720px) {
     .summaryGrid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
   }
-  .sumChip {
-    border: 1px solid var(--border); background: #fff; border-radius: 10px;
+  /* 🔴 チップは .panel の中にあるため、下の指定を `.sumChip` だけで書くと
+     `.panel button`（背景=var(--main-dark)・文字=#fff）に負ける。実際 v0.1.4 では
+     未選択が水色・文字が白なのに、選択中だけ薄い水色（#eaf8fd）の背景に白い文字が
+     載って読めなくなっていた（2026-08-28 指摘）。`.summaryGrid` を付けて必ず
+     こちらが勝つようにし、選択中は「濃いティール＋白い内側リング」で示す。 */
+  .summaryGrid .sumChip {
+    border: 1px solid var(--main-dark); background: var(--main-dark); border-radius: 10px;
     padding: 7px 9px; cursor: pointer; text-align: left; min-width: 0;
-    font-family: inherit; color: var(--text);
+    font-family: inherit; color: #fff;
   }
-  .sumChip:hover { border-color: var(--main-dark); }
-  .sumChip.active { border-color: var(--main-dark); background: #eaf8fd; }
-  .sumChip .chipName {
-    display: block; font-size: 11px; color: #666; margin-bottom: 2px;
+  .summaryGrid .sumChip:hover { border-color: #fff; }
+  /* 選択中。未選択の水色とは明度がはっきり違うので、色覚特性によらず見分けられる */
+  .summaryGrid .sumChip.active {
+    background: #10617c; border-color: #10617c; color: #fff;
+    box-shadow: inset 0 0 0 2px #fff, 0 2px 6px rgba(0,0,0,.28);
+  }
+  .summaryGrid .sumChip .chipName {
+    display: block; font-size: 11px; color: rgba(255,255,255,.92); margin-bottom: 2px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .sumChip .chipCount { display: block; font-size: 19px; font-weight: bold; line-height: 1.2; }
-  .sumChip .chipSub { display: block; font-size: 11px; color: #888; margin-top: 2px; }
-  .sumChip.unassigned .chipCount { color: #b45309; }
+  .summaryGrid .sumChip .chipCount { display: block; font-size: 19px; font-weight: bold; line-height: 1.2; }
+  .summaryGrid .sumChip .chipSub { display: block; font-size: 11px; color: rgba(255,255,255,.85); margin-top: 2px; }
+  /* 未割当だけ件数の色を変えて目立たせる。🔴 水色（未選択）と濃いティール（選択中）の
+     両方で読める明るいアンバーにする。従来の #b45309 は選択中の背景と同じ暗さで消えた */
+  .summaryGrid .sumChip.unassigned .chipCount { color: #ffe0b0; }
 
   /* ------------------------------------------------------------
      一覧テーブル
@@ -327,7 +338,7 @@
 // 認証・GAS通信ルールは badges.html からそのまま移植している（自分で別方式にしないこと）
 // 版数の定義はこの APP_VERSION 1箇所だけ（AGENTS.md バージョン管理ルール）
 // ============================================================
-const APP_VERSION = '0.1.4';
+const APP_VERSION = '0.1.5';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
