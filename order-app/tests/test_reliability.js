@@ -204,6 +204,79 @@ async function testOutboxSnapshotAndRecovery() {
   assert.strictEqual(context.testApi.read().length, 0, 'COMPLETE removes the durable outbox entry');
 }
 
+/* ===================================================
+   保存成立後の後片付けで落ちても、成功が失敗に化けないこと（v1.67.0）
+   ここが崩れると「保存済みなのに未保存扱い→新しいrequestIdで再送→二重発注」になる
+=================================================== */
+function makeOutboxContext(overrides = {}) {
+  let seq = 0;
+  const context = vm.createContext(Object.assign({
+    console: { log() {}, warn() {}, error() {} },
+    Date, Map, JSON, Promise, localStorage: makeStorage(),
+    document: { getElementById: () => null },
+    currentUser: { user_id: 'u1' },
+    currentOrder: { date: '2026-08-27', supplierCode: '10', supplierName: 'Supplier', fax: '', staff: 'User' },
+    cartItems: [{ code: 'A', name: 'Item', qty: 1 }],
+    orderRequestId: null, revisionBaseOrderNo: null, savedOrderNo: null,
+    allHistoryOrders: [], historyDetailCache: {}, sessionStorage: makeStorage(), SS_HIST_CACHE: 'hist-cache',
+    LS_ORDER_OUTBOX: 'outbox', ORDER_OUTBOX_LIMIT: undefined, LS_ORDERED: 'orderApp_orderedCodes',
+    currentScreen: 'order', _historyRefreshing: false, loadHistory: async () => {}, proposalsLoaded: false,
+    _generateRequestId: () => 'request-' + (++seq),
+    showToast() {}, copyToClipboard: async () => true,
+    gasPost: async () => ({ success: true, orderNo: '20260827-001' }),
+    GasOutcomeUnknownError: class GasOutcomeUnknownError extends Error {}
+  }, overrides));
+  const src = section(html, 'const ORDER_OUTBOX_LIMIT = 5;', 'async function saveOrderToGAS(outputType)');
+  vm.runInContext(src + 'globalThis.testApi={create:_newOrderOutboxEntry,read:_readOrderOutbox,process:_processOrderEntry};', context);
+  return context;
+}
+
+async function testCompleteOrderEntryNeverTurnsSuccessIntoFailure() {
+  // 後片付け（履歴キャッシュ破棄）が落ちる端末を再現する。
+  // sessionStorageが使えない環境や容量枯渇で実際に起こりうる
+  const brokenSession = makeStorage();
+  brokenSession.removeItem = () => { throw new Error('storage disabled'); };
+  const context = makeOutboxContext({ sessionStorage: brokenSession });
+
+  const sentRequestIds = [];
+  context.gasPost = async params => {
+    sentRequestIds.push(params.requestId);
+    return { success: true, orderNo: '20260827-001' };
+  };
+
+  const entry = context.testApi.create('CSV');
+  const orderNo = await context.testApi.process(entry, true);
+
+  assert.strictEqual(orderNo, '20260827-001', 'post-save cleanup failure must not reject a saved order');
+  assert.strictEqual(context.savedOrderNo, '20260827-001',
+    'savedOrderNo must be set before any fallible cleanup; saveOrderToGAS relies on it to skip re-sending');
+  assert.strictEqual(context.testApi.read().length, 0, 'the durable outbox entry must still be removed');
+  assert.deepStrictEqual(sentRequestIds, [entry.requestId], 'exactly one saveOrder must reach the server');
+
+  // 後片付けが落ちても発注済みのローカル記録は残る（v1.66.0の「発注済みを隠す」用）
+  const orderedLocal = JSON.parse(context.localStorage.getItem('orderApp_orderedCodes') || '[]');
+  assert.strictEqual(orderedLocal.length, 1, 'ordered-local record runs before the failing cleanup step');
+
+  // 履歴の自動再取得（待たない処理）が失敗しても、保存結果には影響しない
+  const ctx2 = makeOutboxContext({ currentScreen: 'history', loadHistory: async () => { throw new Error('history down'); } });
+  const entry2 = ctx2.testApi.create('CSV');
+  assert.strictEqual(await ctx2.testApi.process(entry2, true), '20260827-001',
+    'a rejected fire-and-forget history refresh must not affect the save result');
+}
+
+async function testTerminalServerErrorStillThrows() {
+  // tryの範囲を通信だけに絞った（v1.67.0）あとも、終局エラーは今までどおり
+  // 例外として伝わり、アウトボックスには要確認として残ること
+  const context = makeOutboxContext();
+  context.gasPost = async () => ({ success: false, error: 'REQUEST_ID_CONFLICT', message: 'conflict' });
+  const entry = context.testApi.create('CSV');
+  await assert.rejects(context.testApi.process(entry, true), e => e.code === 'REQUEST_ID_CONFLICT');
+  const rows = context.testApi.read();
+  assert.strictEqual(rows.length, 1, 'a terminal error must keep the entry for manual review');
+  assert.strictEqual(rows[0].status, 'CONFLICT');
+  assert.strictEqual(context.savedOrderNo, null, 'a failed save must not mark the order as saved');
+}
+
 function testServerCanonicalHashAndGuards() {
   const context = vm.createContext({
     JSON, Number, String,
@@ -400,6 +473,8 @@ function testServerIdempotencyStateMachine() {
   await testSemaphoreCancellation();
   await testTransportPoliciesAndDeadline();
   await testOutboxSnapshotAndRecovery();
+  await testCompleteOrderEntryNeverTurnsSuccessIntoFailure();
+  await testTerminalServerErrorStillThrows();
   testServerCanonicalHashAndGuards();
   testServerIdempotencyStateMachine();
   console.log('All reliability tests passed.');

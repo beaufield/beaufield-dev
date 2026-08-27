@@ -1349,7 +1349,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.66.0'; // 提案タブ: 入荷済みの商品がローカル発注記録のせいで最大30日間隠れ続ける不具合を修正
+const APP_VERSION    = 'v1.67.0'; // 発注保存: 保存成立後の後片付けで落ちると二重発注になりうる経路を塞いだ
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -3176,27 +3176,50 @@ function _reconcileOrderedLocal() {
 }
 /* === /ORDERED CACHE === */
 
+// サーバーが保存を確定させた後だけ呼ぶ。ここから先で例外を出してはいけない（v1.67.0）。
+//
+// ⚠️ この関数が途中で例外を投げると二重発注になりうる。理由:
+//   アウトボックスの控えを消した後に落ちると、savedOrderNo が未設定のまま呼び出し元へ
+//   エラーが伝わる → 利用者が「履歴登録をやり直す」を押す → _newOrderOutboxEntry() は
+//   控えを見つけられず**新しいrequestIdを発行する** → GASの冪等判定はrequestId単位なので
+//   同じ発注がもう1件立つ。（2026-08-27に再現テストで実証。sessionStorageが使えない端末で発生しうる）
+// そのため「保存が成立した事実の確定」→「永続記録の後始末」→「画面まわりの後始末」の順に並べ、
+// 最後の段は失敗しても絶対に外へ例外を出さない
 function _completeOrderEntry(entry, orderNo) {
+  // ① 保存成立の確定。ここは代入だけで、失敗しうる処理を絶対に入れない。
+  //    savedOrderNo が入っていれば saveOrderToGAS() が即returnするので、
+  //    以降で何が起きても新しいrequestIdでの再送は起きない
+  if (orderRequestId === entry.requestId) savedOrderNo = orderNo;
+
+  // ② 永続記録の後始末（_removeOrderOutbox は内部で例外を握りつぶす）
   _removeOrderOutbox(entry.requestId);
-  _recordOrderedLocal(entry, orderNo);
-  proposalsLoaded = false; // 次に提案タブを開いたときGASから取り直し、pendingOrdersを最新化する
-  // 新規・修正どちらも次回の履歴表示ではGASから取り直し、古い20件キャッシュを使わない。
-  sessionStorage.removeItem(SS_HIST_CACHE);
-  // 保存が終わるまでGAS側の履歴行はPENDING＝履歴取得に出てこない。履歴画面を開いたまま
-  // 保存が完了した場合は、利用者が更新を押さなくてもこの時点で最新化する
-  // （更新ボタン経由なら直後に取り直すので、重い getOrders を二重に投げない）
-  if (currentScreen === 'history' && !_historyRefreshing) {
-    const histFilter = document.getElementById('hist-filter-supplier');
-    loadHistory(true, (histFilter && histFilter.value) || undefined);
-  }
-  if (orderRequestId === entry.requestId) {
-    savedOrderNo = orderNo;
-    const revisionBase = entry.params.revisionBaseOrderNo || '';
-    if (revisionBase) {
-      allHistoryOrders = allHistoryOrders.filter(o => o.orderNo !== revisionBase);
-      delete historyDetailCache[revisionBase];
-      revisionBaseOrderNo = null;
+
+  // ③ 画面・キャッシュの後始末。保存の成否とは無関係なので、失敗しても握りつぶす
+  try {
+    _recordOrderedLocal(entry, orderNo);
+    proposalsLoaded = false; // 次に提案タブを開いたときGASから取り直し、pendingOrdersを最新化する
+    // 新規・修正どちらも次回の履歴表示ではGASから取り直し、古い20件キャッシュを使わない。
+    sessionStorage.removeItem(SS_HIST_CACHE);
+    // 保存が終わるまでGAS側の履歴行はPENDING＝履歴取得に出てこない。履歴画面を開いたまま
+    // 保存が完了した場合は、利用者が更新を押さなくてもこの時点で最新化する
+    // （更新ボタン経由なら直後に取り直すので、重い getOrders を二重に投げない）
+    if (currentScreen === 'history' && !_historyRefreshing) {
+      const histFilter = document.getElementById('hist-filter-supplier');
+      // 待たない処理なので、失敗しても未処理のPromise拒否として漏れないよう自前で受ける
+      Promise.resolve(loadHistory(true, (histFilter && histFilter.value) || undefined))
+        .catch(e => console.warn('[order save] history refresh failed:', e));
     }
+    if (orderRequestId === entry.requestId) {
+      const revisionBase = entry.params.revisionBaseOrderNo || '';
+      if (revisionBase) {
+        allHistoryOrders = allHistoryOrders.filter(o => o.orderNo !== revisionBase);
+        delete historyDetailCache[revisionBase];
+        revisionBaseOrderNo = null;
+      }
+    }
+  } catch(e) {
+    // 保存自体は成功している。ここで失敗と伝えると成功した発注を再送してしまう
+    console.warn('[order save] post-save cleanup failed (order is saved):', e);
   }
   return orderNo;
 }
@@ -3244,18 +3267,20 @@ async function _recoverOrderEntry(entry) {
 
   // 未検出は未登録の確定ではない。同じrequestId・同じ固定payloadで1回だけ収束再送する。
   _markOrderEntry(entry, 'RECOVERING');
+  // ⚠️ tryで囲むのは「結果が曖昧になりうる通信そのもの」だけにする（v1.67.0）。
+  //    応答の解釈や保存成立後の後始末まで囲むと、保存できているのに「不明」として
+  //    再照会へ流れ、最終的に recovery incomplete で失敗扱いになる
+  let saved = null;
   try {
-    const saved = await gasPost({ ...entry.params });
-    if (saved && saved.success) return _completeOrderEntry(entry, saved.orderNo);
-    if (saved && _isTerminalOrderError(saved.error)) {
-      _markOrderEntry(entry, saved.error === 'REQUEST_ID_CONFLICT' ? 'CONFLICT' : 'ERROR', saved.message || saved.error);
-      const terminal = _serverOrderError(saved);
-      terminal.terminalOrderError = true;
-      throw terminal;
-    }
+    saved = await gasPost({ ...entry.params });
   } catch(e) {
-    if (e && e.terminalOrderError) throw e;
     // 応答喪失の可能性があるため、この時点では新しいrequestIdを発行しない。
+    // 下の再照会でサーバー側の状態を確かめる
+  }
+  if (saved && saved.success) return _completeOrderEntry(entry, saved.orderNo);
+  if (saved && _isTerminalOrderError(saved.error)) {
+    _markOrderEntry(entry, saved.error === 'REQUEST_ID_CONFLICT' ? 'CONFLICT' : 'ERROR', saved.message || saved.error);
+    throw _serverOrderError(saved);
   }
 
   try {
@@ -3278,20 +3303,22 @@ async function _processOrderEntry(entry, initialSend) {
   const task = (async () => {
     if (!initialSend) return _recoverOrderEntry(entry);
     _markOrderEntry(entry, 'SENDING');
+    // ⚠️ _recoverOrderEntry と同じ理由で、tryは通信だけを囲む（v1.67.0）
+    let res = null;
     try {
-      const res = await gasPost({ ...entry.params });
-      if (res && res.success) return _completeOrderEntry(entry, res.orderNo);
-      if (res && _isTerminalOrderError(res.error)) {
-        _markOrderEntry(entry, res.error === 'REQUEST_ID_CONFLICT' ? 'CONFLICT' : 'ERROR', res.message || res.error);
-        throw _serverOrderError(res);
-      }
-      // LOCK_BUSY / INTERNAL_ERROR 等は未実行または部分保存の可能性があるため照会へ進む。
-      _markOrderEntry(entry, 'UNKNOWN', res && (res.message || res.error));
-      return _recoverOrderEntry(entry);
+      res = await gasPost({ ...entry.params });
     } catch(e) {
       if (e && e.name !== 'GasOutcomeUnknownError') throw e;
       return _recoverOrderEntry(entry);
     }
+    if (res && res.success) return _completeOrderEntry(entry, res.orderNo);
+    if (res && _isTerminalOrderError(res.error)) {
+      _markOrderEntry(entry, res.error === 'REQUEST_ID_CONFLICT' ? 'CONFLICT' : 'ERROR', res.message || res.error);
+      throw _serverOrderError(res);
+    }
+    // LOCK_BUSY / INTERNAL_ERROR 等は未実行または部分保存の可能性があるため照会へ進む。
+    _markOrderEntry(entry, 'UNKNOWN', res && (res.message || res.error));
+    return _recoverOrderEntry(entry);
   })().finally(() => _orderOutboxInFlight.delete(entry.requestId));
   _orderOutboxInFlight.set(entry.requestId, task);
   return task;
