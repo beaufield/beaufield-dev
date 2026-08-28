@@ -1349,7 +1349,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.67.0'; // 発注保存: 保存成立後の後片付けで落ちると二重発注になりうる経路を塞いだ
+const APP_VERSION    = 'v1.68.0'; // 複製して発注: 複製した行の仕入単価・相手商品CDを商品マスターから引き直す
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -4668,6 +4668,38 @@ async function reOutputAderansPDF(orderNo) {
 
 // 履歴から複製して発注開始
 // 発注先・商品を今日の日付でカートに復元し、発注画面に移動する
+/* === HISTORY TO CART (test:history-to-cart) === */
+// 履歴の明細（getOrderDetail の戻り）をカート形式へ変換する。
+//
+// 仕入単価・相手商品CDは発注履歴に保存していないため、商品マスターから引き直す（v1.68.0）。
+// 以前はここで purchasePrice を 0 固定にしていたので、複製した行だけ金額が計算されず、
+// 確認画面の合計が「複製後にあとから追加した行のぶんだけ」になっていた
+// （renderConfirm は purchasePrice>0 の行しか金額に入れないため）。
+// メーカー発注書のPDF自動記入（outputMelosPDF 等）は makerCode を見るので同時に補完する。
+//
+// マスター未読込・終売・マスターから消えた商品では引けないので、その場合は従来どおり
+// 0 / 空のまま返す（金額が出ないだけで発注そのものは従来どおり成立する）。
+// 手書き行は商品コードを持たず単価の概念もないため常に0（追加時の仕様と揃える）。
+function historyItemsToCart(items, fallbackSupplierCode) {
+  return (items || []).map(item => {
+    const master = (item.isHandwritten ? null : productMaster.find(p =>
+      (item.code && p.code === item.code) || (item.jan && p.jan === item.jan))) || {};
+    return {
+      janCode:       item.jan           || master.jan  || '',
+      code:          item.code          || '',
+      name:          item.name          || '',
+      qty:           item.qty           || 1,
+      unit:          item.unit          || master.unit || '',
+      memo:          item.memo          || '',
+      isHandwritten: item.isHandwritten || false,
+      supplierCD:    master.supplierCD  || fallbackSupplierCode || '',
+      makerCode:     master.makerCode   || '',
+      purchasePrice: master.purchasePrice || 0
+    };
+  });
+}
+/* === /HISTORY TO CART === */
+
 async function copyOrderFromHistory(orderNo) {
   const orderInfo = getHistoryOrderInfo(orderNo);
   if (!orderInfo) { showToast('データが見つかりません', 'error'); return; }
@@ -4712,17 +4744,7 @@ async function copyOrderFromHistory(orderNo) {
   };
 
   // 履歴の明細をカート形式に変換（janCode / code の名前変換に注意）
-  cartItems = items.map(item => ({
-    janCode:       item.jan           || '',
-    code:          item.code          || '',
-    name:          item.name          || '',
-    qty:           item.qty           || 1,
-    unit:          item.unit          || '',
-    memo:          item.memo          || '',
-    isHandwritten: item.isHandwritten || false,
-    supplierCD:    orderInfo.supplierCode || '',
-    purchasePrice: 0  // 履歴には仕入単価を保存していないため0
-  }));
+  cartItems = historyItemsToCart(items, orderInfo.supplierCode);
 
   savedOrderNo = null;
   orderRequestId = null;

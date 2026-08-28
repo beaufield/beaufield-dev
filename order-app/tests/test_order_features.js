@@ -430,12 +430,71 @@ function testCartResume() {
   assert.strictEqual(context.currentOrder.supplierCode, '', 'discardCart clears the order info');
 }
 
+/* ===================================================
+   機能6: 複製して発注（historyItemsToCart / v1.68.0）
+   発注履歴は仕入単価・相手商品CDを持たないので、複製時に商品マスターから引き直す。
+   v1.67.0以前は purchasePrice を 0 固定にしていたため、複製した行が確認画面の
+   合計金額に入らず、あとから追加した行のぶんしか合計に出なかった。
+   ※商品名・単価はダミー（実データはコミット禁止。GITHUB-RULES.md参照）
+=================================================== */
+function testHistoryItemsToCart() {
+  const context = vm.createContext({
+    console,
+    productMaster: [
+      { code: 'TEST001', jan: '0000000000011', name: 'テスト商品A',
+        unit: '本', supplierCD: '99', makerCode: 'MK-A', purchasePrice: 100 },
+      { code: 'TEST002', jan: '0000000000028', name: 'テスト商品B',
+        unit: '個', supplierCD: '99', makerCode: 'MK-B', purchasePrice: 250 }
+    ]
+  });
+  const block = section(html,
+    '/* === HISTORY TO CART (test:history-to-cart) === */',
+    '/* === /HISTORY TO CART === */');
+  vm.runInContext(`${block}\n globalThis.testApi = { historyItemsToCart };`, context);
+  const api = context.testApi;
+
+  // 商品コードで引ける行は単価・相手商品CDがマスターから入る
+  const [a, b] = api.historyItemsToCart([
+    { code: 'TEST001', name: 'テスト商品A', qty: 7, unit: '本' },
+    { code: 'TEST002', name: 'テスト商品B', qty: 3, unit: '個' }
+  ], '99');
+  assert.strictEqual(a.purchasePrice, 100, 'copied row must carry the master price');
+  assert.strictEqual(a.makerCode, 'MK-A', 'copied row must carry makerCode for PDF output');
+  assert.strictEqual(a.janCode, '0000000000011', 'JAN is filled in from the master');
+  assert.strictEqual(a.qty, 7, 'quantity comes from the history, not the master');
+  assert.strictEqual(b.purchasePrice, 250);
+
+  // 合計金額が全行ぶん出ること（この不具合の実害そのもの）
+  const total = [a, b].reduce((s, i) => s + i.qty * (i.purchasePrice || 0), 0);
+  assert.strictEqual(total, 7 * 100 + 3 * 250, 'confirm-screen total covers copied rows');
+
+  // JANでしか一致しない行も引ける
+  const [c] = api.historyItemsToCart([{ jan: '0000000000028', name: 'B', qty: 2 }], '99');
+  assert.strictEqual(c.purchasePrice, 250, 'falls back to a JAN match');
+
+  // 手書き行はマスターを引かず常に0（追加時の仕様と揃える）
+  const [d] = api.historyItemsToCart(
+    [{ code: 'TEST001', name: '手書き', qty: 3, isHandwritten: true }], '99');
+  assert.strictEqual(d.purchasePrice, 0, 'handwritten rows stay unpriced');
+  assert.strictEqual(d.isHandwritten, true);
+
+  // マスターに無い商品（終売・マスター未読込）は従来どおり0で通す＝発注自体は成立する
+  const [e] = api.historyItemsToCart([{ code: 'NOPE', name: '終売品', qty: 1 }], '99');
+  assert.strictEqual(e.purchasePrice, 0, 'unknown products must not throw');
+  assert.strictEqual(e.supplierCD, '99', 'falls back to the order supplier code');
+
+  // 明細なし・undefined でも落ちない（vm内の配列なのでlengthで見る）
+  assert.strictEqual(api.historyItemsToCart(undefined, '99').length, 0);
+  assert.strictEqual(api.historyItemsToCart([], '99').length, 0);
+}
+
 (async () => {
   testOrderDateHelpers();
   testOrderedCacheAndBuildOrderedByCode();
   testGenerateOrderNoPastDateFullScan();
   testMgSkipGuards();
   testCartResume();
+  testHistoryItemsToCart();
   console.log('All order-feature tests passed.');
 })().catch(err => {
   console.error(err);
