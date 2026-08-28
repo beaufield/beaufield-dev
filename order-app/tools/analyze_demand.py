@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.19.0
+# Version: v1.20.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -1912,6 +1912,11 @@ def main():
     #    入らず提案にも過剰在庫にも出てこない不可視の在庫。ここで商品マスター起点に取り直す）
     # tier2=休眠    : 分析対象商品(results)のうち、直近12ヶ月の販売数量合計が0 かつ在庫あり
     #   （tier1と母集団が排他なので重複しない）
+    # v1.20.0 バグ修正: calc_period() は当月を除く期間を返すため、sales / monthly_by_code_recent は
+    #   いずれも当月分の売上を含まない。そのため当月にだけ売れた商品が sold_codes_period /
+    #   recent_sum の判定をすり抜け、「lastSaleDate=直近なのにreason=◯ヶ月販売ゼロ」という
+    #   矛盾した死蔵行になっていた（2026-08-29 実データで発覚）。各tierの判定に、
+    #   期間フィルタ前の全履歴 last_sale_by_code 由来の months_since による再チェックを追加した。
     sold_codes_period = set(sales['code'].unique())
     dead_rows = []
 
@@ -1934,9 +1939,15 @@ def main():
         stock = float(prod['stock'])
         if stock <= 0 or code in sold_codes_period:
             continue
+        last_sale_fmt, months_since, unsold_reason = _last_sale_info(code)
+        # v1.20.0 バグ修正: sold_codes_period は calc_period() が「当月を除く」期間で作った
+        # sales（=期間フィルタ後df）由来のため、当月分だけ売れている商品はここを素通りしてしまい
+        # 「lastSaleDate=直近なのにreason=24ヶ月販売ゼロ」という矛盾した完全死蔵行になっていた。
+        # last_sale_by_code は期間フィルタ前の全履歴なので、これで当月分も含めて再判定する。
+        if months_since is not None and months_since < WINDOW_MONTHS:
+            continue
         unit_cost = float(prod['cost'])
         supp_key = normalize_supplier_code(prod['supplier_cd'])
-        last_sale_fmt, months_since, unsold_reason = _last_sale_info(code)
         dead_rows.append({
             'code': code,
             'name': prod['name'],
@@ -1956,9 +1967,13 @@ def main():
         if row['stock'] <= 0:
             continue
         recent_sum = sum(monthly_by_code_recent.get(code, {}).values())
+        last_sale_fmt, months_since, unsold_reason = _last_sale_info(code)
         if recent_sum > 0:
             continue
-        last_sale_fmt, months_since, unsold_reason = _last_sale_info(code)
+        # v1.20.0 バグ修正: monthly_by_code_recent も当月を除く期間集計由来のため、
+        # 当月分だけ売れている商品を誤って「休眠」にしないよう全履歴の最終売上日でも再判定する。
+        if months_since is not None and months_since < DECLINE_TREND_MONTHS:
+            continue
         dead_rows.append({
             'code': code,
             'name': row['name'],
