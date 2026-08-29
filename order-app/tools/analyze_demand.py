@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.20.0
+# Version: v1.21.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -1525,6 +1525,16 @@ def main():
     recent6 = sales[sales['ym'] >= months[-6]].groupby('code')['qty'].sum() / 6
     first_ym = sales.groupby('code')['ym'].min()
 
+    # v1.20.0: sales は calc_period() により当月を除いた期間なので、当月に初めて／久々に
+    # 売れた商品は sales['code'].unique() に出現せず、発注提案・過剰在庫・死蔵在庫のどこにも
+    # 現れない不可視在庫になっていた（死蔵在庫tier判定バグの修正で顕在化・2026-08-29発覚）。
+    # 母集団の判定にだけ、期間フィルタ前の全履歴 last_sale_by_code を使って
+    # 「当月に売れたので period には出ないが実在する」商品を拾い足す。
+    # 需要統計の計算自体は従来どおり sales（当月除く）のみを使うので、既存商品の計算結果は
+    # 一切変わらない（新規に拾った商品は monthly_by_code 等が空＝mean_monthly=0扱いになる）。
+    sold_codes_period = set(sales['code'].unique())
+    new_start_codes = {c for c, d in last_sale_by_code.items() if c not in sold_codes_period and d > end_str}
+
     # 商品コード→データの辞書化（ループ内でのMultiIndex参照は遅いため事前展開）
     monthly_by_code = {}
     for (code, ym), qty in monthly_sum.items():
@@ -1574,7 +1584,7 @@ def main():
 
     # ---- 1周目: 需要統計・仕入単価などを集める（ABCランクはまだ決められない） ----
     analyzed = []
-    for code in sorted(sales['code'].unique()):
+    for code in sorted(sold_codes_period | new_start_codes):  # v1.20.0: new_start_codesを合流
         if code not in products.index:
             continue
         prod = products.loc[code]
@@ -1594,7 +1604,10 @@ def main():
         sizes = sizes_by_code.get(code, [])
         stat_full = compute_stats(g_month, sizes, months, window_days)
 
-        if stat_full['mean_monthly'] <= 0:
+        # v1.20.0: new_start_codes（当月に初めて/久々に売れた商品）は sales 期間内の
+        # 実績が無く mean_monthly=0 になるのが正常なので、ここでは弾かない
+        # （このまま進めても「データ不足」扱いで安全に0推奨・過剰在庫判定まで通る）
+        if code not in new_start_codes and stat_full['mean_monthly'] <= 0:
             continue
 
         # 直近トレンド判定: 1年前の12ヶ月平均 vs 直近12ヶ月平均。大きく減っていたら
@@ -1614,7 +1627,10 @@ def main():
                       stat_recent['mean_monthly'] >= older_mean_monthly * GROWTH_RATIO_THRESHOLD)
         stat = stat_recent if (is_declining or is_growing) else stat_full
 
-        months_of_history = len([ym for ym in months if ym >= first_ym.get(code, months[0])])
+        # v1.20.0: フォールバックは「全期間で1件も売れていない」ことを表す必要があるため、
+        # 実在するどのymよりも大きい番兵値にする（months[0]だと逆に「全期間分の履歴あり」
+        # と誤解釈されてしまう。従来はこの分岐に来るcodeが存在しなかったため無害だった）
+        months_of_history = len([ym for ym in months if ym >= first_ym.get(code, '999999')])
         insufficient = months_of_history < MIN_MONTHS_DATA
 
         stock = float(prod['stock'])
@@ -1917,7 +1933,7 @@ def main():
     #   recent_sum の判定をすり抜け、「lastSaleDate=直近なのにreason=◯ヶ月販売ゼロ」という
     #   矛盾した死蔵行になっていた（2026-08-29 実データで発覚）。各tierの判定に、
     #   期間フィルタ前の全履歴 last_sale_by_code 由来の months_since による再チェックを追加した。
-    sold_codes_period = set(sales['code'].unique())
+    #   sold_codes_period はこの関数の上の方（new_start_codes算出時）で定義済みのものを再利用する。
     dead_rows = []
 
     def _last_sale_info(code):
