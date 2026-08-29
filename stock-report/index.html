@@ -133,6 +133,7 @@
   }
   table.maker-table thead th.num, table.flat-table thead th.num { text-align: right; }
   .maker-row td, .flat-table tbody td { padding: 10px 10px; border-bottom: 1px solid var(--gridline); color: var(--text-primary); }
+  .flat-table tbody td { vertical-align: top; }
   .maker-row { cursor: pointer; }
   .maker-row:hover td { background: color-mix(in srgb, var(--series-1) 6%, transparent); }
   .maker-row td.num, .flat-table tbody td.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -157,7 +158,9 @@
   .flat-table tbody td.name { color: var(--text-primary); }
   .flat-table tbody td.maker { color: var(--text-secondary); font-size: 12px; }
   .flat-table tbody tr:hover td { background: color-mix(in srgb, var(--series-1) 6%, transparent); }
-  .rank-num { color: var(--text-muted); font-variant-numeric: tabular-nums; width: 26px; display:inline-block; }
+  /* rank-numは<td>に付ける番号セル。display:inline-blockは<table>内では無効(未定義)動作になり、
+     モバイルSafariで行がずれる原因になっていたため外し、通常のセルとして上寄せにする */
+  .rank-num { color: var(--text-muted); font-variant-numeric: tabular-nums; width: 26px; vertical-align: top; }
 
   footer.notes { font-size: 12px; color: var(--text-muted); line-height: 1.7; padding-top: 8px; }
   footer.notes b { color: var(--text-secondary); }
@@ -175,6 +178,20 @@
   }
   .search-input:focus { outline: none; border-color: var(--series-1); }
   .no-match { font-size: 12.5px; color: var(--text-muted); padding: 16px 4px; display: none; }
+
+  /* CSVダウンロードボタン */
+  .top-toolbar { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+  .csv-btn {
+    font-family: inherit; font-size: 12px; padding: 6px 10px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary); cursor: pointer;
+  }
+  .csv-btn:hover { color: var(--text-primary); border-color: var(--series-1); }
+  .detail-footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; padding-top: 6px; }
+  .maker-csv-btn {
+    font-family: inherit; font-size: 11px; padding: 4px 10px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary); cursor: pointer;
+  }
+  .maker-csv-btn:hover { color: var(--text-primary); border-color: var(--series-1); }
 </style>
 </head>
 <body>
@@ -217,6 +234,9 @@
       <div class="card">
         <h2>商品別 死蔵在庫額（上位30） <span class="scope" id="dead-topScope"></span></h2>
         <div class="subnote">メーカーをまたいで金額の大きい順。値引き販売・処分の判断材料に。</div>
+        <div class="top-toolbar">
+          <button class="csv-btn" id="dead-topCsvBtn" type="button">📥 CSVダウンロード</button>
+        </div>
         <div class="table-scroll">
           <table class="flat-table">
             <thead>
@@ -284,6 +304,9 @@
       <div class="card">
         <h2>商品別 過剰在庫額（上位30）</h2>
         <div class="subnote">メーカーをまたいで金額の大きい順。特定商品を探すときはこちらが早いです。</div>
+        <div class="top-toolbar">
+          <button class="csv-btn" id="excess-topCsvBtn" type="button">📥 CSVダウンロード</button>
+        </div>
         <div class="table-scroll">
           <table class="flat-table">
             <thead>
@@ -474,6 +497,44 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// 分析日時からファイル名用の日付スタンプ（YYYYMMDD）を作る。取得できなければ今日の日付を使う
+let reportDateStamp = '';
+function setReportDateStamp(analyzedAt) {
+  const m = String(analyzedAt || '').match(/(\d{4})-(\d{2})-(\d{2})/);
+  reportDateStamp = m ? (m[1] + m[2] + m[3]) : new Date().toISOString().slice(0, 10).replace(/-/g, '');
+}
+
+// ファイル名に使えない文字を置き換える
+function sanitizeFilename(s) {
+  return String(s).replace(/[\\/:*?"<>|]/g, '_');
+}
+
+// CSV(Excel想定)のセル値エスケープ。カンマ・改行・ダブルクォートを含む場合だけクォートする
+function csvCell(v) {
+  const s = String(v == null ? '' : v);
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function buildCsv(headers, rows) {
+  const lines = [headers.map(csvCell).join(',')];
+  rows.forEach(r => lines.push(r.map(csvCell).join(',')));
+  return lines.join('\r\n');
+}
+
+// Excelで文字化けしないようUTF-8 BOM付きで書き出す
+function downloadCsv(filename, headers, rows) {
+  const csv = '\uFEFF' + buildCsv(headers, rows);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 /* ===================================================
    死蔵在庫タブの描画
    GASの dead[] は { code,name,supplierCode,supplierName,stock,unitCost,deadAmount,
@@ -572,7 +633,8 @@ function renderDead(rawDead) {
 
     const sortedItems = items.slice().sort((a, b) => b.amount - a.amount);
     const topTbody = document.getElementById('dead-topItemsTbody');
-    topTbody.innerHTML = sortedItems.slice(0, 30).map((it, i) => `
+    const top30 = sortedItems.slice(0, 30);
+    topTbody.innerHTML = top30.map((it, i) => `
       <tr>
         <td class="rank-num">${i + 1}</td>
         <td class="name">${escapeHtml(it.name)}</td>
@@ -584,6 +646,13 @@ function renderDead(rawDead) {
         <td><span class="badge ${tierClass(it.tier)}">${it.tier}</span></td>
       </tr>
     `).join('');
+    document.getElementById('dead-topCsvBtn').onclick = () => {
+      downloadCsv(
+        `死蔵在庫_上位30_${reportDateStamp}.csv`,
+        ['順位', '商品名', 'メーカー', '在庫数', '仕入単価', '死蔵金額', '最終売上', '区分'],
+        top30.map((it, i) => [i + 1, it.name, it.maker, it.stock, it.unitCost, it.amount, it.lastSaleDate || '', it.tier])
+      );
+    };
 
     const tbody = document.getElementById('dead-makerTbody');
     tbody.innerHTML = '';
@@ -618,7 +687,7 @@ function renderDead(rawDead) {
         </tr>
       `).join('');
       const moreCount = m.count - shown.length;
-      const moreNote = moreCount > 0 ? `<div class="more-note">ほか ${num(moreCount)} 品目（金額の小さい順）</div>` : '';
+      const moreNote = moreCount > 0 ? `<div class="more-note">ほか ${num(moreCount)} 品目（金額の小さい順）</div>` : '<div></div>';
       detailTr.innerHTML = `
         <td colspan="5">
           <div class="detail-wrap">
@@ -633,10 +702,26 @@ function renderDead(rawDead) {
                 <tbody>${itemRows}</tbody>
               </table>
             </div>
-            ${moreNote}
+            <div class="detail-footer">
+              ${moreNote}
+              <button class="maker-csv-btn" type="button">📥 このメーカーをCSVダウンロード</button>
+            </div>
           </div>
         </td>
       `;
+
+      const makerCsvBtn = detailTr.querySelector('.maker-csv-btn');
+      makerCsvBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        downloadCsv(
+          `死蔵在庫_${sanitizeFilename(m.maker)}_${reportDateStamp}.csv`,
+          ['商品名', '在庫数', '仕入単価', '死蔵金額', '最終売上日', '経過月数', '区分', '理由'],
+          m.items.map(it => [
+            it.name, it.stock, it.unitCost, it.amount, it.lastSaleDate || '',
+            it.monthsSinceLastSale != null ? it.monthsSinceLastSale.toFixed(1) : '', it.tier, it.reason
+          ])
+        );
+      });
 
       tr.addEventListener('click', () => {
         const wrap = detailTr.querySelector('.detail-wrap');
@@ -753,7 +838,8 @@ function renderExcess(rawExcess) {
 
   // top items overall
   const topTbody = document.getElementById('excess-topItemsTbody');
-  topTbody.innerHTML = items.slice(0, 30).map((it, i) => `
+  const top30 = items.slice(0, 30);
+  topTbody.innerHTML = top30.map((it, i) => `
     <tr>
       <td class="rank-num">${i + 1}</td>
       <td class="name"><span class="badge rank-${it.abcRank}">${it.abcRank}</span>${escapeHtml(it.name)}</td>
@@ -764,6 +850,13 @@ function renderExcess(rawExcess) {
       <td class="num">${yen(it.excessAmount)}</td>
     </tr>
   `).join('');
+  document.getElementById('excess-topCsvBtn').onclick = () => {
+    downloadCsv(
+      `過剰在庫_上位30_${reportDateStamp}.csv`,
+      ['順位', '商品名', 'メーカー', '現在庫', '推奨在庫', '過剰数量', '過剰在庫額', 'ABCランク'],
+      top30.map((it, i) => [i + 1, it.name, it.supplierName, it.stock, it.recommended, it.excessQty, it.excessAmount, it.abcRank])
+    );
+  };
 
   // maker table + accordion
   const tbody = document.getElementById('excess-makerTbody');
@@ -800,7 +893,7 @@ function renderExcess(rawExcess) {
       </tr>
     `).join('');
     const moreCount = m.count - m.topItems.length;
-    const moreNote = moreCount > 0 ? `<div class="more-note">ほか ${num(moreCount)} 品目（金額の小さい順）</div>` : '';
+    const moreNote = moreCount > 0 ? `<div class="more-note">ほか ${num(moreCount)} 品目（金額の小さい順）</div>` : '<div></div>';
     detailTr.innerHTML = `
       <td colspan="5">
         <div class="detail-wrap">
@@ -816,10 +909,26 @@ function renderExcess(rawExcess) {
               <tbody>${itemRows}</tbody>
             </table>
           </div>
-          ${moreNote}
+          <div class="detail-footer">
+            ${moreNote}
+            <button class="maker-csv-btn" type="button">📥 このメーカーをCSVダウンロード</button>
+          </div>
         </div>
       </td>
     `;
+
+    const makerCsvBtn = detailTr.querySelector('.maker-csv-btn');
+    makerCsvBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      downloadCsv(
+        `過剰在庫_${sanitizeFilename(m.maker)}_${reportDateStamp}.csv`,
+        ['商品名', '現在庫', '推奨在庫', '過剰数量', '仕入単価', '過剰在庫額', '在庫月数', 'ABCランク', '需要パターン'],
+        m.items.map(it => [
+          it.name, it.stock, it.recommended, it.excessQty, it.unitCost, it.excessAmount,
+          (it.monthsOfStock != null && it.monthsOfStock > 0) ? it.monthsOfStock.toFixed(1) : '', it.abcRank, it.pattern
+        ])
+      );
+    });
 
     tr.addEventListener('click', () => {
       const wrap = detailTr.querySelector('.detail-wrap');
@@ -876,6 +985,8 @@ async function init() {
     return;
   }
   if (!data) return; // fetchStockData 側で既にエラー表示・送還済み
+
+  setReportDateStamp(data.analyzedAt);
 
   try {
     renderDead(data.dead || []);
