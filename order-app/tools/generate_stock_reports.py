@@ -74,7 +74,8 @@ def build_excess(stamp):
             'excessQty': float(r['excessQty']),
             'unitCost': float(r['unitCost']),
             'excessAmount': float(r['excessAmount']),
-            'monthsOfStock': float(r['monthsOfStock']),
+            # 新規/データ不足商品はmonthly_rateが0のためNone（CSV上は空欄）になりうる
+            'monthsOfStock': float(r['monthsOfStock']) if r['monthsOfStock'] not in ('', 'nan') else None,
             'abcRank': r['abcRank'],
             'pattern': r['pattern'],
         })
