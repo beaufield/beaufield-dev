@@ -391,7 +391,9 @@ function showMain() {
 }
 
 /* ===================================================
-   データ取得（発注アプリと同じ getOrderProposals を再利用）
+   データ取得（order-app GAS の getStockReport 専用エンドポイントを使う。
+   getOrderProposalsとは別扱いのセッション検証＝app_name='stock-report'なので、
+   発注アプリの利用権限が無いユーザーでもこのレポートだけは見られる）
 =================================================== */
 async function fetchStockData() {
   const session = getAuthSession();
@@ -400,7 +402,7 @@ async function fetchStockData() {
     return null;
   }
 
-  const params = { action: 'getOrderProposals', session_token: session.token };
+  const params = { action: 'getStockReport', session_token: session.token };
 
   let data = null;
   let networkFailed = false;
@@ -438,7 +440,7 @@ async function fetchStockData() {
       // ここまで来て2回ともSESSION_INVALIDなら、権限が無いか本当に未ログイン。
       // GAS側はこの2つを区別しないため、無言でポータルへ飛ばさず理由が分かる文言を出す。
       localStorage.removeItem(SESSION_KEY);
-      showError('このレポートを表示できませんでした（認証エラー）。発注アプリの利用権限が必要です。権限が無い場合は管理者にご確認ください。ログインし直す場合はポータルからやり直してください。');
+      showError('このレポートを表示できませんでした（認証エラー）。このレポートの閲覧権限が必要です。権限が無い場合は管理者にご確認ください。ログインし直す場合はポータルからやり直してください。');
       return null;
     }
     showError('読み込みに失敗しました。再読み込みしてください。');

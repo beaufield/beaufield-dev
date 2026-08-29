@@ -20,7 +20,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.34.0';
+const VERSION         = 'v1.35.0';
 const APP_NAME        = 'order-app';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 const PROP_STUCK_NOTIFY_DAYS = 14; // 提案滞留の通知・「要対応」表示の閾値（日）。Phase M, v1.31.0〜
@@ -85,11 +85,18 @@ const ORDER_TEMPLATES = {
 // （ログアウト即時反映が必要な運用ではない前提。他アプリと同一パターン）
 // 戻り値: { valid: true, user_id } または { valid: false }
 // ============================================================
-function validateSession(token) {
+// appName省略時は従来どおり APP_NAME('order-app') の権限を見る。
+// stock-report（v1.35.0〜）のように order-app の権限を持たないユーザーにも
+// 別のアプリとして権限を分けたい場合は、第2引数にその app_name を渡す。
+// キャッシュキーもapp_nameごとに分けるため、双方の判定結果が混ざることはない。
+function validateSession(token, appName) {
+  appName = appName || APP_NAME;
   if (!token) return { valid: false };
 
   const cache    = CacheService.getScriptCache();
-  const cacheKey = 'sess_order_v2_' + token.slice(-32);
+  const cacheKey = appName === APP_NAME
+    ? 'sess_order_v2_' + token.slice(-32)
+    : 'sess_' + appName + '_v1_' + token.slice(-32);
   const cached   = cache.get(cacheKey);
   if (cached !== null) {
     try { return JSON.parse(cached); } catch(e) {}
@@ -135,7 +142,7 @@ function validateSession(token) {
         const roles = rolesSh.getDataRange().getValues();
         let role = '';
         for (let j = 1; j < roles.length; j++) {
-          if (String(roles[j][0]) === rowUserId && String(roles[j][1]) === APP_NAME) {
+          if (String(roles[j][0]) === rowUserId && String(roles[j][1]) === appName) {
             role = String(roles[j][2] || '').trim().toLowerCase();
             break;
           }
@@ -225,6 +232,26 @@ function doPost(e) {
       }
     } catch(err) {
       Logger.log(action + ' error: ' + err);
+      return jsonResponse({ success: false, error: 'INTERNAL_ERROR' });
+    }
+  }
+
+  // getStockReport: stock-report専用のセッション検証（app_name='stock-report'）。
+  // order-appの利用権限を持たないユーザーでも死蔵在庫・過剰在庫だけは見られるように、
+  // 通常のセッション検証（下記・app_name='order-app'固定）とは別扱いにする（v1.35.0〜）
+  if (action === 'getStockReport') {
+    const srToken = p.session_token || '';
+    const srAuth = validateSession(srToken, 'stock-report');
+    if (!srAuth.valid) {
+      if (srAuth.transient) {
+        return jsonResponse({ success: false, error: 'AUTH_UNAVAILABLE', message: '認証確認に失敗しました。もう一度お試しください。' });
+      }
+      return jsonResponse({ success: false, error: 'SESSION_INVALID', message: '認証が必要です。ポータルからログインし直してください。' });
+    }
+    try {
+      return jsonResponse(getStockReportData());
+    } catch(err) {
+      Logger.log('getStockReport error: ' + err);
       return jsonResponse({ success: false, error: 'INTERNAL_ERROR' });
     }
   }
@@ -1952,6 +1979,110 @@ function updateProposalExplanations(p) {
 }
 
 // GET(セッション): 発注提案の取得（アプリの発注提案タブ用）
+// 過剰在庫（確認済みを除いたリスト・確認済みの詳細一覧・分析日時）をまとめて読む。
+// getOrderProposals・getStockReportData の両方から呼ばれる共通処理（v1.35.0〜）
+function _readExcessData_(ss) {
+  let excessAcks = [];
+  const ackSh = ss.getSheetByName(SHEET_EXCESS_ACK);
+  if (ackSh && ackSh.getLastRow() > 1) {
+    excessAcks = ackSh.getDataRange().getValues().slice(1)
+      .filter(r => String(r[0]).trim() !== '')
+      .map(r => ({
+        code:    String(r[0]).trim(),
+        name:    String(r[1] || ''),
+        reason:  String(r[2] || ''),
+        ackedBy: String(r[3] || ''),
+        ackedAt: cellToStr(r[4], 'yyyy-MM-dd HH:mm')
+      }));
+  }
+  const ackedCodes = new Set(excessAcks.map(x => x.code));
+
+  let excess = [];
+  let analyzedAt = '';
+  const excSh = ss.getSheetByName(SHEET_EXCESS);
+  if (excSh && excSh.getLastRow() > 1) {
+    const data = excSh.getDataRange().getValues();
+    excess = data.slice(1)
+      .filter(r => String(r[0]).trim() !== '')
+      .map(r => ({
+        code:          String(r[0]).trim(),
+        name:          String(r[1] || ''),
+        supplierCode:  String(r[2] || '').trim(),
+        supplierName:  String(r[3] || ''),
+        stock:         parseFloat(r[4]) || 0,
+        recommended:   parseFloat(r[5]) || 0,
+        excessQty:     parseFloat(r[6]) || 0,
+        unitCost:      parseFloat(r[7]) || 0,
+        excessAmount:  parseFloat(r[8]) || 0,
+        monthsOfStock: parseFloat(r[9]) || 0,
+        abcRank:       String(r[10] || ''),
+        pattern:       String(r[11] || '')
+      }))
+      .filter(x => !ackedCodes.has(x.code));
+    // EXCESS_HEADERS末尾（idx 12）= 分析日時
+    analyzedAt = cellToStr(data[1][12], 'yyyy-MM-dd HH:mm');
+  }
+  return { excess, excessAcks, analyzedAt };
+}
+
+// 死蔵在庫（確認済みを除いたリスト・確認済みの詳細一覧・分析日時）をまとめて読む。
+// getOrderProposals・getStockReportData の両方から呼ばれる共通処理（v1.35.0〜）
+function _readDeadData_(ss) {
+  let deadAcks = [];
+  const deadAckSh = ss.getSheetByName(SHEET_DEAD_ACK);
+  if (deadAckSh && deadAckSh.getLastRow() > 1) {
+    deadAcks = deadAckSh.getDataRange().getValues().slice(1)
+      .filter(r => String(r[0]).trim() !== '')
+      .map(r => ({
+        code:    String(r[0]).trim(),
+        name:    String(r[1] || ''),
+        reason:  String(r[2] || ''),
+        ackedBy: String(r[3] || ''),
+        ackedAt: cellToStr(r[4], 'yyyy-MM-dd HH:mm')
+      }));
+  }
+  const deadAckedCodes = new Set(deadAcks.map(x => x.code));
+
+  let dead = [];
+  let analyzedAt = '';
+  const deadSh2 = ss.getSheetByName(SHEET_DEAD);
+  if (deadSh2 && deadSh2.getLastRow() > 1) {
+    const data = deadSh2.getDataRange().getValues();
+    dead = data.slice(1)
+      .filter(r => String(r[0]).trim() !== '')
+      .map(r => ({
+        code:                 String(r[0]).trim(),
+        name:                 String(r[1] || ''),
+        supplierCode:         String(r[2] || '').trim(),
+        supplierName:         String(r[3] || ''),
+        stock:                parseFloat(r[4]) || 0,
+        unitCost:             parseFloat(r[5]) || 0,
+        deadAmount:           parseFloat(r[6]) || 0,
+        lastSaleDate:         cellToStr(r[7], 'yyyy-MM-dd'),
+        monthsSinceLastSale:  r[8] === '' ? null : (parseFloat(r[8]) || 0),
+        tier:                 String(r[9] || ''),
+        reason:               String(r[10] || '')
+      }))
+      .filter(x => !deadAckedCodes.has(x.code));
+    // DEAD_HEADERS末尾（idx 11）= 分析日時
+    analyzedAt = cellToStr(data[1][11], 'yyyy-MM-dd HH:mm');
+  }
+  return { dead, deadAcks, analyzedAt };
+}
+
+// stock-report専用の軽量エンドポイント（v1.35.0〜）。過剰在庫・死蔵在庫のみを返す。
+// order-appの利用権限を持たないユーザーでも見られるよう、getOrderProposalsとは別に
+// 発注提案本体・入荷待ち等には一切触れず、必要なシートだけを読む
+function getStockReportData() {
+  const ss = getSS();
+  const excessData = _readExcessData_(ss);
+  const deadData = _readDeadData_(ss);
+  // 過剰在庫・死蔵在庫は同じ日次バッチが同時に書き込むため通常は同じ値になる。
+  // 念のため片方が空でも読めるようフォールバックする
+  const analyzedAt = excessData.analyzedAt || deadData.analyzedAt;
+  return { success: true, dead: deadData.dead, excess: excessData.excess, analyzedAt };
+}
+
 function getOrderProposals() {
   const ss = getSS();
   const sh = ss.getSheetByName(SHEET_PROPOSALS);
@@ -2043,44 +2174,10 @@ function getOrderProposals() {
       }));
   }
 
-  // 過剰在庫の確認済みリスト（先に読み、確認済みの商品を過剰在庫リストから除外する）
-  let excessAcks = [];
-  const ackSh = ss.getSheetByName(SHEET_EXCESS_ACK);
-  if (ackSh && ackSh.getLastRow() > 1) {
-    excessAcks = ackSh.getDataRange().getValues().slice(1)
-      .filter(r => String(r[0]).trim() !== '')
-      .map(r => ({
-        code:    String(r[0]).trim(),
-        name:    String(r[1] || ''),
-        reason:  String(r[2] || ''),
-        ackedBy: String(r[3] || ''),
-        ackedAt: cellToStr(r[4], 'yyyy-MM-dd HH:mm')
-      }));
-  }
-  const ackedCodes = new Set(excessAcks.map(x => x.code));
-
-  // 過剰在庫リスト（確認済みは除く）
-  let excess = [];
-  const excSh = ss.getSheetByName(SHEET_EXCESS);
-  if (excSh && excSh.getLastRow() > 1) {
-    excess = excSh.getDataRange().getValues().slice(1)
-      .filter(r => String(r[0]).trim() !== '')
-      .map(r => ({
-        code:          String(r[0]).trim(),
-        name:          String(r[1] || ''),
-        supplierCode:  String(r[2] || '').trim(),
-        supplierName:  String(r[3] || ''),
-        stock:         parseFloat(r[4]) || 0,
-        recommended:   parseFloat(r[5]) || 0,
-        excessQty:     parseFloat(r[6]) || 0,
-        unitCost:      parseFloat(r[7]) || 0,
-        excessAmount:  parseFloat(r[8]) || 0,
-        monthsOfStock: parseFloat(r[9]) || 0,
-        abcRank:       String(r[10] || ''),
-        pattern:       String(r[11] || '')
-      }))
-      .filter(x => !ackedCodes.has(x.code));
-  }
+  // 過剰在庫リスト・確認済み一覧（v1.35.0〜 _readExcessData_ に共通化。getStockReportDataと共用）
+  const excessData = _readExcessData_(ss);
+  const excessAcks = excessData.excessAcks;
+  const excess = excessData.excess;
 
   // 経営KPI（直近2回分＝今週・先週）
   let kpi = null;
@@ -2105,43 +2202,10 @@ function getOrderProposals() {
     kpi = { current: kpiRows[kpiRows.length - 1], previous: kpiRows.length > 1 ? kpiRows[0] : null };
   }
 
-  // 死蔵在庫の確認済みリスト（先に読み、確認済みの商品を死蔵在庫リストから除外する）
-  let deadAcks = [];
-  const deadAckSh = ss.getSheetByName(SHEET_DEAD_ACK);
-  if (deadAckSh && deadAckSh.getLastRow() > 1) {
-    deadAcks = deadAckSh.getDataRange().getValues().slice(1)
-      .filter(r => String(r[0]).trim() !== '')
-      .map(r => ({
-        code:    String(r[0]).trim(),
-        name:    String(r[1] || ''),
-        reason:  String(r[2] || ''),
-        ackedBy: String(r[3] || ''),
-        ackedAt: cellToStr(r[4], 'yyyy-MM-dd HH:mm')
-      }));
-  }
-  const deadAckedCodes = new Set(deadAcks.map(x => x.code));
-
-  // 死蔵在庫リスト（確認済みは除く。Phase E, v1.10.0〜）
-  let dead = [];
-  const deadSh2 = ss.getSheetByName(SHEET_DEAD);
-  if (deadSh2 && deadSh2.getLastRow() > 1) {
-    dead = deadSh2.getDataRange().getValues().slice(1)
-      .filter(r => String(r[0]).trim() !== '')
-      .map(r => ({
-        code:                 String(r[0]).trim(),
-        name:                 String(r[1] || ''),
-        supplierCode:         String(r[2] || '').trim(),
-        supplierName:         String(r[3] || ''),
-        stock:                parseFloat(r[4]) || 0,
-        unitCost:             parseFloat(r[5]) || 0,
-        deadAmount:           parseFloat(r[6]) || 0,
-        lastSaleDate:         cellToStr(r[7], 'yyyy-MM-dd'),
-        monthsSinceLastSale:  r[8] === '' ? null : (parseFloat(r[8]) || 0),
-        tier:                 String(r[9] || ''),
-        reason:               String(r[10] || '')
-      }))
-      .filter(x => !deadAckedCodes.has(x.code));
-  }
+  // 死蔵在庫リスト・確認済み一覧（v1.35.0〜 _readDeadData_ に共通化。getStockReportDataと共用）
+  const deadData = _readDeadData_(ss);
+  const deadAcks = deadData.deadAcks;
+  const dead = deadData.dead;
 
   // 手動ロット設定リスト（ロット管理UIでの表示・解除用）
   let lotOverrides = [];
