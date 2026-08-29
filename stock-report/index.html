@@ -1,0 +1,904 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>在庫レポート</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page-plane:     #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --status-warning: #fab219;
+    --status-critical:#d03b3b;
+    --status-good:    #0ca30c;
+    --series-dead:        #eb6834;
+    --series-dead-track:  #fbe4d8;
+    --series-excess:       #2a78d6;
+    --series-excess-track: #e4edfa;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page-plane:     #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --status-warning: #fab219;
+      --status-critical:#e66767;
+      --status-good:    #0ca30c;
+      --series-dead:        #d95926;
+      --series-dead-track:  #402d20;
+      --series-excess:       #3987e5;
+      --series-excess-track: #22344a;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--page-plane);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.5;
+    overflow-x: hidden;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 24px 16px 64px; }
+
+  header.page { margin-bottom: 20px; }
+  header.page h1 { font-size: 22px; font-weight: 700; margin: 0 0 6px; }
+  header.page p { margin: 0; color: var(--text-secondary); font-size: 13.5px; }
+
+  /* ---- 状態表示（読み込み中／エラー） ---- */
+  .state-box { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 24px; text-align: center; color: var(--text-secondary); font-size: 13.5px; }
+  .state-box p { margin: 0 0 12px; }
+  .state-box button {
+    font-family: inherit; font-size: 13px; padding: 8px 18px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--page-plane); color: var(--text-primary); cursor: pointer;
+  }
+  .state-box button:hover { border-color: var(--text-secondary); }
+
+  /* ---- タブ ---- */
+  .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+  .tab-btn {
+    font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+    padding: 10px 18px; border-radius: 10px; border: 1px solid var(--border);
+    background: var(--surface-1); color: var(--text-secondary); flex: 1;
+  }
+  .tab-btn[data-tab="dead"].active { color: var(--series-dead); border-color: var(--series-dead); box-shadow: 0 0 0 1px var(--series-dead) inset; }
+  .tab-btn[data-tab="excess"].active { color: var(--series-excess); border-color: var(--series-excess); box-shadow: 0 0 0 1px var(--series-excess) inset; }
+
+  /* パネル内だけで --series-1 を切り替える（死蔵=オレンジ／過剰=青） */
+  .tab-panel[data-tab="dead"] { --series-1: var(--series-dead); --series-1-track: var(--series-dead-track); }
+  .tab-panel[data-tab="excess"] { --series-1: var(--series-excess); --series-1-track: var(--series-excess-track); }
+
+  /* tier filter (segmented control・死蔵タブのみ) */
+  .tier-filter { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+  .tier-btn {
+    font-family: inherit; text-align: left; cursor: pointer;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 16px; flex: 1; min-width: 160px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .tier-btn .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background: var(--text-muted); }
+  .tier-btn.t1 .dot { background: var(--status-critical); }
+  .tier-btn.t2 .dot { background: var(--status-warning); }
+  .tier-btn .tname { font-size: 12.5px; color: var(--text-secondary); }
+  .tier-btn .tval { font-size: 16px; font-weight: 700; color: var(--text-primary); }
+  .tier-btn .tsub { font-size: 11.5px; color: var(--text-muted); }
+  .tier-btn.active { border-color: var(--series-1); box-shadow: 0 0 0 1px var(--series-1) inset; }
+  .tier-btn:hover { border-color: var(--series-1); }
+
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .card h2 { font-size: 15px; font-weight: 700; margin: 0 0 4px; color: var(--text-primary); }
+  .card h2 .scope { font-weight: 500; color: var(--text-muted); font-size: 12.5px; }
+  .card .subnote { font-size: 12px; color: var(--text-muted); margin: 0 0 14px; }
+
+  .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .stat-tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .stat-tile .label { font-size: 12.5px; color: var(--text-secondary); margin-bottom: 6px; }
+  .stat-tile .value { font-size: 24px; font-weight: 700; color: var(--text-primary); }
+  .stat-tile .value .unit { font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-left: 2px; }
+  @media (max-width: 720px) { .stat-row { grid-template-columns: repeat(2, 1fr); } }
+
+  .bar-row { display: grid; grid-template-columns: 190px 1fr 108px; align-items: center; gap: 10px; height: 30px; }
+  .bar-row + .bar-row { margin-top: 2px; }
+  .bar-name { font-size: 12.5px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar-track { position: relative; height: 20px; background: var(--series-1-track); border-radius: 4px; }
+  .bar-fill { height: 20px; background: var(--series-1); border-radius: 4px; min-width: 3px; }
+  .bar-value { font-size: 12.5px; color: var(--text-secondary); text-align: right; font-variant-numeric: tabular-nums; }
+  .bar-rank { font-size: 11px; color: var(--text-muted); width: 18px; text-align: right; font-variant-numeric: tabular-nums; display:inline-block; }
+  .empty-note { font-size: 12.5px; color: var(--text-muted); padding: 12px 4px; }
+  @media (max-width: 480px) {
+    .bar-row { grid-template-columns: 118px 1fr 84px; gap: 6px; }
+  }
+
+  /* 横に広い表は table-scroll の中だけをスクロールさせる（本文は横スクロールしない） */
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table.maker-table, table.flat-table { width: 100%; min-width: 620px; border-collapse: collapse; font-size: 13px; }
+  table.item-table { width: 100%; min-width: 640px; border-collapse: collapse; font-size: 12.5px; margin-top: 6px; }
+  table.maker-table thead th, table.flat-table thead th {
+    text-align: left; font-size: 11.5px; color: var(--text-muted); font-weight: 600;
+    padding: 8px 10px; border-bottom: 1px solid var(--gridline);
+  }
+  table.maker-table thead th.num, table.flat-table thead th.num { text-align: right; }
+  .maker-row td, .flat-table tbody td { padding: 10px 10px; border-bottom: 1px solid var(--gridline); color: var(--text-primary); }
+  .maker-row { cursor: pointer; }
+  .maker-row:hover td { background: color-mix(in srgb, var(--series-1) 6%, transparent); }
+  .maker-row td.num, .flat-table tbody td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .maker-row .maker-name { font-weight: 600; }
+  .maker-row .chevron { display: inline-block; margin-right: 6px; color: var(--text-muted); transition: transform .15s ease; font-size: 10px; }
+  .maker-row.open .chevron { transform: rotate(90deg); }
+
+  .detail-row td { padding: 0; border-bottom: 1px solid var(--gridline); }
+  .detail-wrap { display: none; padding: 6px 10px 16px 30px; background: color-mix(in srgb, var(--series-1) 3%, transparent); }
+  .detail-wrap.open { display: block; }
+  table.item-table th { text-align: left; font-size: 11px; color: var(--text-muted); font-weight: 600; padding: 6px 8px; }
+  table.item-table th.num, table.item-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.item-table td { padding: 6px 8px; border-top: 1px solid var(--gridline); color: var(--text-secondary); }
+  table.item-table td.name { color: var(--text-primary); }
+  .badge { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; margin-right: 4px; }
+  .badge.tier-t1 { background: color-mix(in srgb, var(--status-critical) 16%, transparent); color: var(--status-critical); }
+  .badge.tier-t2 { background: color-mix(in srgb, var(--status-warning) 22%, transparent); color: color-mix(in srgb, var(--status-warning) 70%, var(--text-primary)); }
+  .badge.rank-A { background: color-mix(in srgb, var(--status-critical) 16%, transparent); color: var(--status-critical); }
+  .badge.rank-B { background: color-mix(in srgb, var(--status-warning) 22%, transparent); color: color-mix(in srgb, var(--status-warning) 70%, var(--text-primary)); }
+  .badge.rank-C { background: var(--gridline); color: var(--text-secondary); }
+  .more-note { font-size: 11.5px; color: var(--text-muted); padding: 6px 8px 0; }
+  .flat-table tbody td.name { color: var(--text-primary); }
+  .flat-table tbody td.maker { color: var(--text-secondary); font-size: 12px; }
+  .flat-table tbody tr:hover td { background: color-mix(in srgb, var(--series-1) 6%, transparent); }
+  .rank-num { color: var(--text-muted); font-variant-numeric: tabular-nums; width: 26px; display:inline-block; }
+
+  footer.notes { font-size: 12px; color: var(--text-muted); line-height: 1.7; padding-top: 8px; }
+  footer.notes b { color: var(--text-secondary); }
+
+  .toolbar { display:flex; gap:8px; margin-bottom: 10px; align-items: center; flex-wrap: wrap; }
+  .toolbar button {
+    font-family: inherit; font-size: 12px; padding: 6px 10px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary); cursor: pointer;
+  }
+  .toolbar button:hover { color: var(--text-primary); border-color: var(--series-1); }
+  .search-input {
+    font-family: inherit; font-size: 12.5px; padding: 6px 10px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+    min-width: 220px; flex: 1;
+  }
+  .search-input:focus { outline: none; border-color: var(--series-1); }
+  .no-match { font-size: 12.5px; color: var(--text-muted); padding: 16px 4px; display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="page">
+    <h1>📊 在庫レポート</h1>
+    <p id="headerSub">読み込み中…</p>
+  </header>
+
+  <div id="loadingBox" class="state-box">
+    <p>読み込み中…</p>
+  </div>
+
+  <div id="errorBox" class="state-box" style="display:none">
+    <p id="errorMsg"></p>
+    <button id="retryBtn" type="button">再読み込み</button>
+  </div>
+
+  <div id="mainContent" style="display:none">
+
+    <div class="tabs" role="tablist">
+      <button class="tab-btn active" data-tab="dead" id="tabBtnDead" type="button">🧹 死蔵在庫</button>
+      <button class="tab-btn" data-tab="excess" id="tabBtnExcess" type="button">📦 過剰在庫</button>
+    </div>
+
+    <!-- ============ 死蔵在庫タブ ============ -->
+    <div class="tab-panel" data-tab="dead" id="panelDead">
+
+      <div class="tier-filter" id="dead-tierFilter"></div>
+
+      <div class="stat-row" id="dead-statRow"></div>
+
+      <div class="card">
+        <h2>メーカー別 死蔵在庫額（上位15社） <span class="scope" id="dead-chartScope"></span></h2>
+        <div class="subnote">棒の長さ・末尾の数値＝死蔵在庫金額。</div>
+        <div id="dead-chart"></div>
+      </div>
+
+      <div class="card">
+        <h2>商品別 死蔵在庫額（上位30） <span class="scope" id="dead-topScope"></span></h2>
+        <div class="subnote">メーカーをまたいで金額の大きい順。値引き販売・処分の判断材料に。</div>
+        <div class="table-scroll">
+          <table class="flat-table">
+            <thead>
+              <tr>
+                <th style="width:34px"></th>
+                <th>商品名</th>
+                <th>メーカー</th>
+                <th class="num">在庫数</th>
+                <th class="num">仕入単価</th>
+                <th class="num">死蔵金額</th>
+                <th>最終売上</th>
+                <th>区分</th>
+              </tr>
+            </thead>
+            <tbody id="dead-topItemsTbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>メーカー別 内訳（全社） <span class="scope" id="dead-makerScope"></span></h2>
+        <div class="subnote">行をクリックすると、そのメーカーの死蔵在庫額が大きい商品（上位）が展開されます。</div>
+        <div class="toolbar">
+          <input type="text" class="search-input" id="dead-makerSearch" placeholder="メーカー名で絞り込み…">
+          <button id="dead-expandAllBtn" type="button">すべて展開</button>
+          <button id="dead-collapseAllBtn" type="button">すべて閉じる</button>
+        </div>
+        <div class="table-scroll">
+          <table class="maker-table">
+            <thead>
+              <tr>
+                <th style="width:46%">メーカー</th>
+                <th class="num">品目数</th>
+                <th class="num">在庫数</th>
+                <th class="num">死蔵在庫額</th>
+                <th class="num">構成比</th>
+              </tr>
+            </thead>
+            <tbody id="dead-makerTbody"></tbody>
+          </table>
+        </div>
+        <div class="no-match" id="dead-noMatch">該当するメーカーがありません。</div>
+      </div>
+
+      <footer class="notes">
+        <p><b>死蔵在庫の判定条件:</b> 在庫管理対象・非廃番・在庫ありの商品のうち、<b>完全死蔵</b>＝過去24ヶ月の売上明細に1件も出現しない商品、<b>休眠</b>＝24ヶ月以内に販売はあるが直近12ヶ月の販売数量合計が0の商品。金額 = 在庫数 × 仕入単価。上部のボタンで表示対象を切り替えられます。</p>
+        <p><b>返品不可</b>のため、選択肢は値引き販売か処分のみ。保有コストが年率約20%かかるため、放置すると毎年その分だけ目減りします。</p>
+        <p><b>含まれないもの:</b> 「過剰在庫（持ちすぎ）」（在庫はあるが売れてはいる商品）は別タブで集計。廃番品・在庫管理対象外の在庫（帳簿と実在庫が乖離しているため対象外）、発注アプリで「確認済み」にした商品も含みません。</p>
+        <p>「未販売」（区分の理由）は、販売履歴が一度もない商品（新規導入直後の可能性があるため区別表示）。</p>
+      </footer>
+
+    </div>
+
+    <!-- ============ 過剰在庫タブ ============ -->
+    <div class="tab-panel" data-tab="excess" id="panelExcess" style="display:none">
+
+      <div class="stat-row" id="excess-statRow"></div>
+
+      <div class="card">
+        <h2>メーカー別 過剰在庫額（上位15社）</h2>
+        <div class="subnote">棒の長さ・末尾の数値＝過剰在庫金額。</div>
+        <div id="excess-chart"></div>
+      </div>
+
+      <div class="card">
+        <h2>商品別 過剰在庫額（上位30）</h2>
+        <div class="subnote">メーカーをまたいで金額の大きい順。特定商品を探すときはこちらが早いです。</div>
+        <div class="table-scroll">
+          <table class="flat-table">
+            <thead>
+              <tr>
+                <th style="width:34px"></th>
+                <th>商品名</th>
+                <th>メーカー</th>
+                <th class="num">現在庫</th>
+                <th class="num">推奨在庫</th>
+                <th class="num">過剰数量</th>
+                <th class="num">過剰在庫額</th>
+              </tr>
+            </thead>
+            <tbody id="excess-topItemsTbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>メーカー別 内訳（全社）</h2>
+        <div class="subnote">行をクリックすると、そのメーカーの過剰在庫額が大きい商品（上位）が展開されます。</div>
+        <div class="toolbar">
+          <input type="text" class="search-input" id="excess-makerSearch" placeholder="メーカー名で絞り込み…">
+          <button id="excess-expandAllBtn" type="button">すべて展開</button>
+          <button id="excess-collapseAllBtn" type="button">すべて閉じる</button>
+        </div>
+        <div class="table-scroll">
+          <table class="maker-table">
+            <thead>
+              <tr>
+                <th style="width:46%">メーカー</th>
+                <th class="num">品目数</th>
+                <th class="num">数量</th>
+                <th class="num">過剰在庫額</th>
+                <th class="num">構成比</th>
+              </tr>
+            </thead>
+            <tbody id="excess-makerTbody"></tbody>
+          </table>
+        </div>
+        <div class="no-match" id="excess-noMatch">該当するメーカーがありません。</div>
+      </div>
+
+      <footer class="notes">
+        <p><b>過剰在庫の判定条件:</b> 分析対象商品（月平均1個以上・販売歴6ヶ月以上など、発注提案と同じ母集団）のうち、<b>現在庫が推奨在庫（リードタイム＋発注サイクル期間の需要＋安全在庫）の2倍を超え、かつ超過数量が3個以上</b>の商品のみ対象。少額商品のノイズ除外のため、推奨をやや上回る程度（2倍未満）の商品はこのリストには出ません。金額 = （現在庫 − 推奨在庫）× 仕入単価。</p>
+        <p><b>含まれないもの:</b> 24ヶ月以上販売のない「死蔵在庫」は別タブで集計（本タブの対象外）。廃番品・在庫管理対象外の在庫、発注アプリで「確認済み」にした商品も含みません。</p>
+        <p>ABCランクは売上貢献度（A＝主力〜C＝低頻度）。パターンは需要の出方の分類（安定型／変動型／まとめ買い型／散発型／データ不足）。在庫月数が「算出不可」の商品は、直近の販売実績データが無いため月数を計算できない商品です（新規に売れ始めたばかりの商品など）。</p>
+      </footer>
+
+    </div>
+
+  </div>
+</div>
+
+<script>
+/* ===================================================
+   定数・認証（order-app/index.html と同じ値・同じ仕組みを使う）
+=================================================== */
+const GAS_URL     = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
+const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
+const SESSION_KEY = 'bf_session';
+
+function getAuthSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    if (Date.now() > s.expires) { localStorage.removeItem(SESSION_KEY); return null; }
+    return s;
+  } catch { return null; }
+}
+
+async function gasPostOnce(params) {
+  const body = Object.keys(params)
+    .map(k => encodeURIComponent(k) + '=' + encodeURIComponent(params[k]))
+    .join('&');
+  const res = await fetch(GAS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body
+  });
+  return res.json();
+}
+
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/* ===================================================
+   画面状態の切り替え
+=================================================== */
+function showLoading() {
+  document.getElementById('loadingBox').style.display = '';
+  document.getElementById('errorBox').style.display = 'none';
+  document.getElementById('mainContent').style.display = 'none';
+}
+function showError(message) {
+  document.getElementById('loadingBox').style.display = 'none';
+  document.getElementById('errorBox').style.display = '';
+  document.getElementById('mainContent').style.display = 'none';
+  document.getElementById('errorMsg').textContent = message;
+}
+function showMain() {
+  document.getElementById('loadingBox').style.display = 'none';
+  document.getElementById('errorBox').style.display = 'none';
+  document.getElementById('mainContent').style.display = '';
+}
+
+/* ===================================================
+   データ取得（発注アプリと同じ getOrderProposals を再利用）
+=================================================== */
+async function fetchStockData() {
+  const session = getAuthSession();
+  if (!session || !session.token) {
+    location.replace(PORTAL_URL);
+    return null;
+  }
+
+  const params = { action: 'getOrderProposals', session_token: session.token };
+
+  let data = null;
+  let networkFailed = false;
+  try {
+    data = await gasPostOnce(params);
+  } catch (e) {
+    networkFailed = true;
+  }
+
+  // 通信自体の失敗、または一時的な認証確認失敗（AUTH_UNAVAILABLE）は1回だけ再試行する
+  if (networkFailed || (data && data.error === 'AUTH_UNAVAILABLE')) {
+    await delay(1200);
+    try {
+      data = await gasPostOnce(params);
+      networkFailed = false;
+    } catch (e) {
+      networkFailed = true;
+    }
+  }
+
+  if (networkFailed) {
+    showError('通信に失敗しました。ネットワーク状態を確認して再読み込みしてください。');
+    return null;
+  }
+
+  // SESSION_INVALID もシート読み込みの一時的な失敗で返ることがあるため、
+  // トークンを送っている場合は1回だけ再確認してから送還する
+  if (data && data.error === 'SESSION_INVALID') {
+    await delay(1200);
+    try { data = await gasPostOnce(params); } catch (e) { /* 下のチェックで拾う */ }
+  }
+
+  if (!data || data.success !== true) {
+    if (data && data.error === 'SESSION_INVALID') {
+      // ここまで来て2回ともSESSION_INVALIDなら、権限が無いか本当に未ログイン。
+      // GAS側はこの2つを区別しないため、無言でポータルへ飛ばさず理由が分かる文言を出す。
+      localStorage.removeItem(SESSION_KEY);
+      showError('このレポートを表示できませんでした（認証エラー）。発注アプリの利用権限が必要です。権限が無い場合は管理者にご確認ください。ログインし直す場合はポータルからやり直してください。');
+      return null;
+    }
+    showError('読み込みに失敗しました。再読み込みしてください。');
+    return null;
+  }
+
+  return data;
+}
+
+/* ===================================================
+   タブ切り替え
+=================================================== */
+function showTab(tab) {
+  const isDead = tab === 'dead';
+  document.getElementById('panelDead').style.display = isDead ? '' : 'none';
+  document.getElementById('panelExcess').style.display = isDead ? 'none' : '';
+  document.getElementById('tabBtnDead').classList.toggle('active', isDead);
+  document.getElementById('tabBtnExcess').classList.toggle('active', !isDead);
+  if (location.hash !== '#' + tab) history.replaceState(null, '', '#' + tab);
+}
+
+document.getElementById('tabBtnDead').addEventListener('click', () => showTab('dead'));
+document.getElementById('tabBtnExcess').addEventListener('click', () => showTab('excess'));
+
+/* ===================================================
+   共通ヘルパー
+=================================================== */
+const yen = n => '¥' + Math.round(n).toLocaleString('ja-JP');
+const num = n => Math.round(n).toLocaleString('ja-JP');
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/* ===================================================
+   死蔵在庫タブの描画
+   GASの dead[] は { code,name,supplierCode,supplierName,stock,unitCost,deadAmount,
+                     lastSaleDate,monthsSinceLastSale,tier,reason }
+   既存レポートJSは maker / amount というキー名を使うため、ここで変換する
+=================================================== */
+function renderDead(rawDead) {
+  const allItems = (rawDead || []).map(d => ({
+    code: d.code, name: d.name, maker: d.supplierName,
+    stock: d.stock, unitCost: d.unitCost, amount: d.deadAmount,
+    lastSaleDate: d.lastSaleDate, monthsSinceLastSale: d.monthsSinceLastSale,
+    tier: d.tier, reason: d.reason,
+  }));
+
+  function tierClass(t) { return t === '完全死蔵' ? 'tier-t1' : 'tier-t2'; }
+
+  function totalsOf(items) {
+    const makers = new Set(items.map(i => i.maker));
+    return {
+      count: items.length,
+      qty: items.reduce((s, i) => s + i.stock, 0),
+      amount: items.reduce((s, i) => s + i.amount, 0),
+      makerCount: makers.size,
+    };
+  }
+
+  const grand = totalsOf(allItems);
+  const t1Items = allItems.filter(i => i.tier === '完全死蔵');
+  const t2Items = allItems.filter(i => i.tier === '休眠');
+  const t1 = totalsOf(t1Items);
+  const t2 = totalsOf(t2Items);
+
+  const tierFilterEl = document.getElementById('dead-tierFilter');
+  const filters = [
+    { key: 'all', cls: '', label: 'すべて', totals: grand },
+    { key: '完全死蔵', cls: 't1', label: '完全死蔵（24ヶ月販売ゼロ）', totals: t1 },
+    { key: '休眠', cls: 't2', label: '休眠（直近12ヶ月販売ゼロ）', totals: t2 },
+  ];
+  tierFilterEl.innerHTML = filters.map(f => `
+    <button class="tier-btn ${f.cls}" data-key="${f.key}">
+      <span class="dot"></span>
+      <div>
+        <div class="tname">${f.label}</div>
+        <div class="tval">${yen(f.totals.amount)} <span class="tsub">/ ${num(f.totals.count)}品目</span></div>
+      </div>
+    </button>
+  `).join('');
+
+  let currentFilter = 'all';
+
+  function render() {
+    const items = currentFilter === 'all' ? allItems : allItems.filter(i => i.tier === currentFilter);
+    const totals = totalsOf(items);
+    const scopeLabel = currentFilter === 'all' ? '（全体）' : `（${currentFilter}のみ）`;
+    document.getElementById('dead-chartScope').textContent = scopeLabel;
+    document.getElementById('dead-topScope').textContent = scopeLabel;
+    document.getElementById('dead-makerScope').textContent = scopeLabel;
+
+    tierFilterEl.querySelectorAll('.tier-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.key === currentFilter);
+    });
+
+    const statRow = document.getElementById('dead-statRow');
+    const tiles = [
+      { label: '死蔵在庫額', value: yen(totals.amount) },
+      { label: '対象品目数', value: num(totals.count) + '<span class="unit">品目</span>' },
+      { label: '在庫数 合計', value: num(totals.qty) + '<span class="unit">個</span>' },
+      { label: '対象メーカー数', value: num(totals.makerCount) + '<span class="unit">社</span>' },
+    ];
+    statRow.innerHTML = tiles.map(t => `<div class="stat-tile"><div class="label">${t.label}</div><div class="value">${t.value}</div></div>`).join('');
+
+    const byMaker = new Map();
+    items.forEach(it => {
+      if (!byMaker.has(it.maker)) byMaker.set(it.maker, { maker: it.maker, count: 0, qty: 0, amount: 0, items: [] });
+      const d = byMaker.get(it.maker);
+      d.count++; d.qty += it.stock; d.amount += it.amount; d.items.push(it);
+    });
+    const makers = Array.from(byMaker.values());
+    makers.forEach(m => m.items.sort((a, b) => b.amount - a.amount));
+    makers.sort((a, b) => b.amount - a.amount);
+
+    const chartEl = document.getElementById('dead-chart');
+    if (makers.length === 0) {
+      chartEl.innerHTML = '<div class="empty-note">該当するデータがありません。</div>';
+    } else {
+      const top15 = makers.slice(0, 15);
+      const maxAmount = top15[0].amount || 1;
+      chartEl.innerHTML = top15.map((m, i) => `
+        <div class="bar-row">
+          <div class="bar-name" title="${escapeHtml(m.maker)}"><span class="bar-rank">${i + 1}</span> ${escapeHtml(m.maker)}</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${(m.amount / maxAmount * 100).toFixed(1)}%"></div></div>
+          <div class="bar-value">${yen(m.amount)}</div>
+        </div>
+      `).join('');
+    }
+
+    const sortedItems = items.slice().sort((a, b) => b.amount - a.amount);
+    const topTbody = document.getElementById('dead-topItemsTbody');
+    topTbody.innerHTML = sortedItems.slice(0, 30).map((it, i) => `
+      <tr>
+        <td class="rank-num">${i + 1}</td>
+        <td class="name">${escapeHtml(it.name)}</td>
+        <td class="maker">${escapeHtml(it.maker)}</td>
+        <td class="num">${num(it.stock)}</td>
+        <td class="num">${yen(it.unitCost)}</td>
+        <td class="num">${yen(it.amount)}</td>
+        <td>${it.lastSaleDate || '—'}</td>
+        <td><span class="badge ${tierClass(it.tier)}">${it.tier}</span></td>
+      </tr>
+    `).join('');
+
+    const tbody = document.getElementById('dead-makerTbody');
+    tbody.innerHTML = '';
+    const rowPairs = [];
+    const totalAmount = totals.amount || 1;
+    makers.forEach(m => {
+      const share = (m.amount / totalAmount * 100).toFixed(1) + '%';
+      const tr = document.createElement('tr');
+      tr.className = 'maker-row';
+      tr.dataset.maker = m.maker.toLowerCase();
+      tr.innerHTML = `
+        <td><span class="chevron">▶</span><span class="maker-name">${escapeHtml(m.maker)}</span></td>
+        <td class="num">${num(m.count)}</td>
+        <td class="num">${num(m.qty)}</td>
+        <td class="num">${yen(m.amount)}</td>
+        <td class="num">${share}</td>
+      `;
+
+      const detailTr = document.createElement('tr');
+      detailTr.className = 'detail-row';
+      detailTr.dataset.maker = m.maker.toLowerCase();
+      const shown = m.items.slice(0, 15);
+      const itemRows = shown.map(it => `
+        <tr>
+          <td class="name"><span class="badge ${tierClass(it.tier)}">${it.tier}</span>${escapeHtml(it.name)}</td>
+          <td class="num">${num(it.stock)}</td>
+          <td class="num">${yen(it.unitCost)}</td>
+          <td class="num">${yen(it.amount)}</td>
+          <td>${it.lastSaleDate || '—'}</td>
+          <td>${it.monthsSinceLastSale != null ? it.monthsSinceLastSale.toFixed(1) + 'ヶ月前' : '—'}</td>
+          <td>${escapeHtml(it.reason)}</td>
+        </tr>
+      `).join('');
+      const moreCount = m.count - shown.length;
+      const moreNote = moreCount > 0 ? `<div class="more-note">ほか ${num(moreCount)} 品目（金額の小さい順）</div>` : '';
+      detailTr.innerHTML = `
+        <td colspan="5">
+          <div class="detail-wrap">
+            <div class="table-scroll">
+              <table class="item-table">
+                <thead>
+                  <tr>
+                    <th>商品名</th><th class="num">在庫数</th><th class="num">仕入単価</th>
+                    <th class="num">死蔵金額</th><th>最終売上日</th><th>経過月数</th><th>理由</th>
+                  </tr>
+                </thead>
+                <tbody>${itemRows}</tbody>
+              </table>
+            </div>
+            ${moreNote}
+          </div>
+        </td>
+      `;
+
+      tr.addEventListener('click', () => {
+        const wrap = detailTr.querySelector('.detail-wrap');
+        const isOpen = wrap.classList.toggle('open');
+        tr.classList.toggle('open', isOpen);
+      });
+
+      tbody.appendChild(tr);
+      tbody.appendChild(detailTr);
+      rowPairs.push({ tr, detailTr, maker: m.maker.toLowerCase() });
+    });
+
+    applySearch(rowPairs);
+
+    document.getElementById('dead-expandAllBtn').onclick = () => {
+      rowPairs.forEach(({ tr, detailTr }) => {
+        if (tr.style.display === 'none') return;
+        detailTr.querySelector('.detail-wrap').classList.add('open');
+        tr.classList.add('open');
+      });
+    };
+    document.getElementById('dead-collapseAllBtn').onclick = () => {
+      rowPairs.forEach(({ tr, detailTr }) => {
+        detailTr.querySelector('.detail-wrap').classList.remove('open');
+        tr.classList.remove('open');
+      });
+    };
+
+    const searchInput = document.getElementById('dead-makerSearch');
+    searchInput.oninput = () => applySearch(rowPairs);
+  }
+
+  function applySearch(rowPairs) {
+    const searchInput = document.getElementById('dead-makerSearch');
+    const noMatch = document.getElementById('dead-noMatch');
+    const q = searchInput.value.trim().toLowerCase();
+    let visible = 0;
+    rowPairs.forEach(({ tr, detailTr, maker }) => {
+      const match = !q || maker.includes(q);
+      tr.style.display = match ? '' : 'none';
+      detailTr.style.display = match ? '' : 'none';
+      if (match) visible++;
+    });
+    noMatch.style.display = visible === 0 ? 'block' : 'none';
+  }
+
+  tierFilterEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('.tier-btn');
+    if (!btn) return;
+    currentFilter = btn.dataset.key;
+    render();
+  });
+
+  render();
+}
+
+/* ===================================================
+   過剰在庫タブの描画
+   GASの excess[] はフラットな配列。メーカー別集計はクライアント側で組み立てる
+   （tools/generate_stock_reports.py: build_excess() と同じロジック）
+=================================================== */
+function renderExcess(rawExcess) {
+  const items = (rawExcess || []).slice().sort((a, b) => b.excessAmount - a.excessAmount);
+
+  const total = {
+    count: items.length,
+    qty: items.reduce((s, i) => s + i.stock, 0),
+    amount: items.reduce((s, i) => s + i.excessAmount, 0),
+  };
+
+  const byMaker = new Map();
+  items.forEach(it => {
+    if (!byMaker.has(it.supplierName)) byMaker.set(it.supplierName, { maker: it.supplierName, count: 0, qty: 0, amount: 0, items: [] });
+    const m = byMaker.get(it.supplierName);
+    m.count++; m.qty += it.stock; m.amount += it.excessAmount; m.items.push(it);
+  });
+  const makers = Array.from(byMaker.values());
+  makers.forEach(m => {
+    m.items.sort((a, b) => b.excessAmount - a.excessAmount);
+    m.topItems = m.items.slice(0, 12);
+  });
+  makers.sort((a, b) => b.amount - a.amount);
+
+  function monthsLabel(v) {
+    if (v == null || !(v > 0)) return '算出不可';
+    return (v >= 100 ? '100+' : v.toFixed(1)) + 'ヶ月分';
+  }
+
+  // stat tiles
+  const statRow = document.getElementById('excess-statRow');
+  const tiles = [
+    { label: '過剰在庫 総額', value: yen(total.amount) },
+    { label: '対象品目数', value: num(total.count) + '<span class="unit">品目</span>' },
+    { label: '過剰数量 合計', value: num(total.qty) + '<span class="unit">個</span>' },
+    { label: '対象メーカー数', value: num(makers.length) + '<span class="unit">社</span>' },
+  ];
+  statRow.innerHTML = tiles.map(t => `<div class="stat-tile"><div class="label">${t.label}</div><div class="value">${t.value}</div></div>`).join('');
+
+  // bar chart (top 15)
+  const chartEl = document.getElementById('excess-chart');
+  if (makers.length === 0) {
+    chartEl.innerHTML = '<div class="empty-note">該当するデータがありません。</div>';
+  } else {
+    const top15 = makers.slice(0, 15);
+    const maxAmount = top15[0].amount || 1;
+    chartEl.innerHTML = top15.map((m, i) => `
+      <div class="bar-row">
+        <div class="bar-name" title="${escapeHtml(m.maker)}"><span class="bar-rank">${i + 1}</span> ${escapeHtml(m.maker)}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${(m.amount / maxAmount * 100).toFixed(1)}%"></div></div>
+        <div class="bar-value">${yen(m.amount)}</div>
+      </div>
+    `).join('');
+  }
+
+  // top items overall
+  const topTbody = document.getElementById('excess-topItemsTbody');
+  topTbody.innerHTML = items.slice(0, 30).map((it, i) => `
+    <tr>
+      <td class="rank-num">${i + 1}</td>
+      <td class="name"><span class="badge rank-${it.abcRank}">${it.abcRank}</span>${escapeHtml(it.name)}</td>
+      <td class="maker">${escapeHtml(it.supplierName)}</td>
+      <td class="num">${num(it.stock)}</td>
+      <td class="num">${num(it.recommended)}</td>
+      <td class="num">${num(it.excessQty)}</td>
+      <td class="num">${yen(it.excessAmount)}</td>
+    </tr>
+  `).join('');
+
+  // maker table + accordion
+  const tbody = document.getElementById('excess-makerTbody');
+  tbody.innerHTML = '';
+  const rowPairs = [];
+  const totalAmount = total.amount || 1;
+  makers.forEach(m => {
+    const share = (m.amount / totalAmount * 100).toFixed(1) + '%';
+
+    const tr = document.createElement('tr');
+    tr.className = 'maker-row';
+    tr.dataset.maker = m.maker.toLowerCase();
+    tr.innerHTML = `
+      <td><span class="chevron">▶</span><span class="maker-name">${escapeHtml(m.maker)}</span></td>
+      <td class="num">${num(m.count)}</td>
+      <td class="num">${num(m.qty)}</td>
+      <td class="num">${yen(m.amount)}</td>
+      <td class="num">${share}</td>
+    `;
+
+    const detailTr = document.createElement('tr');
+    detailTr.className = 'detail-row';
+    detailTr.dataset.maker = m.maker.toLowerCase();
+    const itemRows = m.topItems.map(it => `
+      <tr>
+        <td class="name"><span class="badge rank-${it.abcRank}">${it.abcRank}</span>${escapeHtml(it.name)}</td>
+        <td class="num">${num(it.stock)}</td>
+        <td class="num">${num(it.recommended)}</td>
+        <td class="num">${num(it.excessQty)}</td>
+        <td class="num">${yen(it.unitCost)}</td>
+        <td class="num">${yen(it.excessAmount)}</td>
+        <td class="num">${monthsLabel(it.monthsOfStock)}</td>
+        <td>${escapeHtml(it.pattern)}</td>
+      </tr>
+    `).join('');
+    const moreCount = m.count - m.topItems.length;
+    const moreNote = moreCount > 0 ? `<div class="more-note">ほか ${num(moreCount)} 品目（金額の小さい順）</div>` : '';
+    detailTr.innerHTML = `
+      <td colspan="5">
+        <div class="detail-wrap">
+          <div class="table-scroll">
+            <table class="item-table">
+              <thead>
+                <tr>
+                  <th>商品名</th><th class="num">現在庫</th><th class="num">推奨在庫</th>
+                  <th class="num">過剰数量</th><th class="num">仕入単価</th><th class="num">過剰在庫額</th>
+                  <th class="num">在庫月数</th><th>需要パターン</th>
+                </tr>
+              </thead>
+              <tbody>${itemRows}</tbody>
+            </table>
+          </div>
+          ${moreNote}
+        </div>
+      </td>
+    `;
+
+    tr.addEventListener('click', () => {
+      const wrap = detailTr.querySelector('.detail-wrap');
+      const isOpen = wrap.classList.toggle('open');
+      tr.classList.toggle('open', isOpen);
+    });
+
+    tbody.appendChild(tr);
+    tbody.appendChild(detailTr);
+    rowPairs.push({ tr, detailTr, maker: m.maker.toLowerCase() });
+  });
+
+  document.getElementById('excess-expandAllBtn').addEventListener('click', () => {
+    rowPairs.forEach(({ tr, detailTr }) => {
+      if (tr.style.display === 'none') return;
+      detailTr.querySelector('.detail-wrap').classList.add('open');
+      tr.classList.add('open');
+    });
+  });
+  document.getElementById('excess-collapseAllBtn').addEventListener('click', () => {
+    rowPairs.forEach(({ tr, detailTr }) => {
+      detailTr.querySelector('.detail-wrap').classList.remove('open');
+      tr.classList.remove('open');
+    });
+  });
+
+  const searchInput = document.getElementById('excess-makerSearch');
+  const noMatch = document.getElementById('excess-noMatch');
+  searchInput.addEventListener('input', () => {
+    const q = searchInput.value.trim().toLowerCase();
+    let visible = 0;
+    rowPairs.forEach(({ tr, detailTr, maker }) => {
+      const match = !q || maker.includes(q);
+      tr.style.display = match ? '' : 'none';
+      detailTr.style.display = match ? '' : 'none';
+      if (match) visible++;
+    });
+    noMatch.style.display = visible === 0 ? 'block' : 'none';
+  });
+}
+
+/* ===================================================
+   初期化
+=================================================== */
+async function init() {
+  showLoading();
+  document.getElementById('headerSub').textContent = '読み込み中…';
+
+  let data;
+  try {
+    data = await fetchStockData();
+  } catch (e) {
+    showError('予期しないエラーが発生しました。再読み込みしてください。');
+    return;
+  }
+  if (!data) return; // fetchStockData 側で既にエラー表示・送還済み
+
+  try {
+    renderDead(data.dead || []);
+    renderExcess(data.excess || []);
+  } catch (e) {
+    showError('レポートの描画に失敗しました。再読み込みしてください。');
+    return;
+  }
+
+  const analyzedAt = data.analyzedAt || '—';
+  document.getElementById('headerSub').textContent =
+    `分析日時: ${analyzedAt} 時点（毎朝7時に自動更新・発注アプリで「確認済み」にした商品は除いています）`;
+
+  const initialTab = location.hash === '#excess' ? 'excess' : 'dead';
+  showTab(initialTab);
+  showMain();
+}
+
+document.getElementById('retryBtn').addEventListener('click', init);
+window.addEventListener('hashchange', () => {
+  const tab = location.hash === '#excess' ? 'excess' : 'dead';
+  showTab(tab);
+});
+
+init();
+</script>
+</body>
+</html>
