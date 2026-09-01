@@ -740,6 +740,10 @@
     /* 提案滞留の可視化（Phase M, v1.58.0）: 「いつから不足しているか」に気付きやすくする */
     .prop-badge.stuck      { background: #fff3e0; color: #e65100; }  /* 14〜29日滞留 */
     .prop-badge.stuck-long { background: #ffebee; color: #c62828; }  /* 30日以上滞留 */
+    /* 得意先集中度（v1.69.0）。需要が1社に偏っている商品＝その1社が止まると在庫が丸ごと滞留する。
+       数字を変える機能ではなく「気づくため」の表示なので、色は控えめ→強めの2段階だけにする */
+    .prop-badge.conc       { background: #fff8e1; color: #ef6c00; }  /* 40〜69% */
+    .prop-badge.conc-high  { background: #ffebee; color: #c62828; }  /* 70%以上 */
     .prop-badge.out        { background: #ffebee; color: #c62828; }  /* 在庫0以下（要対応セクション用） */
     .prop-urgent-card      { border: 2px solid #ef9a9a; margin-bottom: 10px; }
     .prop-urgent-card .prop-group-name { color: #c62828; }
@@ -1349,7 +1353,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.68.0'; // 複製して発注: 複製した行の仕入単価・相手商品CDを商品マスターから引き直す
+const APP_VERSION    = 'v1.69.0'; // 提案に得意先集中度バッジを追加（需要が1社に偏っている商品に気づけるように）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -5367,6 +5371,27 @@ function buildOrderedByCode() {
 }
 /* === /BUILD ORDERED BY CODE === */
 
+// 得意先集中度バッジ（v1.69.0）。需要の何割が上位1社なのかを提案の場で見せる。
+// 狙いは「この商品はこの1社が買うのをやめたら在庫が丸ごと死ぬ」と人が気づけること
+// （実測で、需要の5割以上が1社に集中している提案が63件・38万円あった）。
+// 推奨在庫・提案数量の計算には一切影響しない表示専用のバッジ。
+// 40%未満は「偏っている」と言えないので出さない（全提案の中央値は34%）
+const CONC_BADGE_MIN  = 0.40;
+const CONC_BADGE_HIGH = 0.70;
+function renderConcBadge(p) {
+  const share = parseFloat(p.top1Share) || 0;
+  if (share < CONC_BADGE_MIN) return '';
+  const cust = String(p.top1Cust || '');
+  const n    = parseFloat(p.custCount) || 0;
+  const cls  = share >= CONC_BADGE_HIGH ? 'conc-high' : 'conc';
+  const tip  = `需要の${Math.round(share * 100)}%が「${cust}」1社`
+             + (n ? `（この商品の取引先は${n}社）` : '')
+             + '。この1社が止まると在庫が滞留します';
+  // title はHTML属性なので escHtml を使う（escAttr は onclick 内のJS文字列用でシングルクォートしか
+  // 潰さない。得意先名に " が入っていると属性を抜け出して表示が壊れる）
+  return `<span class="prop-badge ${cls}" title="${escHtml(tip)}">👤 1社${Math.round(share * 100)}%</span>`;
+}
+
 // 1商品ぶんの行HTML。通常の提案行・まとめ発注グループの行・「要対応」セクションで共通に使う
 // （v1.58.0でrenderProposalListから独立関数に切り出し。3箇所から呼べるようにするため）
 function renderPropItem(p, code, delayedByCode, orderedByCode) {
@@ -5395,6 +5420,7 @@ function renderPropItem(p, code, delayedByCode, orderedByCode) {
   // 参考行＝提案対象外だが在庫が推奨を下回った商品。チェックOFF・グレー表示で
   // 金額合計には入らないが、拾いたい時はチェックすれば通常どおり発注へ送れる
   const refBadge = p.refOnly && !p.groupId ? '<span class="prop-badge ref">📎 参考</span>' : '';
+  const concBadge = renderConcBadge(p);
   // 提案滞留バッジ（v1.58.0）: 何日連続で不足のままかを表示。14日以上は橙、30日以上は赤
   const stuckDays = p.stuckDays || 0;
   const stuckBadge = stuckDays >= PROP_STUCK_BADGE_MIN_DAYS
@@ -5429,7 +5455,7 @@ function renderPropItem(p, code, delayedByCode, orderedByCode) {
     <div class="prop-item-top">
       <input type="checkbox" class="prop-check" data-key="${escAttr(itemKey)}" ${propUncheckedItems.has(itemKey) ? '' : 'checked'}>
       <div class="prop-item-name">${escHtml(p.name)}
-        <div class="prop-item-code">${escHtml(p.code)}<span class="prop-badge ${badgeCls}">${escHtml(p.pattern)}</span>${abcBadge}${tierBadge}${refBadge}${stuckBadge}${orderedBadge}</div>
+        <div class="prop-item-code">${escHtml(p.code)}<span class="prop-badge ${badgeCls}">${escHtml(p.pattern)}</span>${abcBadge}${concBadge}${tierBadge}${refBadge}${stuckBadge}${orderedBadge}</div>
       </div>
       <div class="prop-item-actions">
         <button class="prop-excl-btn" onclick="excludeProposal('${escAttr(p.code)}','${escAttr(p.name)}')">🚫 除外</button>
@@ -5482,7 +5508,7 @@ function renderUrgentItemCard(p, delayedByCode) {
   <div class="prop-item prop-urgent-item">
     <div class="prop-item-top">
       <div class="prop-item-name">${escHtml(p.name)}
-        <div class="prop-item-code">${escHtml(p.code)}<span class="prop-badge ${badgeCls}">${escHtml(p.pattern)}</span>${abcBadge}${outBadge}${stuckBadge}${refBadge}</div>
+        <div class="prop-item-code">${escHtml(p.code)}<span class="prop-badge ${badgeCls}">${escHtml(p.pattern)}</span>${abcBadge}${renderConcBadge(p)}${outBadge}${stuckBadge}${refBadge}</div>
       </div>
       <div class="prop-item-actions">
         <button class="prop-excl-btn" onclick="excludeProposal('${escAttr(p.code)}','${escAttr(p.name)}')">🚫 除外</button>
