@@ -322,6 +322,30 @@
   }
   .radio-btn.selected { border-color: var(--primary); color: var(--primary); background: #eff6ff; }
 
+  /* 日付入力＋クリアボタン（iOS等ネイティブ日付ピッカーは空欄に戻せないため） */
+  .date-input-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .date-input-row .form-input { flex: 1; min-width: 0; }
+  .date-clear-btn {
+    flex: 0 0 auto;
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    background: white;
+    color: var(--text-sub);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 12px 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s;
+  }
+  .date-clear-btn:active { transform: scale(0.98); }
+  .date-clear-btn:disabled { opacity: 0.4; cursor: default; }
+
   /* Buttons */
   .btn {
     width: 100%;
@@ -621,7 +645,7 @@
 
 <script>
 // ========== APP VERSION ==========
-const APP_VERSION = '1.12.0';
+const APP_VERSION = '1.13.0';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
 const PORTAL_API_URL = 'https://script.google.com/macros/s/AKfycbzNVW7AaPUTuwneE-M40DTN1clO5VT2yLCHq7cjYvaHqfMfXgVi38UAOsDZQbmmN3wOzw/exec';
 
@@ -1778,7 +1802,10 @@ function renderRegisterForm() {
     </div>
     <div class="form-section" id="maker-due-section" style="display:none;">
       <div class="form-label">メーカー返却期限 <span style="color:var(--text-sub);font-weight:400;">(未定の場合は空欄)</span></div>
-      <input class="form-input" id="f-maker-due" type="date">
+      <div class="date-input-row">
+        <input class="form-input" id="f-maker-due" type="date" oninput="syncDateClearBtn('f-maker-due')">
+        <button type="button" class="date-clear-btn" id="f-maker-due-clear" onclick="clearDateInput('f-maker-due')" disabled>クリア</button>
+      </div>
     </div>
     <div class="form-section">
       <div class="form-label">備考（付属品等）</div>
@@ -2034,7 +2061,10 @@ function renderEditDevice() {
     </div>
     <div class="form-section" id="edit-maker-due-section" style="${isMaker ? '' : 'display:none;'}">
       <div class="form-label">メーカー返却期限 <span style="color:var(--text-sub);font-weight:400;">(未定の場合は空欄)</span></div>
-      <input class="form-input" id="f-edit-maker-due" type="date" value="${device.makerReturnDueDate ? String(device.makerReturnDueDate).split('T')[0].replace(/\//g,'-') : ''}">
+      <div class="date-input-row">
+        <input class="form-input" id="f-edit-maker-due" type="date" value="${device.makerReturnDueDate ? String(device.makerReturnDueDate).split('T')[0].replace(/\//g,'-') : ''}" oninput="syncDateClearBtn('f-edit-maker-due')">
+        <button type="button" class="date-clear-btn" id="f-edit-maker-due-clear" onclick="clearDateInput('f-edit-maker-due')"${device.makerReturnDueDate ? '' : ' disabled'}>クリア</button>
+      </div>
     </div>
     <div class="form-section">
       <div class="form-label">備考（付属品等）</div>
@@ -2046,6 +2076,22 @@ function renderEditDevice() {
     </div>
     <button class="btn btn-primary" onclick="submitEditDevice(${device.id})">保存する</button>
   </div>`;
+}
+
+// 日付入力を空欄に戻す（iOS/Androidのネイティブ日付ピッカーには消去手段がないため専用ボタンを用意）
+function clearDateInput(inputId) {
+  const el = document.getElementById(inputId);
+  if (!el) return;
+  el.value = '';
+  syncDateClearBtn(inputId);
+}
+
+// 日付が空のときはクリアボタンを無効化して、押せる／押せないを見た目で示す
+function syncDateClearBtn(inputId) {
+  const el  = document.getElementById(inputId);
+  const btn = document.getElementById(inputId + '-clear');
+  if (!el || !btn) return;
+  btn.disabled = !el.value;
 }
 
 function selectTypeEdit(type) {
