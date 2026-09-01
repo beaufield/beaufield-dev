@@ -645,7 +645,7 @@
 
 <script>
 // ========== APP VERSION ==========
-const APP_VERSION = '1.13.0';
+const APP_VERSION = '1.14.0';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
 const PORTAL_API_URL = 'https://script.google.com/macros/s/AKfycbzNVW7AaPUTuwneE-M40DTN1clO5VT2yLCHq7cjYvaHqfMfXgVi38UAOsDZQbmmN3wOzw/exec';
 
@@ -1937,6 +1937,8 @@ function selectType(type) {
   document.getElementById('type-own').className = 'radio-btn' + (type === '自社資産' ? ' selected' : '');
   document.getElementById('type-maker').className = 'radio-btn' + (type === 'メーカー借入' ? ' selected' : '');
   document.getElementById('maker-due-section').style.display = type === 'メーカー借入' ? '' : 'none';
+  // 自社資産に切り替えたらメーカー返却期限は不要になるので、その場で空にする
+  if (type !== 'メーカー借入') clearDateInput('f-maker-due');
 }
 
 function onMakerSelectChange(selectId, inputId) {
@@ -1989,7 +1991,7 @@ async function submitRegister() {
       status: '社内',
       loanTo: null, loanDate: null, returnDueDate: null,
       returnDate: null, salesRep: null, notes,
-      makerReturnDueDate: makerDue || null,
+      makerReturnDueDate: type === 'メーカー借入' ? (makerDue || null) : null,
       createdAt: today(),
     };
 
@@ -2099,6 +2101,8 @@ function selectTypeEdit(type) {
   document.getElementById('edit-type-own').className = 'radio-btn' + (type === '自社資産' ? ' selected' : '');
   document.getElementById('edit-type-maker').className = 'radio-btn' + (type === 'メーカー借入' ? ' selected' : '');
   document.getElementById('edit-maker-due-section').style.display = type === 'メーカー借入' ? '' : 'none';
+  // 自社資産に切り替えたらメーカー返却期限は不要になるので、その場で空にする
+  if (type !== 'メーカー借入') clearDateInput('f-edit-maker-due');
 }
 
 async function submitEditDevice(deviceId) {
@@ -2114,7 +2118,7 @@ async function submitEditDevice(deviceId) {
     device.name = name;
     device.type = type;
     device.maker = maker;
-    device.makerReturnDueDate = makerDue || null;
+    device.makerReturnDueDate = type === 'メーカー借入' ? (makerDue || null) : null;
     device.notes = notes;
     const imageUrls = await uploadPendingImages('edit');
     const urlKeys = ['imageUrl', 'imageUrl2', 'imageUrl3'];
