@@ -20,7 +20,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.35.0';
+const VERSION         = 'v1.36.0';
 const APP_NAME        = 'order-app';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 const PROP_STUCK_NOTIFY_DAYS = 14; // 提案滞留の通知・「要対応」表示の閾値（日）。Phase M, v1.31.0〜
@@ -1165,10 +1165,13 @@ function saveSupplier(p, user_id) {
 // 在庫が推奨在庫を下回っている商品（アプリではチェックOFF・グレー表示で金額合計に入れない）
 // グループID・配分枠は v1.27.0（Phase J）で追加。まとめ発注グループに属する商品の行に入る
 // 直近90日実需要は v1.31.0（Phase M）で追加。アプリの「要対応」表示の掲載判定に使う
+// 得意先数・上位1社シェア・上位1社名は v1.36.0（対策3）で追加。「需要が1社に依存していないか」を
+// 提案の場で見えるようにする表示専用の列で、推奨在庫・提案数量の計算には一切使っていない
 const PROPOSAL_HEADERS = ['商品コード','商品名','仕入先コード','仕入先名','パターン',
                           '現在庫','発注済','推奨在庫','提案数量','最低発注数','月平均',
                           '注文P95','最大注文','根拠メモ','AI説明','分析日時','仕入単価','提案金額','ABCランク',
-                          '区分','グループID','配分枠','直近90日実需要'];
+                          '区分','グループID','配分枠','直近90日実需要',
+                          '得意先数','上位1社シェア','上位1社名'];
 
 // 提案滞留シートの列定義（updateOrderProposals / getOrderProposals で共有。Phase M, v1.31.0〜）
 // 「いつから不足しているか」を持つ。発注提案シートは毎回全面書き換えなので、この情報だけは
@@ -1717,7 +1720,10 @@ function updateOrderProposals(p) {
       x.refOnly ? '参考' : '提案',
       String(x.groupId   || ''),
       String(x.allocTier || ''),
-      parseFloat(x.recentDemandMonthly) || 0
+      parseFloat(x.recentDemandMonthly) || 0,
+      parseFloat(x.custCount) || 0,
+      parseFloat(x.top1Share) || 0,
+      String(x.top1Cust || '')
     ]);
     sh.getRange(2, 1, rows.length, PROPOSAL_HEADERS.length).setValues(rows);
   }
@@ -2117,7 +2123,11 @@ function getOrderProposals() {
         groupId:      String(r[20] || '').trim(),
         allocTier:    String(r[21] || '').trim(),
         // 直近90日実需要（v1.31.0〜）。列が無い旧データは0（アプリの「要対応」判定で使う）
-        recentDemandMonthly: parseFloat(r[22]) || 0
+        recentDemandMonthly: parseFloat(r[22]) || 0,
+        // 得意先集中度（v1.36.0〜・対策3）。列が無い旧データは0＝バッジを出さない
+        custCount: parseFloat(r[23]) || 0,
+        top1Share: parseFloat(r[24]) || 0,
+        top1Cust:  String(r[25] || '')
       }));
     analyzedAt = cellToStr(data[1][15], 'yyyy-MM-dd HH:mm');
   }

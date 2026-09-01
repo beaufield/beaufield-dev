@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.21.0
+# Version: v1.22.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -46,6 +46,25 @@
 #   最終推奨在庫が上限キャップを超えることはない（下げない・上げるだけのフロア）。
 #   減少トレンド商品は下限計算の窓も直近12ヶ月に限定する（旧体制の大口注文に
 #   引きずられないため）。詳細・検証結果は 安定型安全在庫_設計プラン.md 参照
+#
+# 得意先のまとめ買いを需要から外す（対策1・v1.22.0で追加）:
+#   「特定の1社が年に数回だけまとめ買いする」商品は、その山が月次標準偏差を押し上げ、
+#   安全在庫だけで推奨在庫の8割を占めることがある（実測例: 推奨50本のうち39本が安全在庫で、
+#   その正体は1社が年2回・120本ずつ買うキャンペーン購入だった商品がある）。
+#   このまとめ買いは事前に分かるので在庫で待ち構える必要がなく、都度発注（受注発注）で足りる。
+#   しかも「日常需要には多すぎ、まとめ買いには全然足りない」というどっちつかずの数字になる。
+#   そこで下記に該当する明細を需要統計（月平均・std・P95・日次フロア）から除外する。
+#     (a) その得意先自身の注文中央値の SPIKE_CUST_MULT 倍以上 かつ SPIKE_MIN_QTY 以上
+#     (b) 24ヶ月で SPIKE_RARE_ORDERS 回以下しか買わない得意先の SPIKE_MIN_QTY 以上の明細
+#   ⚠️ 判定は必ず「商品全体」ではなく「その得意先自身の普段の買い方」を基準にすること。
+#      商品全体の中央値を基準にすると、毎回大量に発注する常連（美容室チェーンの店舗など）まで
+#      需要から消えて主力品が欠品する。実測で、月300個級のカラー剤の推奨が140→53本まで落ちた。
+#      得意先基準なら同じ商品が140本のまま（＝誤爆しない）。
+#      違いは「その客の普段と比べて突出しているか」。常連の大口は普段どおり（中央値18個・最大36個）で、
+#      キャンペーンのまとめ買いは普段の15倍（中央値6個・最大90個）という形で現れる。
+#   さらに需要の上位1社シェアが SPIKE_TOP1_SHARE_MIN 未満の商品には適用しない。
+#      需要が広く分散している商品は「1社の異常な買い方が安全在庫を膨らませている」という
+#      前提が成り立たず、削ると主力品の欠品につながるため（実測で8件の誤爆を4件に減らした）。
 #
 # 発注提案の対象:
 #   月平均1個以上・販売歴6ヶ月以上・提案除外設定に無い・Cランクの間欠需要でない商品のうち、
@@ -205,6 +224,10 @@ import numpy as np
 import pandas as pd
 import requests
 
+# 冒頭ヘッダーの Version と対で必ず更新する。以前はログ側に文字列を直書きしていたため
+# ヘッダーが v1.21.0 なのにログは v1.16.0 のまま、という食い違いが起きていた（v1.22.0で定数化）
+SCRIPT_VERSION = 'v1.22.0'
+
 SCRIPT_DIR  = Path(__file__).parent
 SECRET_ROOT = Path(os.environ.get(
     'BEAUFIELD_SECRETS_DIR',
@@ -254,6 +277,17 @@ CAP_MONTHS_DECLINING    = 2.0   # 減少トレンド商品の推奨在庫上限�
 # 減少トレンドと対称の仕組み。伸びている商品の推奨在庫が24ヶ月平均に引っ張られて
 # 過小にならないよう、直近12ヶ月平均を使う。詳細: 発注提案精度改善_設計プラン.md N-1
 GROWTH_RATIO_THRESHOLD  = 1.5   # 直近12ヶ月平均が1年前の12ヶ月平均のこの倍率以上なら「増加トレンド」
+
+# ---- 得意先のまとめ買いを需要から外すパラメータ（対策1・v1.22.0） ----
+# 詳細と根拠は冒頭の「得意先のまとめ買いを需要から外す」を参照。
+# ⚠️ SPIKE_CUST_MULT は「その得意先自身の注文中央値」に対する倍率。商品全体の中央値ではない
+SPIKE_CUST_MULT      = 4.0   # その得意先の普段の注文量のこの倍以上なら「まとめ買い」
+SPIKE_MIN_QTY        = 15    # 同時に満たすべき最低数量（少量商品での誤検出を防ぐ）
+SPIKE_RARE_ORDERS    = 2     # 24ヶ月でこの回数以下しか買わない得意先は大口を全て対象にする
+                             # （たまにしか来ない客は「その客自身の中央値」自体が大きくなり
+                             #   倍率基準では拾えないため。実測例: 24ヶ月で2回だけ50本ずつ
+                             #   買う得意先が需要の9割を占めていた消耗品）
+SPIKE_TOP1_SHARE_MIN = 0.40  # 需要の上位1社シェアがこれ未満の商品には適用しない
 
 # ---- 直近実需要の把握・MTO判定の直近実績救済（v1.18.0） ----
 # 24ヶ月/12ヶ月の月次統計とは別に「今どれだけ動いているか」を持つための短期窓。
@@ -376,8 +410,9 @@ def normalize_supplier_code(c):
 
 def load_sales(csv_path, start_str, end_str, season_years=None):
     """売上明細CSVを読み込み、期間フィルタ・型変換して返す
-    列: 0=売上日, 1=売上№(取引単位のキー), 24=商品コード, 26=数量
+    列: 0=売上日, 1=売上№(取引単位のキー), 7=得意先コード, 8=得意先名, 24=商品コード, 26=数量
     ※33列目の「伝票No」はほぼ空欄のため使わない
+    ※得意先列は v1.22.0 で追加（得意先のまとめ買い判定・得意先集中度の算出に使う）
 
     戻り値: (期間フィルタ後のDataFrame, 商品コード別の全期間・最終売上日dict, 季節指数用の月別合計Series)
     最終売上日は死蔵在庫検出（v1.10.0）用に、分析期間(24ヶ月)に絞る前の全履歴から取る。
@@ -392,8 +427,8 @@ def load_sales(csv_path, start_str, end_str, season_years=None):
         csv_path,
         encoding='cp932',
         header=0,
-        usecols=[0, 1, 24, 26],
-        names=['date', 'slip', 'code', 'qty'],
+        usecols=[0, 1, 7, 8, 24, 26],
+        names=['date', 'slip', 'cust', 'cust_name', 'code', 'qty'],
         dtype=str,
         on_bad_lines='skip',
     )
@@ -402,6 +437,10 @@ def load_sales(csv_path, start_str, end_str, season_years=None):
     df['date'] = df['date'].fillna('').str.strip()
     df['code'] = df['code'].map(normalize_code)
     df = df[df['code'].notna()]
+    # 得意先コードは表記ゆれ（前後空白・ゼロ埋め有無）があるため商品コードと同じ流儀で正規化する。
+    # 名前は表示用（同じコードで改名された履歴があっても最新1件を採るので集計キーには使わない）
+    df['cust'] = df['cust'].map(normalize_code)
+    df['cust_name'] = df['cust_name'].fillna('').str.strip()
 
     df['qty'] = pd.to_numeric(
         df['qty'].fillna('0').str.replace(',', '', regex=False), errors='coerce')
@@ -429,6 +468,57 @@ def load_sales(csv_path, start_str, end_str, season_years=None):
     df['ym'] = df['date'].str[:6]
     logging.info(f'期間内の有効行数: {len(df):,}行  商品数: {df["code"].nunique():,}件')
     return df, last_sale_by_code, season_monthly_totals
+
+
+def compute_customer_concentration(sales):
+    """商品コード別に「需要が何社に、どれだけ偏っているか」を返す（対策3・v1.22.0）。
+    まとめ買い除外の適用可否（対策1）と、アプリの集中度バッジの両方で使う。
+    返品（qty<=0）は集中度を歪めるので除く。
+    戻り値: {code: {'custCount': 件数, 'top1Share': 0〜1, 'top1Cust': 得意先名}}"""
+    pos = sales[sales['qty'] > 0]
+    if pos.empty:
+        return {}
+    by = pos.groupby(['code', 'cust'])['qty'].sum()
+    # 得意先名は表示用に1つだけ拾う（改名があっても最新の行の名前になる）
+    name_by = pos.sort_values('date').groupby(['code', 'cust'])['cust_name'].last()
+    out = {}
+    for code, g in by.groupby(level=0):
+        total = float(g.sum())
+        if total <= 0:
+            continue
+        top_key = g.idxmax()
+        out[code] = {
+            'custCount': int(g.size),
+            'top1Share': round(float(g.max()) / total, 3),
+            'top1Cust': str(name_by.get(top_key, '') or ''),
+        }
+    return out
+
+
+def mark_customer_spikes(sales, concentration):
+    """得意先ごとの「普段と違うまとめ買い」明細に印をつけて Series[bool] を返す（対策1・v1.22.0）。
+
+    判定は必ず『その得意先自身の注文中央値』を基準にする。商品全体の中央値を基準にすると
+    毎回大量発注する常連まで需要から消え、主力品が欠品する（冒頭の解説を参照）。
+    需要が上位1社に SPIKE_TOP1_SHARE_MIN 以上偏っている商品にだけ適用する。
+    """
+    spike = pd.Series(False, index=sales.index)
+    target_codes = {c for c, v in concentration.items()
+                    if v['top1Share'] >= SPIKE_TOP1_SHARE_MIN}
+    if not target_codes:
+        return spike
+    tgt = sales[sales['code'].isin(target_codes) & (sales['qty'] > 0)]
+    if tgt.empty:
+        return spike
+    grp = tgt.groupby(['code', 'cust'])['qty']
+    med = grp.transform('median')
+    cnt = grp.transform('size')
+    # (a) その得意先の普段の注文量を大きく超えた明細
+    by_mult = (tgt['qty'] >= np.maximum(med * SPIKE_CUST_MULT, SPIKE_MIN_QTY)) & (tgt['qty'] > med)
+    # (b) 24ヶ月で数回しか買わない得意先の大口（中央値そのものが大きくなり(a)では拾えない）
+    by_rare = (cnt <= SPIKE_RARE_ORDERS) & (tgt['qty'] >= SPIKE_MIN_QTY)
+    spike.loc[tgt.index] = (by_mult | by_rare).values
+    return spike
 
 
 def load_products(csv_path):
@@ -943,6 +1033,10 @@ def build_group_proposals(groups, members_by_group, results_by_code, products):
                     'lot': int(r['lot']), 'p95': float(r['p95_order_size']),
                     'maxOrder': float(r['max_order_size']),
                     'recentMM': float(r.get('recent_demand_monthly', 0.0)),
+                    # 得意先集中度（対策3, v1.22.0）。グループ所属商品も個別提案と同じバッジを出す
+                    'custCount': int(r.get('cust_count', 0)),
+                    'top1Share': float(r.get('top1_share', 0.0)),
+                    'top1Cust': str(r.get('top1_cust', '')),
                 })
             else:
                 # 分析期間(24ヶ月)に売上が1件も無い商品（廃番ではなく現行品として残っているケース）。
@@ -1007,6 +1101,9 @@ def build_group_proposals(groups, members_by_group, results_by_code, products):
                 'maxOrder': m['maxOrder'],
                 'refOnly': ref_only,
                 'recentDemandMonthly': m['recentMM'],
+                'custCount': m.get('custCount', 0),
+                'top1Share': m.get('top1Share', 0.0),
+                'top1Cust': m.get('top1Cust', ''),
                 'groupId': g['groupId'],
                 'allocTier': m['tier'],
                 'note': build_group_note(g, m, due, shortage, threshold),
@@ -1249,9 +1346,14 @@ def estimate_lot(lot_stats_entry, lot_override=None):
 
 def build_note(stat, protect_days, lot, on_order=0, abc='A', is_declining=False, is_growing=False,
                 older_mean=None, forced_by_negative_stock=False, stock=None, ref_reason='',
-                floor_source='', season_factor=None):
+                floor_source='', season_factor=None, spike=None, concentration=None):
     """提案根拠の短い説明文（ルールベース）"""
     parts = []
+    # 得意先のまとめ買いを需要から外した場合はその事実を最初に出す（対策1, v1.22.0）。
+    # 推奨在庫が前回より大きく下がった理由が人に見えないと、数字を信用してもらえないため
+    if spike and spike.get('qty', 0) > 0:
+        parts.append(f"特定の得意先のまとめ買い{spike['qty']:.0f}個（{spike['lines']}回）は"
+                     f"都度発注で対応する前提で需要から除外")
     pattern = stat['pattern']
     window_months = DECLINE_TREND_MONTHS if (is_declining or is_growing) else WINDOW_MONTHS
     if ref_reason:
@@ -1296,6 +1398,10 @@ def build_note(stat, protect_days, lot, on_order=0, abc='A', is_declining=False,
     allowance = SERVICE_ALLOWANCE_PCT.get(abc)
     if allowance is not None:
         parts.append(f"{abc}ランク: 欠品許容{allowance}%基準で算出")
+    # 得意先集中度（対策3, v1.22.0）。偏りが強い商品だけ書く（分散している商品では情報にならない）
+    if concentration and concentration.get('top1Share', 0) >= SPIKE_TOP1_SHARE_MIN and concentration.get('top1Cust'):
+        parts.append(f"⚠️需要の{concentration['top1Share']:.0%}が「{concentration['top1Cust']}」1社"
+                     f"（取引{concentration['custCount']}社）。この1社が止まると在庫が滞留する")
     return '。'.join(parts)
 
 
@@ -1428,7 +1534,7 @@ def main():
 
     log_file = setup_logger()
     logging.info('=' * 60)
-    logging.info('Beaufield 需要分析・発注提案スクリプト v1.16.0 開始'
+    logging.info(f'Beaufield 需要分析・発注提案スクリプト {SCRIPT_VERSION} 開始'
                  + ('（dry-run）' if args.dry_run else ''))
 
     config = load_config()
@@ -1519,10 +1625,31 @@ def main():
                  f'未入荷{_lines_open:,}行（{_open_codes:,}商品）/ '
                  f'{ORDER_OPEN_CUTOFF_DAYS}日超で打ち切り{_lines_stale:,}行')
 
-    monthly_sum = sales.groupby(['code', 'ym'])['qty'].sum()
-    slip_sum = sales[sales['slip'] != ''].groupby(['code', 'slip'])['qty'].sum()
+    # ---- 得意先集中度・まとめ買い除外（対策1/3, v1.22.0） ----
+    # 集中度は「実際の得意先の顔ぶれ」を表す指標なので、まとめ買いを含む全明細から算出する。
+    # 需要統計（月平均・std・P95・日次フロア）だけを sales_stock（まとめ買いを除いた売上）で作る
+    concentration = compute_customer_concentration(sales)
+    spike_mask = mark_customer_spikes(sales, concentration)
+    sales_stock = sales[~spike_mask]
+    # 商品別のまとめ買い除外量（根拠メモに出す。数字が下がった理由を人が追えるようにするため）
+    _sp = sales[spike_mask]
+    spike_by_code = {c: {'lines': int(len(g)), 'qty': float(g['qty'].sum())}
+                     for c, g in _sp.groupby('code')} if not _sp.empty else {}
+    _sp_codes = sales.loc[spike_mask, 'code'].nunique()
+    _sp_qty = sales.loc[spike_mask, 'qty'].sum()
+    _tot_qty = sales.loc[sales['qty'] > 0, 'qty'].sum()
+    logging.info(f'得意先まとめ買いの除外: {int(spike_mask.sum()):,}明細 / {_sp_qty:,.0f}個'
+                 f'（全需要の{_sp_qty / _tot_qty * 100:.1f}%・{_sp_codes:,}商品）'
+                 f' 条件: 得意先中央値の{SPIKE_CUST_MULT:g}倍以上かつ{SPIKE_MIN_QTY}個以上'
+                 f' / {SPIKE_RARE_ORDERS}回以下しか買わない得意先の{SPIKE_MIN_QTY}個以上'
+                 f' / 上位1社シェア{SPIKE_TOP1_SHARE_MIN:.0%}以上の商品のみ')
+
+    monthly_sum = sales_stock.groupby(['code', 'ym'])['qty'].sum()
+    slip_sum = sales_stock[sales_stock['slip'] != ''].groupby(['code', 'slip'])['qty'].sum()
     slip_sum = slip_sum[slip_sum > 0]
-    recent6 = sales[sales['ym'] >= months[-6]].groupby('code')['qty'].sum() / 6
+    recent6 = sales_stock[sales_stock['ym'] >= months[-6]].groupby('code')['qty'].sum() / 6
+    # 販売歴（first_ym）と母集団（sold_codes_period）は「その商品が売れているか」の判定なので、
+    # まとめ買いを除く前の sales を使う（除外のせいで販売歴が短くなると誤って提案対象から外れる）
     first_ym = sales.groupby('code')['ym'].min()
 
     # v1.20.0: sales は calc_period() により当月を除いた期間なので、当月に初めて／久々に
@@ -1549,7 +1676,7 @@ def main():
     recent_start_date = date(int(recent_start_ym[:4]), int(recent_start_ym[4:6]), 1)
     window_days_recent = (end_date - recent_start_date).days + 1
 
-    sales_recent = sales[sales['ym'] >= recent_start_ym]
+    sales_recent = sales_stock[sales_stock['ym'] >= recent_start_ym]
     monthly_sum_recent = sales_recent.groupby(['code', 'ym'])['qty'].sum()
     slip_sum_recent = sales_recent[sales_recent['slip'] != ''].groupby(['code', 'slip'])['qty'].sum()
     slip_sum_recent = slip_sum_recent[slip_sum_recent > 0]
@@ -1564,10 +1691,12 @@ def main():
     # ---- 保護日数フロア用: 商品コード別の日次実績配列（v1.16.0） ----
     # 「安定型」でも1回の受注が大きい商品は月次標準偏差だけでは山を拾えないため、
     # 保護日数のローリング窓（日次実績の合計）から実績ベースの下限を別途計算する。
-    # 追加のCSV読み込みはせず、既存の sales（分析期間24ヶ月分）を再利用する
+    # 追加のCSV読み込みはせず、既存の sales_stock（分析期間24ヶ月分・まとめ買い除外後）を再利用する。
+    # ⚠️ ここで sales（除外前）を使うと、除外したはずのまとめ買いが日次フロア経由で
+    #    推奨在庫に戻ってきてしまう（フロアは max() で効くため）
     all_days = pd.date_range(start_date, end_date, freq='D').strftime('%Y%m%d')
     day_index = {d: i for i, d in enumerate(all_days)}
-    daily_sum = sales.groupby(['code', 'date'])['qty'].sum()
+    daily_sum = sales_stock.groupby(['code', 'date'])['qty'].sum()
     daily_arr_by_code = {}
     for (code, d), qty in daily_sum.items():
         idx = day_index.get(d)
@@ -1621,9 +1750,16 @@ def main():
                         stat_recent['mean_monthly'] <= older_mean_monthly * DECLINE_RATIO_THRESHOLD)
         # 増加トレンド判定（v1.18.0, N-1）: 減少トレンドと対称。大きく伸びていたら
         # 24ヶ月平均ではなく直近12ヶ月ベースに切り替える（is_decliningとは排他）
+        # v1.22.0（対策2）: 減少側と同じ「元が月MIN_MEAN_MONTHLY個以上あった」という下限ガードを
+        #   増加側にも入れた。従来は older_mean_monthly > 0 だけだったため、年8個→13個のような
+        #   極小の増減でも「1.5倍成長」と判定され、24ヶ月平均では月1個に届かない商品が
+        #   直近12ヶ月ベースに切り替わって提案の最低ラインをすり抜けていた
+        #   （実測例: 24ヶ月平均0.875個/月・実質1社専用の商品が、年8個→13個という差だけで
+        #     成長判定になり6本＝1.1万円の提案が出ていた）。
+        #   この非対称は意図したものではなく実装漏れ。ガード追加で77商品が該当外になる
         is_growing = (not is_declining and
                       stat_recent['mean_monthly'] >= MIN_MEAN_MONTHLY and
-                      older_mean_monthly > 0 and
+                      older_mean_monthly >= MIN_MEAN_MONTHLY and
                       stat_recent['mean_monthly'] >= older_mean_monthly * GROWTH_RATIO_THRESHOLD)
         stat = stat_recent if (is_declining or is_growing) else stat_full
 
@@ -1665,6 +1801,8 @@ def main():
             'insufficient': insufficient, 'stock': stock, 'unit_cost': unit_cost,
             'lot': lot, 'on_order': on_order, 'excluded': excluded, 'eol_flagged': eol_flagged,
             'monthly_value': stat['mean_monthly'] * value_basis,
+            # 得意先集中度（対策3, v1.22.0）。売上ゼロの商品は空dictになるので既定値を入れておく
+            'concentration': concentration.get(code, {'custCount': 0, 'top1Share': 0.0, 'top1Cust': ''}),
         })
 
     # ---- ABCランク付与（月次原価貢献の累積構成比。分析対象商品全体が母集団） ----
@@ -1817,6 +1955,10 @@ def main():
             'mean_order_size': stat['mean_order_size'],
             'p95_order_size': stat['p95_order_size'],
             'max_order_size': stat['max_order_size'],
+            # 得意先集中度（対策3, v1.22.0）
+            'cust_count': item['concentration']['custCount'],
+            'top1_share': item['concentration']['top1Share'],
+            'top1_cust': item['concentration']['top1Cust'],
         }
         results.append(row)
         # stat['monthly'] は減少・増加トレンド商品なら直近12ヶ月分、そうでなければ24ヶ月分
@@ -1866,11 +2008,17 @@ def main():
                 'refOnly': ref_only,
                 # 直近90日実需要の月換算（v1.18.0, N-0）。アプリの「要対応」表示（Phase M）用
                 'recentDemandMonthly': recent_demand_monthly,
+                # 得意先集中度（対策3, v1.22.0）。「1社が買うのをやめたら在庫が丸ごと死ぬ」
+                # 商品を人が見つけられるようにするための表示用。数値の計算には使っていない
+                'custCount': item['concentration']['custCount'],
+                'top1Share': item['concentration']['top1Share'],
+                'top1Cust': item['concentration']['top1Cust'],
                 'note': build_note(stat, protect_days, lot, on_order=on_order, abc=abc,
                                    is_declining=is_declining, is_growing=is_growing,
                                    older_mean=older_mean, forced_by_negative_stock=forced_by_negative_stock,
                                    stock=stock, ref_reason=ref_reason, floor_source=floor_source,
-                                   season_factor=season_f),
+                                   season_factor=season_f, spike=spike_by_code.get(code),
+                                   concentration=item['concentration']),
             })
 
         if args.dry_run:
