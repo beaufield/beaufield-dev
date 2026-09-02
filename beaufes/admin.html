@@ -155,6 +155,37 @@
   .summaryGrid .sumChip.unassigned .chipCount { color: #ffe0b0; }
 
   /* ------------------------------------------------------------
+     申込ペースの折れ線グラフ（今年 vs 昨年・開催日を0として「何日前」で重ねる）
+     ------------------------------------------------------------ */
+  .paceHead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .paceHero { font-size: 22px; font-weight: bold; color: var(--main-dark); line-height: 1.2; }
+  .paceHeroSub { font-size: 13px; color: #555; }
+  /* 🔴 増減は色だけで示さない（色覚特性・白黒印刷）。必ず ▲▼ と符号付きの数字を添える */
+  .paceHeroSub .up { color: #15803d; font-weight: bold; }
+  .paceHeroSub .down { color: #b45309; font-weight: bold; }
+  .paceLegend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: #555; margin-bottom: 6px; }
+  .paceLegend span.key { display: inline-flex; align-items: center; gap: 6px; }
+  .paceLegend i { display: inline-block; width: 20px; height: 0; border-top-width: 2px; }
+  .chartBox { position: relative; width: 100%; }
+  .chartBox svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
+  .chartTip {
+    position: absolute; pointer-events: none; z-index: 3; display: none;
+    background: rgba(255,255,255,.97); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.14); padding: 7px 10px; font-size: 12px; line-height: 1.7;
+    white-space: nowrap; color: var(--text);
+  }
+  .chartTip .tipHead { font-weight: bold; margin-bottom: 2px; }
+  .chartTip .tipKey { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+  .chartNote { font-size: 11px; color: #888; margin-top: 8px; line-height: 1.7; }
+  details.paceDetails { margin-top: 8px; font-size: 12px; }
+  details.paceDetails summary { cursor: pointer; color: var(--main-dark); }
+  table.paceTable { border-collapse: collapse; margin-top: 8px; font-size: 12px; white-space: nowrap; }
+  table.paceTable th, table.paceTable td { border: 1px solid var(--border); padding: 4px 10px; text-align: right; }
+  table.paceTable th { background: #f1f6f9; font-weight: normal; color: #555; }
+  table.paceTable th.lbl, table.paceTable td.lbl { text-align: left; }
+  table.paceTable tr.now td, table.paceTable tr.now th { background: #eaf8fd; font-weight: bold; }
+
+  /* ------------------------------------------------------------
      一覧テーブル
      ------------------------------------------------------------ */
   .tableWrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -233,6 +264,27 @@
   <div id="app" style="display:none;">
     <div class="panel">
       <div class="row statusLine" id="loginStatusLine"></div>
+
+      <div class="row">
+        <label class="rowLabel">申込の推移（開催日を基準に「何日前」で昨年と重ねる）</label>
+        <div class="paceHead">
+          <span class="paceHero" id="paceHero">—</span>
+          <span class="paceHeroSub" id="paceHeroSub"></span>
+        </div>
+        <div class="paceLegend">
+          <span class="key"><i style="border-top: 2px solid #0284c7;"></i>今年（2026年10月26日 開催）</span>
+          <span class="key"><i style="border-top: 2px dashed #b45309;"></i>昨年（2025年6月23日 開催）</span>
+        </div>
+        <div class="chartBox" id="chartBox">
+          <svg id="paceChart" role="img" aria-label="申込件数の累計推移（今年と昨年の比較）"></svg>
+          <div class="chartTip" id="chartTip"></div>
+        </div>
+        <div class="chartNote" id="chartNote"></div>
+        <details class="paceDetails">
+          <summary>数字で見る（10日ごとの対比表）</summary>
+          <div class="tableWrap"><table class="paceTable" id="paceTable"></table></div>
+        </details>
+      </div>
 
       <div class="row">
         <label class="rowLabel">担当別の申込件数（クリックでその担当に絞り込み）</label>
@@ -338,7 +390,7 @@
 // 認証・GAS通信ルールは badges.html からそのまま移植している（自分で別方式にしないこと）
 // 版数の定義はこの APP_VERSION 1箇所だけ（AGENTS.md バージョン管理ルール）
 // ============================================================
-const APP_VERSION = '0.1.5';
+const APP_VERSION = '0.2.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
@@ -680,6 +732,7 @@ function applyFilters() {
   });
 
   sortFiltered();
+  renderChart();
   renderSummary();
   renderTable();
 
@@ -771,6 +824,400 @@ function resetFilters() {
   el('showCancelled').checked = false;
   el('onlyUnassigned').checked = false;
   applyFilters();
+}
+
+// ------------------------------------------------------------
+// 申込ペースの折れ線グラフ（今年 vs 昨年・開催日を0とした「何日前」で重ねる）
+// ------------------------------------------------------------
+// 🔴 昨年（2025年・6/23開催）の実績は「開催何日前に何件」だけを持つ。
+//    元データ（MS Forms の申込一覧）にはサロン名・氏名・電話・メールが入っているが、
+//    このリポジトリは Public なので日別件数の集計値以外は絶対に持ち込まない（GITHUB-RULES.md）。
+//    集計基準: フォームの「完了時刻」ベース・全214件。昨年はキャンセルの記録が
+//    元データに無いため、申込全件をそのまま計上している（今年側との差はこの注記で吸収する）。
+const EVENT_DATE_2026 = '2026-10-26'; // 開催当日。index.html の日時と必ず一致させること
+const EVENT_DATE_2025 = '2025-06-23'; // 昨年の開催当日（重ね合わせの基準）
+const LAST_YEAR_DAILY = [
+  [-70,1],[-69,1],[-68,2],[-66,1],[-65,1],[-63,1],[-62,1],[-61,2],[-59,10],[-58,3],[-57,1],
+  [-56,5],[-54,5],[-53,5],[-52,2],[-50,1],[-47,3],[-46,7],[-45,8],[-42,2],[-41,3],[-40,4],
+  [-39,3],[-38,4],[-37,3],[-35,1],[-34,4],[-33,8],[-32,2],[-31,1],[-30,1],[-27,6],[-26,6],
+  [-25,9],[-24,12],[-23,4],[-20,6],[-19,3],[-18,7],[-17,1],[-16,4],[-15,1],[-13,2],[-12,7],
+  [-11,8],[-10,6],[-7,3],[-6,9],[-5,10],[-4,3],[-3,9],[-2,2]
+];
+
+// 色は「今年＝青・昨年＝オレンジ」。P型/D型/T型のいずれでも判別できる組み合わせを
+// 選んである（加えて昨年は破線にし、凡例と直接ラベルも付けて色だけに頼らせない）
+const COLOR_TY = '#0284c7';
+const COLOR_LY = '#b45309';
+
+let chartModel = null;   // 直近の描画結果。ホバー時の座標逆算に使う
+let chartResizeTimer = null;
+
+function pad2(n) { return ('0' + n).slice(-2); }
+
+// 'YYYY-MM-DD' → UTCミリ秒。日付だけを扱うので時差の影響を受けない
+function keyToUTC(key) {
+  const s = String(key || '');
+  if (s.length < 10) return NaN;
+  const y = Number(s.slice(0, 4)), m = Number(s.slice(5, 7)), d = Number(s.slice(8, 10));
+  if (!y || !m || !d) return NaN;
+  return Date.UTC(y, m - 1, d);
+}
+
+// 開催日を0として「何日前か」を負の数で返す（-70 なら開催70日前）
+function dayOffset(key, eventKey) {
+  const a = keyToUTC(key), b = keyToUTC(eventKey);
+  if (isNaN(a) || isNaN(b)) return NaN;
+  return Math.round((a - b) / 86400000);
+}
+
+function offsetToKey(offset, eventKey) {
+  const d = new Date(keyToUTC(eventKey) + offset * 86400000);
+  return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate());
+}
+
+function todayKey() {
+  const d = new Date();
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+}
+
+function offsetLabel(o) { return (o === 0) ? '当日' : (-o) + '日前'; }
+
+function niceYStep(maxValue) {
+  const cands = [5, 10, 20, 25, 50, 100, 200, 250, 500];
+  for (let i = 0; i < cands.length; i++) if (maxValue / cands[i] <= 5) return cands[i];
+  return 1000;
+}
+
+function pickXStep(span, maxTicks) {
+  const cands = [7, 10, 14, 20, 30, 60];
+  for (let i = 0; i < cands.length; i++) if (span / cands[i] <= maxTicks) return cands[i];
+  return 90;
+}
+
+function esc(s) {
+  return String(s).split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;');
+}
+
+// ------------------------------------------------------------
+// 描画本体
+// ------------------------------------------------------------
+function renderChart() {
+  const box = el('chartBox');
+  const oldSvg = el('paceChart');
+  if (!box || !oldSvg) return;
+
+  // ---- 1. 「開催何日前」ごとの累計に直す
+  const lyDaily = {};
+  LAST_YEAR_DAILY.forEach(function (p) { lyDaily[p[0]] = p[1]; });
+
+  // 🔴 母集団は担当別サマリーと必ず同じにする（キャンセルの扱いだけチェックに従う）。
+  //    担当・業態などの絞り込みは無視する（全体のペースを見るためのグラフなので）
+  const showCancelled = el('showCancelled').checked;
+  const tyDaily = {};
+  let tyUndated = 0;
+  state.apps.forEach(function (a) {
+    if (!showCancelled && a.status !== 'confirmed') return;
+    const o = dayOffset(a.created_key, EVENT_DATE_2026);
+    if (isNaN(o)) { tyUndated++; return; }
+    tyDaily[o] = (tyDaily[o] || 0) + 1;
+  });
+
+  const today = dayOffset(todayKey(), EVENT_DATE_2026);
+  const maxX = 0;
+
+  // 今年の線は「今日」まで引く（その先はまだ分からないので引かない）。
+  // 🔴 ただし端末の時計ずれ等で今日より後の申込日が入っていたら、そこまで伸ばす。
+  //    ここを today で切ると、担当別サマリーの合計とグラフの件数が黙って食い違う
+  let tyLast = today;
+  Object.keys(tyDaily).forEach(function (k) { const o = Number(k); if (o > tyLast) tyLast = o; });
+  const tyEnd = Math.min(tyLast, 0);
+
+  let minX = LAST_YEAR_DAILY[0][0];
+  Object.keys(tyDaily).forEach(function (k) { const o = Number(k); if (o < minX) minX = o; });
+  if (tyEnd < minX) minX = tyEnd;    // 受付開始前でも「今日」が軸に入るようにする
+
+  const lyCum = {}, tyCum = {};
+  let acc = 0;
+  for (let o = minX; o <= maxX; o++) { acc += (lyDaily[o] || 0); lyCum[o] = acc; }
+  const lyTotal = acc;
+  acc = 0;
+  for (let o = minX; o <= tyEnd; o++) { acc += (tyDaily[o] || 0); tyCum[o] = acc; }
+  const tyNow = (tyEnd >= minX) ? acc : 0;
+  const lyNow = lyCum[Math.max(minX, Math.min(tyEnd, maxX))] || 0;
+
+  // ---- 2. 座標
+  const w = Math.max(320, Math.round(box.clientWidth || 640));
+  const h = (w >= 560) ? 250 : 208;
+  const padL = 44, padR = 14, padT = 18, padB = 28;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
+  const spanX = Math.max(1, maxX - minX);
+  const yStep = niceYStep(Math.max(lyTotal, tyNow, 1));
+  const yMax = Math.max(yStep, Math.ceil(Math.max(lyTotal, tyNow, 1) / yStep) * yStep);
+
+  function X(o) { return padL + (o - minX) / spanX * plotW; }
+  function Y(v) { return padT + plotH - (v / yMax) * plotH; }
+  function anchorFor(x) {
+    if (x < padL + 20) return 'start';
+    if (x > w - padR - 20) return 'end';
+    return 'middle';
+  }
+
+  // ---- 3. SVGを組み立てる（入る値はすべてこちらで計算した数値・固定文字列のみ）
+  const p = [];
+
+  for (let v = 0; v <= yMax; v += yStep) {
+    const y = Y(v).toFixed(1);
+    p.push('<line x1="' + padL + '" y1="' + y + '" x2="' + (w - padR) + '" y2="' + y +
+           '" stroke="#eef2f5" stroke-width="1"/>');
+    p.push('<text x="' + (padL - 7) + '" y="' + (Y(v) + 4).toFixed(1) +
+           '" text-anchor="end" font-size="11" fill="#9aa5ad">' + v + '</text>');
+  }
+  p.push('<line x1="' + padL + '" y1="' + Y(0).toFixed(1) + '" x2="' + (w - padR) +
+         '" y2="' + Y(0).toFixed(1) + '" stroke="#d7dee3" stroke-width="1"/>');
+
+  const xStep = pickXStep(spanX, (w >= 560) ? 7 : 4);
+  for (let o = 0; o >= minX; o -= xStep) {
+    const x = X(o);
+    p.push('<line x1="' + x.toFixed(1) + '" y1="' + Y(0).toFixed(1) + '" x2="' + x.toFixed(1) +
+           '" y2="' + (Y(0) + 4).toFixed(1) + '" stroke="#d7dee3" stroke-width="1"/>');
+    p.push('<text x="' + x.toFixed(1) + '" y="' + (h - 9) + '" text-anchor="' + anchorFor(x) +
+           '" font-size="11" fill="#9aa5ad">' + esc(offsetLabel(o)) + '</text>');
+  }
+
+  if (today >= minX && today <= maxX) {
+    const x = X(today);
+    p.push('<line x1="' + x.toFixed(1) + '" y1="' + padT + '" x2="' + x.toFixed(1) + '" y2="' +
+           Y(0).toFixed(1) + '" stroke="#b9c6cd" stroke-width="1" stroke-dasharray="3 3"/>');
+    p.push('<text x="' + x.toFixed(1) + '" y="' + (padT - 5) + '" text-anchor="' + anchorFor(x) +
+           '" font-size="10" fill="#8b969e">今日</text>');
+  }
+
+  function linePath(cum, from, to) {
+    const seg = [];
+    for (let o = from; o <= to; o++) {
+      seg.push((seg.length ? 'L' : 'M') + X(o).toFixed(1) + ' ' + Y(cum[o]).toFixed(1));
+    }
+    return seg.join(' ');
+  }
+
+  // 線の上に文字が乗っても読めるように、白フチ（縁取り）を付けてから塗る
+  function endLabel(x, y, anchor, text) {
+    return '<text x="' + x + '" y="' + y + '" text-anchor="' + anchor +
+           '" font-size="11" font-weight="bold" fill="#555" stroke="#fff" stroke-width="3"' +
+           ' paint-order="stroke" stroke-linejoin="round">' + esc(text) + '</text>';
+  }
+
+  // 昨年（破線）→ 今年（実線）の順に描き、今年を必ず上に重ねる
+  p.push('<path d="' + linePath(lyCum, minX, maxX) + '" fill="none" stroke="' + COLOR_LY +
+         '" stroke-width="2" stroke-dasharray="6 4" stroke-linecap="round" stroke-linejoin="round"/>');
+  p.push('<circle cx="' + X(maxX).toFixed(1) + '" cy="' + Y(lyTotal).toFixed(1) +
+         '" r="4" fill="' + COLOR_LY + '" stroke="#fff" stroke-width="2"/>');
+  p.push(endLabel(w - padR, (Y(lyTotal) + 20).toFixed(1), 'end', '昨年 ' + lyTotal));
+
+  if (tyEnd >= minX) {
+    p.push('<path d="' + linePath(tyCum, minX, tyEnd) + '" fill="none" stroke="' + COLOR_TY +
+           '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>');
+    p.push('<circle cx="' + X(tyEnd).toFixed(1) + '" cy="' + Y(tyNow).toFixed(1) +
+           '" r="4" fill="' + COLOR_TY + '" stroke="#fff" stroke-width="2"/>');
+    p.push(endLabel(X(tyEnd).toFixed(1), (Y(tyNow) - 10).toFixed(1), anchorFor(X(tyEnd)), '今年 ' + tyNow));
+  }
+
+  // ホバー用（十字線と点は最初は隠しておく）
+  p.push('<g id="paceCross" style="display:none">' +
+         '<line id="paceCrossLine" y1="' + padT + '" y2="' + Y(0).toFixed(1) +
+         '" stroke="#8b969e" stroke-width="1" stroke-dasharray="3 3"/>' +
+         '<circle id="paceDotLy" r="4.5" fill="' + COLOR_LY + '" stroke="#fff" stroke-width="2"/>' +
+         '<circle id="paceDotTy" r="4.5" fill="' + COLOR_TY + '" stroke="#fff" stroke-width="2"/>' +
+         '</g>');
+  // 当たり判定（線より広く取る）
+  p.push('<rect x="' + padL + '" y="' + padT + '" width="' + plotW + '" height="' + plotH +
+         '" fill="transparent"/>');
+
+  // 🔴 SVG要素への直接 innerHTML は環境によって落ちるため、
+  //    div にHTMLとして組んでからノードごと差し替える
+  const holder = document.createElement('div');
+  holder.innerHTML =
+    '<svg id="paceChart" role="img" viewBox="0 0 ' + w + ' ' + h + '" width="' + w + '" height="' + h +
+    '" aria-label="申込件数の累計推移。今年は' + tyNow + '件、昨年の同時期は' + lyNow + '件。">' +
+    p.join('') + '</svg>';
+  const newSvg = holder.firstChild;
+  oldSvg.parentNode.replaceChild(newSvg, oldSvg);
+
+  chartModel = {
+    minX: minX, maxX: maxX, tyEnd: tyEnd, today: today,
+    lyCum: lyCum, tyCum: tyCum, lyTotal: lyTotal, tyNow: tyNow, lyNow: lyNow,
+    w: w, h: h, padL: padL, padT: padT, plotW: plotW, plotH: plotH, yMax: yMax,
+    X: X, Y: Y
+  };
+
+  newSvg.addEventListener('pointermove', onChartPoint);
+  newSvg.addEventListener('pointerdown', onChartPoint);
+  newSvg.addEventListener('pointerleave', hideChartTip);
+  newSvg.addEventListener('pointercancel', hideChartTip);
+
+  renderPaceHero(tyNow, lyNow, tyEnd);
+  renderPaceNote(showCancelled, tyUndated);
+  renderPaceTable();
+}
+
+// ------------------------------------------------------------
+// 見出し（今日時点でどこまで来ているか）
+// ------------------------------------------------------------
+function renderPaceHero(tyNow, lyNow, tyEnd) {
+  el('paceHero').textContent = '今年 ' + tyNow + '件';
+
+  const parts = [];
+  parts.push('（' + esc(offsetLabel(Math.max(tyEnd, chartModel.minX))) + '時点');
+  parts.push('昨年の同時期 ' + lyNow + '件');
+  const diff = tyNow - lyNow;
+  if (lyNow > 0) {
+    // 🔴 増減は色だけで示さない（▲▼と符号を必ず添える）
+    const cls  = (diff >= 0) ? 'up' : 'down';
+    const mark = (diff >= 0) ? '▲' : '▼';
+    const sign = (diff >= 0) ? '+' : '−';
+    parts.push('<span class="' + cls + '">' + mark + ' ' + sign + Math.abs(diff) +
+               '件（昨年比 ' + Math.round(tyNow / lyNow * 100) + '%）</span>');
+  }
+  parts.push('昨年の最終 ' + chartModel.lyTotal + '件）');
+  el('paceHeroSub').innerHTML = parts.join(' ・ ');
+}
+
+function renderPaceNote(showCancelled, tyUndated) {
+  let s = '※ 開催日を0日として重ねています。今年＝2026年10月26日（月）開催、昨年＝2025年6月23日（月）開催・最終' +
+          chartModel.lyTotal + '件。' +
+          '昨年はフォームの完了時刻ベースで、キャンセルの記録が元データに無いため申込全件を計上しています。' +
+          '今年は' + (showCancelled ? 'キャンセル済みも含めた' : 'キャンセルを除いた（確定分の）') + '件数です。' +
+          'このグラフは担当・業態などの絞り込みには連動しません（全体のペースを見るため）。';
+  if (tyUndated > 0) s += ' ⚠ 申込日が読み取れない申込が' + tyUndated + '件あり、グラフから除いています。';
+  el('chartNote').textContent = s;
+}
+
+// ------------------------------------------------------------
+// 対比表（グラフを読まなくても数字で追えるようにする）
+// ------------------------------------------------------------
+function renderPaceTable() {
+  const m = chartModel;
+  const table = el('paceTable');
+  table.textContent = '';
+
+  const step = 10;
+  const marks = [];
+  for (let o = Math.ceil(m.minX / step) * step; o <= 0; o += step) marks.push(o);
+  if (marks.indexOf(0) < 0) marks.push(0);
+  if (m.tyEnd >= m.minX && m.tyEnd <= 0 && marks.indexOf(m.tyEnd) < 0) marks.push(m.tyEnd);
+  marks.sort(function (a, b) { return a - b; });
+
+  const thead = document.createElement('thead');
+  const htr = document.createElement('tr');
+  [['時点', 'lbl'], ['今年', ''], ['昨年', ''], ['差', '']].forEach(function (c) {
+    const th = document.createElement('th');
+    th.className = c[1];
+    th.textContent = c[0];
+    htr.appendChild(th);
+  });
+  thead.appendChild(htr);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  marks.forEach(function (o) {
+    const tr = document.createElement('tr');
+    const isNow = (o === m.tyEnd);
+    if (isNow) tr.className = 'now';
+
+    const th = document.createElement('th');
+    th.className = 'lbl';
+    // 通常 tyEnd は今日。ずれている場合（時計ずれ等）は「今日」と言い切らない
+    th.textContent = offsetLabel(o) + (o === m.today ? '（今日）' : (isNow ? '（最新）' : ''));
+    tr.appendChild(th);
+
+    const known = (o <= m.tyEnd && o >= m.minX);
+    const ty = known ? m.tyCum[o] : null;
+    const ly = m.lyCum[o] || 0;
+    const cells = [
+      known ? (ty + '件') : '—',
+      ly + '件',
+      known ? (((ty - ly) >= 0 ? '+' : '−') + Math.abs(ty - ly) + '件') : '—'
+    ];
+    cells.forEach(function (v) {
+      const td = document.createElement('td');
+      td.textContent = v;
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+}
+
+// ------------------------------------------------------------
+// ホバー（十字線＋吹き出し）
+// ------------------------------------------------------------
+function hideChartTip() {
+  const g = el('paceCross');
+  if (g) g.style.display = 'none';
+  el('chartTip').style.display = 'none';
+}
+
+function onChartPoint(ev) {
+  const m = chartModel;
+  const svg = el('paceChart');
+  if (!m || !svg) return;
+
+  const rect = svg.getBoundingClientRect();
+  if (!rect.width) return;
+  // SVGは幅100%で拡縮されるので、描画時の座標系に戻してから日数に直す
+  const scale = m.w / rect.width;
+  const px = (ev.clientX - rect.left) * scale;
+  let o = Math.round(m.minX + (px - m.padL) / m.plotW * (m.maxX - m.minX));
+  if (o < m.minX) o = m.minX;
+  if (o > m.maxX) o = m.maxX;
+
+  const x = m.X(o);
+  el('paceCross').style.display = '';
+  const line = el('paceCrossLine');
+  line.setAttribute('x1', x.toFixed(1));
+  line.setAttribute('x2', x.toFixed(1));
+
+  const ly = m.lyCum[o] || 0;
+  const dotLy = el('paceDotLy');
+  dotLy.setAttribute('cx', x.toFixed(1));
+  dotLy.setAttribute('cy', m.Y(ly).toFixed(1));
+
+  const known = (o <= m.tyEnd);
+  const ty = known ? (m.tyCum[o] || 0) : null;
+  const dotTy = el('paceDotTy');
+  if (known) {
+    dotTy.style.display = '';
+    dotTy.setAttribute('cx', x.toFixed(1));
+    dotTy.setAttribute('cy', m.Y(ty).toFixed(1));
+  } else {
+    dotTy.style.display = 'none';
+  }
+
+  const rows = [];
+  rows.push('<div class="tipHead">' + esc(offsetLabel(o)) + '（今年 ' + esc(offsetToKey(o, EVENT_DATE_2026)) + '）</div>');
+  rows.push('<div><span class="tipKey" style="background:' + COLOR_TY + '"></span>今年 ' +
+            (known ? (ty + '件') : '—') + '</div>');
+  rows.push('<div><span class="tipKey" style="background:' + COLOR_LY + '"></span>昨年 ' + ly + '件' +
+            '<span style="color:#999"> / ' + esc(offsetToKey(o, EVENT_DATE_2025)) + '</span></div>');
+  if (known) {
+    const d = ty - ly;
+    rows.push('<div>差 ' + ((d >= 0) ? '+' : '−') + Math.abs(d) + '件' +
+              (ly > 0 ? '（昨年比 ' + Math.round(ty / ly * 100) + '%）' : '') + '</div>');
+  }
+
+  const tip = el('chartTip');
+  tip.innerHTML = rows.join('');
+  tip.style.display = 'block';
+
+  const bx = el('chartBox').getBoundingClientRect();
+  let left = (ev.clientX - bx.left) + 14;
+  if (left + tip.offsetWidth > bx.width) left = (ev.clientX - bx.left) - tip.offsetWidth - 14;
+  if (left < 0) left = 0;
+  let top = (ev.clientY - bx.top) - 12;
+  if (top + tip.offsetHeight > bx.height) top = bx.height - tip.offsetHeight;
+  if (top < 0) top = 0;
+  tip.style.left = Math.round(left) + 'px';
+  tip.style.top = Math.round(top) + 'px';
 }
 
 // ------------------------------------------------------------
@@ -1192,6 +1639,12 @@ function init() {
     setFilterOpen(el('filterBody').hidden, true); // 畳んでいたら開く・開いていたら畳む
   });
   setFilterOpen(defaultFilterOpen(), false); // 初期表示は記憶または画面幅で決める（保存はしない）
+
+  // グラフは幅に合わせて実寸で描くので、画面幅が変わったら描き直す（連打を防ぐため間引く）
+  window.addEventListener('resize', function () {
+    if (chartResizeTimer) clearTimeout(chartResizeTimer);
+    chartResizeTimer = setTimeout(function () { hideChartTip(); renderChart(); }, 180);
+  });
   el('bulkApplyBtn').addEventListener('click', bulkApply);
   el('selectAllBtn').addEventListener('click', selectAllVisible);
   el('clearSelBtn').addEventListener('click', clearSelection);
@@ -1204,6 +1657,8 @@ function init() {
   document.querySelectorAll('input[name=trade]').forEach(function (r) {
     r.addEventListener('change', applyFilters);
   });
+
+  renderChart(); // 取得前でも昨年の線と目盛りは出しておく（申込を取ると今年の線が乗る）
 
   if (isMock()) {
     el('mockBanner').style.display = 'block';
