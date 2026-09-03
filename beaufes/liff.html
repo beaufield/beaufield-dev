@@ -202,7 +202,7 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.5.0';
 const GAS_URL  = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const LIFF_ID  = '2010404613-cwHA5B0U';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
@@ -402,6 +402,15 @@ function applyHasTransaction(hasTransaction) {
 // ------------------------------------------------------------
 // 送信
 // ------------------------------------------------------------
+// 🆕 v0.5.0: LINEのIDトークン。boot()が取得できた時点で入る。
+// 🔴 submitハンドラをboot()の中で登録してはいけない（v0.4.0以前はそうなっていた）。
+// boot()の登録位置はプリフィル取得のawaitより後だったが、フォームの表示はawaitより前。
+// プリフィル取得は最大約80秒かかりうる（10秒×6回＋待ち時間）ので、その間に送信すると
+// ハンドラがまだ無く、<form>が素のGET送信になって——actionが無いので同じURLへ遷移し——
+// **入力内容ごとページがリロードされる**。ハンドラは必ずトップレベルで先に登録し、
+// トークンの有無はハンドラの中で見ること。
+let currentIdToken = null;
+
 function buildPayload(idToken) {
   return {
     id_token:         idToken,
@@ -450,6 +459,21 @@ async function sendApplyLiff(idToken) {
   }
 }
 
+// 🆕 v0.5.0: 送信ハンドラはここ（トップレベル）で登録する。boot()の完了を待たない。
+// 🔴 ev.preventDefault() は何よりも先に呼ぶこと。ここを通らずに抜けると<form>の
+// 既定動作（GET送信＝ページのリロード）が走り、入力内容が消える。
+el('applyForm').addEventListener('submit', function (ev) {
+  ev.preventDefault();
+  hideError('errorMsg');
+  if (!currentIdToken) {
+    // 実際にはフォームはトークン取得後にしか表示されないので、ここへは通常来ない。
+    // 表示条件を将来変えたときに、黙ってリロードされるのではなく理由が出るようにしておく。
+    showError('errorMsg', 'LINEのログイン情報を確認しています。数秒おいて、もう一度お試しください。');
+    return;
+  }
+  sendApplyLiff(currentIdToken);
+});
+
 // ------------------------------------------------------------
 // LIFF起動シーケンス
 // ------------------------------------------------------------
@@ -496,6 +520,9 @@ async function boot() {
     return;
   }
 
+  // 🔴 フォームを表示するより先にトークンを渡す。表示された瞬間から送信できる状態にするため。
+  currentIdToken = idToken;
+
   hideBoot();
   el('eventInfo').style.display = 'block';
   el('formWrap').style.display  = 'block';
@@ -518,12 +545,8 @@ async function boot() {
   } finally {
     el('prefillStatus').style.display = 'none';
   }
-
-  el('applyForm').addEventListener('submit', function (ev) {
-    ev.preventDefault();
-    hideError('errorMsg');
-    sendApplyLiff(idToken);
-  });
+  // 🔴 ここに submit ハンドラを戻さないこと（v0.5.0で上のトップレベルへ移した）。
+  // 理由は currentIdToken の宣言に書いてある。
 }
 
 boot();
