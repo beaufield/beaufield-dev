@@ -155,7 +155,10 @@
       <input type="text" id="e_staff_name" required>
 
       <label>メールアドレス<span class="req">必須</span></label>
-      <input type="email" id="e_email" required>
+      <!-- 🔴 inputmode/autocapitalize/spellcheck は「日本語IMEのまま全角で打たれる」事故を
+           減らすためのもの。消さないこと（2026-09-03） -->
+      <input type="email" id="e_email" inputmode="email" autocomplete="email"
+             autocapitalize="off" spellcheck="false" required>
 
       <label>お電話番号<span class="req">必須</span></label>
       <input type="tel" id="e_phone" required>
@@ -214,7 +217,7 @@
 
 <script src="lib/qrcode.min.js"></script>
 <script>
-const APP_VERSION = '0.8.0';
+const APP_VERSION = '0.9.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
@@ -239,6 +242,50 @@ function el(id) {
 function sleep(ms) {
   return new Promise(function (r) { setTimeout(r, ms); });
 }
+
+// ------------------------------------------------------------
+// 🆕 v0.9.0: メールアドレスの全角→半角 自動補正
+// ------------------------------------------------------------
+// 🔴 index.html v0.12.0 と同一の実装。経緯・注意点はそちらのコメントを参照
+//（要点: type="email" はブラウザ標準の検証が送信直前に走るため、日本語IMEのまま
+//  打った全角の `＠` `ａ` で「@ を挿入してください」と弾かれ、お客様には
+//  「入力できない」としか見えない。composition中に走らせるとIMEが壊れる）。
+// 🔴 index.html / liff.html にも同じ関数がある。直すときは3つとも直すこと。
+function normalizeEmailValue(v) {
+  return String(v)
+    .replace(/[！-～]/g, function (ch) {   // 全角ASCII（！〜～）→ 半角
+      return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0);
+    })
+    .replace(/[\s　]/g, '');                   // 空白（全角スペース含む）は除去
+}
+
+function attachEmailNormalizer(input, form) {
+  let composing = false;
+
+  function fix() {
+    if (composing) return false;
+    const before = input.value;
+    const after  = normalizeEmailValue(before);
+    if (after === before) return false;
+    input.value = after;
+    return true;
+  }
+
+  input.addEventListener('compositionstart', function () { composing = true; });
+  input.addEventListener('compositionend',   function () { composing = false; fix(); });
+  input.addEventListener('blur',   function () { fix(); });
+  input.addEventListener('change', function () { fix(); });
+
+  input.addEventListener('invalid', function (ev) {
+    if (!fix()) return;
+    if (!input.checkValidity()) return;
+    ev.preventDefault();
+    if (!form || !form.requestSubmit) return;
+    setTimeout(function () { form.requestSubmit(); }, 0);
+  });
+}
+
+attachEmailNormalizer(el('e_email'), el('editForm'));
 
 // ------------------------------------------------------------
 // QRの描画 —— サーバーに一切問い合わせずに行う
