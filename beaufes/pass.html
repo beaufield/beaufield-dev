@@ -110,6 +110,95 @@
   .formCard .btnQuiet {
     background: #fff; color: #888; border: 1px solid var(--border); font-weight: normal;
   }
+
+  /* ===== 🆕 v0.10.0 セミナー予約 =====
+     🔴 index.html / liff.html にも同じ見た目のものを置いてある。直すときは3つとも直すこと。 */
+  .semLine     { text-align: left; }
+  .semToggleLine { text-align: center; margin-top: 10px; font-size: 13px; }
+  .semToggleLine a { color: var(--main-dark); }
+  .semAlert {
+    margin-top: 10px; background: #fffbeb; color: #92400e;
+    border: 1px solid #fde68a; border-radius: 8px; padding: 10px 12px;
+    font-size: 13px; line-height: 1.7;
+  }
+  .semNote  { font-size: 12px; color: #888; margin: 4px 0 10px; line-height: 1.7; }
+  .semMailNote {
+    margin-top: 10px; background: #ecfdf5; color: #059669;
+    border: 1px solid #a7f3d0; border-radius: 8px; padding: 8px 12px;
+    font-size: 12px; line-height: 1.7;
+  }
+  .semSlot  { margin-top: 14px; }
+  .semSlotHead {
+    font-size: 13px; font-weight: bold; color: var(--main-dark);
+    border-left: 3px solid var(--main); padding-left: 8px;
+  }
+  .semCard {
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; margin-top: 8px; background: #fff;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .semCard.selected { border-color: var(--main); box-shadow: 0 0 0 2px rgba(91,200,232,.28); }
+  .semCard.full     { background: #fafafa; }
+  .semPick   { display: flex; gap: 10px; align-items: flex-start; font-weight: normal; margin: 0; cursor: pointer; }
+  .semCard.full .semPick { cursor: default; }
+  .semPick input { margin-top: 3px; flex: none; }
+  .semTitle  { font-weight: bold; font-size: 14px; line-height: 1.55; display: block; }
+  .semCard.full .semTitle { color: #999; }
+  .semMeta   { font-size: 12px; color: #666; margin-top: 5px; display: block; }
+  .semSeats.few  { color: #d97706; font-weight: bold; }
+  .semSeats.full { color: #dc2626; font-weight: bold; }
+  .semDetail { margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 8px; }
+  .semDetail summary { cursor: pointer; color: var(--main-dark); font-size: 13px; list-style: none; outline: none; }
+  .semDetail summary::-webkit-details-marker { display: none; }
+  .semDetail summary::before { content: "▶ "; font-size: 10px; }
+  .semDetail[open] summary::before { content: "▼ "; }
+  .semDetailBody { font-size: 13px; line-height: 1.9; color: #555; padding: 6px 2px 2px; }
+  .semDetailBody ul { margin: 6px 0 10px; padding-left: 1.2em; }
+  .semDetailBody li { margin-bottom: 3px; }
+  .semDetailBody p  { margin: 0; }
+  .semSkip {
+    display: flex; align-items: center; gap: 8px;
+    font-weight: normal; font-size: 13px; color: #666; margin: 8px 0 0; padding-left: 2px;
+  }
+  .semSlotDetail { margin-top: 10px; }
+  .semSlotDetail .semDetail { border-top: none; padding-top: 0; }
+  /* 時間チップの一覧（同じ内容の枠が4つ以上並ぶとき） */
+  .semSlotHint { font-size: 12px; color: #888; margin: 6px 0 0; }
+  .semGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .semChip {
+    position: relative;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 1px;
+    padding: 9px 4px;
+    border: 1px solid var(--border); border-radius: 10px;
+    background: #fff; cursor: pointer; font-weight: normal; margin: 0;
+    text-align: center; line-height: 1.3;
+    transition: border-color .15s, background .15s, box-shadow .15s;
+  }
+  .semChip input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+  .semChipTime { font-size: 15px; font-weight: bold; color: var(--text); }
+  .semChipSub  { font-size: 11px; color: #999; }
+  .semChip.selected {
+    border-color: var(--main); background: var(--main-dark);
+    box-shadow: 0 0 0 2px rgba(91,200,232,.28);
+  }
+  .semChip.selected .semChipTime,
+  .semChip.selected .semChipSub { color: #fff; }
+  .semChip.full {
+    background: #f4f5f6; border-color: #e6e8ea; cursor: default;
+  }
+  .semChip.full .semChipTime { color: #b9bec3; }
+  .semChip.full .semChipSub  { color: #b45454; font-weight: bold; }
+  /* 🔴 このページだけ `.formCard label { display:block; font-weight:bold }` のほうが
+     詳細度で勝ってしまい、ラジオとタイトルが縦積みになる。打ち消しておくこと。 */
+  .formCard label.semPick { display: flex; font-weight: normal; margin: 0; }
+  .formCard label.semSkip { display: flex; font-weight: normal; margin: 8px 0 0; }
+  .formCard label.semChip { display: flex; font-weight: normal; margin: 0; }
 </style>
 </head>
 <body>
@@ -129,8 +218,19 @@
 
     <div class="event-info" id="eventInfo"></div>
 
-    <div class="event-info" id="seminarInfo">
-      <b>セミナー</b>：内容が決まり次第、この画面からご予約いただけます（現在準備中）
+    <!-- 🆕 v0.10.0 セミナー予約。枠は sessions シートから取得して描く（コードに枠を書かない） -->
+    <div class="event-info semLine" id="seminarInfo">
+      <div><b>ご予約</b>：<span id="semCurrent">確認中…</span></div>
+      <div class="semAlert" id="semFullAlert" style="display:none;">
+        ご希望の枠は満席のため、ご予約をお取りできませんでした。<br>
+        <span style="color:#a16207;">ご入場のお申し込みは完了しています。</span>空いている枠は下からご予約いただけます。
+      </div>
+      <div class="semMailNote" id="semMailNote" style="display:none;">
+        ご予約内容の控えをメールでお送りしました。
+      </div>
+      <div class="semToggleLine" id="semToggleLine" style="display:none;">
+        <a href="#" id="semToggleLink">セミナー・体験会を予約する／変更する</a>
+      </div>
     </div>
 
     <div class="warnBox" id="warnBox">
@@ -142,6 +242,19 @@
     <div class="editToggleLine" id="editToggleLine" style="display:none;">
       <a href="#" id="editToggleLink">お申し込み内容を変更する</a>
     </div>
+  </div>
+
+  <!-- 🆕 v0.10.0: セミナー予約パネル（reserveSessionsのみを呼ぶ。申込内容には触らない） -->
+  <div class="card formCard" id="semPanel" style="display:none;">
+    <p class="panelTitle">セミナー・体験会のご予約</p>
+    <div class="semNote">
+      ご予約がなくてもご入場いただけます。<br>
+      時間帯ごとに1つお選びください。「予約しない」を選ぶとご予約は取り消されます。
+    </div>
+    <div id="semList"></div>
+    <div class="errorMsg" id="semError"></div>
+    <button type="button" class="btn" id="semSaveBtn">この内容で予約する</button>
+    <button type="button" class="btn btnQuiet" id="semCancelBtn">閉じる</button>
   </div>
 
   <!-- 🆕 L1-e: お申し込み内容の変更フォーム（§4 L1-e・updateApplicationのみを呼ぶ） -->
@@ -217,7 +330,7 @@
 
 <script src="lib/qrcode.min.js"></script>
 <script>
-const APP_VERSION = '0.9.0';
+const APP_VERSION = '0.15.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
@@ -434,6 +547,353 @@ function hideError(id) { el(id).style.display = 'none'; }
 // ------------------------------------------------------------
 // メイン
 // ------------------------------------------------------------
+// ------------------------------------------------------------
+// 🆕 v0.10.0: セミナー予約
+// ------------------------------------------------------------
+// 🔴 枠の内容（タイトル・時間・定員・詳細）はこのファイルに一切書かない。sessionsシートが正。
+// 🔴 セミナーの取得・保存に失敗しても、QRと入場パスの表示は絶対に壊さないこと。
+//    当日いちばん大事なのは QR が出ること（このページの設計方針）。
+// 🔴 index.html / liff.html にも同じ描画ロジックがある。直すときは3つとも直すこと。
+
+const IS_MOCK = qs('mock') === '1';
+
+// ?mock=1 用のダミーデータ。GASもスプレッドシートも使わずに見た目と操作を確認するためのもの。
+// 🔵 本番の中身は sessions シート（seedSeminarSessions で投入）。ここはあくまで画面確認用で、
+//    「同じ時間帯に2枠」「満席」「定員なし」「開始時刻だけの枠が7つ」を全部含めてある。
+const MOCK_BALANCE_BULLETS = [
+  'コンピューター精密計測で、足裏の圧力バランスと骨盤のゆがみをデータで見える化',
+  '微細振動波（圧電体）による体軸の体感テスト',
+  'お一人ずつのオーダーメイド インソール型骨格調整具のご提案'
+];
+const MOCK_BALANCE_OVERVIEW =
+  '長引く「ひざ痛・腰痛・猫背・肩こり・疲労感」の原因は、骨格のゆがみかもしれません。\n' +
+  '足裏コンピューター計測で、骨盤と足裏のバランスを精密に測定します。\n' +
+  'お一人ずつ丁寧に計測・ご説明を行うため完全予約制です（各回1名様）。';
+
+function mockBalanceSlot(id, start, end, remaining) {
+  return { session_id: id, slot: 'バランス革命 無料計測会', title: start + '〜' + end + 'の回',
+           starts_at: start, ends_at: end, capacity: 1, remaining: remaining,
+           is_full: (remaining <= 0), bullets: MOCK_BALANCE_BULLETS, overview: MOCK_BALANCE_OVERVIEW };
+}
+
+const MOCK_SESSIONS = [
+  { session_id: 'S1', slot: 'セミナー 第1部', title: 'オトナ女子の"巡り"に寄り添うフェムケアセミナー',
+    starts_at: '11:00', ends_at: '12:00', capacity: 30, remaining: 12, is_full: false,
+    bullets: ['更年期は"予防"できる！', '結局更年期の原因ってなにから来ているの？',
+              '身体の変化に寄り添ったエッセンス新商品のご紹介', '今日からできるフェムケア'],
+    overview: '年齢を重ねるにつれて感じる、理由のはっきりしないゆらぎや、すっきりしない毎日。\n' +
+              '頑張っているのに気分が晴れない、以前とは違う自分に戸惑う、そんなオトナ女子のために' +
+              '生まれたのが「Meguru+（メグルプラス）」です。\n' +
+              '「ゆらぐ私に穏やかな巡りを」をコンセプトに、これからの毎日を前向きに、自分らしく' +
+              '過ごすための新しい習慣をご提案します。\n' +
+              '本セミナーでは、更年期の仕組みとその解決するための秘密を詳しくご紹介。' +
+              '変化の時期を、美しく心地よく迎えるためのヒントをお届けします。' },
+  { session_id: 'S2', slot: 'セミナー 第2部', title: 'ジャンパーニュ体験セミナー',
+    starts_at: '14:00', ends_at: '15:00', capacity: 30, remaining: 28, is_full: false,
+    bullets: ['ジャンパーニュの特徴をご紹介', 'サロンでの取り入れ方', '実際に体験していただけます'],
+    overview: '※この説明文は仮のものです。内容が決まり次第、差し替えます。' },
+  mockBalanceSlot('B1', '10:00', '10:45', 1),
+  mockBalanceSlot('B2', '10:45', '11:30', 0),   // 満席の見え方
+  mockBalanceSlot('B3', '11:30', '12:15', 1),
+  mockBalanceSlot('B4', '12:45', '13:30', 1),
+  mockBalanceSlot('B5', '13:30', '14:15', 0),   // 満席が2つ並んだときの見え方
+  mockBalanceSlot('B6', '14:15', '15:00', 1),
+  mockBalanceSlot('B7', '15:00', '15:45', 1)
+];
+
+let semCatalog  = [];   // 公開中の枠
+let semReserved = [];   // 自分がいま予約している session_id
+
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function seatLabel(s) {
+  if (s.capacity === null || s.capacity === undefined) return '';
+  if (s.is_full) return '<span class="semSeats full">満席</span>';
+  const cls = (s.remaining !== null && s.remaining <= 5) ? 'semSeats few' : 'semSeats';
+  return '<span class="' + cls + '">残り' + s.remaining + '席</span>' +
+         '<span style="color:#aaa;"> ／ 定員' + s.capacity + '名</span>';
+}
+
+// 時刻の表示。🔴 終了時刻が空欄でも「10:00〜」と出す。
+// 予約枠の一覧に開始時刻しか無いことがあり、「両方揃っていなければ何も出さない」に
+// すると時間が画面から消える。
+function timeLabel(s) {
+  if (!s.starts_at) return '';
+  return s.starts_at + '〜' + (s.ends_at || '');
+}
+
+function hasDetail(s) {
+  return !!((s.bullets && s.bullets.length) || s.overview);
+}
+
+// タップして開く詳細（内容の箇条書き＋概要）
+function detailHtml(s) {
+  if (!hasDetail(s)) return '';
+  return '<details class="semDetail"><summary>詳しい内容をみる</summary>' +
+         '<div class="semDetailBody">' +
+         ((s.bullets && s.bullets.length)
+           ? '<ul>' + s.bullets.map(function (b) { return '<li>' + escHtml(b) + '</li>'; }).join('') + '</ul>'
+           : '') +
+         (s.overview ? '<p>' + escHtml(s.overview).replace(/\n/g, '<br>') + '</p>' : '') +
+         '</div></details>';
+}
+
+// ふつうのカード（1枠ずつ縦に並べる）
+function sessionCardHtml(s, radioName, checked, hideTime, hideDetail) {
+  const time  = hideTime ? '' : timeLabel(s);
+  const seats = seatLabel(s);
+  const meta  = [time, seats].filter(function (x) { return x; }).join(' ／ ');
+  // 🔴 満席でも「自分が予約している枠」は選べる状態で出す。disabledにすると自分の予約が
+  //    画面上で外れて見え、そのまま保存すると取り消されてしまう。
+  const disabled = (s.is_full && !checked);
+
+  return '<div class="semCard' + (disabled ? ' full' : '') + (checked ? ' selected' : '') +
+         '" data-sid="' + escHtml(s.session_id) + '">' +
+         '<label class="semPick">' +
+         '<input type="radio" name="' + radioName + '" value="' + escHtml(s.session_id) + '"' +
+         (disabled ? ' disabled' : '') + (checked ? ' checked' : '') + '>' +
+         '<span><span class="semTitle">' + escHtml(s.title) + '</span>' +
+         (meta ? '<span class="semMeta">' + meta + '</span>' : '') +
+         (s.speaker ? '<span class="semMeta">' + escHtml(s.speaker) + '</span>' : '') +
+         '</span></label>' + (hideDetail ? '' : detailHtml(s)) + '</div>';
+}
+
+// 時間チップ（1行に複数並べる）。同じ内容の枠が時間だけ違って何本もあるときに使う。
+// 見るべき情報が「その時間が空いているか」だけなので、タイトルは出さず時間と状態だけにする。
+function sessionChipHtml(s, radioName, checked) {
+  const disabled = (s.is_full && !checked);
+  const sub = s.is_full ? '満席'
+            : (s.capacity !== null && s.capacity !== undefined && s.capacity > 1)
+              ? ('残り' + s.remaining)
+              : (s.ends_at ? '〜' + s.ends_at : '空き');
+
+  return '<label class="semChip' + (disabled ? ' full' : '') + (checked ? ' selected' : '') +
+         '" data-sid="' + escHtml(s.session_id) + '">' +
+         '<input type="radio" name="' + radioName + '" value="' + escHtml(s.session_id) + '"' +
+         (disabled ? ' disabled' : '') + (checked ? ' checked' : '') + '>' +
+         '<span class="semChipTime">' + escHtml(s.starts_at || s.title) + '</span>' +
+         '<span class="semChipSub">' + escHtml(sub) + '</span>' +
+         '</label>';
+}
+
+// slot（時間帯グループ）ごとにまとめて描く。
+// 同じ slot 内はラジオ＝1つしか選べない → 同じ時間に2つ予約する事故が構造的に起きない。
+//
+// 🔴 見出しに時刻を出すのは、そのグループの枠が全部同じ時間のときだけ。
+//    1グループ内で時間がバラバラな予約では、先頭の枠の時刻を見出しに出すと
+//    全部その時間に見えてしまう。
+// 🔴 説明文がグループ内で全部同じなら、詳細は枠の下に1つだけ出す（7回繰り返さない）。
+// 🔴 さらにその枠が4つ以上あるときは、カードではなく**時間チップの一覧**にする。
+//    見るべきものが「どの時間が空いているか」だけになるため、1行に複数並べて
+//    ひと目で空きが分かるようにする（バランス革命の無料計測会・7枠）。
+function renderSeminars(container, sessions, selectedIds) {
+  const list = sessions || [];
+  const sel  = selectedIds || [];
+  if (!list.length) return false;
+
+  const order = [], groups = {};
+  list.forEach(function (s) {
+    if (!groups[s.slot]) { groups[s.slot] = []; order.push(s.slot); }
+    groups[s.slot].push(s);
+  });
+
+  let html = '';
+  order.forEach(function (slot, gi) {
+    const name = 'sem_slot_' + gi;
+    const g    = groups[slot];
+    const sameTime = g.every(function (s) {
+      return s.starts_at === g[0].starts_at && s.ends_at === g[0].ends_at;
+    });
+    const headTime = sameTime ? timeLabel(g[0]) : '';
+
+    // 説明文が1種類しか無い複数枠のグループ → 詳細をまとめて1つにする
+    const keys = [];
+    g.forEach(function (s) {
+      if (!hasDetail(s)) return;
+      const k = JSON.stringify([s.bullets || [], s.overview || '']);
+      if (keys.indexOf(k) < 0) keys.push(k);
+    });
+    const sharedDetail = (g.length > 1 && keys.length === 1);
+    const detailOwner  = sharedDetail ? g.filter(hasDetail)[0] : null;
+    const useGrid      = sharedDetail && g.length >= 4 && !headTime;
+
+    // 全部同じ定員なら「各回◯名様」と添える（チップには定員を書かないため）
+    const sameCap = g.every(function (s) { return s.capacity === g[0].capacity; });
+    const capHint = (useGrid && sameCap && g[0].capacity) ? '各回' + g[0].capacity + '名様' : '';
+
+    const anySelected = g.some(function (s) { return sel.indexOf(s.session_id) >= 0; });
+
+    html += '<div class="semSlot">' +
+            '<div class="semSlotHead">' + escHtml(slot) + (headTime ? '　' + headTime : '') + '</div>';
+    if (useGrid) {
+      html += '<div class="semSlotHint">ご希望の時間を1つお選びください' +
+              (capHint ? '（' + capHint + '）' : '') + '</div>' +
+              '<div class="semGrid">';
+      g.forEach(function (s) {
+        html += sessionChipHtml(s, name, sel.indexOf(s.session_id) >= 0);
+      });
+      html += '</div>';
+    } else {
+      g.forEach(function (s) {
+        html += sessionCardHtml(s, name, sel.indexOf(s.session_id) >= 0, !!headTime, sharedDetail);
+      });
+    }
+    html += '<label class="semSkip"><input type="radio" name="' + name + '" value=""' +
+            (anySelected ? '' : ' checked') + '><span>予約しない</span></label>';
+    if (detailOwner) html += '<div class="semSlotDetail">' + detailHtml(detailOwner) + '</div>';
+    html += '</div>';
+  });
+  container.innerHTML = html;
+
+  container.querySelectorAll('input[type=radio]').forEach(function (r) {
+    r.addEventListener('change', function () {
+      container.querySelectorAll('.semCard, .semChip').forEach(function (c) {
+        const input = c.querySelector('input[type=radio]');
+        c.classList.toggle('selected', !!(input && input.checked));
+      });
+    });
+  });
+  return true;
+}
+
+function selectedSessionIds(container) {
+  const out = [];
+  container.querySelectorAll('input[type=radio]').forEach(function (r) {
+    if (r.checked && r.value) out.push(r.value);
+  });
+  return out;
+}
+
+// 「セミナー：…」の1行を書く
+function renderCurrentSeminar() {
+  const box = el('semCurrent');
+  if (!semCatalog.length) { box.textContent = '現在ご予約いただける枠はありません'; return; }
+  if (!semReserved.length) { box.textContent = 'ご予約はありません'; return; }
+
+  const byId = {};
+  semCatalog.forEach(function (s) { byId[s.session_id] = s; });
+  // 2件以上のときは「ご予約：」の次の行から箇条書きにする（1行目が続くと切れ目が分からない）
+  const multi  = (semReserved.length > 1);
+  const bullet = multi ? '　・' : '';
+  box.innerHTML = (multi ? '<br>' : '') + semReserved.map(function (id) {
+    const s = byId[id];
+    if (!s) return escHtml(id);
+    // 🔴 計測会のように**タイトルが時刻そのもの**の枠では、時刻＋タイトルにすると
+    //    「10:00〜10:45　10:00〜10:45の回」と二重になる。その場合は slot 名を使う。
+    //    サーバー側の _sessionDisplayName と同じ規則。直すときは両方直すこと。
+    const time  = timeLabel(s);
+    const isDup = !!(s.starts_at && String(s.title).indexOf(s.starts_at) >= 0);
+    const name  = (isDup && s.slot) ? s.slot : s.title;
+    return bullet + escHtml(time ? (time + '　' + name) : name);
+  }).join('<br>');
+}
+
+// セミナー枠と自分の予約を取りにいく。🔴 失敗してもパス表示は壊さない。
+async function loadSeminarState(token) {
+  if (IS_MOCK) {
+    semCatalog  = MOCK_SESSIONS;
+    semReserved = ['S1'];
+    renderCurrentSeminar();
+    el('semToggleLine').style.display = 'block';
+    return;
+  }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await sleep(1000 * attempt);
+    try {
+      const json = await postOnce({
+        action: 'listSessions',
+        data: JSON.stringify({ ticket_token: token })
+      });
+      if (json && json.success && json.data && json.data.sessions) {
+        semCatalog  = json.data.sessions;
+        semReserved = json.data.reserved || [];
+        renderCurrentSeminar();
+        if (semCatalog.length) el('semToggleLine').style.display = 'block';
+        return;
+      }
+    } catch (e) { /* リトライ */ }
+  }
+  el('semCurrent').textContent = '空き状況を確認できませんでした';
+}
+
+function openSemPanel() {
+  renderSeminars(el('semList'), semCatalog, semReserved);
+  hideError('semError');
+  el('semPanel').style.display  = 'block';
+  el('passCard').style.display  = 'none';
+  el('editPanel').style.display = 'none';
+  window.scrollTo(0, 0);
+}
+function closeSemPanel() {
+  el('semPanel').style.display = 'none';
+  el('passCard').style.display = 'block';
+  window.scrollTo(0, 0);
+}
+
+el('semToggleLink').addEventListener('click', function (ev) {
+  ev.preventDefault();
+  openSemPanel();
+});
+el('semCancelBtn').addEventListener('click', closeSemPanel);
+
+el('semSaveBtn').addEventListener('click', async function () {
+  hideError('semError');
+  const want  = selectedSessionIds(el('semList'));
+  const token = qs('t');
+
+  if (IS_MOCK) {
+    const changed = (want.join(',') !== semReserved.join(','));
+    semReserved = want;
+    renderCurrentSeminar();
+    closeSemPanel();
+    el('semFullAlert').style.display = 'none';
+    el('semMailNote').style.display  = changed ? 'block' : 'none';   // 実際には送らない
+    return;
+  }
+
+  el('semSaveBtn').disabled = true;
+  el('semSaveBtn').textContent = '保存中…';
+  try {
+    const json = await postWithRetry({
+      action: 'reserveSessions',
+      data: JSON.stringify({ ticket_token: token, sessions: want })
+    });
+    if (!json.success) {
+      showError('semError', json.error || '保存できませんでした。時間をおいて再度お試しください。');
+      return;
+    }
+    semCatalog  = json.data.sessions || semCatalog;
+    semReserved = json.data.reserved || [];
+    renderCurrentSeminar();
+
+    // 🆕 v0.15.0: 控えメールを送ったときだけ出す。
+    // 🔴 「送りました」と書いてよいのはサーバーが実際に送ったときだけ（mail_sent）。
+    //    内容が変わらなかった場合はメールを送らないので、ここも出さない。
+    el('semMailNote').style.display = json.data.mail_sent ? 'block' : 'none';
+
+    const r = json.data.result || {};
+    if ((r.full && r.full.length) || (r.invalid && r.invalid.length)) {
+      // 選んだ枠が、保存するまでの間に満席になった場合。取れた分は保存されている。
+      el('semFullAlert').style.display = 'block';
+      el('semFullAlert').innerHTML =
+        'ご希望の枠は満席のため、ご予約をお取りできませんでした。<br>' +
+        '<span style="color:#a16207;">ご入場のお申し込みはそのまま有効です。</span>';
+    } else {
+      el('semFullAlert').style.display = 'none';
+    }
+    closeSemPanel();
+  } catch (e) {
+    showError('semError', '保存結果を確認できませんでした。お手数ですが、画面を読み込み直してご確認ください。');
+  } finally {
+    el('semSaveBtn').disabled = false;
+    el('semSaveBtn').textContent = 'この内容で予約する';
+  }
+});
+
 async function init() {
   const token = qs('t');
   const isNew = qs('new') === '1';
@@ -453,9 +913,31 @@ async function init() {
   if (isNew) el('newBadge').style.display = 'block';
   renderQr(localPassUrl(token));
 
+  // 🆕 v0.10.0: ?mock=1 はGASもスプレッドシートも使わない動作確認用
+  if (IS_MOCK) {
+    renderDetail({
+      salon_name: 'サンプルサロン', staff_name: 'サンプル 太郎', status: 'active',
+      email: 'sample@example.com', phone: '000-0000-0000', business_type: '美容室',
+      has_transaction: 'yes', address: '', referrer: '', note: '',
+      event: { date: '2026年10月26日（月）', time: '10:00〜16:00',
+               venue_name: '青島屋（AOSHIMAYA）', venue_addr: '宮崎市青島2丁目12-11' }
+    });
+    if (qs('semfull') === '1') el('semFullAlert').style.display = 'block';
+    loadSeminarState(token);
+    return;
+  }
+
   // 2) 前回表示できた内容があれば先に出しておく（圏外でも名前が出る）
   const cached = loadCache(token);
   if (cached) renderDetail(cached);
+
+  // 🆕 v0.10.0: 申込時に満席で取れなかった場合（index.htmlから ?semfull=1 で来る）
+  if (qs('semfull') === '1') el('semFullAlert').style.display = 'block';
+
+  // 🆕 v0.10.0: セミナーの状態を取りにいく。
+  // 🔴 await しない。ここで待つとパス本体の取得が遅れる（QRは既に出ているが、
+  //    お名前の表示が遅れる）。失敗してもパス表示には一切影響させない。
+  loadSeminarState(token);
 
   // 3) 裏で最新を取りにいく
   const result = await fetchPassWithRetry(token);

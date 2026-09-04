@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.19.0';
+const VERSION  = '0.24.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -385,6 +385,7 @@ function doGet(e) {
       case 'getPass':   return _jsonResponse(getPass(data));
       // 🆕 v0.19.0 booth.html用。認証なし・booth_tokenで認可（booth実装設計_確定版.md §4-1）
       case 'boothInit': return _jsonResponse(boothInit(data));
+      case 'listSessions': return _jsonResponse(listSessions(data));  // 🆕 v0.20.0 セミナー枠一覧（公開）
       // 🆕 診断用（diag.html）。読み取りのみ・データを一切変更しない
       case 'ping':      return _jsonResponse(pingLight(data));
       case 'pingHeavy': return _jsonResponse(pingHeavy(data));
@@ -416,6 +417,9 @@ function doPost(e) {
       case 'updateApplication': return _jsonResponse(updateApplication(data));
       case 'liffPrefill':       return _jsonResponse(liffPrefill(data));
       case 'applyLiff':         return _jsonResponse(applyLiff(data));
+      // 🆕 v0.20.0 セミナー予約（認証なし・ticket_tokenが本人確認を兼ねる）
+      case 'listSessions':      return _jsonResponse(listSessions(data));
+      case 'reserveSessions':   return _jsonResponse(reserveSessions(data));
       // 🆕 診断用（diag.html）。読み取りのみ・データを一切変更しない
       case 'ping':              return _jsonResponse(pingLight(data));
       case 'pingHeavy':         return _jsonResponse(pingHeavy(data));
@@ -771,6 +775,9 @@ function applyApplication(data, clientAttempt) {
   }
 
   let appId, ticketToken;
+  // 🆕 v0.20.0: セミナー予約。ここで例外を出さない・申込を止めないこと（設計書§4-2の絶対条件）
+  const wantSessions = _parseSessionIds(data.sessions);
+  let sessionsResult = null;
   let replayed          = false; // 🆕 request_id一致＝配送失敗による再試行と確定した場合
   let existingNotified  = false;
   let resendList        = null; // メール一致・氏名一致が見つかった場合の再送先（ロック解放後に送信）
@@ -827,6 +834,18 @@ function applyApplication(data, clientAttempt) {
         const created = _appendApplicationRow(sh, rows, f, 'web', '', '', requestId);
         appId       = created.appId;
         ticketToken = created.ticketToken;
+
+        // 🆕 v0.20.0: セミナー予約を同じロックの中で書く。
+        // 🔴 満席・枠切れでも申込は成立させる（_writeReservationsは例外を投げない）。
+        // 🔴 予約の書き込みが落ちても申込行は残す。ここでthrowすると「申込できない」に化ける。
+        if (wantSessions.length) {
+          try {
+            sessionsResult = _writeReservations(ss, appId, wantSessions, { replace: false });
+          } catch (e) {
+            Logger.log('セミナー予約の書き込みに失敗（申込自体は成立済み）: ' + e);
+            sessionsResult = { reserved: [], full: [], invalid: wantSessions.slice(), cancelled: [], error: String(e) };
+          }
+        }
       }
     }
   } finally {
@@ -876,7 +895,9 @@ function applyApplication(data, clientAttempt) {
   if (mailSkipped) {
     Logger.log('apply: 確認メールをスキップ reason=' + mailSkipped + ' email=' + f.email + ' app_id=' + appId);
   } else {
-    _sendConfirmationMail(f.email, f.salonName, f.staffName, passUrl, false);
+    _sendConfirmationMail(f.email, f.salonName, f.staffName, passUrl, false,
+                          _reservedSessionLabels(appId),    // 🆕 v0.20.0 予約した枠を本文に載せる
+                          !!(sessionsResult && sessionsResult.full && sessionsResult.full.length));
   }
 
   // 🆕 v0.15.0: 1件ごとの通知は本日30件までにする。
@@ -898,6 +919,8 @@ function applyApplication(data, clientAttempt) {
 
   const res = { app_id: appId, pass_url: passUrl, is_update: false };
   if (mailSkipped) res.mail_skipped = mailSkipped; // 診断用。クライアントは参照していない
+  // 🆕 v0.20.0: 満席等で予約できなかった枠を画面に伝える（申込自体は成立している）
+  if (sessionsResult) res.sessions_result = sessionsResult;
   return _ok(res);
 }
 
@@ -920,6 +943,12 @@ function updateApplication(data) {
   const f = v.fields;
 
   let appId;
+  // 🆕 v0.20.0: data.sessions が来ていればセミナー予約も差し替える。
+  // 🔴 キーが無い場合（旧HTMLキャッシュからの送信）は予約に一切触らない。
+  // undefined を「全部取消」と解釈すると、古い画面から編集しただけで予約が黙って消える。
+  const touchSessions = (data.sessions !== undefined && data.sessions !== null && data.sessions !== '');
+  const wantSessions  = touchSessions ? _parseSessionIds(data.sessions) : [];
+  let sessionsResult  = null;
 
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -936,11 +965,22 @@ function updateApplication(data) {
 
     appId = rows[foundRow - 1][0];
     _updateApplicationRow(sh, foundRow, f);
+
+    if (touchSessions) {
+      try {
+        sessionsResult = _writeReservations(ss, appId, wantSessions, { replace: true });
+      } catch (e) {
+        Logger.log('セミナー予約の書き込みに失敗（申込内容の更新は成立済み）: ' + e);
+        sessionsResult = { reserved: [], full: [], invalid: wantSessions.slice(), cancelled: [], error: String(e) };
+      }
+    }
   } finally {
     lock.releaseLock();
   }
 
-  return _ok({ app_id: appId, pass_url: SITE_BASE_URL + 'pass.html?t=' + token });
+  const upRes = { app_id: appId, pass_url: SITE_BASE_URL + 'pass.html?t=' + token };
+  if (sessionsResult) upRes.sessions_result = sessionsResult;
+  return _ok(upRes);
 }
 
 // ============================================================
@@ -1016,6 +1056,9 @@ function applyLiff(data) {
   const lineFriendId = friend ? friend.friendId : '';
 
   let appId, ticketToken, isUpdate;
+  // 🆕 v0.20.0: セミナー予約。LIFFは本人確定なので、再申込＝内容変更として予約も差し替える
+  const wantSessions = _parseSessionIds(data.sessions);
+  let sessionsResult = null;
 
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -1040,6 +1083,14 @@ function applyLiff(data) {
       appId       = created.appId;
       ticketToken = created.ticketToken;
     }
+
+    // 🔴 申込を止めない（設計書§4-2）。satisfiedでなくても申込行は既に書けている。
+    try {
+      sessionsResult = _writeReservations(ss, appId, wantSessions, { replace: true });
+    } catch (e) {
+      Logger.log('セミナー予約の書き込みに失敗（申込自体は成立済み）: ' + e);
+      sessionsResult = { reserved: [], full: [], invalid: wantSessions.slice(), cancelled: [], error: String(e) };
+    }
   } finally {
     lock.releaseLock();
   }
@@ -1047,11 +1098,27 @@ function applyLiff(data) {
   const passUrl = SITE_BASE_URL + 'pass.html?t=' + ticketToken;
   // 更新時はメールを送らない（本人が画面上でパスURLをそのまま受け取れるため。updateApplicationと同じ考え方）
   if (!isUpdate) {
-    _sendConfirmationMail(f.email, f.salonName, f.staffName, passUrl, false);
+    _sendConfirmationMail(f.email, f.salonName, f.staffName, passUrl, false,
+                          _reservedSessionLabels(appId),    // 🆕 v0.20.0
+                          !!(sessionsResult && sessionsResult.full && sessionsResult.full.length));
     try {
       _notifyNewApplicationLineWorks(appId, f, 'liff');
     } catch (e) {
       Logger.log('LINE WORKS通知に失敗（申込自体は成立済み）: ' + e);
+    }
+  }
+
+  // 🆕 v0.24.0: 予約が変わったときの控えメール（更新の場合も送る）。
+  // 🔴 新規申込のときは申込完了メールに予約が載っているので、二重に送らない。
+  if (isUpdate && sessionsResult &&
+      ((sessionsResult.added && sessionsResult.added.length) ||
+       (sessionsResult.cancelled && sessionsResult.cancelled.length))) {
+    try {
+      _sendReservationMail(f.email, f.salonName, f.staffName, passUrl,
+                           _reservedSessionLabels(appId),
+                           !!(sessionsResult.full && sessionsResult.full.length));
+    } catch (e) {
+      Logger.log('予約の控えメール送信に失敗（申込・予約自体は成立済み）: ' + e);
     }
   }
 
@@ -1064,7 +1131,9 @@ function applyLiff(data) {
     Logger.log('_syncApplicationToLine予期せぬ失敗: ' + e);
   }
 
-  return _ok({ app_id: appId, pass_url: passUrl, is_update: isUpdate });
+  const liffRes = { app_id: appId, pass_url: passUrl, is_update: isUpdate };
+  if (sessionsResult) liffRes.sessions_result = sessionsResult;
+  return _ok(liffRes);
 }
 
 // ============================================================
@@ -1469,7 +1538,7 @@ function _notifyNewApplicationLineWorks(appId, f, source) {
 //    GmailAppでの送信に失敗した場合（send-as未登録等）は
 //    MailApp（送信元は実行アカウントのまま・差出人名とReply-Toで代替）にフォールバックする。
 // ============================================================
-function _sendConfirmationMail(email, salonName, staffName, passUrl, isUpdate) {
+function _sendConfirmationMail(email, salonName, staffName, passUrl, isUpdate, seminarLines, fullNotice) {
   const cfg       = _getConfig();
   const eventDate = cfg.event_date || '2026-10-26';
   const eventTime = cfg.event_time || '10:00〜16:00';
@@ -1480,12 +1549,37 @@ function _sendConfirmationMail(email, salonName, staffName, passUrl, isUpdate) {
     ? '【ビューフェス2026】お申し込み内容を更新しました'
     : '【ビューフェス2026】お申し込みありがとうございます（入場パス）';
 
+  // 🆕 v0.20.0: 予約した枠（無ければ空文字＝これまでと同じ本文になる）
+  const semList = (seminarLines && seminarLines.length) ? seminarLines : [];
+  const semText = semList.length
+    ? '▼ ご予約いただいたセミナー・体験会\n' + semList.map(function (s) { return '  ・' + s; }).join('\n') + '\n\n'
+    : '';
+  const semHtml = semList.length
+    ? '<p>▼ ご予約いただいたセミナー・体験会<br>' +
+      semList.map(function (s) { return '・' + _escapeHtml(s); }).join('<br>') + '</p>'
+    : '';
+
+  // 🆕 v0.23.0: 満席で予約が取れなかった場合。
+  // 🔴 「申し込めていない」と誤解されないよう、入場申込は完了していることを必ず添える。
+  const fullText = fullNotice
+    ? '▼ ご希望のセミナー・体験会は満席のため、ご予約をお取りできませんでした\n' +
+      '  ご入場のお申し込みは完了しております。\n' +
+      '  空いている枠は、下記の入場パスの画面からご予約いただけます。\n\n'
+    : '';
+  const fullHtml = fullNotice
+    ? '<p style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;">' +
+      '▼ ご希望のセミナー・体験会は満席のため、ご予約をお取りできませんでした<br>' +
+      '<span style="color:#92400e;">ご入場のお申し込みは完了しております。' +
+      '空いている枠は、下記の入場パスの画面からご予約いただけます。</span></p>'
+    : '';
+
   const textBody =
     salonName + '\n' +
     staffName + ' 様\n\n' +
     'ビューフェス2026へのお申し込みを' + (isUpdate ? '更新' : '受付') + 'いたしました。\n\n' +
     '  日時 : ' + eventDate + ' ' + eventTime + '\n' +
     '  会場 : ' + venueName + ' ' + venueAddr + '\n\n' +
+    semText + fullText +
     '▼ 当日は入場口でこちらの入場パスをご提示ください\n' +
     '  ' + passUrl + '\n\n' +
     '※このメールを保存いただくか、上のリンクをスマホのホーム画面に追加しておくと当日スムーズです\n' +
@@ -1498,12 +1592,70 @@ function _sendConfirmationMail(email, salonName, staffName, passUrl, isUpdate) {
     '<p>ビューフェス2026へのお申し込みを' + (isUpdate ? '更新' : '受付') + 'いたしました。</p>' +
     '<p>日時: ' + _escapeHtml(eventDate) + ' ' + _escapeHtml(eventTime) + '<br>' +
     '会場: ' + _escapeHtml(venueName) + ' ' + _escapeHtml(venueAddr) + '</p>' +
+    semHtml + fullHtml +
     '<p><a href="' + passUrl + '">▼ 入場パスを開く</a></p>' +
     '<p style="color:#666;font-size:13px;">' +
     '※このメールを保存いただくか、上のリンクをスマホのホーム画面に追加しておくと当日スムーズです</p>' +
     '<p style="color:#999;font-size:12px;">ビューフェス事務局（' + MAIL_FROM_ADDR + '）</p>';
 
   _sendMail(email, subject, textBody, htmlBody, isUpdate ? 'resend' : 'apply');
+}
+
+// 🆕 v0.24.0: セミナー・体験会の予約を変更/取消したときの控えメール。
+// 🔴 「取り消しました」だけを読んだお客様が、来場申込ごと消えたと誤解しないよう、
+//    ご入場のお申し込みは有効であることを必ず本文に入れる。
+function _sendReservationMail(email, salonName, staffName, passUrl, labels, fullNotice) {
+  const list    = labels || [];
+  const subject = list.length
+    ? '【ビューフェス2026】セミナー・体験会のご予約内容'
+    : '【ビューフェス2026】セミナー・体験会のご予約を取り消しました';
+
+  // 🔴 件名と書き出しを揃える。全部取り消したのに「承りました」だと読み手が混乱する。
+  const lead = list.length
+    ? 'セミナー・体験会のご予約内容を承りました。'
+    : 'セミナー・体験会のご予約を取り消しました。';
+
+  const bodyLines = list.length
+    ? '▼ 現在のご予約\n' + list.map(function (x) { return '  ・' + x; }).join('\n') + '\n\n'
+    : '▼ 現在のご予約\n  ご予約はありません（すべて取り消しました）\n\n';
+
+  const fullText = fullNotice
+    ? '▼ ご希望のセミナー・体験会は満席のため、ご予約をお取りできませんでした\n' +
+      '  空いている枠は、下記の画面からご予約いただけます。\n\n'
+    : '';
+
+  const textBody =
+    salonName + '\n' +
+    staffName + ' 様\n\n' +
+    lead + '\n\n' +
+    bodyLines + fullText +
+    '▼ ご予約の変更・取り消し、入場パスの表示はこちら\n' +
+    '  ' + passUrl + '\n\n' +
+    '※ビューフェス2026へのご入場のお申し込みは有効です。\n' +
+    '　当日は上のリンクの入場パスをご提示ください。\n' +
+    '\n--\n' +
+    'ビューフェス事務局（' + MAIL_FROM_ADDR + '）\n';
+
+  const htmlList = list.length
+    ? '<p>▼ 現在のご予約<br>' + list.map(function (x) { return '・' + _escapeHtml(x); }).join('<br>') + '</p>'
+    : '<p>▼ 現在のご予約<br>ご予約はありません（すべて取り消しました）</p>';
+
+  const htmlFull = fullNotice
+    ? '<p style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;">' +
+      '▼ ご希望のセミナー・体験会は満席のため、ご予約をお取りできませんでした<br>' +
+      '<span style="color:#92400e;">空いている枠は、下記の画面からご予約いただけます。</span></p>'
+    : '';
+
+  const htmlBody =
+    '<p>' + _escapeHtml(salonName) + '<br>' + _escapeHtml(staffName) + ' 様</p>' +
+    '<p>' + _escapeHtml(lead) + '</p>' +
+    htmlList + htmlFull +
+    '<p><a href="' + passUrl + '">▼ ご予約の変更・取り消し、入場パスの表示</a></p>' +
+    '<p style="color:#666;font-size:13px;">※ビューフェス2026へのご入場のお申し込みは有効です。<br>' +
+    '当日は上のリンクの入場パスをご提示ください。</p>' +
+    '<p style="color:#999;font-size:12px;">ビューフェス事務局（' + MAIL_FROM_ADDR + '）</p>';
+
+  _sendMail(email, subject, textBody, htmlBody, 'reservation');
 }
 
 // 🆕 入場パスの再発行メール（v0.7.0）
@@ -1817,6 +1969,504 @@ function testVerifyBadIdToken() {
 }
 
 // ============================================================
+// 🆕 セミナー予約（sessions / reservations）—— v0.20.0（2026-09-04）
+//    設計: `LINEHarness/ビューフェス申込_設計.md` §4-2
+//
+//    【この設計の要点】
+//    - 枠は `sessions` シートが正。**枠を増やすのはシートに1行足すだけ**で、
+//      コード修正もGAS再デプロイもいらない（画面はこのAPIの返り値だけを見て描く）。
+//    - `slot`（時間帯グループ）が同じ枠は**排他**。画面ではslotごとのラジオになり、
+//      サーバー側でも同一slotの二重予約を拒否する。同じ時間に2枠取る事故を構造的に潰す。
+//    - `capacity` 空欄 = 定員なし。設定されていれば満席で自動的に予約不可。
+//    - 🔴🔴 **セミナーが満席でも来場申込は絶対に止めない**（設計書§4-2の絶対条件）。
+//      申込処理の中で満席に当たった場合も申込行は書き、`sessions_result.full` で
+//      「予約だけ取れなかった」ことを返す。ここを例外にしたりエラー返しにしないこと。
+//    - キャンセル待ちは作らない（要件）。取消は pass.html から（席がその場で戻る）。
+// ============================================================
+
+const RES_STATUS_RESERVED  = 'reserved';
+const RES_STATUS_CANCELLED = 'cancelled';
+
+// sessions シートの列（0始まり）。J・K は v0.20.0 で追加した詳細表示用。
+const SES_COL = {
+  id: 0, slot: 1, title: 2, speaker: 3, room: 4,
+  starts: 5, ends: 6, capacity: 7, active: 8,
+  bullets: 9, overview: 10
+};
+// reservations シートの列（0始まり）
+const RES_COL = { id: 0, appId: 1, sessionId: 2, createdAt: 3, status: 4, attendedAt: 5 };
+
+// 🔴 時刻セルは Date になっている場合がある（"10:30" と打つとスプレッドシートが
+// 勝手に時刻値へ変換するため）。文字列のまま String() すると
+// "Sat Dec 30 1899 10:30:00 GMT+0919" のような値が画面に出る。必ずこの関数を通す。
+function _fmtTimeCell(v) {
+  if (v === null || v === undefined || v === '') return '';
+  if (Object.prototype.toString.call(v) === '[object Date]') {
+    return Utilities.formatDate(v, 'Asia/Tokyo', 'HH:mm');
+  }
+  return String(v).trim();
+}
+
+// 改行区切りのセルを配列にする（セミナー内容の箇条書き用）
+function _splitLines(v) {
+  return String(v == null ? '' : v)
+    .split(/\r?\n/)
+    .map(function (s) { return s.trim(); })
+    .filter(function (s) { return s !== ''; });
+}
+
+// sessions シートを読む（無ければ空配列。シート未作成でも画面を壊さない）
+function _readSessions(ss) {
+  const sh = ss.getSheetByName(SHEET_SESSIONS);
+  if (!sh) return [];
+  const rows = sh.getDataRange().getValues();
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const id = String(rows[i][SES_COL.id] == null ? '' : rows[i][SES_COL.id]).trim();
+    if (!id) continue;
+    const capRaw = rows[i][SES_COL.capacity];
+    const capNum = (capRaw === '' || capRaw === null || capRaw === undefined) ? null : Number(capRaw);
+    out.push({
+      session_id: id,
+      slot:       String(rows[i][SES_COL.slot]  == null ? '' : rows[i][SES_COL.slot]).trim() || id,
+      title:      String(rows[i][SES_COL.title] == null ? '' : rows[i][SES_COL.title]).trim(),
+      speaker:    String(rows[i][SES_COL.speaker] == null ? '' : rows[i][SES_COL.speaker]).trim(),
+      room:       String(rows[i][SES_COL.room]  == null ? '' : rows[i][SES_COL.room]).trim(),
+      starts_at:  _fmtTimeCell(rows[i][SES_COL.starts]),
+      ends_at:    _fmtTimeCell(rows[i][SES_COL.ends]),
+      capacity:   (capNum === null || isNaN(capNum)) ? null : capNum,
+      // 🔴 空欄は「有効」。書き忘れで枠が黙って消えるほうが害が大きい（booth と同じ判断）
+      is_active:  _boothIsActive(rows[i][SES_COL.active]),
+      bullets:    _splitLines(rows[i][SES_COL.bullets]),
+      overview:   String(rows[i][SES_COL.overview] == null ? '' : rows[i][SES_COL.overview]).trim()
+    });
+  }
+  return out;
+}
+
+// reservations シートの生データ（ヘッダー込み）。書き込み側は行番号が要るのでそのまま返す。
+function _readReservationRows(ss) {
+  const sh = ss.getSheetByName(SHEET_RESERVATIONS);
+  if (!sh) return [];
+  return sh.getDataRange().getValues();
+}
+
+// 予約済み（reserved）の件数を session_id ごとに数える
+function _countReserved(resRows) {
+  const counts = {};
+  for (let i = 1; i < resRows.length; i++) {
+    if (String(resRows[i][RES_COL.status]) !== RES_STATUS_RESERVED) continue;
+    const sid = String(resRows[i][RES_COL.sessionId] == null ? '' : resRows[i][RES_COL.sessionId]).trim();
+    if (!sid) continue;
+    counts[sid] = (counts[sid] || 0) + 1;
+  }
+  return counts;
+}
+
+// その人（app_id）が現在予約している session_id の配列
+function _reservedSessionIdsOf(resRows, appId) {
+  const out = [];
+  if (!appId) return out;
+  for (let i = 1; i < resRows.length; i++) {
+    if (String(resRows[i][RES_COL.status]) !== RES_STATUS_RESERVED) continue;
+    if (String(resRows[i][RES_COL.appId]) !== String(appId)) continue;
+    out.push(String(resRows[i][RES_COL.sessionId]).trim());
+  }
+  return out;
+}
+
+// res_id の採番。既存の R0001 形式の最大値の次から発番するクロージャを返す。
+function _resIdIssuer(resRows) {
+  let max = 0;
+  for (let i = 1; i < resRows.length; i++) {
+    const m = /^R(\d+)$/.exec(String(resRows[i][RES_COL.id] == null ? '' : resRows[i][RES_COL.id]).trim());
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return function () { max++; return 'R' + _boothPad(max, 4); };
+}
+
+// 公開されている枠（is_active）だけを、残席つきで返す共通部品
+function _sessionCatalog(ss, resRows) {
+  const counts = _countReserved(resRows);
+  return _readSessions(ss)
+    .filter(function (s) { return s.is_active; })
+    .map(function (s) {
+      const used = counts[s.session_id] || 0;
+      const remaining = (s.capacity === null) ? null : Math.max(0, s.capacity - used);
+      return {
+        session_id: s.session_id,
+        slot:       s.slot,
+        title:      s.title,
+        speaker:    s.speaker,
+        room:       s.room,
+        starts_at:  s.starts_at,
+        ends_at:    s.ends_at,
+        capacity:   s.capacity,
+        remaining:  remaining,
+        is_full:    (remaining !== null && remaining <= 0),
+        bullets:    s.bullets,
+        overview:   s.overview
+      };
+    });
+}
+
+// ticket_token から申込者を引く（見つからなければ null）。
+// 予約の控えメールに宛先と氏名が要るので、app_id だけでなく行の内容も返す。
+function _applicantByTicketToken(ss, token) {
+  if (!token) return null;
+  const sh   = _getSheet(ss, SHEET_APPLICATIONS);
+  const rows = sh.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][16]) !== token) continue;
+    return {
+      appId:     String(rows[i][0]),
+      salonName: String(rows[i][4]),
+      staffName: String(rows[i][5]),
+      email:     String(rows[i][6]),
+      status:    String(rows[i][17])
+    };
+  }
+  return null;
+}
+
+// ticket_token から app_id を引く（見つからなければ null）
+function _appIdByTicketToken(ss, token) {
+  const a = _applicantByTicketToken(ss, token);
+  return a ? a.appId : null;
+}
+
+// 予約1件の表示名。"11:00〜12:00  フェムケアセミナー" の形。
+// 🔴 バランス革命の計測会のように**タイトルが時刻そのもの**（"10:00〜10:45の回"）の枠では、
+//    時刻＋タイトルにすると「10:00〜10:45  10:00〜10:45の回」と二重になる。
+//    その場合はタイトルではなく slot 名（"バランス革命 無料計測会"）を使う。
+function _sessionDisplayName(s) {
+  const time = (s.starts_at && s.ends_at) ? (s.starts_at + '〜' + s.ends_at)
+             : (s.starts_at ? (s.starts_at + '〜') : '');
+  const titleIsTime = !!(s.starts_at && String(s.title).indexOf(s.starts_at) >= 0);
+  const name = (titleIsTime && s.slot) ? s.slot : s.title;
+  return time ? (time + '  ' + name) : name;
+}
+
+// その人が予約している枠の表示名の配列（確認メール用）。
+// 🔴 ロックの外から呼ぶこと（シートを読むだけ）。失敗しても空配列を返し、メール送信を止めない。
+function _reservedSessionLabels(appId) {
+  try {
+    const ss      = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const resRows = _readReservationRows(ss);
+    const ids     = _reservedSessionIdsOf(resRows, appId);
+    if (!ids.length) return [];
+    const byId = {};
+    _readSessions(ss).forEach(function (s) { byId[s.session_id] = s; });
+    return ids.map(function (id) {
+      const s = byId[id];
+      return s ? _sessionDisplayName(s) : id;
+    });
+  } catch (e) {
+    Logger.log('_reservedSessionLabels失敗（メールは予約欄なしで送る）: ' + e);
+    return [];
+  }
+}
+
+// ============================================================
+// 🆕 セミナー枠の一覧（doGet/doPost: action=listSessions）— 認証なし・公開
+//    ticket_token を添えると「その人の現在の予約」も一緒に返す（pass.html用）。
+//    🔴 氏名・メール等の個人情報は返さない。返すのは枠の情報と自分の予約だけ。
+// ============================================================
+function listSessions(data) {
+  _checkProps();
+  const ss      = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const resRows = _readReservationRows(ss);
+  const catalog = _sessionCatalog(ss, resRows);
+
+  const token = String((data && data.ticket_token) || '').trim();
+  let reserved = [];
+  if (token) {
+    const appId = _appIdByTicketToken(ss, token);
+    if (appId) reserved = _reservedSessionIdsOf(resRows, appId);
+  }
+  return _ok({ sessions: catalog, reserved: reserved });
+}
+
+// ============================================================
+// 予約の書き込み（内部関数）
+// 🔴🔴 必ず LockService のロックの中から呼ぶこと。残席の判定と書き込みの間に
+//      他のリクエストが割り込むと定員を超える。
+//
+//    wantIds : 予約したい session_id の配列（[] なら「全部取消」の意味になる・replace時）
+//    opts.replace : true なら wantIds に無い自分の既存予約を cancelled にする
+//                   （pass.html からの変更・取消）。false なら追加のみ（申込時）。
+//
+//    返り値 { reserved: [], added: [], full: [], invalid: [], cancelled: [] }
+//    🔴 reserved は「保存後に予約されている枠」、added は「今回あらたに入った枠」。
+//       控えメールを送るかどうかは added / cancelled で判断する（同じ内容の再保存では送らない）。
+//    🔴 例外は投げない。呼び出し元（申込処理）を巻き込んで申込そのものを失敗させないため。
+// ============================================================
+function _writeReservations(ss, appId, wantIds, opts) {
+  const replace = !!(opts && opts.replace);
+  const result  = { reserved: [], added: [], full: [], invalid: [], cancelled: [] };
+  if (!appId) return result;
+
+  const sh = ss.getSheetByName(SHEET_RESERVATIONS);
+  if (!sh) {                     // セミナーを使わない運用（シート未作成）なら何もしない
+    result.invalid = (wantIds || []).slice();
+    return result;
+  }
+
+  const all   = _readSessions(ss);
+  const byId  = {};
+  all.forEach(function (s) { byId[s.session_id] = s; });
+
+  const rows     = sh.getDataRange().getValues();
+  const counts   = _countReserved(rows);
+  const nextId   = _resIdIssuer(rows);
+  const mineRow  = {};           // session_id -> 自分の予約行（1始まり）
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][RES_COL.status]) !== RES_STATUS_RESERVED) continue;
+    if (String(rows[i][RES_COL.appId]) !== String(appId)) continue;
+    mineRow[String(rows[i][RES_COL.sessionId]).trim()] = i + 1;
+  }
+
+  const want = [];
+  (wantIds || []).forEach(function (raw) {
+    const sid = String(raw == null ? '' : raw).trim();
+    if (sid && want.indexOf(sid) < 0) want.push(sid);
+  });
+
+  // --- 1) 取消（replace時のみ）。先に取り消してから追加する。
+  //     同じslot内で「Aをやめて Bにする」場合に、先に席を戻さないと自分の予約が
+  //     自分の席を塞いで満席扱いになるため、この順序は変えないこと。
+  if (replace) {
+    Object.keys(mineRow).forEach(function (sid) {
+      if (want.indexOf(sid) >= 0) return;
+      sh.getRange(mineRow[sid], RES_COL.status + 1).setValue(RES_STATUS_CANCELLED);
+      counts[sid] = Math.max(0, (counts[sid] || 1) - 1);
+      delete mineRow[sid];
+      result.cancelled.push(sid);
+    });
+  }
+
+  // --- 2) 追加
+  const slotTaken = {};          // slot -> session_id（同一slotの二重予約を防ぐ）
+  Object.keys(mineRow).forEach(function (sid) {
+    const s = byId[sid];
+    if (s) slotTaken[s.slot] = sid;
+  });
+
+  const appends = [];
+  want.forEach(function (sid) {
+    const s = byId[sid];
+    if (!s || !s.is_active) { result.invalid.push(sid); return; }       // 存在しない/終了した枠
+    if (mineRow[sid]) { result.reserved.push(sid); return; }            // すでに予約済み＝冪等（再送で増えない）
+    if (slotTaken[s.slot]) { result.invalid.push(sid); return; }        // 同じ時間帯を二重に取ろうとした
+    const used = counts[sid] || 0;
+    if (s.capacity !== null && used >= s.capacity) { result.full.push(sid); return; }  // 満席
+
+    appends.push([nextId(), String(appId), sid, _now(), RES_STATUS_RESERVED, '']);
+    counts[sid]      = used + 1;
+    slotTaken[s.slot] = sid;
+    result.reserved.push(sid);
+    result.added.push(sid);
+  });
+
+  if (appends.length) {
+    sh.getRange(sh.getLastRow() + 1, 1, appends.length, 6).setValues(appends);
+  }
+  return result;
+}
+
+// data.sessions（JSON配列 or カンマ区切り）を配列にする。壊れていても例外にしない。
+function _parseSessionIds(v) {
+  if (v === null || v === undefined || v === '') return [];
+  if (Object.prototype.toString.call(v) === '[object Array]') {
+    return v.map(function (x) { return String(x).trim(); }).filter(function (x) { return x; });
+  }
+  const s = String(v).trim();
+  if (!s) return [];
+  if (s.charAt(0) === '[') {
+    try {
+      const arr = JSON.parse(s);
+      if (Object.prototype.toString.call(arr) === '[object Array]') {
+        return arr.map(function (x) { return String(x).trim(); }).filter(function (x) { return x; });
+      }
+    } catch (e) { /* 壊れたJSONは下のカンマ区切り解釈に落とす */ }
+  }
+  return s.split(',').map(function (x) { return x.trim(); }).filter(function (x) { return x; });
+}
+
+// ============================================================
+// 🆕 セミナー予約の変更・取消（doPost: action=reserveSessions）
+//    ticket_token を知っている本人だけが自分の予約を差し替えられる（capability URL方式・
+//    updateApplication と同じ考え方）。pass.html の予約UIから呼ばれる。
+//    sessions: [] を送ると全て取消になる。
+// ============================================================
+function reserveSessions(data) {
+  _checkProps();
+
+  const token = String(data.ticket_token || '').trim();
+  if (!token) return _err('INVALID_TOKEN');
+  const want = _parseSessionIds(data.sessions);
+
+  let result, appId, applicant;
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    applicant = _applicantByTicketToken(ss, token);
+    if (!applicant) return _err('NOT_FOUND');
+    appId  = applicant.appId;
+    result = _writeReservations(ss, appId, want, { replace: true });
+  } finally {
+    lock.releaseLock();
+  }
+
+  // 🆕 v0.24.0: 控えメール。
+  // 🔴 ロックの外で送る（メール送信は数秒かかる。ロック内に入れると他の予約が待たされる）。
+  // 🔴 実際に変わったときだけ送る。同じ内容を保存し直しただけで毎回届くと鬱陶しいため。
+  // 🔴 メールが失敗しても予約の保存は成功として返す。メールは控えであって本体ではない。
+  let mailSent = false;
+  const changed = !!((result.added && result.added.length) || (result.cancelled && result.cancelled.length));
+  if (changed && applicant.email) {
+    try {
+      const cfg   = _guardConfig();
+      const quota = cfg.enabled ? _remainingMailQuota() : null;   // 取得失敗時はnull＝送る
+      if (quota !== null && quota <= cfg.mailQuotaStop) {
+        Logger.log('reserveSessions: 残メール枠が' + quota + '通のため控えメールを送りませんでした app_id=' + appId);
+      } else {
+        _sendReservationMail(
+          applicant.email, applicant.salonName, applicant.staffName,
+          SITE_BASE_URL + 'pass.html?t=' + token,
+          _reservedSessionLabels(appId),
+          !!(result.full && result.full.length));
+        mailSent = true;
+      }
+    } catch (e) {
+      Logger.log('予約の控えメール送信に失敗（予約自体は保存済み）: ' + e);
+    }
+  }
+
+  // 変更後の最新の残席をそのまま返す（画面側で再取得させない＝往復を1回減らす。
+  // GASの結果配送は約7%失敗するので、往復回数そのものを減らすことに意味がある）
+  const ss2      = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const resRows2 = _readReservationRows(ss2);
+  return _ok({
+    app_id:    appId,
+    result:    result,
+    mail_sent: mailSent,   // 画面に「控えをメールでお送りしました」と出すため
+    sessions:  _sessionCatalog(ss2, resRows2),
+    reserved:  _reservedSessionIdsOf(resRows2, appId)
+  });
+}
+
+// ============================================================
+// 🆕 マイグレーション: 既存の sessions シートに bullets（J列）/ overview（K列）を追加する
+//    【本番シートに対して一度だけ手動実行する】GASエディタで migrateAddSessionDetailColumns
+//    を選び▷実行。2回実行しても冪等。
+// ============================================================
+function migrateAddSessionDetailColumns() {
+  _checkProps();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh = ss.getSheetByName(SHEET_SESSIONS);
+  if (!sh) { Logger.log('sessionsシートがありません。先に setupSheets() を実行してください。'); return; }
+
+  const j = String(sh.getRange(1, 10).getValue() || '').trim();
+  const k = String(sh.getRange(1, 11).getValue() || '').trim();
+  if (j === 'bullets' && k === 'overview') { Logger.log('bullets/overview は既にあります。何もしませんでした。'); return; }
+  if ((j && j !== 'bullets') || (k && k !== 'overview')) {
+    throw new Error('sessionsのJ1/K1に想定外の値があります（"' + j + '" / "' + k + '"）。手動で確認してください。');
+  }
+  sh.getRange(1, 10, 1, 2).setValues([['bullets', 'overview']]);
+  Logger.log('sessionsシートに bullets(J) / overview(K) を追加しました。');
+}
+
+// ============================================================
+// 🆕 予約枠の投入（手動実行・冪等）
+//    2026年のラインナップを sessions シートに入れる。既にある session_id は飛ばすので
+//    何度実行してもよい（既存行の内容は上書きしない）。
+//
+//    🔴 枠を増やす・時間や定員を変えるときは、この関数を書き換えるのではなく
+//       **スプレッドシートの sessions シートを直接編集する**こと。
+//       この関数は初回投入を楽にするためだけのもの。
+//
+//    🔴 slot（B列）が同じ枠どうしは排他になる（お客様は1つしか選べない）。
+//       バランス革命の計測会は7枠すべて同じ slot なので、1人1枠しか取れない。
+// ============================================================
+function seedSeminarSessions() {
+  _checkProps();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  let sh = ss.getSheetByName(SHEET_SESSIONS);
+  if (!sh) { setupSheets(); sh = _getSheet(ss, SHEET_SESSIONS); }
+  migrateAddSessionDetailColumns();
+
+  const femcareBullets = [
+    '更年期は"予防"できる！',
+    '結局更年期の原因ってなにから来ているの？',
+    '身体の変化に寄り添ったエッセンス新商品のご紹介',
+    '今日からできるフェムケア'
+  ].join('\n');
+
+  const femcareOverview =
+    '年齢を重ねるにつれて感じる、理由のはっきりしないゆらぎや、すっきりしない毎日。\n' +
+    '頑張っているのに気分が晴れない、以前とは違う自分に戸惑う、そんなオトナ女子のために生まれたのが' +
+    '「Meguru+（メグルプラス）」です。\n' +
+    '「ゆらぐ私に穏やかな巡りを」をコンセプトに、これからの毎日を前向きに、自分らしく過ごすための' +
+    '新しい習慣をご提案します。\n' +
+    '本セミナーでは、更年期の仕組みとその解決するための秘密を詳しくご紹介。' +
+    '変化の時期を、美しく心地よく迎えるためのヒントをお届けします。';
+
+  // 🔵 ジャンパーニュの説明文は仮置き（2026-09-04時点で本文未定）。決まり次第シートを直接編集する。
+  const janpagneBullets = [
+    'ジャンパーニュの特徴をご紹介',
+    'サロンでの取り入れ方',
+    '実際に体験していただけます'
+  ].join('\n');
+  const janpagneOverview = '※この説明文は仮のものです。内容が決まり次第、差し替えます。';
+
+  const balanceBullets = [
+    'コンピューター精密計測で、足裏の圧力バランスと骨盤のゆがみをデータで見える化',
+    '微細振動波（圧電体）による体軸の体感テスト',
+    'お一人ずつのオーダーメイド インソール型骨格調整具のご提案'
+  ].join('\n');
+  const balanceOverview =
+    '長引く「ひざ痛・腰痛・猫背・肩こり・疲労感」の原因は、骨格のゆがみかもしれません。\n' +
+    '足裏コンピューター計測で、骨盤と足裏のバランスを精密に測定します。\n' +
+    'お一人ずつ丁寧に計測・ご説明を行うため完全予約制です（各回1名様）。';
+
+  // [session_id, slot, title, speaker, room, starts_at, ends_at, capacity, is_active, bullets, overview]
+  // 🔴 starts_at / ends_at は文字列で入れる。ends_at が空欄でも画面では「10:00〜」と表示される。
+  // 🔵 バランス革命は各回45分（2026-09-04 Takashiさん確認）。申込書には開始時刻しか無いので、
+  //    45分を足した終了時刻をここで入れている。変更するときはシートのG列を直す。
+  const rows = [
+    ['S1', 'セミナー 第1部', 'オトナ女子の"巡り"に寄り添うフェムケアセミナー', '', '',
+     '11:00', '12:00', 30, true, femcareBullets, femcareOverview],
+    ['S2', 'セミナー 第2部', 'ジャンパーニュ体験セミナー', '', '',
+     '14:00', '15:00', 30, true, janpagneBullets, janpagneOverview],
+    ['B1', 'バランス革命 無料計測会', '10:00〜10:45の回', '', '', '10:00', '10:45', 1, true, balanceBullets, balanceOverview],
+    ['B2', 'バランス革命 無料計測会', '10:45〜11:30の回', '', '', '10:45', '11:30', 1, true, balanceBullets, balanceOverview],
+    ['B3', 'バランス革命 無料計測会', '11:30〜12:15の回', '', '', '11:30', '12:15', 1, true, balanceBullets, balanceOverview],
+    ['B4', 'バランス革命 無料計測会', '12:45〜13:30の回', '', '', '12:45', '13:30', 1, true, balanceBullets, balanceOverview],
+    ['B5', 'バランス革命 無料計測会', '13:30〜14:15の回', '', '', '13:30', '14:15', 1, true, balanceBullets, balanceOverview],
+    ['B6', 'バランス革命 無料計測会', '14:15〜15:00の回', '', '', '14:15', '15:00', 1, true, balanceBullets, balanceOverview],
+    ['B7', 'バランス革命 無料計測会', '15:00〜15:45の回', '', '', '15:00', '15:45', 1, true, balanceBullets, balanceOverview]
+  ];
+
+  const existing = {};
+  const cur = sh.getDataRange().getValues();
+  for (let i = 1; i < cur.length; i++) {
+    const id = String(cur[i][0] == null ? '' : cur[i][0]).trim();
+    if (id) existing[id] = true;
+  }
+
+  const toAdd = rows.filter(function (r) { return !existing[r[0]]; });
+  if (!toAdd.length) { Logger.log('追加する枠はありませんでした（すべて既にあります）。'); return; }
+
+  sh.getRange(sh.getLastRow() + 1, 1, toAdd.length, 11).setValues(toAdd);
+  Logger.log('予約枠を' + toAdd.length + '件投入しました: ' +
+             toAdd.map(function (r) { return r[0]; }).join(', ') +
+             '\n定員・時間・説明文の変更は、以後スプレッドシートを直接編集してください。');
+}
+
+
+// ============================================================
 // スプレッドシート初期セットアップ
 // GASエディタから手動で一度だけ実行すること
 // ============================================================
@@ -1845,13 +2495,14 @@ function setupSheets() {
     Logger.log('applicationsシートは既に存在します');
   }
 
-  // --- sessions シート（セミナー枠マスタ。今回は保留のため空のまま用意）---
+  // --- sessions シート（セミナー枠マスタ。1行=1枠。枠を増やすのはここに行を足すだけ）---
   let sesSh = ss.getSheetByName(SHEET_SESSIONS);
   if (!sesSh) {
     sesSh = ss.insertSheet(SHEET_SESSIONS);
-    sesSh.getRange(1, 1, 1, 9).setValues([[
+    sesSh.getRange(1, 1, 1, 11).setValues([[
       'session_id', 'slot', 'title', 'speaker', 'room',
-      'starts_at', 'ends_at', 'capacity', 'is_active'
+      'starts_at', 'ends_at', 'capacity', 'is_active',
+      'bullets', 'overview'   // 🆕 v0.20.0（画面でタップして開く詳細。bulletsは1行1項目）
     ]]);
     sesSh.setFrozenRows(1);
     Logger.log('sessionsシート作成完了');
