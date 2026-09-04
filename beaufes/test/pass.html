@@ -349,7 +349,7 @@
 
 <script src="../lib/qrcode.min.js"></script>
 <script>
-const APP_VERSION = '0.12.0';
+const APP_VERSION = '0.14.0';
 const GAS_URL = 'TEST_ENV_NO_GAS';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
@@ -795,11 +795,17 @@ function renderCurrentSeminar() {
 
   const byId = {};
   semCatalog.forEach(function (s) { byId[s.session_id] = s; });
+  const bullet = (semReserved.length > 1) ? '・' : '';
   box.innerHTML = semReserved.map(function (id) {
     const s = byId[id];
     if (!s) return escHtml(id);
-    const t = (s.starts_at && s.ends_at) ? (s.starts_at + '〜' + s.ends_at + '　') : '';
-    return escHtml(t + s.title);
+    // 🔴 計測会のように**タイトルが時刻そのもの**の枠では、時刻＋タイトルにすると
+    //    「10:00〜10:45　10:00〜10:45の回」と二重になる。その場合は slot 名を使う。
+    //    サーバー側の _sessionDisplayName と同じ規則。直すときは両方直すこと。
+    const time  = timeLabel(s);
+    const isDup = !!(s.starts_at && String(s.title).indexOf(s.starts_at) >= 0);
+    const name  = (isDup && s.slot) ? s.slot : s.title;
+    return bullet + escHtml(time ? (time + '　' + name) : name);
   }).join('<br>');
 }
 
