@@ -140,6 +140,11 @@
     font-size: 13px; line-height: 1.7;
   }
   .semNote  { font-size: 12px; color: #888; margin: 4px 0 10px; line-height: 1.7; }
+  .semMailNote {
+    margin-top: 10px; background: #ecfdf5; color: #059669;
+    border: 1px solid #a7f3d0; border-radius: 8px; padding: 8px 12px;
+    font-size: 12px; line-height: 1.7;
+  }
   .semSlot  { margin-top: 14px; }
   .semSlotHead {
     font-size: 13px; font-weight: bold; color: var(--main-dark);
@@ -247,6 +252,9 @@
         ご希望の枠は満席のため、ご予約をお取りできませんでした。<br>
         <span style="color:#a16207;">ご入場のお申し込みは完了しています。</span>空いている枠は下からご予約いただけます。
       </div>
+      <div class="semMailNote" id="semMailNote" style="display:none;">
+        ご予約内容の控えをメールでお送りしました。
+      </div>
       <div class="semToggleLine" id="semToggleLine" style="display:none;">
         <a href="#" id="semToggleLink">セミナー・体験会を予約する／変更する</a>
       </div>
@@ -349,7 +357,7 @@
 
 <script src="../lib/qrcode.min.js"></script>
 <script>
-const APP_VERSION = '0.14.0';
+const APP_VERSION = '0.15.0';
 const GAS_URL = 'TEST_ENV_NO_GAS';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
@@ -795,8 +803,10 @@ function renderCurrentSeminar() {
 
   const byId = {};
   semCatalog.forEach(function (s) { byId[s.session_id] = s; });
-  const bullet = (semReserved.length > 1) ? '・' : '';
-  box.innerHTML = semReserved.map(function (id) {
+  // 2件以上のときは「ご予約：」の次の行から箇条書きにする（1行目が続くと切れ目が分からない）
+  const multi  = (semReserved.length > 1);
+  const bullet = multi ? '　・' : '';
+  box.innerHTML = (multi ? '<br>' : '') + semReserved.map(function (id) {
     const s = byId[id];
     if (!s) return escHtml(id);
     // 🔴 計測会のように**タイトルが時刻そのもの**の枠では、時刻＋タイトルにすると
@@ -863,10 +873,12 @@ el('semSaveBtn').addEventListener('click', async function () {
   const token = qs('t');
 
   if (IS_MOCK) {
+    const changed = (want.join(',') !== semReserved.join(','));
     semReserved = want;
     renderCurrentSeminar();
     closeSemPanel();
     el('semFullAlert').style.display = 'none';
+    el('semMailNote').style.display  = changed ? 'block' : 'none';   // 実際には送らない
     return;
   }
 
@@ -884,6 +896,11 @@ el('semSaveBtn').addEventListener('click', async function () {
     semCatalog  = json.data.sessions || semCatalog;
     semReserved = json.data.reserved || [];
     renderCurrentSeminar();
+
+    // 🆕 v0.15.0: 控えメールを送ったときだけ出す。
+    // 🔴 「送りました」と書いてよいのはサーバーが実際に送ったときだけ（mail_sent）。
+    //    内容が変わらなかった場合はメールを送らないので、ここも出さない。
+    el('semMailNote').style.display = json.data.mail_sent ? 'block' : 'none';
 
     const r = json.data.result || {};
     if ((r.full && r.full.length) || (r.invalid && r.invalid.length)) {
