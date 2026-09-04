@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>ブース購買記録 | ビューフェス2026</title>
+
+<!-- jsQR（QRコード専用エンジン。iPhone Safariでも動作）。
+     serial-apps/index.html と同じ版・同じSRIハッシュ。読めなくても手入力で運用できる。 -->
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"
+        integrity="sha384-b5Ya4Bq3qCyz39m2ISh+4DxjAIljdeFwK/BsXLuj9gugaNwAcj/ia15fxNZL9Nlx"
+        crossorigin="anonymous"></script>
+<style>
+  :root {
+    --main: #5BC8E8; --main-dark: #10617c; --border: #e5e7eb;
+    --ok: #059669; --warn: #d97706; --error: #dc2626; --bg: #f7f9fb;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; background: var(--bg); color: #222;
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+    font-size: 16px; line-height: 1.6; padding-bottom: 40px;
+  }
+  header {
+    background: var(--main-dark); color: #fff; padding: 10px 14px;
+    position: sticky; top: 0; z-index: 20;
+  }
+  .hTitle { font-size: 16px; font-weight: bold; }
+  .hSub   { font-size: 12px; opacity: .85; }
+  .statusBar {
+    display: flex; gap: 6px; padding: 8px 10px; background: #fff;
+    border-bottom: 1px solid var(--border); position: sticky; top: 54px; z-index: 19;
+    font-size: 13px;
+  }
+  .stat { flex: 1; text-align: center; border-radius: 8px; padding: 6px 4px; background: #f3f4f6; }
+  .stat b { display: block; font-size: 17px; line-height: 1.3; }
+  .stat.wait.on  { background: #fff7ed; color: #b45309; }
+  .stat.warn.on  { background: #fef2f2; color: var(--error); }
+  .stat.net.off  { background: #fef2f2; color: var(--error); }
+
+  main { padding: 12px; max-width: 640px; margin: 0 auto; }
+  .card {
+    background: #fff; border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px; margin-bottom: 12px;
+  }
+  h2 { font-size: 15px; margin: 0 0 10px; color: var(--main-dark); }
+  button {
+    font-family: inherit; font-size: 16px; border-radius: 10px; border: 1px solid var(--main-dark);
+    background: var(--main-dark); color: #fff; padding: 12px 16px; cursor: pointer;
+  }
+  button.ghost { background: #fff; color: var(--main-dark); }
+  button.danger { background: #fff; color: var(--error); border-color: var(--error); }
+  button:disabled { opacity: .45; cursor: default; }
+  .btnRow { display: flex; gap: 10px; }
+  .btnRow button { flex: 1; }
+
+  input[type="text"] {
+    font-family: inherit; font-size: 18px; padding: 12px; width: 100%;
+    border: 1px solid var(--border); border-radius: 10px;
+  }
+  .hint { font-size: 12px; color: #666; margin-top: 6px; }
+  .err  { color: var(--error); font-size: 13px; margin-top: 6px; }
+
+  #camWrap { position: relative; background: #000; border-radius: 12px; overflow: hidden; }
+  #cam { width: 100%; display: block; }
+  #camGuide {
+    position: absolute; inset: 12% 12%; border: 3px solid rgba(255,255,255,.85); border-radius: 12px;
+  }
+
+  .subject { background: #ecfeff; border: 1px solid #a5f3fc; border-radius: 10px; padding: 12px; }
+  .subjectName { font-size: 20px; font-weight: bold; }
+  .subjectSub  { font-size: 13px; color: #555; }
+
+  .prod { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px dashed var(--border); }
+  .prod:last-child { border-bottom: none; }
+  .prodName { flex: 1; font-size: 15px; line-height: 1.45; }
+  .prodSpec { font-size: 12px; color: #777; display: block; }
+  .qtyBox { display: flex; align-items: center; gap: 8px; flex: none; }
+  .qtyBox button { width: 44px; height: 44px; padding: 0; font-size: 22px; line-height: 1; }
+  .qtyVal { min-width: 32px; text-align: center; font-size: 19px; font-weight: bold; }
+  .prod.picked { background: #f0fdff; }
+
+  .deliv { display: flex; gap: 14px; margin-top: 10px; }
+  .deliv label { display: flex; align-items: center; gap: 6px; font-size: 15px; }
+
+  .toast {
+    position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 40;
+    background: #064e3b; color: #fff; border-radius: 12px; padding: 14px;
+    display: none; box-shadow: 0 6px 20px rgba(0,0,0,.25);
+  }
+  .toast.show { display: flex; align-items: center; gap: 12px; }
+  .toast .msg { flex: 1; font-weight: bold; }
+  .toast button { padding: 8px 12px; font-size: 14px; background: #fff; color: #064e3b; border-color: #fff; }
+
+  .recent { font-size: 14px; }
+  .recent li {
+    list-style: none; border-bottom: 1px solid var(--border); padding: 10px 0;
+    display: flex; gap: 10px; align-items: flex-start;
+  }
+  .recent li:last-child { border-bottom: none; }
+  .recBody { flex: 1; }
+  .recHead { font-weight: bold; }
+  .recItems { font-size: 13px; color: #444; }
+  .recMeta  { font-size: 12px; color: #888; }
+  .recent button { padding: 8px 12px; font-size: 13px; }
+  .badge { font-size: 11px; border-radius: 999px; padding: 2px 8px; margin-left: 6px; }
+  .badge.wait { background: #fff7ed; color: #b45309; }
+  .badge.warn { background: #fef2f2; color: var(--error); }
+  .badge.void { background: #f3f4f6; color: #666; }
+
+  .fatal {
+    background: #fef2f2; border: 2px solid var(--error); color: #7f1d1d;
+    border-radius: 12px; padding: 16px; margin: 12px;
+  }
+  .fatal h2 { color: #7f1d1d; }
+  .notice { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  footer { text-align: center; font-size: 11px; color: #999; padding: 16px; }
+  details.pack summary { cursor: pointer; color: var(--main-dark); font-size: 14px; }
+  textarea { width: 100%; height: 120px; font-size: 12px; font-family: monospace; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hTitle" id="hMaker">ブース購買記録</div>
+  <div class="hSub">ビューフェス2026 <span id="hVer"></span></div>
+</header>
+
+<div class="statusBar">
+  <div class="stat wait" id="statWait">送信待ち<b>0</b></div>
+  <div class="stat warn" id="statWarn">要確認<b>0</b></div>
+  <div class="stat net"  id="statNet">通信<b>―</b></div>
+</div>
+
+<div id="fatal" class="fatal" style="display:none"></div>
+
+<main id="app" style="display:none">
+
+  <div id="inactiveNote" class="notice" style="display:none">
+    <b>このブースは受付を終了しています。</b><br>
+    新しい登録はできません。紙の伝票をお使いください。<br>
+    <span class="hint">すでに端末にある未送信データは、このまま自動で送信されます。</span>
+  </div>
+
+  <!-- ① 入力 -->
+  <div class="card" id="cardInput">
+    <h2>① お客様の名札</h2>
+    <div class="btnRow">
+      <button id="btnScan">QRを読む</button>
+      <button id="btnManual" class="ghost">番号を入力</button>
+    </div>
+
+    <div id="scanArea" style="display:none; margin-top:12px">
+      <div id="camWrap"><video id="cam" playsinline muted></video><div id="camGuide"></div></div>
+      <div class="hint">名札のQRコードを枠の中に入れてください。</div>
+      <div class="btnRow" style="margin-top:10px"><button id="btnScanStop" class="ghost">やめる</button></div>
+      <div id="scanErr" class="err"></div>
+    </div>
+
+    <div id="manualArea" style="display:none; margin-top:12px">
+      <input type="text" id="codeInput" inputmode="text" autocapitalize="characters"
+             autocomplete="off" spellcheck="false" placeholder="F2026-0123 または P-07">
+      <div class="hint">名札に印刷された受付番号です。予備の名札は <b>P-07</b> のような番号です。</div>
+      <div id="manualErr" class="err"></div>
+      <div class="btnRow" style="margin-top:10px">
+        <button id="btnManualOk">この番号で進む</button>
+        <button id="btnManualCancel" class="ghost">やめる</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ② 確認表示 -->
+  <div class="card" id="cardSubject" style="display:none">
+    <h2>② お客様</h2>
+    <div class="subject">
+      <div class="subjectName" id="subjName">―</div>
+      <div class="subjectSub"  id="subjSub"></div>
+    </div>
+    <div class="btnRow" style="margin-top:10px"><button id="btnResetSubject" class="ghost">読み直す</button></div>
+  </div>
+
+  <!-- ③ 商品 -->
+  <div class="card" id="cardItems" style="display:none">
+    <h2>③ 商品</h2>
+    <div id="prodList"></div>
+    <div class="deliv">
+      <label><input type="radio" name="deliv" value="handed" checked> その場で渡した</label>
+      <label><input type="radio" name="deliv" value="later"> 後日</label>
+    </div>
+    <div class="btnRow" style="margin-top:14px">
+      <button id="btnSubmit" disabled>この内容で登録する</button>
+    </div>
+    <div class="hint" id="submitHint">商品の数量を1つ以上えらんでください。</div>
+  </div>
+
+  <!-- 直近 -->
+  <div class="card">
+    <h2>このブースの直近の登録</h2>
+    <ul class="recent" id="recentList"><li><span class="recMeta">まだ登録はありません。</span></li></ul>
+    <div class="btnRow" style="margin-top:10px"><button id="btnReloadRecent" class="ghost">最新にする</button></div>
+    <div class="hint">お名前は表示しません。取り消しは受付番号と商品でお確かめください。</div>
+  </div>
+
+  <!-- 撤収 -->
+  <div class="card">
+    <details class="pack">
+      <summary>撤収のとき（社員の指示で操作してください）</summary>
+      <div style="margin-top:12px">
+        <div class="btnRow">
+          <button id="btnExport" class="ghost">未送信データを書き出す</button>
+          <button id="btnWipe" class="danger" disabled>データを消去</button>
+        </div>
+        <div class="hint" id="wipeHint">送信待ち・要確認が0件になるか、書き出しを済ませると消去できます。</div>
+        <textarea id="exportBox" style="display:none; margin-top:10px" readonly></textarea>
+      </div>
+    </details>
+  </div>
+</main>
+
+<div class="toast" id="toast">
+  <div class="msg" id="toastMsg">端末に記録しました</div>
+  <button id="toastUndo">取り消す</button>
+</div>
+
+<footer>ビューフェス2026 ブース購買記録 <span id="fVer"></span></footer>
+
+<script>
+'use strict';
+// ============================================================
+// booth.html（ブース購買記録）
+// 実装仕様の正本: 開発・自動化/beaufes/booth実装設計_確定版.md §6
+// 画面仕様: LINEHarness/ビューフェス申込_設計.md §15-4 / 当日運用_堅牢化設計.md §4-2
+//
+// 🔴 この画面の3つの約束
+//   1. 登録は IndexedDB への書き込みで成立する。サーバー応答は待たない
+//   2. 一度でも積んだ注文はキューから消さない。取消は void を積む（消さない）
+//   3. 氏名・サロン名は保存も送信もしない。QRの n= はその場の表示だけに使う
+// ============================================================
+
+const APP_VERSION = '0.1.0';
+
+// 🔴 送信先はここ1箇所だけ（T-12: 基盤を差し替えるときはこの1行を変える）
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
+
+const DB_NAME = 'beaufes_booth';
+const DB_VER  = 1;
+const FETCH_TIMEOUT_MS = 10000;
+// バックオフ（秒）。§6-3のとおり。上限60秒＋0〜30%のジッタ
+const BACKOFF_SEC = [1, 2, 3, 5, 8, 13, 21, 34, 55, 60];
+const UNRESOLVED_RETRY_MS = 120000; // 未解決は120秒ごとに再送して自動解決を待つ
+const RECENT_REFRESH_MS   = 60000;
+
+// 恒久失敗にするエラー（§4-6）。ここに無いものは全部「再送」
+const PERMANENT_ERRORS = [
+  'IDEMPOTENCY_CONFLICT', 'PRODUCT_NOT_FOUND', 'PRODUCT_OTHER_BOOTH',
+  'NO_ITEMS', 'INVALID_REQUEST', 'BOOTH_NOT_FOUND', 'ORDER_NOT_FOUND'
+];
+
+// ------------------------------------------------------------
+// 状態
+// ------------------------------------------------------------
+let db = null;
+let boothToken = '';
+let boothId = '', makerName = '', masterVersion = '', clientInstanceId = '';
+let products = [];
+let boothInactive = false;
+let storageOk = false;
+let subject = null;   // { kind:'qr'|'manual', ticket_token, entry_code, name }
+let qty = {};         // product_id → 数量
+let serverRecent = [];
+let sending = false;
+let lastToastKey = '';
+let scanStream = null, scanTimer = null;
+
+function el(id) { return document.getElementById(id); }
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function nowStr() {
+  const d = new Date();
+  const p = function (n) { return (n < 10 ? '0' : '') + n; };
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' +
+         p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+function uuid() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return 'x-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
+}
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+// ------------------------------------------------------------
+// IndexedDB（§6-1）
+// ------------------------------------------------------------
+function openDb() {
+  return new Promise(function (resolve, reject) {
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = function () {
+      const d = req.result;
+      if (!d.objectStoreNames.contains('kv'))       d.createObjectStore('kv', { keyPath: 'k' });
+      if (!d.objectStoreNames.contains('products')) d.createObjectStore('products', { keyPath: 'product_id' });
+      if (!d.objectStoreNames.contains('queue'))    d.createObjectStore('queue', { keyPath: 'idempotency_key' });
+    };
+    req.onsuccess = function () { resolve(req.result); };
+    req.onerror   = function () { reject(req.error || new Error('IDB_OPEN_FAILED')); };
+  });
+}
+function tx(store, mode, fn) {
+  return new Promise(function (resolve, reject) {
+    let out;
+    const t = db.transaction(store, mode);
+    const s = t.objectStore(store);
+    try { out = fn(s); } catch (e) { reject(e); return; }
+    // 🔴 完了（oncomplete）を待ってから解決する。これが「端末に記録しました」の根拠
+    t.oncomplete = function () { resolve(out && out.result !== undefined ? out.result : out); };
+    t.onerror    = function () { reject(t.error || new Error('IDB_TX_FAILED')); };
+    t.onabort    = function () { reject(t.error || new Error('IDB_ABORTED')); };
+  });
+}
+function idbGet(store, key) {
+  return new Promise(function (resolve, reject) {
+    const t = db.transaction(store, 'readonly');
+    const r = t.objectStore(store).get(key);
+    r.onsuccess = function () { resolve(r.result); };
+    r.onerror   = function () { reject(r.error); };
+  });
+}
+function idbAll(store) {
+  return new Promise(function (resolve, reject) {
+    const t = db.transaction(store, 'readonly');
+    const r = t.objectStore(store).getAll();
+    r.onsuccess = function () { resolve(r.result || []); };
+    r.onerror   = function () { reject(r.error); };
+  });
+}
+function kvSet(k, v) { return tx('kv', 'readwrite', function (s) { s.put({ k: k, v: v }); }); }
+async function kvGet(k) { const r = await idbGet('kv', k); return r ? r.v : null; }
+
+// ------------------------------------------------------------
+// 起動
+// ------------------------------------------------------------
+function fatal(title, body) {
+  el('app').style.display = 'none';
+  el('fatal').style.display = 'block';
+  el('fatal').innerHTML = '<h2>' + esc(title) + '</h2><div>' + body + '</div>';
+}
+
+async function boot() {
+  el('hVer').textContent = 'v' + APP_VERSION;
+  el('fVer').textContent = 'v' + APP_VERSION;
+
+  boothToken = new URLSearchParams(location.search).get('b') || '';
+  if (!boothToken) {
+    fatal('URLをご確認ください', '配布されたQRコード（またはリンク）から開き直してください。<br>' +
+      '<span class="hint">アドレスの末尾に <code>?b=</code> で始まる文字列が必要です。</span>');
+    return;
+  }
+
+  // 🔴 ストレージが使えるかを最初に確かめる（§6-1）。黙って進むと当日データが消える
+  try {
+    db = await openDb();
+    await kvSet('__probe', Date.now());
+    const back = await kvGet('__probe');
+    storageOk = !!back;
+  } catch (e) {
+    storageOk = false;
+  }
+  if (!storageOk) {
+    fatal('この端末では記録を保存できません',
+      'プライベートブラウズ（シークレットモード）を解除して開き直してください。<br>' +
+      '解除できない場合は<b>紙の伝票</b>をお使いください。<br>' +
+      '<span class="hint">保存できないまま入力すると、記録が消えます。</span>');
+    return;
+  }
+
+  clientInstanceId = await kvGet('client_instance_id');
+  if (!clientInstanceId) {
+    clientInstanceId = 'dev-' + uuid().replace(/-/g, '').slice(0, 16);
+    await kvSet('client_instance_id', clientInstanceId);
+  }
+
+  // キャッシュから即起動する（2回目以降は通信を待たない）
+  const cachedBoothId = await kvGet('booth_id');
+  if (cachedBoothId) {
+    boothId       = cachedBoothId;
+    makerName     = (await kvGet('maker_name')) || '';
+    masterVersion = (await kvGet('master_version')) || '';
+    products      = await idbAll('products');
+    products.sort(sortProducts);
+    showApp();
+  }
+
+  wireUi();
+  updateStatus();
+  await refreshInit();          // 裏でマスタ更新（初回はここで初期化）
+  if (!boothId) return;         // 初期化できず、キャッシュも無い場合は refreshInit が画面を出している
+  renderProducts();
+  await renderRecent();
+  // 🔴 起動直後に1回サーバーの直近も取りに行く（データを消去した端末・別端末で登録した分が
+  //    60秒間まったく見えないと「登録できていないのでは」と思わせるため）
+  refreshRecent();
+  pump();
+  setInterval(pump, 5000);
+  setInterval(function () { refreshRecent(); }, RECENT_REFRESH_MS);
+  window.addEventListener('online',  function () { updateStatus(); pump(); });
+  window.addEventListener('offline', updateStatus);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) { updateStatus(); pump(); } });
+}
+
+function sortProducts(a, b) {
+  if (a.sort_order !== b.sort_order) return (a.sort_order || 0) - (b.sort_order || 0);
+  return a.product_id < b.product_id ? -1 : (a.product_id > b.product_id ? 1 : 0);
+}
+function showApp() {
+  el('app').style.display = 'block';
+  el('hMaker').textContent = makerName ? (makerName + ' ブース') : 'ブース購買記録';
+}
+
+// boothInit（商品マスタの取得・更新）
+async function refreshInit() {
+  try {
+    const url = GAS_URL + '?action=boothInit&data=' +
+      encodeURIComponent(JSON.stringify({ b: boothToken }));
+    const json = await getJson(url);
+
+    if (json && json.success) {
+      boothId       = json.data.booth_id;
+      makerName     = json.data.maker_name || '';
+      masterVersion = json.data.master_version || '';
+      products      = (json.data.products || []).slice().sort(sortProducts);
+      boothInactive = false;
+      await kvSet('booth_id', boothId);
+      await kvSet('maker_name', makerName);
+      await kvSet('master_version', masterVersion);
+      await kvSet('products_fetched_at', nowStr());
+      await tx('products', 'readwrite', function (s) {
+        s.clear();
+        products.forEach(function (p) { s.put(p); });
+      });
+      showApp();
+      el('inactiveNote').style.display = 'none';
+      renderProducts();
+      return;
+    }
+
+    const err = json ? json.error : 'UNKNOWN';
+    if (err === 'BOOTH_NOT_FOUND') {
+      fatal('URLをご確認ください', '配布されたQRコード（またはリンク）から開き直してください。');
+      return;
+    }
+    if (err === 'BOOTH_INACTIVE') {
+      // 🔴 新規入力だけ止める。キューの送信は続ける（§4-6）
+      boothInactive = true;
+      showApp();
+      el('inactiveNote').style.display = 'block';
+      el('cardInput').style.display = 'none';
+      el('cardSubject').style.display = 'none';
+      el('cardItems').style.display = 'none';
+      return;
+    }
+    throw new Error(err || 'UNKNOWN');
+
+  } catch (e) {
+    // 通信できない: キャッシュがあればそのまま使う（オフライン起動）
+    if (!boothId) {
+      fatal('商品情報を読み込めませんでした',
+        '電波の届く場所で、この画面を再読み込みしてください。<br>' +
+        '<span class="hint">前日に一度この画面を開いておくと、当日は電波が弱くても使えます。</span>');
+    }
+  }
+}
+
+// ------------------------------------------------------------
+// 通信（全画面共通ルール: res.ok を見る＋text()で受けて自前でJSON.parse）
+// ------------------------------------------------------------
+async function getJson(url) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(function () { ctrl.abort(); }, FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { method: 'GET', redirect: 'follow', signal: ctrl.signal });
+    if (!res.ok) throw new Error('HTTP_' + res.status);
+    const text = await res.text();
+    try { return JSON.parse(text); } catch (e) { throw new Error('NON_JSON'); }
+  } finally { clearTimeout(timer); }
+}
+async function postJson(action, data) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(function () { ctrl.abort(); }, FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      body: new URLSearchParams({ action: action, data: JSON.stringify(data) }),
+      redirect: 'follow',
+      signal: ctrl.signal
+    });
+    if (!res.ok) throw new Error('HTTP_' + res.status);
+    const text = await res.text();
+    try { return JSON.parse(text); } catch (e) { throw new Error('NON_JSON'); }
+  } finally { clearTimeout(timer); }
+}
+
+// ------------------------------------------------------------
+// 画面（入力 → 確認 → 商品）
+// ------------------------------------------------------------
+function wireUi() {
+  el('btnScan').onclick   = startScan;
+  el('btnScanStop').onclick = stopScan;
+  el('btnManual').onclick = function () {
+    stopScan();
+    el('manualArea').style.display = 'block';
+    el('manualErr').textContent = '';
+    el('codeInput').value = '';
+    el('codeInput').focus();
+  };
+  el('btnManualCancel').onclick = function () { el('manualArea').style.display = 'none'; };
+  el('btnManualOk').onclick = applyManual;
+  el('codeInput').addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter') { ev.preventDefault(); applyManual(); }
+  });
+  el('btnResetSubject').onclick = resetSubject;
+  el('btnSubmit').onclick = submitOrder;
+  el('btnReloadRecent').onclick = function () { refreshRecent(true); };
+  el('btnExport').onclick = exportQueue;
+  el('btnWipe').onclick = wipeAll;
+  el('toastUndo').onclick = function () {
+    if (lastToastKey) requestVoid(lastToastKey);
+    hideToast();
+  };
+}
+
+// 受付番号の正規化。全角→半角・大文字化・ゼロ埋め（サーバー側でも吸収するが手元でも整える）
+function normCode(raw) {
+  let s = String(raw || '').trim();
+  if (s.normalize) s = s.normalize('NFKC');
+  s = s.replace(/\s+/g, '').toUpperCase();
+  let m = s.match(/^(F\d{4})-?(\d{1,4})$/);
+  if (m) return m[1] + '-' + ('000' + m[2]).slice(-4);
+  m = s.match(/^P-?(\d{1,2})$/);
+  if (m) return 'P-' + ('0' + m[1]).slice(-2);
+  return s;
+}
+function applyManual() {
+  const code = normCode(el('codeInput').value);
+  if (!/^F\d{4}-\d{4}$/.test(code) && !/^P-\d{2}$/.test(code)) {
+    el('manualErr').textContent = '「F2026-0123」または「P-07」の形で入力してください。';
+    return;
+  }
+  el('manualArea').style.display = 'none';
+  setSubject({ kind: 'manual', entry_code: code, ticket_token: '', name: '' });
+}
+
+function setSubject(s) {
+  subject = s;
+  qty = {};
+  el('cardSubject').style.display = 'block';
+  el('cardItems').style.display = 'block';
+  if (s.kind === 'qr') {
+    el('subjName').textContent = s.name ? (s.name + ' 様') : 'お名前は名札でご確認ください';
+    el('subjSub').textContent  = s.name ? '名札のQRから読み取りました' : '予備の名札です';
+  } else {
+    el('subjName').textContent = s.entry_code;
+    el('subjSub').textContent  = '入力された番号';
+  }
+  renderProducts();
+  el('cardSubject').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function resetSubject() {
+  subject = null; qty = {};
+  el('cardSubject').style.display = 'none';
+  el('cardItems').style.display = 'none';
+  el('cardInput').style.display = boothInactive ? 'none' : 'block';
+}
+
+function renderProducts() {
+  const box = el('prodList');
+  if (!box) return;
+  if (!products.length) {
+    box.innerHTML = '<div class="hint">商品が登録されていません。事務局にお知らせください。</div>';
+    return;
+  }
+  box.innerHTML = products.map(function (p) {
+    const n = qty[p.product_id] || 0;
+    return '<div class="prod' + (n > 0 ? ' picked' : '') + '">' +
+      '<div class="prodName">' + esc(p.product_name) +
+        (p.spec ? '<span class="prodSpec">' + esc(p.spec) + '</span>' : '') +
+      '</div>' +
+      '<div class="qtyBox">' +
+        '<button class="ghost" data-minus="' + esc(p.product_id) + '">−</button>' +
+        '<span class="qtyVal">' + n + '</span>' +
+        '<button class="ghost" data-plus="' + esc(p.product_id) + '">＋</button>' +
+      '</div></div>';
+  }).join('');
+  box.querySelectorAll('[data-plus]').forEach(function (b) {
+    b.onclick = function () { bump(b.getAttribute('data-plus'), 1); };
+  });
+  box.querySelectorAll('[data-minus]').forEach(function (b) {
+    b.onclick = function () { bump(b.getAttribute('data-minus'), -1); };
+  });
+  const total = Object.keys(qty).reduce(function (a, k) { return a + qty[k]; }, 0);
+  el('btnSubmit').disabled = !(subject && total > 0);
+  el('submitHint').textContent = total > 0
+    ? ('合計 ' + total + ' 点')
+    : '商品の数量を1つ以上えらんでください。';
+}
+function bump(pid, d) {
+  const n = (qty[pid] || 0) + d;
+  if (n <= 0) delete qty[pid];
+  else if (n > 99) qty[pid] = 99;   // サーバーの上限（§4-2）
+  else qty[pid] = n;
+  renderProducts();
+}
+
+// ------------------------------------------------------------
+// 登録（🔴 IndexedDBへの書き込み完了で成立。サーバー応答は待たない）
+// ------------------------------------------------------------
+async function submitOrder() {
+  if (!subject) return;
+  const items = Object.keys(qty).map(function (pid) { return { product_id: pid, qty: qty[pid] }; });
+  if (!items.length) return;
+
+  const key = uuid();
+  const payload = {
+    b: boothToken,
+    idempotency_key: key,
+    items: items,
+    delivery: document.querySelector('input[name="deliv"]:checked').value,
+    client_created_at: nowStr(),
+    client_instance_id: clientInstanceId,
+    master_version: masterVersion
+  };
+  if (subject.ticket_token) payload.ticket_token = subject.ticket_token;
+  if (subject.entry_code)   payload.entry_code   = subject.entry_code;
+
+  // 🔴 氏名は保存も送信もしない（§15-2）。表示用のラベルだけを残す
+  const entry = {
+    idempotency_key: key,
+    type: 'submit',
+    payload: payload,
+    state: 'queued',
+    attempts: 0,
+    next_attempt_at: 0,
+    order_id: '',
+    server_status: '',
+    resolve_status: '',
+    validation_state: '',
+    created_at: nowStr(),
+    last_error: '',
+    label: subject.entry_code || '（QR）',
+    items_label: items.map(function (i) {
+      const p = products.filter(function (x) { return x.product_id === i.product_id; })[0];
+      return (p ? p.product_name : i.product_id) + ' × ' + i.qty;
+    }).join('、')
+  };
+
+  el('btnSubmit').disabled = true;
+  try {
+    await tx('queue', 'readwrite', function (s) { s.put(entry); });
+  } catch (e) {
+    alert('端末に保存できませんでした。もう一度お試しください。');
+    el('btnSubmit').disabled = false;
+    return;
+  }
+
+  showToast('端末に記録しました', key);
+  resetSubject();
+  await renderRecent();
+  updateStatus();
+  pump();
+}
+
+function showToast(msg, key) {
+  lastToastKey = key || '';
+  el('toastMsg').textContent = msg;
+  el('toastUndo').style.display = key ? 'block' : 'none';
+  el('toast').classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(hideToast, 12000);
+}
+function hideToast() { el('toast').classList.remove('show'); lastToastKey = ''; }
+
+// 取消（送信済みかどうかを操作者に意識させない・§15-4）
+async function requestVoid(targetKey) {
+  const target = await idbGet('queue', targetKey);
+  if (!target) return;
+  if (target.voided_locally) return;
+
+  const voidKey = uuid();
+  const entry = {
+    idempotency_key: voidKey,
+    type: 'void',
+    target_idempotency_key: targetKey,
+    payload: {
+      b: boothToken,
+      void_idempotency_key: voidKey,
+      target_idempotency_key: targetKey
+    },
+    state: 'void_pending',
+    attempts: 0,
+    next_attempt_at: 0,
+    created_at: nowStr(),
+    last_error: '',
+    label: target.label,
+    items_label: target.items_label
+  };
+  // 🔴 元の注文はキューから消さない。送信は続ける（墓標に頼らず、正しい内容がサーバーに残る）
+  target.voided_locally = true;
+  if (target.order_id) entry.payload.target_order_id = target.order_id;
+
+  await tx('queue', 'readwrite', function (s) { s.put(target); s.put(entry); });
+  await renderRecent();
+  updateStatus();
+  pump();
+}
+
+// ------------------------------------------------------------
+// 送信ループ（🔴 直列・1件ずつ）
+// ------------------------------------------------------------
+function backoffMs(attempts) {
+  const base = BACKOFF_SEC[Math.min(attempts, BACKOFF_SEC.length - 1)] * 1000;
+  return base + Math.floor(base * 0.3 * Math.random());
+}
+function isPermanent(err) { return PERMANENT_ERRORS.indexOf(String(err)) >= 0; }
+
+async function pump() {
+  if (sending || !db) return;
+  sending = true;
+  try {
+    for (;;) {
+      const list = await idbAll('queue');
+      const now = Date.now();
+      const due = list.filter(function (e) {
+        if (e.state === 'queued' || e.state === 'void_pending') return (e.next_attempt_at || 0) <= now;
+        // 未解決は120秒ごとに同じキーで再送し、okになるのを待つ（§4-6）
+        if (e.state === 'unresolved') return (e.next_attempt_at || 0) <= now;
+        return false;
+      }).sort(function (a, b) { return (a.created_at < b.created_at ? -1 : 1); });
+
+      if (!due.length) break;
+      const entry = due[0];
+      const ok = await sendOne(entry);
+      updateStatus();
+      await renderRecent();
+      if (!ok) break;  // 失敗したら次の周回（タイマー）に任せる。畳みかけない
+    }
+  } catch (e) {
+    // ここで落としても次のタイマーで再開する
+  } finally {
+    sending = false;
+  }
+}
+
+async function sendOne(entry) {
+  entry.attempts = (entry.attempts || 0) + 1;
+  const action = (entry.type === 'void') ? 'boothVoid' : 'boothSubmit';
+  let json = null, transportError = '';
+  try {
+    json = await postJson(action, entry.payload);
+  } catch (e) {
+    transportError = (e && e.message) ? e.message : 'NETWORK';
+  }
+
+  if (transportError || !json) {
+    entry.last_error = transportError || 'EMPTY';
+    entry.next_attempt_at = Date.now() + backoffMs(entry.attempts);
+    await tx('queue', 'readwrite', function (s) { s.put(entry); });
+    return false;
+  }
+
+  if (json.success) {
+    const d = json.data || {};
+    if (entry.type === 'void') {
+      entry.state = 'voided';
+      entry.order_id = d.order_id || entry.order_id;
+    } else {
+      entry.order_id         = d.order_id || '';
+      entry.server_status    = d.status || '';
+      entry.resolve_status   = d.resolve_status || '';
+      entry.validation_state = d.validation_state || '';
+      if (d.write_state === 'COMPLETE') {
+        // 🔴 acknowledged はサーバーが COMPLETE を返したときだけ
+        entry.state = (d.resolve_status === 'ok') ? 'acknowledged' : 'unresolved';
+      } else {
+        entry.state = 'queued';   // PENDING のまま＝明細が欠けている。もう一度送って補完させる
+      }
+      if (entry.state === 'unresolved') entry.next_attempt_at = Date.now() + UNRESOLVED_RETRY_MS;
+    }
+    entry.last_error = '';
+    await tx('queue', 'readwrite', function (s) { s.put(entry); });
+    return true;
+  }
+
+  // success:false
+  const err = String(json.error || 'UNKNOWN');
+  entry.last_error = err;
+  if (isPermanent(err)) {
+    entry.state = 'failed_permanent';
+    await tx('queue', 'readwrite', function (s) { s.put(entry); });
+    return true;
+  }
+  // LOCK_BUSY はバックオフを1段飛ばす（§4-6）
+  if (err === 'LOCK_BUSY') entry.attempts++;
+  entry.next_attempt_at = Date.now() + backoffMs(entry.attempts);
+  await tx('queue', 'readwrite', function (s) { s.put(entry); });
+  return false;
+}
+
+// ------------------------------------------------------------
+// 表示（3表示＋直近）
+// ------------------------------------------------------------
+async function counts() {
+  const list = await idbAll('queue');
+  let wait = 0, warn = 0;
+  list.forEach(function (e) {
+    if (e.state === 'queued' || e.state === 'sending' || e.state === 'void_pending') wait++;
+    if (e.state === 'unresolved' || e.state === 'failed_permanent') warn++;
+  });
+  return { wait: wait, warn: warn, list: list };
+}
+async function updateStatus() {
+  const c = await counts();
+  el('statWait').innerHTML = '送信待ち<b>' + c.wait + '</b>';
+  el('statWarn').innerHTML = '要確認<b>' + c.warn + '</b>';
+  el('statWait').classList.toggle('on', c.wait > 0);
+  el('statWarn').classList.toggle('on', c.warn > 0);
+  const on = navigator.onLine !== false;
+  el('statNet').innerHTML = '通信<b>' + (on ? '○' : '×') + '</b>';
+  el('statNet').classList.toggle('off', !on);
+
+  // 消去ガード（§6-5）: 0件になるか、書き出し済みでなければ押せない
+  const evacuated = await kvGet('evacuated_at');
+  const canWipe = (c.wait === 0 && c.warn === 0) || !!evacuated;
+  el('btnWipe').disabled = !canWipe;
+  el('wipeHint').textContent = canWipe
+    ? (evacuated ? '書き出し済みです。社員の確認のうえ消去してください。'
+                 : '送信待ち・要確認とも0件です。社員の確認のうえ消去してください。')
+    : '送信待ち・要確認が0件になるか、書き出しを済ませると消去できます。';
+}
+
+async function refreshRecent(force) {
+  if (!boothId) return;
+  try {
+    const json = await postJson('boothRecent', { b: boothToken, limit: 10 });
+    if (json && json.success) serverRecent = json.data.orders || [];
+  } catch (e) { /* オフラインなら自端末分だけ表示する */ }
+  await renderRecent();
+}
+
+async function renderRecent() {
+  const c = await counts();
+  const localByKey = {};
+  c.list.forEach(function (e) { if (e.type === 'submit') localByKey[e.idempotency_key] = e; });
+
+  const rows = [];
+  // 自端末のキュー（新しい順）
+  c.list.filter(function (e) { return e.type === 'submit'; })
+    .sort(function (a, b) { return a.created_at < b.created_at ? 1 : -1; })
+    .forEach(function (e) {
+      rows.push({
+        key: e.idempotency_key,
+        label: e.label,
+        items: e.items_label,
+        time: e.created_at,
+        state: e.voided_locally ? 'voided' : e.state,
+        local: true
+      });
+    });
+  // サーバー側（別端末で登録されたもの。自端末にあるものは重ねない）
+  serverRecent.forEach(function (o) {
+    if (localByKey[o.idempotency_key]) return;
+    rows.push({
+      key: o.idempotency_key,
+      label: o.entry_label || '',
+      items: (o.items || []).map(function (i) { return i.product_name + ' × ' + i.qty; }).join('、'),
+      time: o.client_created_at || '',
+      state: 'acknowledged',
+      local: false
+    });
+  });
+
+  const view = rows.slice(0, 10);
+  const box = el('recentList');
+  if (!view.length) {
+    box.innerHTML = '<li><span class="recMeta">まだ登録はありません。</span></li>';
+    return;
+  }
+  box.innerHTML = view.map(function (r) {
+    let badge = '';
+    if (r.state === 'queued' || r.state === 'void_pending') badge = '<span class="badge wait">送信待ち</span>';
+    else if (r.state === 'unresolved') badge = '<span class="badge warn">受付で確認</span>';
+    else if (r.state === 'failed_permanent') badge = '<span class="badge warn">要確認</span>';
+    else if (r.state === 'voided') badge = '<span class="badge void">取消済み</span>';
+    const btn = (r.state === 'voided')
+      ? ''
+      : '<button class="ghost" data-void="' + esc(r.key) + '">取り消す</button>';
+    return '<li><div class="recBody">' +
+      '<div class="recHead">' + esc(r.label || '（QR）') + badge + '</div>' +
+      '<div class="recItems">' + esc(r.items) + '</div>' +
+      '<div class="recMeta">' + esc(r.time) + (r.local ? '' : '（他の端末）') + '</div>' +
+      '</div>' + btn + '</li>';
+  }).join('');
+  box.querySelectorAll('[data-void]').forEach(function (b) {
+    b.onclick = async function () {
+      const key = b.getAttribute('data-void');
+      if (!confirm('この登録を取り消します。よろしいですか？')) return;
+      const local = await idbGet('queue', key);
+      if (local) { await requestVoid(key); return; }
+      // 別端末の注文（自端末にキューが無い）: 取消だけを積む
+      const voidKey = uuid();
+      const src = serverRecent.filter(function (o) { return o.idempotency_key === key; })[0] || {};
+      await tx('queue', 'readwrite', function (s) {
+        s.put({
+          idempotency_key: voidKey, type: 'void', target_idempotency_key: key,
+          payload: { b: boothToken, void_idempotency_key: voidKey, target_idempotency_key: key,
+                     target_order_id: src.order_id || '' },
+          state: 'void_pending', attempts: 0, next_attempt_at: 0, created_at: nowStr(),
+          label: src.entry_label || '', items_label: (src.items || []).map(function (i) {
+            return i.product_name + ' × ' + i.qty; }).join('、')
+        });
+      });
+      serverRecent = serverRecent.filter(function (o) { return o.idempotency_key !== key; });
+      await renderRecent();
+      updateStatus();
+      pump();
+    };
+  });
+}
+
+// ------------------------------------------------------------
+// QRスキャン（jsQR。BarcodeDetectorがあればそちらを優先）
+// ------------------------------------------------------------
+async function startScan() {
+  el('manualArea').style.display = 'none';
+  el('scanErr').textContent = '';
+  el('scanArea').style.display = 'block';
+  const video = el('cam');
+  try {
+    scanStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } }, audio: false
+    });
+  } catch (e) {
+    el('scanErr').innerHTML = 'カメラを使えませんでした。<b>「番号を入力」</b>から受付番号でご登録ください。' +
+      '<span class="hint">（カメラの利用を「許可」にすると使えます）</span>';
+    return;
+  }
+  video.srcObject = scanStream;
+  video.setAttribute('playsinline', 'true');
+  await video.play();
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  let detector = null;
+  if (window.BarcodeDetector) {
+    try { detector = new BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { detector = null; }
+  }
+
+  scanTimer = setInterval(async function () {
+    if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
+    let text = '';
+    try {
+      if (detector) {
+        const found = await detector.detect(video);
+        if (found && found.length) text = found[0].rawValue || '';
+      } else if (window.jsQR) {
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const r = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+        if (r) text = r.data || '';
+      } else {
+        el('scanErr').innerHTML = 'QRの読み取り部品を読み込めませんでした。<b>「番号を入力」</b>をお使いください。';
+        stopScan();
+        return;
+      }
+    } catch (e) { return; }
+    if (!text) return;
+    const parsed = parseBadgeQr(text);
+    if (!parsed) { el('scanErr').textContent = 'この名札のQRではないようです。もう一度お試しください。'; return; }
+    stopScan();
+    setSubject({ kind: 'qr', ticket_token: parsed.t, entry_code: '', name: parsed.n });
+  }, 250);
+}
+function stopScan() {
+  if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
+  if (scanStream) { scanStream.getTracks().forEach(function (t) { t.stop(); }); scanStream = null; }
+  el('cam').srcObject = null;
+  el('scanArea').style.display = 'none';
+}
+// 名札QRは pass.html?t=<ticket_token>&n=<氏名>（badges.html v0.1.3）。
+// 🔴 n= は表示専用。保存も送信もしない（§15-9）
+function parseBadgeQr(text) {
+  try {
+    const u = new URL(String(text), location.href);
+    const t = u.searchParams.get('t') || '';
+    if (!t) return null;
+    return { t: t, n: u.searchParams.get('n') || '' };
+  } catch (e) {
+    const m = String(text).match(/[?&]t=([^&\s]+)/);
+    if (!m) return null;
+    const n = String(text).match(/[?&]n=([^&\s]+)/);
+    return { t: decodeURIComponent(m[1]), n: n ? decodeURIComponent(n[1]) : '' };
+  }
+}
+
+// ------------------------------------------------------------
+// 撤収（§6-5）
+// ------------------------------------------------------------
+async function exportQueue() {
+  const list = await idbAll('queue');
+  const pending = list.filter(function (e) {
+    return e.state !== 'acknowledged' && e.state !== 'voided';
+  });
+  // 🔴 boothImportQueue にそのまま投入できる形（idempotency_key / type / payload）
+  const json = JSON.stringify({
+    exported_at: nowStr(), booth_id: boothId, client_instance_id: clientInstanceId,
+    entries: pending.map(function (e) {
+      return { idempotency_key: e.idempotency_key, type: e.type, payload: e.payload };
+    })
+  }, null, 2);
+
+  const csvLines = [['idempotency_key', 'type', 'state', 'label', 'items', 'created_at', 'last_error']
+    .map(csvCell).join(',')];
+  pending.forEach(function (e) {
+    csvLines.push([e.idempotency_key, e.type, e.state, e.label || '', e.items_label || '',
+                   e.created_at || '', e.last_error || ''].map(csvCell).join(','));
+  });
+
+  download('beaufes_booth_' + (boothId || 'unknown') + '_' + stamp() + '.json', json, 'application/json');
+  download('beaufes_booth_' + (boothId || 'unknown') + '_' + stamp() + '.csv',
+           '﻿' + csvLines.join('\r\n'), 'text/csv');
+  const box = el('exportBox');
+  box.style.display = 'block';
+  box.value = json;
+  box.select();
+
+  await kvSet('evacuated_at', nowStr());
+  updateStatus();
+  alert('書き出しました（' + pending.length + '件）。\nこの画面のテキストを社員にお渡しいただいても構いません。');
+}
+function csvCell(v) { return '"' + String(v == null ? '' : v).split('"').join('""') + '"'; }
+function stamp() { return nowStr().replace(/[-: ]/g, '').slice(0, 12); }
+function download(name, text, mime) {
+  try {
+    const url = URL.createObjectURL(new Blob([text], { type: mime + ';charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = name; document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 1000);
+  } catch (e) { /* 保存できない端末では画面のテキストを使う */ }
+}
+
+async function wipeAll() {
+  const c = await counts();
+  if (!confirm('この端末の記録をすべて消去します。\n' +
+               '送信待ち ' + c.wait + '件 / 要確認 ' + c.warn + '件\n\n' +
+               '社員の確認は済んでいますか？')) return;
+  await tx('queue', 'readwrite', function (s) { s.clear(); });
+  await tx('kv', 'readwrite', function (s) { s.clear(); });
+  await tx('products', 'readwrite', function (s) { s.clear(); });
+  alert('消去しました。ご協力ありがとうございました。');
+  location.reload();
+}
+
+boot();
+</script>
+</body>
+</html>
