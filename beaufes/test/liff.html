@@ -156,6 +156,38 @@
   }
   .semSlotDetail { margin-top: 10px; }
   .semSlotDetail .semDetail { border-top: none; padding-top: 0; }
+  /* 時間チップの一覧（同じ内容の枠が4つ以上並ぶとき） */
+  .semSlotHint { font-size: 12px; color: #888; margin: 6px 0 0; }
+  .semGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .semChip {
+    position: relative;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 1px;
+    padding: 9px 4px;
+    border: 1px solid var(--border); border-radius: 10px;
+    background: #fff; cursor: pointer; font-weight: normal; margin: 0;
+    text-align: center; line-height: 1.3;
+    transition: border-color .15s, background .15s, box-shadow .15s;
+  }
+  .semChip input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+  .semChipTime { font-size: 15px; font-weight: bold; color: var(--text); }
+  .semChipSub  { font-size: 11px; color: #999; }
+  .semChip.selected {
+    border-color: var(--main); background: var(--main-dark);
+    box-shadow: 0 0 0 2px rgba(91,200,232,.28);
+  }
+  .semChip.selected .semChipTime,
+  .semChip.selected .semChipSub { color: #fff; }
+  .semChip.full {
+    background: #f4f5f6; border-color: #e6e8ea; cursor: default;
+  }
+  .semChip.full .semChipTime { color: #b9bec3; }
+  .semChip.full .semChipSub  { color: #b45454; font-weight: bold; }
   .semLoading { font-size: 13px; color: #888; padding: 6px 0; }
 </style>
 </head>
@@ -284,7 +316,7 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.7.0';
+const APP_VERSION = '0.8.0';
 const GAS_URL = 'TEST_ENV_NO_GAS';
 const LIFF_ID  = '2010404613-cwHA5B0U';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
@@ -371,9 +403,9 @@ const MOCK_BALANCE_OVERVIEW =
   '足裏コンピューター計測で、骨盤と足裏のバランスを精密に測定します。\n' +
   'お一人ずつ丁寧に計測・ご説明を行うため完全予約制です（各回1名様）。';
 
-function mockBalanceSlot(id, start, remaining) {
-  return { session_id: id, slot: 'バランス革命 無料計測会', title: start + '〜の回',
-           starts_at: start, ends_at: '', capacity: 1, remaining: remaining,
+function mockBalanceSlot(id, start, end, remaining) {
+  return { session_id: id, slot: 'バランス革命 無料計測会', title: start + '〜' + end + 'の回',
+           starts_at: start, ends_at: end, capacity: 1, remaining: remaining,
            is_full: (remaining <= 0), bullets: MOCK_BALANCE_BULLETS, overview: MOCK_BALANCE_OVERVIEW };
 }
 
@@ -390,16 +422,16 @@ const MOCK_SESSIONS = [
               '本セミナーでは、更年期の仕組みとその解決するための秘密を詳しくご紹介。' +
               '変化の時期を、美しく心地よく迎えるためのヒントをお届けします。' },
   { session_id: 'S2', slot: 'セミナー 第2部', title: 'ジャンパーニュ体験セミナー',
-    starts_at: '14:00', ends_at: '15:00', capacity: null, remaining: null, is_full: false,
+    starts_at: '14:00', ends_at: '15:00', capacity: 30, remaining: 28, is_full: false,
     bullets: ['ジャンパーニュの特徴をご紹介', 'サロンでの取り入れ方', '実際に体験していただけます'],
     overview: '※この説明文は仮のものです。内容が決まり次第、差し替えます。' },
-  mockBalanceSlot('B1', '10:00', 1),
-  mockBalanceSlot('B2', '10:45', 0),   // 満席の見え方
-  mockBalanceSlot('B3', '11:30', 1),
-  mockBalanceSlot('B4', '12:45', 1),
-  mockBalanceSlot('B5', '13:30', 1),
-  mockBalanceSlot('B6', '14:15', 1),
-  mockBalanceSlot('B7', '15:00', 1)
+  mockBalanceSlot('B1', '10:00', '10:45', 1),
+  mockBalanceSlot('B2', '10:45', '11:30', 0),   // 満席の見え方
+  mockBalanceSlot('B3', '11:30', '12:15', 1),
+  mockBalanceSlot('B4', '12:45', '13:30', 1),
+  mockBalanceSlot('B5', '13:30', '14:15', 0),   // 満席が2つ並んだときの見え方
+  mockBalanceSlot('B6', '14:15', '15:00', 1),
+  mockBalanceSlot('B7', '15:00', '15:45', 1)
 ];
 
 function escHtml(s) {
@@ -417,8 +449,8 @@ function seatLabel(s) {
 }
 
 // 時刻の表示。🔴 終了時刻が空欄でも「10:00〜」と出す。
-// 予約枠の一覧（バランス革命の申込書など）に開始時刻しか無いことがあり、
-// 「両方揃っていなければ何も出さない」にすると時間が画面から消える。
+// 予約枠の一覧に開始時刻しか無いことがあり、「両方揃っていなければ何も出さない」に
+// すると時間が画面から消える。
 function timeLabel(s) {
   if (!s.starts_at) return '';
   return s.starts_at + '〜' + (s.ends_at || '');
@@ -440,6 +472,7 @@ function detailHtml(s) {
          '</div></details>';
 }
 
+// ふつうのカード（1枠ずつ縦に並べる）
 function sessionCardHtml(s, radioName, checked, hideTime, hideDetail) {
   const time  = hideTime ? '' : timeLabel(s);
   const seats = seatLabel(s);
@@ -459,14 +492,34 @@ function sessionCardHtml(s, radioName, checked, hideTime, hideDetail) {
          '</span></label>' + (hideDetail ? '' : detailHtml(s)) + '</div>';
 }
 
+// 時間チップ（1行に複数並べる）。同じ内容の枠が時間だけ違って何本もあるときに使う。
+// 見るべき情報が「その時間が空いているか」だけなので、タイトルは出さず時間と状態だけにする。
+function sessionChipHtml(s, radioName, checked) {
+  const disabled = (s.is_full && !checked);
+  const sub = s.is_full ? '満席'
+            : (s.capacity !== null && s.capacity !== undefined && s.capacity > 1)
+              ? ('残り' + s.remaining)
+              : (s.ends_at ? '〜' + s.ends_at : '空き');
+
+  return '<label class="semChip' + (disabled ? ' full' : '') + (checked ? ' selected' : '') +
+         '" data-sid="' + escHtml(s.session_id) + '">' +
+         '<input type="radio" name="' + radioName + '" value="' + escHtml(s.session_id) + '"' +
+         (disabled ? ' disabled' : '') + (checked ? ' checked' : '') + '>' +
+         '<span class="semChipTime">' + escHtml(s.starts_at || s.title) + '</span>' +
+         '<span class="semChipSub">' + escHtml(sub) + '</span>' +
+         '</label>';
+}
+
 // slot（時間帯グループ）ごとにまとめて描く。
 // 同じ slot 内はラジオ＝1つしか選べない → 同じ時間に2つ予約する事故が構造的に起きない。
 //
 // 🔴 見出しに時刻を出すのは、そのグループの枠が全部同じ時間のときだけ。
-//    バランス革命の計測会のように1グループ内で時間がバラバラな予約では、
-//    先頭の枠の時刻を見出しに出すと全部その時間に見えてしまう。
-// 🔴 説明文がグループ内で全部同じなら、詳細は枠の下に1つだけ出す。
-//    7枠に同じ説明を7回出すと画面が読めなくなるため（バランス革命の計測会）。
+//    1グループ内で時間がバラバラな予約では、先頭の枠の時刻を見出しに出すと
+//    全部その時間に見えてしまう。
+// 🔴 説明文がグループ内で全部同じなら、詳細は枠の下に1つだけ出す（7回繰り返さない）。
+// 🔴 さらにその枠が4つ以上あるときは、カードではなく**時間チップの一覧**にする。
+//    見るべきものが「どの時間が空いているか」だけになるため、1行に複数並べて
+//    ひと目で空きが分かるようにする（バランス革命の無料計測会・7枠）。
 function renderSeminars(container, sessions, selectedIds) {
   const list = sessions || [];
   const sel  = selectedIds || [];
@@ -496,14 +549,29 @@ function renderSeminars(container, sessions, selectedIds) {
     });
     const sharedDetail = (g.length > 1 && keys.length === 1);
     const detailOwner  = sharedDetail ? g.filter(hasDetail)[0] : null;
+    const useGrid      = sharedDetail && g.length >= 4 && !headTime;
+
+    // 全部同じ定員なら「各回◯名様」と添える（チップには定員を書かないため）
+    const sameCap = g.every(function (s) { return s.capacity === g[0].capacity; });
+    const capHint = (useGrid && sameCap && g[0].capacity) ? '各回' + g[0].capacity + '名様' : '';
 
     const anySelected = g.some(function (s) { return sel.indexOf(s.session_id) >= 0; });
 
     html += '<div class="semSlot">' +
             '<div class="semSlotHead">' + escHtml(slot) + (headTime ? '　' + headTime : '') + '</div>';
-    g.forEach(function (s) {
-      html += sessionCardHtml(s, name, sel.indexOf(s.session_id) >= 0, !!headTime, sharedDetail);
-    });
+    if (useGrid) {
+      html += '<div class="semSlotHint">ご希望の時間を1つお選びください' +
+              (capHint ? '（' + capHint + '）' : '') + '</div>' +
+              '<div class="semGrid">';
+      g.forEach(function (s) {
+        html += sessionChipHtml(s, name, sel.indexOf(s.session_id) >= 0);
+      });
+      html += '</div>';
+    } else {
+      g.forEach(function (s) {
+        html += sessionCardHtml(s, name, sel.indexOf(s.session_id) >= 0, !!headTime, sharedDetail);
+      });
+    }
     html += '<label class="semSkip"><input type="radio" name="' + name + '" value=""' +
             (anySelected ? '' : ' checked') + '><span>予約しない</span></label>';
     if (detailOwner) html += '<div class="semSlotDetail">' + detailHtml(detailOwner) + '</div>';
@@ -514,7 +582,7 @@ function renderSeminars(container, sessions, selectedIds) {
   container.querySelectorAll('input[type=radio]').forEach(function (r) {
     r.addEventListener('change', function () {
       semTouched = true;   // 🔴 一度でも選ばれたら、あとから来たプリフィルで上書きしない
-      container.querySelectorAll('.semCard').forEach(function (c) {
+      container.querySelectorAll('.semCard, .semChip').forEach(function (c) {
         const input = c.querySelector('input[type=radio]');
         c.classList.toggle('selected', !!(input && input.checked));
       });
