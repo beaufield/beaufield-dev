@@ -780,6 +780,8 @@
     .pending-ack-btn     { padding: 4px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-light); cursor: pointer; white-space: nowrap; }
     .pending-delay-badge { display: inline-block; font-size: 10px; font-weight: 700; border-radius: 8px; padding: 1px 6px; margin-left: 6px; background: #ffebee; color: #c62828; }
     .prop-pending-warn   { font-size: 11px; color: #c62828; font-weight: 600; margin-top: 4px; line-height: 1.5; }
+    /* 分析より前に発注済み＝推奨発注数に既に反映されている、と伝える行（v1.70.0） */
+    .prop-pending-info   { font-size: 11px; color: #1e7e34; font-weight: 600; margin-top: 4px; line-height: 1.5; }
     .kpi-row          { display: flex; gap: 8px; }
     .kpi-card         { flex: 1; padding: 10px 8px; text-align: center; cursor: pointer; -webkit-tap-highlight-color: transparent; }
     .kpi-label        { font-size: 11px; color: var(--text-light); }
@@ -1353,7 +1355,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.69.0'; // 提案に得意先集中度バッジを追加（需要が1社に偏っている商品に気づけるように）
+const APP_VERSION    = 'v1.70.0'; // 分析前に発注済みの商品を提案から消さない（同じ数量を二重に引いていた不具合の修正）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -5345,10 +5347,43 @@ const fmtOrderDate = s => {
 };
 
 /* === BUILD ORDERED BY CODE (test:ordered-cache) === */
+// 提案データの分析日（'YYYY-MM-DD'）。取れなければ空文字。
+// pendingOrders の orderDate は日付までしか無いので、前後判定はこの日付単位で行う
+function _analyzedDayStr() {
+  const m = String(proposalsData.analyzedAt || '').match(/^(\d{4})[-\/](\d{2})[-\/](\d{2})/);
+  return m ? m[1] + '-' + m[2] + '-' + m[3] : '';
+}
+// 分析日時（'yyyy-MM-dd HH:mm'）をepoch msに直す。ローカル発注記録の savedAt と比べるために使う。
+// パースできなければ null（＝前後を判定せず全ての発注を「未反映」とみなす安全側の既定）
+function _analyzedAtMs() {
+  const m = String(proposalsData.analyzedAt || '')
+    .match(/^(\d{4})[-\/](\d{2})[-\/](\d{2})(?:[ T](\d{1,2}):(\d{2}))?/);
+  if (!m) return null;
+  return new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0)).getTime();
+}
+// この発注は既に推奨発注数へ反映されているか（＝分析より前の発注か）。v1.70.0
+function _isOrderReflected(orderDate) {
+  const day = _analyzedDayStr();
+  return !!(day && orderDate && String(orderDate) < day);
+}
+
 // 発注済み（アプリ経由・仕入未計上）の商品コード → { qty合計, 直近の発注日, 発注No, isDelayed }
 // GASの pendingOrders（リアルタイム集計・受領✓と自動突合済み・30日超過は除外済み）と
 // ローカル発注記録（即時性を担保するため）の両方を突き合わせて作る（v1.62.0）
-function buildOrderedByCode() {
+//
+// ⚠️ opts.unreflectedOnly（v1.70.0）: 「分析日時より後の発注」だけに絞る。
+//    提案タブから商品を隠す判定には必ずこちらを使うこと。分析より前の発注は
+//    analyze_demand.py が `不足 = 推奨在庫 −（在庫 + 発注済み未計上）` で既に差し引いており、
+//    提案数量そのものが「その発注を引いた残り」になっている。にもかかわらず行ごと隠すと
+//    同じ数量を二重に引くことになり、昨日3個だけ発注した商品（推奨15・在庫0・提案12）が
+//    まるごと消えていた（2026-09-04・25件/約20万円が非表示になっていた不具合）。
+//    分析より後の発注は提案数に未反映なので、従来どおり隠して二重発注を防ぐ。
+//    引数なしの呼び出しは全件（バッジ表示用）。
+function buildOrderedByCode(opts) {
+  const unreflectedOnly = !!(opts && opts.unreflectedOnly);
+  // 分析日時が取れないときはフィルタしない（＝v1.69.0までと同じ挙動。隠しすぎる側に倒す）
+  const analyzedDay = unreflectedOnly ? _analyzedDayStr() : '';
+  const analyzedMs  = unreflectedOnly ? _analyzedAtMs()   : null;
   const map = {};
   const put = (code, qty, orderDate, orderNo, isDelayed) => {
     if (!code) return;
@@ -5358,13 +5393,20 @@ function buildOrderedByCode() {
     cur.isDelayed = cur.isDelayed || !!isDelayed;
     if (orderDate > cur.orderDate) { cur.orderDate = orderDate; cur.orderNo = orderNo; }
   };
-  (proposalsData.pendingOrders || []).forEach(x => put(x.code, x.qty || 0, x.orderDate || '', x.orderNo || '', x.isDelayed));
+  (proposalsData.pendingOrders || []).forEach(x => {
+    if (analyzedDay && _isOrderReflected(x.orderDate)) return; // 提案数に反映済み＝隠す対象ではない
+    put(x.code, x.qty || 0, x.orderDate || '', x.orderNo || '', x.isDelayed);
+  });
   // ローカル記録は pendingOrders と重複しうるので、同じ明細（発注No＋商品コード）は二重計上しない。
   // ⚠️ 発注No単位で突き合わせてはいけない（v1.66.0）。1明細でも入荷済みになると発注Noごと
   //    「サーバーに無い」判定になり、その発注の全商品がローカル記録だけで隠れ続ける
   const seenLines = new Set((proposalsData.pendingOrders || []).map(x => x.orderNo + '|' + x.code));
   _readOrderedLocal().forEach(r => {
     if (seenLines.has(r.orderNo + '|' + r.code)) return;
+    // ローカル記録は発注日を過去日に変更できる（[isOrderDateAllowed] 参照）ので、
+    // 前後判定には発注日ではなく「保存した時刻」を使う。これなら過去日で登録した発注も
+    // 「分析より後に立てた発注＝未反映」と正しく扱える
+    if (analyzedMs !== null && !(r.savedAt > analyzedMs)) return;
     put(r.code, r.qty, r.orderDate, r.orderNo, false);
   });
   return map;
@@ -5398,11 +5440,16 @@ function renderPropItem(p, code, delayedByCode, orderedByCode) {
   const badgeCls = PROP_PATTERN_CLASS[p.pattern] || 'sporadic';
   const note = p.aiNote || p.note || '';
   const stockNeg = (parseFloat(p.stock) || 0) < 0;
-  // 発注済み（仕入未計上）バッジ（v1.62.0）。「発注済みも表示」トグルON時のみここに来る
-  // （既定ONの「発注済みを隠す」状態では該当商品自体が描画対象から除かれる）
+  // 発注済み（仕入未計上）バッジ（v1.62.0）。orderedByCode は全件マップ（v1.70.0）。
+  // 分析より前の発注（reflected）は提案数量から既に引かれた上で表示されている行なので、
+  // 「隠されずに出ている理由」をバッジと下の説明行の両方で示す。分析より後の発注は
+  // 従来どおり隠れているため、ここに来るのは「発注済みも表示」トグルON時か入荷遅延中だけ
   const ordered = (orderedByCode || {})[p.code];
+  const orderedReflected = !!(ordered && _isOrderReflected(ordered.orderDate));
   const orderedBadge = ordered
-    ? `<span class="prop-badge ordered">✅ ${fmtOrderDate(ordered.orderDate)}発注済 ${ordered.qty}個</span>` : '';
+    ? `<span class="prop-badge ordered" title="${escHtml(orderedReflected
+        ? fmtOrderDate(ordered.orderDate) + 'に発注した' + ordered.qty + '個は、この推奨発注数からすでに差し引いてあります'
+        : 'この商品は発注済みです（仕入にはまだ計上されていません）')}">✅ ${fmtOrderDate(ordered.orderDate)}発注済 ${ordered.qty}個${orderedReflected ? '・差引済' : ''}</span>` : '';
   // 発注済み（仕入未計上）＝実物は届いている可能性が高いが在庫にはまだ反映されていない分
   const onOrder = p.onOrder > 0 ? `<span style="color:var(--text-light)">＋発注済(未計上) <b>${p.onOrder}</b></span> ` : '';
   const unitCost = parseFloat(p.unitCost) || 0;
@@ -5448,8 +5495,14 @@ function renderPropItem(p, code, delayedByCode, orderedByCode) {
   // 「今すぐ組む」で数量が入った行はチェックONになるので、グレーのままだと食い違う。
   // 在庫が推奨を下回っている行は配分ゼロでもグレーにしない（気づいてほしい行なので）。
   // ただし「📌 今回は入れない」と人が明示的に決めた行は、不足していてもグレーのままにする。
-  // 発注済み（ordered）は種別を問わず常にグレー（v1.62.0）
-  const isGrey = !!ordered || (p.groupId ? (qty <= 0 && (pinned || !mgIsShort(p))) : p.refOnly);
+  // 発注済み（ordered）は種別を問わず常にグレー（v1.62.0）。ただし分析より前の発注は
+  // 「その分を引いてもまだ足りない残り」を出している行なので、グレーにしない（v1.70.0）
+  const isGrey = (!!ordered && !orderedReflected) || (p.groupId ? (qty <= 0 && (pinned || !mgIsShort(p))) : p.refOnly);
+  // 分析より前に発注済みの行に出す説明。「昨日頼んだのにまた出てきた＝二重発注では？」という
+  // 誤解をその場で解くための一文（v1.70.0）
+  const reflectedNote = orderedReflected
+    ? `<div class="prop-pending-info">✅ ${fmtOrderDate(ordered.orderDate)}に${ordered.qty}個発注済み。その分を差し引いても、まだ${qty}個足りません</div>`
+    : '';
   return `
   <div class="prop-item${isGrey ? ' prop-ref' : ''}" data-code="${escHtml(p.code)}" data-unit-cost="${unitCost}">
     <div class="prop-item-top">
@@ -5472,6 +5525,7 @@ function renderPropItem(p, code, delayedByCode, orderedByCode) {
     </div>
     ${lastOrder ? `<div class="prop-item-stats" style="margin-top:2px;font-size:11px">${lastOrder}</div>` : ''}
     ${note ? `<div class="prop-note">${escHtml(note)}</div>` : ''}
+    ${reflectedNote}
     ${delayWarn}
   </div>`;
 }
@@ -5545,7 +5599,7 @@ function renderProposalUrgent() {
   const wrap = document.getElementById('prop-urgent');
   if (!wrap) return;
   const delayedByCode = buildDelayedByCode();
-  const orderedByCode = propHideOrdered ? buildOrderedByCode() : {};
+  const orderedByCode = propHideOrdered ? buildOrderedByCode({ unreflectedOnly: true }) : {};
   const seen = new Set();
   const items = [];
   (proposalsData.proposals || []).forEach(p => {
@@ -5625,9 +5679,16 @@ async function loadProposals(force = false) {
       _reconcileOrderedLocal();
       // 発注済み（仕入未計上）の商品も既定でチェックOFFにする（v1.62.0）。
       // buildOrderedByCode() は proposalsData.pendingOrders を見るため、代入後に行う必要がある
-      const orderedByCodeAtLoad = buildOrderedByCode();
+      // v1.70.0: 対象は「分析より後の発注」＋「入荷遅延中」に限る。
+      //   ・分析より前の発注は提案数量から既に引かれた残りなので、チェックONのまま発注してよい
+      //     （昨日3個・推奨15・在庫0 → 提案12。この12個は発注すべき数量そのもの）
+      //   ・入荷遅延中だけは「今から届くかもしれない」ので、人が判断できるようOFFのままにする
+      const orderedByCodeAtLoad = buildOrderedByCode({ unreflectedOnly: true });
+      const delayedByCodeAtLoad = buildDelayedByCode();
       proposalsData.proposals.forEach(p => {
-        if (orderedByCodeAtLoad[p.code]) propUncheckedItems.add(p.supplierCode + '|' + p.code);
+        if (orderedByCodeAtLoad[p.code] || delayedByCodeAtLoad[p.code]) {
+          propUncheckedItems.add(p.supplierCode + '|' + p.code);
+        }
       });
       proposalsLoaded = true;
       excessShowCount = 20;
@@ -5654,8 +5715,9 @@ async function loadProposals(force = false) {
 
 function updateProposalBadge() {
   const badge = document.getElementById('prop-badge-count');
-  // タブのバッジは「発注すべき件数」なので参考表示・発注済み（隠している時）は数えない
-  const orderedByCode = propHideOrdered ? buildOrderedByCode() : {};
+  // タブのバッジは「発注すべき件数」なので参考表示・発注済み（隠している時）は数えない。
+  // 「発注済み」＝分析より後の発注だけ（分析前の発注は提案数に反映済みなので数える。v1.70.0）
+  const orderedByCode = propHideOrdered ? buildOrderedByCode({ unreflectedOnly: true }) : {};
   const n = proposalsData.proposals.filter(p => !p.refOnly && !orderedByCode[p.code]).length;
   badge.style.display = n > 0 ? '' : 'none';
   badge.textContent = n > 99 ? '99+' : String(n);
@@ -5723,7 +5785,7 @@ function kpiDeltaHtml(curr, prev, formatFn) {
 function renderProposalFilter() {
   const sel = document.getElementById('prop-filter-supplier');
   const prev = sel.value;
-  const orderedByCode = propHideOrdered ? buildOrderedByCode() : {};
+  const orderedByCode = propHideOrdered ? buildOrderedByCode({ unreflectedOnly: true }) : {};
   const seen = {};
   proposalsData.proposals.forEach(p => { seen[p.supplierCode] = resolveSupplierName(p.supplierCode, p.supplierName); });
   const opts = Object.keys(seen)
@@ -5743,7 +5805,9 @@ function renderProposalFilter() {
 function renderProposalList() {
   const wrap = document.getElementById('prop-list');
   const filter = document.getElementById('prop-filter-supplier').value;
+  // orderedByCode … 全件（行のバッジ表示用）／orderedUnreflected … 分析より後の発注だけ（非表示判定用）
   const orderedByCode = buildOrderedByCode();
+  const orderedUnreflected = buildOrderedByCode({ unreflectedOnly: true });
   let props = proposalsData.proposals.filter(p => !filter || p.supplierCode === filter);
   if (propWebFilter === 'onlyWeb')    props = props.filter(p => isWebSupplier(p.supplierCode));
   if (propWebFilter === 'excludeWeb') props = props.filter(p => !isWebSupplier(p.supplierCode));
@@ -5753,15 +5817,17 @@ function renderProposalList() {
   // 遅延中（発注したのに届いていない）は隠さない。「要対応」セクション（renderProposalUrgent）が
   // 同じ商品を「🛒 xxxのカードへ移動して発注」で誘導してくるため、ここで隠すと移動先が空になって
   // 操作できなくなる（v1.62.0）
+  // ⚠️ 隠す判定に使うのは orderedUnreflected（分析より後の発注）だけ。分析より前の発注は
+  //    提案数量から既に引かれているので、隠すと同じ数量を二重に引く（v1.70.0）
   const delayedByCode = buildDelayedByCode();
   const hiddenOrderedBySupplier = {};
   if (propHideOrdered) {
     props.forEach(p => {
-      if (orderedByCode[p.code] && !delayedByCode[p.code]) {
+      if (orderedUnreflected[p.code] && !delayedByCode[p.code]) {
         hiddenOrderedBySupplier[p.supplierCode] = (hiddenOrderedBySupplier[p.supplierCode] || 0) + 1;
       }
     });
-    props = props.filter(p => !orderedByCode[p.code] || delayedByCode[p.code]);
+    props = props.filter(p => !orderedUnreflected[p.code] || delayedByCode[p.code]);
   }
   const totalHiddenOrdered = Object.values(hiddenOrderedBySupplier).reduce((s, n) => s + n, 0);
 
@@ -5925,8 +5991,9 @@ function mgItemsOf(groupId) {
   const items = proposalsData.proposals.filter(p => p.groupId === groupId);
   if (!propHideOrdered) return items;
   // 発注済み（仕入未計上）の商品は再配分の対象から外す。除外しないと、発注済みの商品に
-  // 系列の残り本数の一部がまた割り当てられてしまう（v1.62.0）
-  const orderedByCode = buildOrderedByCode();
+  // 系列の残り本数の一部がまた割り当てられてしまう（v1.62.0）。
+  // 対象は分析より後の発注だけ（分析より前の発注は配分結果に既に織り込まれている。v1.70.0）
+  const orderedByCode = buildOrderedByCode({ unreflectedOnly: true });
   return items.filter(p => !orderedByCode[p.code]);
 }
 /* === MG SKIP GUARDS (test:mg-skip) === */
