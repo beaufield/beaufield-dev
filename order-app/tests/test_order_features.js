@@ -86,7 +86,7 @@ function testOrderedCacheAndBuildOrderedByCode() {
     console, JSON, Number, String, Date, Set, Math,
     localStorage: makeStorage(),
     LS_ORDERED: 'orderApp_orderedCodes',
-    proposalsData: { pendingOrders: [] }
+    proposalsData: { pendingOrders: [], analyzedAt: '' }
   });
   const orderedCacheBlock = section(html,
     '/* === ORDERED CACHE (test:ordered-cache) === */',
@@ -97,7 +97,8 @@ function testOrderedCacheAndBuildOrderedByCode() {
   vm.runInContext(`${orderedCacheBlock}\n${buildBlock}\n globalThis.testApi = {
     readLocal: _readOrderedLocal, writeLocal: _writeOrderedLocal,
     record: _recordOrderedLocal, forget: _forgetOrderedLocal,
-    build: buildOrderedByCode, reconcile: _reconcileOrderedLocal
+    build: buildOrderedByCode, reconcile: _reconcileOrderedLocal,
+    isReflected: _isOrderReflected, analyzedDay: _analyzedDayStr, analyzedMs: _analyzedAtMs
   };`, context);
   const api = context.testApi;
 
@@ -191,6 +192,52 @@ function testOrderedCacheAndBuildOrderedByCode() {
   assert.strictEqual(api.build()['J'].qty, 6, 'just-saved order must still hide the item');
   api.writeLocal([]);
   context.proposalsData.pendingOrders = [];
+
+  /* --- v1.70.0: 分析より前に発注済みの商品を提案から消さない --- */
+  // 実害: 昨日3個だけ発注した商品（推奨15・在庫0）を分析は「あと12個」と提案しているのに、
+  //       アプリが「発注済み」として行ごと隠していた（2026-09-04・25件/約20万円が非表示）。
+  //       同じ3個を、分析の引き算とアプリの非表示で二重に引いていたのが原因
+  context.proposalsData.analyzedAt = '2026-09-04 07:00';
+
+  // 分析より前（前日）の発注 … 提案数量に反映済みなので「隠す判定」の対象外。
+  // ただし全件マップ（バッジ表示用）には残る
+  context.proposalsData.pendingOrders = [
+    { code: 'K', qty: 3, orderDate: '2026-09-03', orderNo: '20260903-001', isDelayed: false }
+  ];
+  assert.strictEqual(api.build({ unreflectedOnly: true })['K'], undefined,
+    'order placed before the analysis must not hide the proposal');
+  assert.strictEqual(api.build()['K'].qty, 3,
+    'the full map must still carry it so the row can show the badge');
+
+  // 分析と同じ日の発注 … 提案数量に未反映なので従来どおり隠す（二重発注防止）
+  context.proposalsData.pendingOrders = [
+    { code: 'L', qty: 3, orderDate: '2026-09-04', orderNo: '20260904-001', isDelayed: false }
+  ];
+  assert.strictEqual(api.build({ unreflectedOnly: true })['L'].qty, 3,
+    'order placed on/after the analysis day must still hide the proposal');
+
+  // ローカル記録は発注日ではなく savedAt で前後を判定する（発注日は過去日に変更できるため）
+  const analyzedMs = new Date(2026, 8, 4, 7, 0).getTime();
+  context.proposalsData.pendingOrders = [];
+  api.writeLocal([
+    // 過去日で登録したが、保存したのは分析より後 → 未反映＝隠す
+    { code: 'M', qty: 2, orderDate: '2026-08-20', orderNo: '20260820-001', savedAt: analyzedMs + 3600000 },
+    // 保存も分析より前 → 反映済み＝隠さない
+    { code: 'N', qty: 2, orderDate: '2026-09-02', orderNo: '20260902-001', savedAt: analyzedMs - 3600000 }
+  ]);
+  let unreflected = api.build({ unreflectedOnly: true });
+  assert.strictEqual(unreflected['M'].qty, 2, 'local record saved after the analysis must hide the item');
+  assert.strictEqual(unreflected['N'], undefined, 'local record saved before the analysis must not hide the item');
+
+  // 分析日時が取れないときは前後を判定せず全件を「未反映」扱い（v1.69.0までと同じ・隠しすぎる側）
+  context.proposalsData.analyzedAt = '';
+  unreflected = api.build({ unreflectedOnly: true });
+  assert.strictEqual(unreflected['M'].qty, 2, 'without analyzedAt everything must fall back to hiding');
+  assert.strictEqual(unreflected['N'].qty, 2, 'without analyzedAt everything must fall back to hiding');
+
+  api.writeLocal([]);
+  context.proposalsData.pendingOrders = [];
+  context.proposalsData.analyzedAt = '';
 }
 
 function makeFakeHistorySheet(rows) {
