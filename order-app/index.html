@@ -1355,7 +1355,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.70.0'; // 分析前に発注済みの商品を提案から消さない（同じ数量を二重に引いていた不具合の修正）
+const APP_VERSION    = 'v1.71.0'; // GAS同時実行セマフォの不整合から自動復旧できるようにした（fail-closedで永久に動かなくなる問題の解消）
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1511,6 +1511,9 @@ const _GAS_READ_RETRYABLE_ACTIONS = new Set([
 
 let _gasActive = 0;
 let _gasSemaphoreBroken = false;
+let _gasEpoch = 0;       // セマフォを作り直すたびに進める世代番号。旧世代のleaseは新カウンタに触らせない
+let _gasBreakCount = 0;  // 不整合の累計発生回数。復旧しても壊れ続けるなら自動復旧をやめる根拠にする
+const GAS_SEMAPHORE_MAX_RECOVERY = 3;
 const _gasWaiters = [];
 const _activeGasOps = new Map();
 
@@ -1537,25 +1540,55 @@ class GasSemaphoreError extends Error {
 function _gasCheckInvariant() {
   if (_gasActive < 0 || _gasActive > GAS_MAX_CONCURRENCY) {
     _gasSemaphoreBroken = true; // 数値を丸めて隠さず、新規取得を止めてfail-closedにする
-    console.error('[GAS semaphore] invariant violated: active=' + _gasActive);
+    _gasBreakCount++;
+    console.error('[GAS semaphore] invariant violated: active=' + _gasActive + ' (break#' + _gasBreakCount + ')');
+    _gasDiagSemaphoreEvent('broken', { active: _gasActive });
     return false;
   }
   return true;
 }
 
+// 復旧手段。壊れたカウンタは値そのものが信用できないので、直すのではなく作り直す。
+// _gasEpoch を進めることで、復旧前に配ったleaseが後からreleaseしても新しいカウンタには触らない
+// （二重にデクリメントされて即座にまた壊れるのを防ぐ）。
+// ⚠️ 飛行中の通信は数え直せないため、復旧直後だけ実際の同時実行数が GAS_MAX_CONCURRENCY を
+//    一時的に超えることがある。各通信は自分のdeadlineで必ず終わるので超過は有限。
+// ⚠️ 何度も壊れる＝別のバグがあるということなので、GAS_SEMAPHORE_MAX_RECOVERY 回を超えたら
+//    自動復旧をやめ、fail-closed のまま _gasErrorMessage の再読み込み誘導に委ねる。
+// 壊れた事実は自動復旧しても握りつぶさず、console と GAS診断ログ（localStorage）に必ず残す。
+function _gasRecoverSemaphore() {
+  if (!_gasSemaphoreBroken) return true;
+  if (_gasBreakCount > GAS_SEMAPHORE_MAX_RECOVERY) return false;
+  _gasEpoch++;
+  _gasActive = 0;
+  while (_gasWaiters.length) {
+    const ticket = _gasWaiters.shift();
+    // 壊れたカウンタに並んでいた待ち行列は引き継がない。呼び出し側には「混み合っている」として
+    // 返し、やり直してもらう（次の取得は復旧後のカウンタで正しく通る）
+    if (ticket.state === 'waiting' && ticket.cancel) ticket.cancel(new GasQueueTimeoutError());
+  }
+  _gasSemaphoreBroken = false;
+  console.warn('[GAS semaphore] recovered (epoch=' + _gasEpoch + ', break#' + _gasBreakCount + ')');
+  _gasDiagSemaphoreEvent('recovered', { epoch: _gasEpoch });
+  return true;
+}
+
 function _makeGasLease() {
   let released = false;
+  const epoch = _gasEpoch; // 復旧をまたいだleaseは無効化する
   return {
     release() {
       if (released) return;
       released = true;
+      if (epoch !== _gasEpoch) return; // 復旧前に取った枠。カウンタは作り直したので触らない
       _gasRelease();
     }
   };
 }
 
 function _gasAcquire(queueWaitMs, signal) {
-  if (_gasSemaphoreBroken) return Promise.reject(new GasSemaphoreError());
+  // 壊れていてもまず復旧を試みる。復旧できなければ従来どおり fail-closed のまま弾く
+  if (_gasSemaphoreBroken && !_gasRecoverSemaphore()) return Promise.reject(new GasSemaphoreError());
   if (queueWaitMs <= 0 || (signal && signal.aborted)) return Promise.reject(new GasDeadlineError());
   if (_gasActive < GAS_MAX_CONCURRENCY) {
     _gasActive++;
@@ -1564,7 +1597,7 @@ function _gasAcquire(queueWaitMs, signal) {
   }
 
   return new Promise((resolve, reject) => {
-    const ticket = { state: 'waiting', timer: null, onAbort: null, grant: null };
+    const ticket = { state: 'waiting', timer: null, onAbort: null, grant: null, cancel: null };
     const cancel = err => {
       if (ticket.state !== 'waiting') return;
       ticket.state = 'cancelled';
@@ -1572,6 +1605,7 @@ function _gasAcquire(queueWaitMs, signal) {
       if (signal && ticket.onAbort) signal.removeEventListener('abort', ticket.onAbort);
       reject(err);
     };
+    ticket.cancel = cancel; // 復旧時に待ち行列を外から畳むため
     ticket.grant = () => {
       if (ticket.state !== 'waiting') return false;
       ticket.state = 'granted';
@@ -1600,7 +1634,7 @@ function _gasRelease() {
 function _gasDebugSnapshot() {
   const counts = { waiting: 0, cancelled: 0, granted: 0 };
   _gasWaiters.forEach(t => { if (counts[t.state] !== undefined) counts[t.state]++; });
-  return { active: _gasActive, broken: _gasSemaphoreBroken, ...counts };
+  return { active: _gasActive, broken: _gasSemaphoreBroken, epoch: _gasEpoch, breaks: _gasBreakCount, ...counts };
 }
 
 function _gasProfileFor(action, options = {}) {
@@ -1627,6 +1661,20 @@ function _gasReadDiagnostics() {
 
 function _gasWriteDiagnostics(rows) {
   try { localStorage.setItem(LS_GAS_DIAG, JSON.stringify(rows.slice(-GAS_DIAG_LIMIT))); } catch(e) {}
+}
+
+// セマフォの不整合と復旧を通信ログと同じ場所に残す。自動復旧しても調査の手掛かりを消さないため
+function _gasDiagSemaphoreEvent(kind, detail) {
+  try {
+    const now = Date.now();
+    const rows = _gasReadDiagnostics();
+    rows.push({
+      opId: 'semaphore-' + now, action: 'semaphore', kind: 'semaphore', version: APP_VERSION,
+      startedAt: now, endedAt: now, state: 'END', outcome: kind,
+      breakCount: _gasBreakCount, detail: detail || null
+    });
+    _gasWriteDiagnostics(rows);
+  } catch(e) {}
 }
 
 function _gasDiagStart(op) {
@@ -1732,9 +1780,9 @@ function _gasErrorMessage(e) {
   if (e && e.name === 'GasOutcomeUnknownError') return '処理結果を確認できませんでした。同じ操作をすぐ繰り返さず、画面の状態を確認してください。';
   if (e && e.name === 'GasDeadlineError') return '処理時間の上限に達しました。画面を戻しました。';
   if (e && e.name === 'GasQueueTimeoutError') return '通信が混み合っているため開始できませんでした。少し待ってからお試しください。';
-  // セマフォ不整合は一度発生すると _gasSemaphoreBroken が二度とfalseに戻らず、以後すべての通信が
-  // 即座に失敗する（fail-closed）。既定文言のまま「もう一度お試しください」と出すと、何度試しても
-  // 直らないのに再試行だけを促してしまうため、再読み込み誘導の専用文言にする（_handoff.md記載の残タスク）
+  // セマフォ不整合。v1.71.0で _gasRecoverSemaphore() による自動復旧を入れたため、通常はここまで来ない。
+  // ここに来るのは自動復旧の上限（GAS_SEMAPHORE_MAX_RECOVERY）を超えて壊れ続けている場合＝
+  // 以後すべての通信が即座に失敗する（fail-closed）状態なので、再試行ではなく再読み込みへ誘導する
   if (e && e.name === 'GasSemaphoreError') return 'アプリの内部状態に問題が発生しました。ページを再読み込みしてください。';
   if (e && e.name === 'TypeError') return '通信エラー。ネットワークを確認してください。';
   return 'Google側が一時的に混み合っています。もう一度お試しください。';
