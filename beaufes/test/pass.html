@@ -1,0 +1,1068 @@
+<!DOCTYPE html>
+<!-- 🔴 このファイルは tools/build_test_pages.py の生成物です。手で編集しないこと。
+     直すときは beaufes/pass.html を編集してから再生成してください。 -->
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="robots" content="noindex,nofollow">
+<style>
+  /* === テスト環境の帯（build_test_pages.py が挿入・本番には存在しない） === */
+  #testEnvBar {
+    position: sticky; top: 0; z-index: 999;
+    background: #b91c1c; color: #fff;
+    font-size: 12px; line-height: 1.6; text-align: center;
+    padding: 8px 10px;
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+  }
+  #testEnvBar b { font-size: 13px; }
+  #testEnvBar .navs { margin-top: 6px; }
+  #testEnvBar a {
+    color: #fff; text-decoration: underline; margin: 0 6px; white-space: nowrap;
+  }
+</style>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ビューフェス2026 入場パス</title>
+<style>
+  :root {
+    --main: #5BC8E8;
+    --main-dark: #2fa8cc;
+    --text: #333;
+    --bg: #f7fafc;
+    --border: #e0e6ea;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    background: linear-gradient(135deg, var(--main), var(--main-dark));
+    color: #fff;
+    padding: 22px 20px;
+    text-align: center;
+  }
+  header h1 { margin: 0; font-size: 18px; }
+  main { max-width: 420px; margin: 0 auto; padding: 20px 16px 60px; }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 24px 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    text-align: center;
+  }
+  .newBadge {
+    background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0;
+    border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 16px;
+  }
+  .name { font-size: 20px; font-weight: bold; margin: 4px 0; min-height: 24px; }
+  .salon { font-size: 14px; color: #666; margin-bottom: 18px; min-height: 20px; }
+  .placeholder { color: #bbb; font-weight: normal; font-size: 14px; }
+  #qrBox { margin: 12px 0; }
+  #qrBox svg { width: 220px; height: 220px; }
+  .event-info { font-size: 13px; color: #555; line-height: 1.9; text-align: left; margin-top: 18px; border-top: 1px dashed var(--border); padding-top: 14px; }
+  .event-info b { color: var(--main-dark); }
+  .checkedIn {
+    margin-top: 14px; background: #eff6ff; color: #1d4ed8;
+    border: 1px solid #bfdbfe; border-radius: 8px; padding: 8px 12px; font-size: 13px;
+  }
+  /* 通信に失敗したがQRは出せている状態の注意書き（パス自体は使える） */
+  .warnBox {
+    display: none;
+    margin-top: 16px; background: #fffbeb; color: #92400e;
+    border: 1px solid #fde68a; border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.7;
+  }
+  .reloadBtn {
+    display: inline-block; margin-top: 10px; padding: 10px 18px;
+    font-size: 14px; font-weight: bold; color: #fff; background: var(--main-dark);
+    border: none; border-radius: 8px; cursor: pointer;
+  }
+  .fallback { font-size: 12px; color: #888; margin-top: 20px; line-height: 1.7; }
+  .errorCard { text-align: center; padding: 36px 20px; color: #666; line-height: 1.9; }
+  .errorCard a { color: var(--main-dark); }
+  .stale { font-size: 12px; color: #999; margin-top: 10px; }
+
+  /* 🆕 L1-e: お申し込み内容の変更UI（トークンURLを知っている本人のみ・§2-2） */
+  .editToggleLine { text-align: center; margin-top: 16px; font-size: 13px; }
+  .editToggleLine a { color: var(--main-dark); }
+  .formCard { text-align: left; }
+  .formCard .panelTitle { font-size: 16px; font-weight: bold; margin: 0 0 14px; }
+  .formCard label { display: block; font-weight: bold; font-size: 14px; margin: 16px 0 6px; }
+  .formCard label .req { color: #dc2626; font-size: 12px; margin-left: 4px; }
+  .formCard input[type=text], .formCard input[type=email], .formCard input[type=tel],
+  .formCard select, .formCard textarea {
+    width: 100%;
+    padding: 11px 12px;
+    font-size: 15px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--text);
+  }
+  .formCard textarea { resize: vertical; min-height: 60px; }
+  .formCard .radio-group { display: flex; gap: 16px; margin-top: 6px; }
+  .formCard .radio-group label { display: flex; align-items: center; gap: 6px; font-weight: normal; margin: 0; }
+  #e_newFields { display: none; margin-top: 6px; }
+  .formCard .errorMsg {
+    display: none;
+    color: #dc2626;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+    margin-top: 14px;
+    line-height: 1.7;
+  }
+  .formCard .okMsg {
+    background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0;
+    border-radius: 8px; padding: 12px; font-size: 14px; line-height: 1.7; text-align: center;
+  }
+  .formCard .btn {
+    width: 100%; padding: 13px; margin-top: 14px;
+    font-size: 15px; font-weight: bold; border-radius: 9px; cursor: pointer;
+    border: none; color: #fff; background: var(--main-dark);
+  }
+  .formCard .btn:disabled { opacity: .5; }
+  .formCard .btnQuiet {
+    background: #fff; color: #888; border: 1px solid var(--border); font-weight: normal;
+  }
+
+  /* ===== 🆕 v0.10.0 セミナー予約 =====
+     🔴 index.html / liff.html にも同じ見た目のものを置いてある。直すときは3つとも直すこと。 */
+  .semLine     { text-align: left; }
+  .semToggleLine { text-align: center; margin-top: 10px; font-size: 13px; }
+  .semToggleLine a { color: var(--main-dark); }
+  .semAlert {
+    margin-top: 10px; background: #fffbeb; color: #92400e;
+    border: 1px solid #fde68a; border-radius: 8px; padding: 10px 12px;
+    font-size: 13px; line-height: 1.7;
+  }
+  .semNote  { font-size: 12px; color: #888; margin: 4px 0 10px; line-height: 1.7; }
+  .semSlot  { margin-top: 14px; }
+  .semSlotHead {
+    font-size: 13px; font-weight: bold; color: var(--main-dark);
+    border-left: 3px solid var(--main); padding-left: 8px;
+  }
+  .semCard {
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; margin-top: 8px; background: #fff;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .semCard.selected { border-color: var(--main); box-shadow: 0 0 0 2px rgba(91,200,232,.28); }
+  .semCard.full     { background: #fafafa; }
+  .semPick   { display: flex; gap: 10px; align-items: flex-start; font-weight: normal; margin: 0; cursor: pointer; }
+  .semCard.full .semPick { cursor: default; }
+  .semPick input { margin-top: 3px; flex: none; }
+  .semTitle  { font-weight: bold; font-size: 14px; line-height: 1.55; display: block; }
+  .semCard.full .semTitle { color: #999; }
+  .semMeta   { font-size: 12px; color: #666; margin-top: 5px; display: block; }
+  .semSeats.few  { color: #d97706; font-weight: bold; }
+  .semSeats.full { color: #dc2626; font-weight: bold; }
+  .semDetail { margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 8px; }
+  .semDetail summary { cursor: pointer; color: var(--main-dark); font-size: 13px; list-style: none; outline: none; }
+  .semDetail summary::-webkit-details-marker { display: none; }
+  .semDetail summary::before { content: "▶ "; font-size: 10px; }
+  .semDetail[open] summary::before { content: "▼ "; }
+  .semDetailBody { font-size: 13px; line-height: 1.9; color: #555; padding: 6px 2px 2px; }
+  .semDetailBody ul { margin: 6px 0 10px; padding-left: 1.2em; }
+  .semDetailBody li { margin-bottom: 3px; }
+  .semDetailBody p  { margin: 0; }
+  .semSkip {
+    display: flex; align-items: center; gap: 8px;
+    font-weight: normal; font-size: 13px; color: #666; margin: 8px 0 0; padding-left: 2px;
+  }
+  .semSlotDetail { margin-top: 10px; }
+  .semSlotDetail .semDetail { border-top: none; padding-top: 0; }
+  /* 🔴 このページだけ `.formCard label { display:block; font-weight:bold }` のほうが
+     詳細度で勝ってしまい、ラジオとタイトルが縦積みになる。打ち消しておくこと。 */
+  .formCard label.semPick { display: flex; font-weight: normal; margin: 0; }
+  .formCard label.semSkip { display: flex; font-weight: normal; margin: 8px 0 0; }
+</style>
+</head>
+<body>
+<div id="testEnvBar">
+  <b>🔴 テスト環境（本番ではありません）</b><br>
+  画面の確認用です。入力しても<b>どこにも送信されません</b>。
+  <div class="navs">
+    <a href="index.html">申込フォーム</a>
+    <a href="pass.html?t=TESTTOKEN&amp;new=1">入場パス</a>
+    <a href="liff.html">LINE版</a>
+  </div>
+</div>
+
+<header><h1>ビューフェス2026 入場パス</h1></header>
+
+<main>
+  <!-- QRは通信を待たずに即描画するため、最初から表示しておく（#loadingは廃止） -->
+  <div class="card" id="passCard" style="display:none;">
+    <div class="newBadge" id="newBadge" style="display:none;">お申し込みが完了しました</div>
+    <div class="salon" id="salonName"></div>
+    <div class="name" id="staffName"><span class="placeholder">確認中…</span></div>
+
+    <div id="qrBox"></div>
+
+    <div id="checkedInBox"></div>
+
+    <div class="event-info" id="eventInfo"></div>
+
+    <!-- 🆕 v0.10.0 セミナー予約。枠は sessions シートから取得して描く（コードに枠を書かない） -->
+    <div class="event-info semLine" id="seminarInfo">
+      <div><b>ご予約</b>：<span id="semCurrent">確認中…</span></div>
+      <div class="semAlert" id="semFullAlert" style="display:none;">
+        ご希望の枠は満席のため、ご予約をお取りできませんでした。<br>
+        <span style="color:#a16207;">ご入場のお申し込みは完了しています。</span>空いている枠は下からご予約いただけます。
+      </div>
+      <div class="semToggleLine" id="semToggleLine" style="display:none;">
+        <a href="#" id="semToggleLink">セミナー・体験会を予約する／変更する</a>
+      </div>
+    </div>
+
+    <div class="warnBox" id="warnBox">
+      <div id="warnText"></div>
+      <button class="reloadBtn" id="reloadBtn">もう一度読み込む</button>
+    </div>
+
+    <!-- 🆕 L1-e: 内容を取得できた場合のみ表示（プリフィルする値が無いと編集できないため） -->
+    <div class="editToggleLine" id="editToggleLine" style="display:none;">
+      <a href="#" id="editToggleLink">お申し込み内容を変更する</a>
+    </div>
+  </div>
+
+  <!-- 🆕 v0.10.0: セミナー予約パネル（reserveSessionsのみを呼ぶ。申込内容には触らない） -->
+  <div class="card formCard" id="semPanel" style="display:none;">
+    <p class="panelTitle">セミナー・体験会のご予約</p>
+    <div class="semNote">
+      ご予約がなくてもご入場いただけます。<br>
+      時間帯ごとに1つお選びください。「予約しない」を選ぶとご予約は取り消されます。
+    </div>
+    <div id="semList"></div>
+    <div class="errorMsg" id="semError"></div>
+    <button type="button" class="btn" id="semSaveBtn">この内容で予約する</button>
+    <button type="button" class="btn btnQuiet" id="semCancelBtn">閉じる</button>
+  </div>
+
+  <!-- 🆕 L1-e: お申し込み内容の変更フォーム（§4 L1-e・updateApplicationのみを呼ぶ） -->
+  <div class="card formCard" id="editPanel" style="display:none;">
+    <p class="panelTitle">お申し込み内容の変更</p>
+    <form id="editForm">
+      <label>サロン様名<span class="req">必須</span></label>
+      <input type="text" id="e_salon_name" required>
+
+      <label>お名前（フルネーム）<span class="req">必須</span></label>
+      <input type="text" id="e_staff_name" required>
+
+      <label>メールアドレス<span class="req">必須</span></label>
+      <!-- 🔴 inputmode/autocapitalize/spellcheck は「日本語IMEのまま全角で打たれる」事故を
+           減らすためのもの。消さないこと（2026-09-03） -->
+      <input type="email" id="e_email" inputmode="email" autocomplete="email"
+             autocapitalize="off" spellcheck="false" required>
+
+      <label>お電話番号<span class="req">必須</span></label>
+      <input type="tel" id="e_phone" required>
+
+      <!-- 🔴 index.htmlと選択肢を1文字も違えないこと（LINEフォーム実物準拠） -->
+      <label>業態<span class="req">必須</span></label>
+      <select id="e_business_type" required>
+        <option value="">選択してください</option>
+        <option>美容室</option>
+        <option>理容室</option>
+        <option>エステサロン</option>
+        <option>ネイルサロン</option>
+        <option>アイサロン</option>
+        <option>その他</option>
+      </select>
+
+      <label>ビューフィールドとお取引はありますか？<span class="req">必須</span></label>
+      <div class="radio-group">
+        <label><input type="radio" name="e_has_transaction" value="yes"> あり</label>
+        <label><input type="radio" name="e_has_transaction" value="no"> なし（初めて）</label>
+      </div>
+
+      <!-- index.htmlと同じく「なし（初めて）」選択時のみ表示（新規客向け項目） -->
+      <div id="e_newFields">
+        <label>サロンのご住所</label>
+        <input type="text" id="e_address">
+
+        <label>ご紹介サロン名・お名前（あれば）</label>
+        <input type="text" id="e_referrer">
+      </div>
+
+      <label>備考（あれば）</label>
+      <textarea id="e_note"></textarea>
+
+      <div class="errorMsg" id="editError"></div>
+
+      <button type="submit" class="btn" id="editSaveBtn">この内容で保存する</button>
+      <button type="button" class="btn btnQuiet" id="editCancelBtn">キャンセル</button>
+    </form>
+
+    <div id="editDone" style="display:none;">
+      <div class="okMsg">保存しました。</div>
+      <button type="button" class="btn btnQuiet" id="editCloseBtn">閉じる</button>
+    </div>
+  </div>
+
+  <div class="card errorCard" id="errorCard" style="display:none;">
+    <div id="errorText"></div>
+  </div>
+
+  <div class="fallback">
+    ※このページをスマホのホーム画面に追加しておくと当日スムーズです
+  </div>
+  <p style="font-size:11px;color:#ccc;text-align:center;" id="versionLine"></p>
+</main>
+
+<script src="../lib/qrcode.min.js"></script>
+<script>
+const APP_VERSION = '0.11.0';
+const GAS_URL = 'TEST_ENV_NO_GAS';
+document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
+
+// 通信の設定（GASの結果配信は逐次でも約7%失敗するため、リトライは必須。
+// 失敗時は16〜47秒かかってから返ることがあるので、1回あたりの待ち時間も切る）
+// 🆕 v0.7.0: 2026-08-06の実測（80回）に基づき再設計。詳細は index.html の同じ箇所を参照。
+// GASの結果配送は約32%失われる。応答は「数秒で返る」か「返らない」かの二択なので、
+// 長く待たず手数を増やす。20秒×3回=2.7%失敗 → 10秒×6回=約0.66%失敗
+//（誤記訂正・v0.8.0: 以前「0.12%」としていたが計算誤り。詳細はindex.htmlの同じ箇所を参照）。
+// 失敗は連続する傾向があるため、再試行の間隔を徐々に広げる。
+// updateApplicationはticket_tokenで冪等なため、applyのようなrequest_idは不要。
+const FETCH_TIMEOUT_MS = 10000;
+const MAX_ATTEMPTS     = 6;
+const RETRY_WAIT_MS    = [1000, 2000, 3000, 5000, 8000];
+
+function qs(name) {
+  return new URLSearchParams(location.search).get(name);
+}
+function el(id) {
+  return document.getElementById(id);
+}
+function sleep(ms) {
+  return new Promise(function (r) { setTimeout(r, ms); });
+}
+
+// ------------------------------------------------------------
+// 🆕 v0.9.0: メールアドレスの全角→半角 自動補正
+// ------------------------------------------------------------
+// 🔴 index.html v0.12.0 と同一の実装。経緯・注意点はそちらのコメントを参照
+//（要点: type="email" はブラウザ標準の検証が送信直前に走るため、日本語IMEのまま
+//  打った全角の `＠` `ａ` で「@ を挿入してください」と弾かれ、お客様には
+//  「入力できない」としか見えない。composition中に走らせるとIMEが壊れる）。
+// 🔴 index.html / liff.html にも同じ関数がある。直すときは3つとも直すこと。
+function normalizeEmailValue(v) {
+  return String(v)
+    .replace(/[！-～]/g, function (ch) {   // 全角ASCII（！〜～）→ 半角
+      return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0);
+    })
+    .replace(/[\s　]/g, '');                   // 空白（全角スペース含む）は除去
+}
+
+function attachEmailNormalizer(input, form) {
+  let composing = false;
+
+  function fix() {
+    if (composing) return false;
+    const before = input.value;
+    const after  = normalizeEmailValue(before);
+    if (after === before) return false;
+    input.value = after;
+    return true;
+  }
+
+  input.addEventListener('compositionstart', function () { composing = true; });
+  input.addEventListener('compositionend',   function () { composing = false; fix(); });
+  input.addEventListener('blur',   function () { fix(); });
+  input.addEventListener('change', function () { fix(); });
+
+  input.addEventListener('invalid', function (ev) {
+    if (!fix()) return;
+    if (!input.checkValidity()) return;
+    ev.preventDefault();
+    if (!form || !form.requestSubmit) return;
+    setTimeout(function () { form.requestSubmit(); }, 0);
+  });
+}
+
+attachEmailNormalizer(el('e_email'), el('editForm'));
+
+// ------------------------------------------------------------
+// QRの描画 —— サーバーに一切問い合わせずに行う
+// QRの中身は「このページ自身のURL（?t=<token>）」なので、tokenさえあれば描ける。
+// 当日の入場口で最も重要なのはQRが出ること。ここを通信に依存させない。
+//
+// サーバーから正式なURL（config由来の公開URL）が取れた場合はそちらで描き直す。
+// 内容が同じなら描き直さないので、通常は画面がちらつかない。
+// ------------------------------------------------------------
+let currentQrData = '';
+
+function renderQr(passUrl) {
+  if (!passUrl || currentQrData === passUrl) return;
+  currentQrData = passUrl;
+  const qr = qrcode(0, 'M');
+  qr.addData(passUrl);
+  qr.make();
+  el('qrBox').innerHTML = qr.createSvgTag({ cellSize: 5, margin: 2 });
+}
+
+// 通信なしで組み立てる、このページ自身のURL
+function localPassUrl(token) {
+  return location.origin + location.pathname + '?t=' + encodeURIComponent(token);
+}
+
+// ------------------------------------------------------------
+// 表示用データの反映
+// ------------------------------------------------------------
+// 🆕 L1-e: 最後に反映した内容（編集フォームのプリフィルに使う）
+let lastDetail = null;
+
+function renderDetail(d) {
+  lastDetail = d;
+
+  el('salonName').textContent = d.salon_name || '';
+  el('staffName').textContent = (d.staff_name || '') + ' 様';
+
+  // サーバー（またはキャッシュ）が正式なパスURLを持っていればQRを更新する
+  if (d.pass_url) renderQr(d.pass_url);
+
+  if (d.event) {
+    el('eventInfo').innerHTML =
+      '<div><b>日時</b>：' + (d.event.date || '') + ' ' + (d.event.time || '') + '</div>' +
+      '<div><b>会場</b>：' + (d.event.venue_name || '') + ' ' + (d.event.venue_addr || '') + '</div>';
+  }
+
+  if (d.checked_in_at) {
+    el('checkedInBox').innerHTML =
+      '<div class="checkedIn">✅ ' + d.checked_in_at + ' に入場済みです</div>';
+  }
+
+  // 🆕 内容を取得できてから「変更する」リンクを出す（プリフィルする値が無いと編集できないため）
+  el('editToggleLine').style.display = 'block';
+}
+
+// ------------------------------------------------------------
+// キャッシュ（一度表示できた内容は端末に残し、圏外・通信失敗でも出せるようにする）
+// ------------------------------------------------------------
+function cacheKey(token) { return 'beaufes_pass_' + token; }
+
+function saveCache(token, d) {
+  try { localStorage.setItem(cacheKey(token), JSON.stringify(d)); } catch (e) { /* 保存できなくても致命的ではない */ }
+}
+function loadCache(token) {
+  try {
+    const s = localStorage.getItem(cacheKey(token));
+    return s ? JSON.parse(s) : null;
+  } catch (e) { return null; }
+}
+
+// ------------------------------------------------------------
+// GASからの取得（1回ぶん）
+// GASは結果配信に失敗すると404のHTMLを返す。res.jsonだとSyntaxErrorになって
+// 「通信エラー」に見えるため、必ずテキストで受けてから自前でJSON.parseし、
+// 「一時的な配信失敗」と「本当にパスが無い」を区別できるようにする。
+// ------------------------------------------------------------
+async function fetchPassOnce(token) {
+  const params = new URLSearchParams({
+    action: 'getPass',
+    data: JSON.stringify({ ticket_token: token })
+  });
+
+  const ctrl  = new AbortController();
+  const timer = setTimeout(function () { ctrl.abort(); }, FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(GAS_URL + '?' + params, { redirect: 'follow', signal: ctrl.signal });
+    if (!res.ok) throw new Error('HTTP_' + res.status);   // GASの配信失敗404はここに来る
+    const text = await res.text();
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch (e) {
+      throw new Error('NON_JSON');                        // 404のHTMLを掴んだ場合
+    }
+    return json;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// リトライ付き取得。戻り値は { ok:true, data } / { ok:false, notFound:true } / { ok:false, transient:true }
+async function fetchPassWithRetry(token) {
+  let lastErr = null;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) await sleep(RETRY_WAIT_MS[attempt - 1] || 2000);
+    try {
+      const json = await fetchPassOnce(token);
+      if (json && json.success) return { ok: true, data: json.data };
+
+      // サーバーが明確に「このtokenは無い」と答えた場合はリトライしても同じ
+      const code = json && json.error ? String(json.error) : '';
+      if (code === 'NOT_FOUND' || code === 'INVALID_TOKEN') return { ok: false, notFound: true };
+
+      lastErr = code || 'UNKNOWN';   // INTERNAL_ERROR等は一時障害の可能性があるので再試行する
+    } catch (e) {
+      lastErr = e && e.message ? e.message : String(e);
+    }
+  }
+  console.warn('getPass失敗（リトライ上限）:', lastErr);
+  return { ok: false, transient: true };
+}
+
+// ------------------------------------------------------------
+// 画面状態
+// ------------------------------------------------------------
+function showErrorCard(html) {
+  el('passCard').style.display = 'none';
+  el('errorCard').style.display = 'block';
+  el('errorText').innerHTML = html;
+}
+
+function showWarn(text) {
+  el('warnText').textContent = text;
+  el('warnBox').style.display = 'block';
+}
+
+function showError(id, msg) {
+  const e = el(id);
+  e.innerHTML = msg;
+  e.style.display = 'block';
+}
+function hideError(id) { el(id).style.display = 'none'; }
+
+// ------------------------------------------------------------
+// メイン
+// ------------------------------------------------------------
+// ------------------------------------------------------------
+// 🆕 v0.10.0: セミナー予約
+// ------------------------------------------------------------
+// 🔴 枠の内容（タイトル・時間・定員・詳細）はこのファイルに一切書かない。sessionsシートが正。
+// 🔴 セミナーの取得・保存に失敗しても、QRと入場パスの表示は絶対に壊さないこと。
+//    当日いちばん大事なのは QR が出ること（このページの設計方針）。
+// 🔴 index.html / liff.html にも同じ描画ロジックがある。直すときは3つとも直すこと。
+
+const IS_MOCK = true;   // 🔴 テスト環境では常にモック（送信しない）
+
+// ?mock=1 用のダミーデータ。GASもスプレッドシートも使わずに見た目と操作を確認するためのもの。
+// 🔵 本番の中身は sessions シート（seedSeminarSessions で投入）。ここはあくまで画面確認用で、
+//    「同じ時間帯に2枠」「満席」「定員なし」「開始時刻だけの枠が7つ」を全部含めてある。
+const MOCK_BALANCE_BULLETS = [
+  'コンピューター精密計測で、足裏の圧力バランスと骨盤のゆがみをデータで見える化',
+  '微細振動波（圧電体）による体軸の体感テスト',
+  'お一人ずつのオーダーメイド インソール型骨格調整具のご提案'
+];
+const MOCK_BALANCE_OVERVIEW =
+  '長引く「ひざ痛・腰痛・猫背・肩こり・疲労感」の原因は、骨格のゆがみかもしれません。\n' +
+  '足裏コンピューター計測で、骨盤と足裏のバランスを精密に測定します。\n' +
+  'お一人ずつ丁寧に計測・ご説明を行うため完全予約制です（各回1名様）。';
+
+function mockBalanceSlot(id, start, remaining) {
+  return { session_id: id, slot: 'バランス革命 無料計測会', title: start + '〜の回',
+           starts_at: start, ends_at: '', capacity: 1, remaining: remaining,
+           is_full: (remaining <= 0), bullets: MOCK_BALANCE_BULLETS, overview: MOCK_BALANCE_OVERVIEW };
+}
+
+const MOCK_SESSIONS = [
+  { session_id: 'S1', slot: 'セミナー 第1部', title: 'オトナ女子の"巡り"に寄り添うフェムケアセミナー',
+    starts_at: '11:00', ends_at: '12:00', capacity: 30, remaining: 12, is_full: false,
+    bullets: ['更年期は"予防"できる！', '結局更年期の原因ってなにから来ているの？',
+              '身体の変化に寄り添ったエッセンス新商品のご紹介', '今日からできるフェムケア'],
+    overview: '年齢を重ねるにつれて感じる、理由のはっきりしないゆらぎや、すっきりしない毎日。\n' +
+              '頑張っているのに気分が晴れない、以前とは違う自分に戸惑う、そんなオトナ女子のために' +
+              '生まれたのが「Meguru+（メグルプラス）」です。\n' +
+              '「ゆらぐ私に穏やかな巡りを」をコンセプトに、これからの毎日を前向きに、自分らしく' +
+              '過ごすための新しい習慣をご提案します。\n' +
+              '本セミナーでは、更年期の仕組みとその解決するための秘密を詳しくご紹介。' +
+              '変化の時期を、美しく心地よく迎えるためのヒントをお届けします。' },
+  { session_id: 'S2', slot: 'セミナー 第2部', title: 'ジャンパーニュ体験セミナー',
+    starts_at: '14:00', ends_at: '15:00', capacity: null, remaining: null, is_full: false,
+    bullets: ['ジャンパーニュの特徴をご紹介', 'サロンでの取り入れ方', '実際に体験していただけます'],
+    overview: '※この説明文は仮のものです。内容が決まり次第、差し替えます。' },
+  mockBalanceSlot('B1', '10:00', 1),
+  mockBalanceSlot('B2', '10:45', 0),   // 満席の見え方
+  mockBalanceSlot('B3', '11:30', 1),
+  mockBalanceSlot('B4', '12:45', 1),
+  mockBalanceSlot('B5', '13:30', 1),
+  mockBalanceSlot('B6', '14:15', 1),
+  mockBalanceSlot('B7', '15:00', 1)
+];
+
+let semCatalog  = [];   // 公開中の枠
+let semReserved = [];   // 自分がいま予約している session_id
+
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function seatLabel(s) {
+  if (s.capacity === null || s.capacity === undefined) return '';
+  if (s.is_full) return '<span class="semSeats full">満席</span>';
+  const cls = (s.remaining !== null && s.remaining <= 5) ? 'semSeats few' : 'semSeats';
+  return '<span class="' + cls + '">残り' + s.remaining + '席</span>' +
+         '<span style="color:#aaa;"> ／ 定員' + s.capacity + '名</span>';
+}
+
+// 時刻の表示。🔴 終了時刻が空欄でも「10:00〜」と出す。
+// 予約枠の一覧（バランス革命の申込書など）に開始時刻しか無いことがあり、
+// 「両方揃っていなければ何も出さない」にすると時間が画面から消える。
+function timeLabel(s) {
+  if (!s.starts_at) return '';
+  return s.starts_at + '〜' + (s.ends_at || '');
+}
+
+function hasDetail(s) {
+  return !!((s.bullets && s.bullets.length) || s.overview);
+}
+
+// タップして開く詳細（内容の箇条書き＋概要）
+function detailHtml(s) {
+  if (!hasDetail(s)) return '';
+  return '<details class="semDetail"><summary>詳しい内容をみる</summary>' +
+         '<div class="semDetailBody">' +
+         ((s.bullets && s.bullets.length)
+           ? '<ul>' + s.bullets.map(function (b) { return '<li>' + escHtml(b) + '</li>'; }).join('') + '</ul>'
+           : '') +
+         (s.overview ? '<p>' + escHtml(s.overview).replace(/\n/g, '<br>') + '</p>' : '') +
+         '</div></details>';
+}
+
+function sessionCardHtml(s, radioName, checked, hideTime, hideDetail) {
+  const time  = hideTime ? '' : timeLabel(s);
+  const seats = seatLabel(s);
+  const meta  = [time, seats].filter(function (x) { return x; }).join(' ／ ');
+  // 🔴 満席でも「自分が予約している枠」は選べる状態で出す。disabledにすると自分の予約が
+  //    画面上で外れて見え、そのまま保存すると取り消されてしまう。
+  const disabled = (s.is_full && !checked);
+
+  return '<div class="semCard' + (disabled ? ' full' : '') + (checked ? ' selected' : '') +
+         '" data-sid="' + escHtml(s.session_id) + '">' +
+         '<label class="semPick">' +
+         '<input type="radio" name="' + radioName + '" value="' + escHtml(s.session_id) + '"' +
+         (disabled ? ' disabled' : '') + (checked ? ' checked' : '') + '>' +
+         '<span><span class="semTitle">' + escHtml(s.title) + '</span>' +
+         (meta ? '<span class="semMeta">' + meta + '</span>' : '') +
+         (s.speaker ? '<span class="semMeta">' + escHtml(s.speaker) + '</span>' : '') +
+         '</span></label>' + (hideDetail ? '' : detailHtml(s)) + '</div>';
+}
+
+// slot（時間帯グループ）ごとにまとめて描く。
+// 同じ slot 内はラジオ＝1つしか選べない → 同じ時間に2つ予約する事故が構造的に起きない。
+//
+// 🔴 見出しに時刻を出すのは、そのグループの枠が全部同じ時間のときだけ。
+//    バランス革命の計測会のように1グループ内で時間がバラバラな予約では、
+//    先頭の枠の時刻を見出しに出すと全部その時間に見えてしまう。
+// 🔴 説明文がグループ内で全部同じなら、詳細は枠の下に1つだけ出す。
+//    7枠に同じ説明を7回出すと画面が読めなくなるため（バランス革命の計測会）。
+function renderSeminars(container, sessions, selectedIds) {
+  const list = sessions || [];
+  const sel  = selectedIds || [];
+  if (!list.length) return false;
+
+  const order = [], groups = {};
+  list.forEach(function (s) {
+    if (!groups[s.slot]) { groups[s.slot] = []; order.push(s.slot); }
+    groups[s.slot].push(s);
+  });
+
+  let html = '';
+  order.forEach(function (slot, gi) {
+    const name = 'sem_slot_' + gi;
+    const g    = groups[slot];
+    const sameTime = g.every(function (s) {
+      return s.starts_at === g[0].starts_at && s.ends_at === g[0].ends_at;
+    });
+    const headTime = sameTime ? timeLabel(g[0]) : '';
+
+    // 説明文が1種類しか無い複数枠のグループ → 詳細をまとめて1つにする
+    const keys = [];
+    g.forEach(function (s) {
+      if (!hasDetail(s)) return;
+      const k = JSON.stringify([s.bullets || [], s.overview || '']);
+      if (keys.indexOf(k) < 0) keys.push(k);
+    });
+    const sharedDetail = (g.length > 1 && keys.length === 1);
+    const detailOwner  = sharedDetail ? g.filter(hasDetail)[0] : null;
+
+    const anySelected = g.some(function (s) { return sel.indexOf(s.session_id) >= 0; });
+
+    html += '<div class="semSlot">' +
+            '<div class="semSlotHead">' + escHtml(slot) + (headTime ? '　' + headTime : '') + '</div>';
+    g.forEach(function (s) {
+      html += sessionCardHtml(s, name, sel.indexOf(s.session_id) >= 0, !!headTime, sharedDetail);
+    });
+    html += '<label class="semSkip"><input type="radio" name="' + name + '" value=""' +
+            (anySelected ? '' : ' checked') + '><span>予約しない</span></label>';
+    if (detailOwner) html += '<div class="semSlotDetail">' + detailHtml(detailOwner) + '</div>';
+    html += '</div>';
+  });
+  container.innerHTML = html;
+
+  container.querySelectorAll('input[type=radio]').forEach(function (r) {
+    r.addEventListener('change', function () {
+      container.querySelectorAll('.semCard').forEach(function (c) {
+        const input = c.querySelector('input[type=radio]');
+        c.classList.toggle('selected', !!(input && input.checked));
+      });
+    });
+  });
+  return true;
+}
+
+function selectedSessionIds(container) {
+  const out = [];
+  container.querySelectorAll('input[type=radio]').forEach(function (r) {
+    if (r.checked && r.value) out.push(r.value);
+  });
+  return out;
+}
+
+// 「セミナー：…」の1行を書く
+function renderCurrentSeminar() {
+  const box = el('semCurrent');
+  if (!semCatalog.length) { box.textContent = '現在ご予約いただける枠はありません'; return; }
+  if (!semReserved.length) { box.textContent = 'ご予約はありません'; return; }
+
+  const byId = {};
+  semCatalog.forEach(function (s) { byId[s.session_id] = s; });
+  box.innerHTML = semReserved.map(function (id) {
+    const s = byId[id];
+    if (!s) return escHtml(id);
+    const t = (s.starts_at && s.ends_at) ? (s.starts_at + '〜' + s.ends_at + '　') : '';
+    return escHtml(t + s.title);
+  }).join('<br>');
+}
+
+// セミナー枠と自分の予約を取りにいく。🔴 失敗してもパス表示は壊さない。
+async function loadSeminarState(token) {
+  if (IS_MOCK) {
+    semCatalog  = MOCK_SESSIONS;
+    semReserved = ['S1'];
+    renderCurrentSeminar();
+    el('semToggleLine').style.display = 'block';
+    return;
+  }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await sleep(1000 * attempt);
+    try {
+      const json = await postOnce({
+        action: 'listSessions',
+        data: JSON.stringify({ ticket_token: token })
+      });
+      if (json && json.success && json.data && json.data.sessions) {
+        semCatalog  = json.data.sessions;
+        semReserved = json.data.reserved || [];
+        renderCurrentSeminar();
+        if (semCatalog.length) el('semToggleLine').style.display = 'block';
+        return;
+      }
+    } catch (e) { /* リトライ */ }
+  }
+  el('semCurrent').textContent = '空き状況を確認できませんでした';
+}
+
+function openSemPanel() {
+  renderSeminars(el('semList'), semCatalog, semReserved);
+  hideError('semError');
+  el('semPanel').style.display  = 'block';
+  el('passCard').style.display  = 'none';
+  el('editPanel').style.display = 'none';
+  window.scrollTo(0, 0);
+}
+function closeSemPanel() {
+  el('semPanel').style.display = 'none';
+  el('passCard').style.display = 'block';
+  window.scrollTo(0, 0);
+}
+
+el('semToggleLink').addEventListener('click', function (ev) {
+  ev.preventDefault();
+  openSemPanel();
+});
+el('semCancelBtn').addEventListener('click', closeSemPanel);
+
+el('semSaveBtn').addEventListener('click', async function () {
+  hideError('semError');
+  const want  = selectedSessionIds(el('semList'));
+  const token = qs('t');
+
+  if (IS_MOCK) {
+    semReserved = want;
+    renderCurrentSeminar();
+    closeSemPanel();
+    el('semFullAlert').style.display = 'none';
+    return;
+  }
+
+  el('semSaveBtn').disabled = true;
+  el('semSaveBtn').textContent = '保存中…';
+  try {
+    const json = await postWithRetry({
+      action: 'reserveSessions',
+      data: JSON.stringify({ ticket_token: token, sessions: want })
+    });
+    if (!json.success) {
+      showError('semError', json.error || '保存できませんでした。時間をおいて再度お試しください。');
+      return;
+    }
+    semCatalog  = json.data.sessions || semCatalog;
+    semReserved = json.data.reserved || [];
+    renderCurrentSeminar();
+
+    const r = json.data.result || {};
+    if ((r.full && r.full.length) || (r.invalid && r.invalid.length)) {
+      // 選んだ枠が、保存するまでの間に満席になった場合。取れた分は保存されている。
+      el('semFullAlert').style.display = 'block';
+      el('semFullAlert').innerHTML =
+        'ご希望の枠は満席のため、ご予約をお取りできませんでした。<br>' +
+        '<span style="color:#a16207;">ご入場のお申し込みはそのまま有効です。</span>';
+    } else {
+      el('semFullAlert').style.display = 'none';
+    }
+    closeSemPanel();
+  } catch (e) {
+    showError('semError', '保存結果を確認できませんでした。お手数ですが、画面を読み込み直してご確認ください。');
+  } finally {
+    el('semSaveBtn').disabled = false;
+    el('semSaveBtn').textContent = 'この内容で予約する';
+  }
+});
+
+async function init() {
+  const token = qs('t');
+  const isNew = qs('new') === '1';
+
+  // tokenが無い＝リンクが壊れている。QRも出せないのでこの場合だけ最初からエラー表示
+  if (!token) {
+    showErrorCard(
+      'このリンクからは入場パスを表示できませんでした。<br>' +
+      'お申し込み時のメールに記載のリンクを、もう一度お開きください。<br><br>' +
+      '<a href="index.html?resend=1">リンクが見つからない方はこちら（パスの再送）</a>'
+    );
+    return;
+  }
+
+  // 1) まずQRを出す（通信ゼロ・ここは絶対に失敗しない）
+  el('passCard').style.display = 'block';
+  if (isNew) el('newBadge').style.display = 'block';
+  renderQr(localPassUrl(token));
+
+  // 🆕 v0.10.0: ?mock=1 はGASもスプレッドシートも使わない動作確認用
+  if (IS_MOCK) {
+    renderDetail({
+      salon_name: 'サンプルサロン', staff_name: 'サンプル 太郎', status: 'active',
+      email: 'sample@example.com', phone: '000-0000-0000', business_type: '美容室',
+      has_transaction: 'yes', address: '', referrer: '', note: '',
+      event: { date: '2026年10月26日（月）', time: '10:00〜16:00',
+               venue_name: '青島屋（AOSHIMAYA）', venue_addr: '宮崎市青島2丁目12-11' }
+    });
+    if (qs('semfull') === '1') el('semFullAlert').style.display = 'block';
+    loadSeminarState(token);
+    return;
+  }
+
+  // 2) 前回表示できた内容があれば先に出しておく（圏外でも名前が出る）
+  const cached = loadCache(token);
+  if (cached) renderDetail(cached);
+
+  // 🆕 v0.10.0: 申込時に満席で取れなかった場合（index.htmlから ?semfull=1 で来る）
+  if (qs('semfull') === '1') el('semFullAlert').style.display = 'block';
+
+  // 🆕 v0.10.0: セミナーの状態を取りにいく。
+  // 🔴 await しない。ここで待つとパス本体の取得が遅れる（QRは既に出ているが、
+  //    お名前の表示が遅れる）。失敗してもパス表示には一切影響させない。
+  loadSeminarState(token);
+
+  // 3) 裏で最新を取りにいく
+  const result = await fetchPassWithRetry(token);
+
+  if (result.ok) {
+    renderDetail(result.data);
+    saveCache(token, result.data);
+    el('warnBox').style.display = 'none';
+    return;
+  }
+
+  if (result.notFound) {
+    // サーバーが明確に否定した場合だけエラー画面にする
+    showErrorCard(
+      'このリンクからは入場パスを表示できませんでした。<br>' +
+      'お申し込み時のメールに記載のリンクを、もう一度お開きください。<br><br>' +
+      '<a href="index.html?resend=1">リンクが見つからない方はこちら（パスの再送）</a>'
+    );
+    return;
+  }
+
+  // 一時的な通信失敗。QRは有効なので消さず、再読み込みを促す
+  if (cached) {
+    showWarn('最新の情報を取得できませんでした。表示中のQRコードはそのままご利用いただけます。');
+  } else {
+    el('staffName').innerHTML = '<span class="placeholder">お名前を取得できませんでした</span>';
+    showWarn('読み込みに失敗しました。お手数ですが「もう一度読み込む」を押してください。QRコードはこのままご利用いただけます。');
+  }
+}
+
+el('reloadBtn').addEventListener('click', function () {
+  location.reload();
+});
+
+// ------------------------------------------------------------
+// 🆕 L1-e: お申し込み内容の変更（doPost: action=updateApplication）
+// GASへのPOSTはindex.htmlと同じくリトライ付き（§2-6）。
+// ------------------------------------------------------------
+async function postOnce(params) {
+  const ctrl  = new AbortController();
+  const timer = setTimeout(function () { ctrl.abort(); }, FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      body: new URLSearchParams(params),
+      redirect: 'follow',
+      signal: ctrl.signal
+    });
+    if (!res.ok) throw new Error('HTTP_' + res.status);
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new Error('NON_JSON');
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// 🆕 v0.8.0: 「不明なアクション」「INVALID_REQUEST」は輸送路でパラメータが壊れて
+// 届いた場合のみ返る（サーバーには常にaction/dataを送っているため）。一時障害として
+// リトライする。詳細はindex.htmlの同じ箇所を参照。
+const TRANSPORT_ERROR_PATTERN = /^(不明なアクション|INVALID_REQUEST)/;
+
+// onProgress: 再試行に入ったことを画面に出すためのコールバック（省略可）。
+// 手数が増えた分、無言で待たせると固まったように見えるため。
+async function postWithRetry(params, onProgress) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      if (onProgress) onProgress(attempt + 1, MAX_ATTEMPTS);
+      await sleep(RETRY_WAIT_MS[attempt - 1] || 8000);
+    }
+    try {
+      const attemptParams = Object.assign({}, params, { client_attempt: String(attempt + 1) });
+      const json = await postOnce(attemptParams);
+      if (json && json.success === false && TRANSPORT_ERROR_PATTERN.test(String(json.error || ''))) {
+        lastErr = json.error;
+        continue;
+      }
+      return json;
+    } catch (e) {
+      lastErr = e && e.message ? e.message : String(e);
+    }
+  }
+  throw new Error(lastErr || 'UNKNOWN');
+}
+
+// getPassが返した現在値をフォームに反映する
+function populateEditForm(d) {
+  el('e_salon_name').value    = d.salon_name || '';
+  el('e_staff_name').value    = d.staff_name || '';
+  el('e_email').value         = d.email || '';
+  el('e_phone').value         = d.phone || '';
+  el('e_business_type').value = d.business_type || '';
+  el('e_address').value       = d.address || '';
+  el('e_referrer').value      = d.referrer || '';
+  el('e_note').value          = d.note || '';
+
+  const hasTx = d.has_transaction || 'yes';
+  document.querySelectorAll('input[name=e_has_transaction]').forEach(function (r) {
+    r.checked = (r.value === hasTx);
+  });
+  // index.htmlと同じ表示制御。フォームを開いた時点の値を即座に反映する（changeイベント任せにしない）
+  el('e_newFields').style.display = (hasTx === 'no') ? 'block' : 'none';
+}
+
+document.querySelectorAll('input[name=e_has_transaction]').forEach(function (r) {
+  r.addEventListener('change', function () {
+    el('e_newFields').style.display =
+      document.querySelector('input[name=e_has_transaction]:checked').value === 'no' ? 'block' : 'none';
+  });
+});
+
+el('editToggleLink').addEventListener('click', function (ev) {
+  ev.preventDefault();
+  if (!lastDetail) return; // プリフィルする値が無い＝表示できていない状態では開かせない
+  populateEditForm(lastDetail);
+  hideError('editError');
+  el('editForm').style.display = 'block';
+  el('editDone').style.display = 'none';
+  el('editPanel').style.display = 'block';
+  el('editPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+
+el('editCancelBtn').addEventListener('click', function () {
+  el('editPanel').style.display = 'none';
+});
+el('editCloseBtn').addEventListener('click', function () {
+  el('editPanel').style.display = 'none';
+});
+
+el('editForm').addEventListener('submit', async function (ev) {
+  ev.preventDefault();
+  hideError('editError');
+
+  const token = qs('t');
+  const payload = {
+    ticket_token:    token,
+    salon_name:      el('e_salon_name').value.trim(),
+    staff_name:      el('e_staff_name').value.trim(),
+    email:           el('e_email').value.trim(),
+    phone:           el('e_phone').value.trim(),
+    business_type:   el('e_business_type').value,
+    has_transaction: (document.querySelector('input[name=e_has_transaction]:checked') || {}).value || '',
+    address:         el('e_address').value.trim(),
+    referrer:        el('e_referrer').value.trim(),
+    note:            el('e_note').value.trim()
+  };
+
+  el('editSaveBtn').disabled    = true;
+  el('editCancelBtn').disabled  = true;
+  el('editSaveBtn').textContent = '保存中…';
+
+  // 成否どちらでもボタンを元に戻す（再試行の表示が残らないように）
+  function restoreSaveBtn() {
+    el('editSaveBtn').disabled    = false;
+    el('editCancelBtn').disabled  = false;
+    el('editSaveBtn').textContent = 'この内容で保存する';
+  }
+
+  try {
+    const json = await postWithRetry({ action: 'updateApplication', data: JSON.stringify(payload) }, function (n, max) {
+      el('editSaveBtn').textContent = '保存中…（確認しています ' + n + '/' + max + '）';
+    });
+    restoreSaveBtn();
+
+    if (!json.success) {
+      showError('editError', json.error === 'NOT_FOUND'
+        ? 'このリンクは無効です。お申し込み時のメールに記載のリンクをご確認ください。'
+        : (json.error || '保存に失敗しました。時間をおいて再度お試しください。'));
+      return;
+    }
+
+    // 表示・キャッシュを更新する。ticket_tokenは変わらないのでQRはそのまま。
+    const updated = Object.assign({}, lastDetail, payload);
+    renderDetail(updated);
+    saveCache(token, updated);
+
+    el('editForm').style.display = 'none';
+    el('editDone').style.display = 'block';
+  } catch (e) {
+    restoreSaveBtn();
+    showError('editError', '保存結果を確認できませんでした。お手数ですが、もう一度お試しください。');
+  }
+});
+
+init();
+</script>
+
+</body>
+</html>
