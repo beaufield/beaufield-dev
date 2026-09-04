@@ -331,6 +331,13 @@
       ご登録のメールアドレスに、内容の確認・変更ができるリンクをお送りしました。<br>
       メールが届かない場合は、迷惑メールフォルダもご確認ください。
     </div>
+    <!-- 🔴 この経路では申込内容を書き換えない（他人のメール＋氏名で内容を触れないようにする設計）。
+         セミナーを選んで送信し直した場合、その選択は保存されない。黙って消すと
+         「予約したのに入っていない」事故になるので、必ずここで行き先を案内すること。 -->
+    <p class="panelLead" style="margin-top:14px;">
+      <b>セミナー・体験会のご予約も、そのリンク先の画面から</b>お取りいただけます。<br>
+      この画面で選んだご予約は保存されていませんので、お手数ですがリンク先でお選びください。
+    </p>
     <button class="btn btnQuiet" id="backFromExistingBtn">入力画面に戻る</button>
   </div>
 
@@ -361,7 +368,7 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.15.0';
+const APP_VERSION = '0.16.0';
 const GAS_URL = 'TEST_ENV_NO_GAS';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
