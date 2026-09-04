@@ -271,3 +271,6 @@ beaufes/tests/
 # セミナー・体験会の元資料（メーカー提供の案内文・申込書PDF・商品画像）
 # 業務リソースなのでGitHubには上げない（GITHUB-RULES.md 🔴絶対コミット禁止）
 beaufes/内容/
+
+# ノートPCへの引き継ぎメモ（ローカル作業用・GitHub不要）
+beaufes/_next_session_notebook.md
