@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.18.0';
+const VERSION  = '0.19.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -383,6 +383,8 @@ function doGet(e) {
   try {
     switch (action) {
       case 'getPass':   return _jsonResponse(getPass(data));
+      // 🆕 v0.19.0 booth.html用。認証なし・booth_tokenで認可（booth実装設計_確定版.md §4-1）
+      case 'boothInit': return _jsonResponse(boothInit(data));
       // 🆕 診断用（diag.html）。読み取りのみ・データを一切変更しない
       case 'ping':      return _jsonResponse(pingLight(data));
       case 'pingHeavy': return _jsonResponse(pingHeavy(data));
@@ -423,6 +425,15 @@ function doPost(e) {
       // 🆕 v0.17.0 申込者一覧 admin.html 用。🔒 認証必須（_requireSession）
       case 'listApplications':  return _jsonResponse(listApplications(data));
       case 'setTantou':         return _jsonResponse(setTantou(data));
+      // 🆕 v0.19.0 booth.html用（booth実装設計_確定版.md §4）。
+      // 上2つは認証なし・booth_tokenで認可（社外端末から叩くため）。下4つは🔒認証必須（_requireSession）
+      case 'boothSubmit':            return _jsonResponse(boothSubmit(data));
+      case 'boothVoid':              return _jsonResponse(boothVoid(data));
+      case 'boothRecent':            return _jsonResponse(boothRecent(data));
+      case 'boothSummary':           return _jsonResponse(boothSummary(data));
+      case 'boothResolveUnresolved': return _jsonResponse(boothResolveUnresolved(data));
+      case 'boothExportCsv':         return _jsonResponse(boothExportCsv(data));
+      case 'boothImportQueue':       return _jsonResponse(boothImportQueue(data));
       default:                  return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
@@ -1933,6 +1944,10 @@ function setupSheets() {
     Logger.log('spare_badgesシートは既に存在します');
   }
 
+  // --- booth系4シート（🆕 v0.19.0。booths / booth_products / orders / order_items）---
+  // 既存シートには触らない（_ensureBoothSheetsが冪等）。単独で作るなら setupBoothSheets() を実行する
+  _ensureBoothSheets(ss);
+
   Logger.log('setupSheets完了');
 }
 
@@ -2336,4 +2351,1111 @@ function seedTantouList(namesCsv) {
   }
   sh.appendRow(['tantou_list', String(namesCsv || '')]);
   Logger.log('tantou_list を追加しました: ' + namesCsv);
+}
+
+// ============================================================
+// 🆕 booth（ブース購買記録）v0.19.0
+// 実装仕様の正本: 開発・自動化/beaufes/booth実装設計_確定版.md
+//   §3 データモデル / §4 API契約 / §5 サーバー実装 / §2 各項目の根拠
+// 上位の設計思想・当日運用は 当日運用_堅牢化設計.md §4 と正本§15。
+//
+// 🔴 3つの不変条件（迷ったらここへ戻る・§1）
+//   I1 端末が申告した値（*_raw）とサーバーが解決した値（app_id 等）を列レベルで分ける
+//   I2 write_state(PENDING→COMPLETE) と status(active→voided) は直交・どちらも前にしか進まない
+//   I3 現実に発生した取引は消さない。原則は「拒否」ではなく「受理してフラグを立てる」
+// ============================================================
+
+const SHEET_BOOTHS         = 'booths';
+const SHEET_BOOTH_PRODUCTS = 'booth_products';
+const SHEET_ORDERS         = 'orders';
+const SHEET_ORDER_ITEMS    = 'order_items';
+
+const BOOTH_ORDER_COLS = 25; // orders は A〜Y の25列（§3-3）
+const BOOTH_ITEM_COLS  = 10; // order_items は A〜J の10列（§3-4）
+
+// 🔴 ロック内で1回だけ読む範囲。A〜F が冪等判定、G(expected)・H(resolve_status) が
+// 再送時の分岐に要る（§5-3）。8列とも連続しているので getRange は1回のまま（§5-2）。
+const BOOTH_KEY_COLS = 8;
+
+// orders の列番号（1始まり）。🔴 A〜F の並びには意味がある。列を足すときは必ず末尾（Z以降）へ。
+const BO = {
+  order_id: 1, booth_id: 2, idempotency_key: 3, payload_hash: 4, write_state: 5, status: 6,
+  expected_item_count: 7, resolve_status: 8, app_id: 9, ticket_token: 10, ticket_token_raw: 11,
+  entry_code_raw: 12, input_method: 13, client_created_at: 14, received_at: 15, created_at: 16,
+  client_instance_id: 17, master_version: 18, validation_state: 19, line_notify_state: 20,
+  line_notified_at: 21, void_idempotency_key: 22, voided_at: 23, last_error: 24, note: 25
+};
+
+// 入力上限（§4-2）。超えたら INVALID_REQUEST（端末は恒久失敗として扱う）
+const BOOTH_MAX_ITEMS         = 30;
+const BOOTH_MAX_QTY           = 99;
+const BOOTH_MAX_KEY_LEN       = 64;
+const BOOTH_MAX_REQUEST_CHARS = 16384;
+const BOOTH_LOCK_WAIT_MS      = 45000;
+const BOOTH_CLOCK_SKEW_MS     = 10 * 60 * 1000;
+
+// ------------------------------------------------------------
+// シート
+// ------------------------------------------------------------
+
+// booth用シート4枚を冪等に用意して返す（既存があれば触らない・_ensureSpareBadgesSheetと同じ形）。
+function _ensureBoothSheets(ss) {
+  let bo = ss.getSheetByName(SHEET_BOOTHS);
+  if (!bo) {
+    bo = ss.insertSheet(SHEET_BOOTHS);
+    bo.getRange(1, 1, 1, 5).setValues([[
+      'booth_id', 'maker_name', 'booth_token', 'is_active', 'note'
+    ]]);
+    bo.setFrozenRows(1);
+    // トークンは英数字なので指数表記に化けうる。列ごとPlain Textにしておく（電話番号列と同じ理由）
+    bo.getRange(1, 3, bo.getMaxRows(), 1).setNumberFormat('@');
+    Logger.log('boothsシート作成完了');
+  }
+
+  let bp = ss.getSheetByName(SHEET_BOOTH_PRODUCTS);
+  if (!bp) {
+    bp = ss.insertSheet(SHEET_BOOTH_PRODUCTS);
+    bp.getRange(1, 1, 1, 7).setValues([[
+      'product_id', 'booth_id', 'product_name', 'spec', 'unit_price', 'sort_order', 'is_active'
+    ]]);
+    bp.setFrozenRows(1);
+    Logger.log('booth_productsシート作成完了');
+  }
+
+  let or = ss.getSheetByName(SHEET_ORDERS);
+  if (!or) {
+    or = ss.insertSheet(SHEET_ORDERS);
+    or.getRange(1, 1, 1, BOOTH_ORDER_COLS).setValues([[
+      'order_id', 'booth_id', 'idempotency_key', 'payload_hash', 'write_state', 'status',
+      'expected_item_count', 'resolve_status', 'app_id', 'ticket_token', 'ticket_token_raw',
+      'entry_code_raw', 'input_method', 'client_created_at', 'received_at', 'created_at',
+      'client_instance_id', 'master_version', 'validation_state', 'line_notify_state',
+      'line_notified_at', 'void_idempotency_key', 'voided_at', 'last_error', 'note'
+    ]]);
+    or.setFrozenRows(1);
+    // 🔴 L列（entry_code_raw）は 'P-07' が日付に化けないようPlain Text（§3-5）。
+    // K列（ticket_token_raw）・J列（ticket_token）も英数字トークンなので同じ扱いにする。
+    or.getRange(1, BO.ticket_token,     or.getMaxRows(), 3).setNumberFormat('@');
+    Logger.log('ordersシート作成完了');
+  }
+
+  let oi = ss.getSheetByName(SHEET_ORDER_ITEMS);
+  if (!oi) {
+    oi = ss.insertSheet(SHEET_ORDER_ITEMS);
+    oi.getRange(1, 1, 1, BOOTH_ITEM_COLS).setValues([[
+      'item_id', 'order_id', 'booth_id', 'product_id', 'product_name', 'spec',
+      'qty', 'unit_price', 'delivery', 'created_at'
+    ]]);
+    oi.setFrozenRows(1);
+    Logger.log('order_itemsシート作成完了');
+  }
+
+  return { booths: bo, products: bp, orders: or, items: oi };
+}
+
+// 【本番シートに対して手動実行する】booth用シート4枚を作る（STEP 1）。冪等。
+function setupBoothSheets() {
+  _checkProps();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  _ensureBoothSheets(ss);
+  Logger.log('setupBoothSheets完了');
+}
+
+// 【手動実行】動作確認用のテストブース1件と商品3件を入れる（STEP 1）。
+// 既に B99 があれば何もしない。🔴 本番のブースは B01〜 を手で作る。
+function seedTestBooth() {
+  _checkProps();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheets = _ensureBoothSheets(ss);
+
+  const rows = sheets.booths.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]).trim() === 'B99') {
+      Logger.log('テストブース B99 は既に存在します。booth_token=' + rows[i][2]);
+      return;
+    }
+  }
+
+  const token = _genBoothToken();
+  sheets.booths.getRange(sheets.booths.getLastRow() + 1, 1, 1, 5)
+    .setValues([['B99', 'テスト商事（動作確認用）', token, true, '動作確認用。当日までに is_active=FALSE にする']]);
+
+  const pRows = [
+    ['B99-001', 'B99', 'テストシャンプー', '1000ml', 3000, 1, true],
+    ['B99-002', 'B99', 'テストトリートメント', '1000g', 4200, 2, true],
+    ['B99-003', 'B99', 'テストカラー剤', '80g',    900, 3, true]
+  ];
+  sheets.products.getRange(sheets.products.getLastRow() + 1, 1, pRows.length, 7).setValues(pRows);
+
+  Logger.log('seedTestBooth完了: B99 / booth_token=' + token);
+  Logger.log('確認URL例: <WebアプリURL>?action=boothInit&data=' +
+    encodeURIComponent(JSON.stringify({ b: token })));
+}
+
+// ------------------------------------------------------------
+// 小道具
+// ------------------------------------------------------------
+
+// ブース用トークン（ランダム24文字・§3-1）
+function _genBoothToken() {
+  return Utilities.getUuid().replace(/-/g, '').substring(0, 24);
+}
+
+function _boothPad(n, width) {
+  let s = String(n);
+  while (s.length < width) s = '0' + s;
+  return s;
+}
+
+// 🔴 「明示的にFALSEでない限り有効」とする。空欄を無効扱いにすると、手作りのマスタで
+// is_active を書き忘れただけで当日その商品が1件も出なくなる（黙って消える）。
+// 無効化は運用ルールどおり FALSE を書く操作でのみ起きる（§7ルール1）。
+function _boothIsActive(v) {
+  if (v === false) return false;
+  const s = String(v == null ? '' : v).trim().toUpperCase();
+  return !(s === 'FALSE' || s === '0' || s === 'NO' || s === 'N' || s === 'いいえ');
+}
+
+// 入力キーの正規化（§2-3 手順1）。NFKC＋trim。ecはさらに大文字化して使う。
+function _boothNormKey(s) {
+  let t = String(s == null ? '' : s).trim();
+  if (t && t.normalize) t = t.normalize('NFKC').trim();
+  return t;
+}
+
+// 'yyyy-MM-dd HH:mm:ss' をミリ秒に。読めなければ0（判定をスキップする）
+function _boothParseTs(s) {
+  const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if (!m) return 0;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]),
+                  Number(m[4]), Number(m[5]), Number(m[6])).getTime();
+}
+
+function _boothClockSkew(clientCreatedAt, receivedAt) {
+  const c = _boothParseTs(clientCreatedAt);
+  const r = _boothParseTs(receivedAt);
+  if (!c || !r) return false;
+  return Math.abs(r - c) > BOOTH_CLOCK_SKEW_MS;
+}
+
+function _boothFlags(list) {
+  const out = [];
+  (list || []).forEach(function (f) {
+    if (f && out.indexOf(f) < 0) out.push(f);
+  });
+  return out.join(',');
+}
+
+// 🔴 冪等判定の正準ハッシュ（§2-3）。対象は booth_id ＋ 生の入力キー ＋ 明細 ＋ delivery のみ。
+// master_version・時刻・端末ID・解決後のapp_id・商品名/単価は**入れない**
+// （入れると、再送の合間に状況が変わっただけで正常な再送が CONFLICT になる）。
+function _boothPayloadHash(boothId, tt, ec, delivery, items) {
+  const body = boothId + '|' + tt + '|' + ec + '|' + delivery + '|' +
+    items.map(function (i) { return i.product_id + ':' + i.qty; }).join(',');
+  const raw = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256, body, Utilities.Charset.UTF_8);
+  return raw.map(function (b) {
+    return ('0' + (b & 0xFF).toString(16)).slice(-2);
+  }).join('');
+}
+
+// 明細の正規化（§2-3 手順2）: qty整数化 → 0以下を捨てる → 同一product_idを合算 → product_id昇順。
+// 🔴 並べ替えは localeCompare を使わない（ロケール依存でハッシュがぶれる）。
+function _boothCanonicalizeItems(items) {
+  if (!Array.isArray(items)) return { error: 'INVALID_REQUEST' };
+  if (items.length > BOOTH_MAX_ITEMS) return { error: 'INVALID_REQUEST' };
+
+  const merged = {};
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i] || {};
+    const pid = String(it.product_id == null ? '' : it.product_id).trim();
+    if (!pid || pid.length > BOOTH_MAX_KEY_LEN) return { error: 'INVALID_REQUEST' };
+    const qty = Number(it.qty);
+    if (!isFinite(qty) || Math.floor(qty) !== qty) return { error: 'INVALID_REQUEST' };
+    if (qty > BOOTH_MAX_QTY) return { error: 'INVALID_REQUEST' };
+    if (qty <= 0) continue; // 正規化で捨てる（エラーにはしない）
+    merged[pid] = (merged[pid] || 0) + qty;
+  }
+
+  const ids = Object.keys(merged).sort(function (a, b) {
+    return a < b ? -1 : (a > b ? 1 : 0);
+  });
+  if (ids.length === 0) return { error: 'NO_ITEMS' };
+
+  return { items: ids.map(function (pid) { return { product_id: pid, qty: merged[pid] }; }) };
+}
+
+// booth_token → ブース。🔴 他ブースの情報は一切返さない。
+function _boothAuth(sheets, boothToken) {
+  const token = String(boothToken || '').trim();
+  if (!token) return { ok: false, error: 'BOOTH_NOT_FOUND' };
+
+  const rows = sheets.booths.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][2]).trim() !== token) continue;
+    return {
+      ok: true,
+      booth_id: String(rows[i][0]).trim(),
+      maker_name: String(rows[i][1] || ''),
+      is_active: _boothIsActive(rows[i][3])
+    };
+  }
+  return { ok: false, error: 'BOOTH_NOT_FOUND' };
+}
+
+// 商品の検証＋スナップショット（§2-6）。🔴 商品名・規格・単価はサーバーがマスタから取る。
+function _boothSnapshotProducts(sheets, boothId, canonItems) {
+  const rows = sheets.products.getDataRange().getValues();
+  const map = {};
+  for (let i = 1; i < rows.length; i++) {
+    const pid = String(rows[i][0]).trim();
+    if (!pid) continue;
+    map[pid] = {
+      booth_id: String(rows[i][1]).trim(),
+      product_name: String(rows[i][2] || ''),
+      spec: String(rows[i][3] || ''),
+      unit_price: (rows[i][4] === '' || rows[i][4] == null) ? '' : rows[i][4],
+      is_active: _boothIsActive(rows[i][6])
+    };
+  }
+
+  const out = [];
+  let stale = false;
+  for (let k = 0; k < canonItems.length; k++) {
+    const c = canonItems[k];
+    const p = map[c.product_id];
+    if (!p) return { error: 'PRODUCT_NOT_FOUND' };
+    if (p.booth_id !== boothId) return { error: 'PRODUCT_OTHER_BOOTH' };
+    if (!p.is_active) stale = true; // 受理してフラグ（I3）
+    out.push({
+      product_id: c.product_id, qty: c.qty,
+      product_name: p.product_name, spec: p.spec, unit_price: p.unit_price
+    });
+  }
+  return { items: out, stale: stale };
+}
+
+// ------------------------------------------------------------
+// 本人解決（§5-4）
+// ------------------------------------------------------------
+
+// applications と spare_badges を1回ずつだけ読んで索引を作る。
+// 🔴 ロックの外で呼ぶこと（一番重い読み取り・§5-2）。
+function _boothLoadSubjectIndex(ss) {
+  const appRows = _getSheet(ss, SHEET_APPLICATIONS).getDataRange().getValues();
+  const appsById = {}, appsByToken = {};
+  for (let i = 1; i < appRows.length; i++) {
+    const appId = String(appRows[i][0] || '').trim();
+    if (!appId) continue;
+    const rec = {
+      app_id: appId,
+      ticket_token: String(appRows[i][16] || '').trim(),
+      status: String(appRows[i][17] || '').trim(),
+      line_friend_id: String(appRows[i][14] || '').trim()
+    };
+    appsById[appId] = rec;
+    // 🔴 予備名札の割当で applications.ticket_token は上書きされる（§2-7）。
+    // だからここは「いまの値」の索引でしかない。集計の正キーは app_id。
+    if (rec.ticket_token) appsByToken[rec.ticket_token] = rec;
+  }
+
+  const spRows = _ensureSpareBadgesSheet(ss).getDataRange().getValues();
+  const sparesByNo = {}, sparesByToken = {};
+  for (let i = 1; i < spRows.length; i++) {
+    const no = String(spRows[i][0] || '').trim();
+    if (!no) continue;
+    const rec = {
+      spare_no: no,
+      ticket_token: String(spRows[i][1] || '').trim(),
+      assigned_app_id: String(spRows[i][2] || '').trim()
+    };
+    sparesByNo[no] = rec;
+    if (rec.ticket_token) sparesByToken[rec.ticket_token] = rec;
+  }
+
+  return { appsById: appsById, appsByToken: appsByToken,
+           sparesByNo: sparesByNo, sparesByToken: sparesByToken };
+}
+
+// 'F2026-123' → 'F2026-0123' / 'P-7' → 'P-07' のゆらぎを吸収する。
+// 🔴 ハッシュは生値（正規化前の ec）で取るので、ここでの補正は冪等性に影響しない。
+function _boothPadCode(ec) {
+  let m = ec.match(/^(F\d{4}-)(\d{1,4})$/);
+  if (m) return m[1] + _boothPad(m[2], 4);
+  m = ec.match(/^(P-)(\d{1,2})$/);
+  if (m) return m[1] + _boothPad(m[2], 2);
+  return ec;
+}
+
+function _boothResolveByToken(tt, idx) {
+  const app = idx.appsByToken[tt];
+  if (app) return { status: 'ok', app_id: app.app_id, flag: '' };
+
+  const spare = idx.sparesByToken[tt];
+  if (spare) {
+    if (!spare.assigned_app_id) return { status: 'unresolved', app_id: '', flag: 'spare_unassigned' };
+    if (!idx.appsById[spare.assigned_app_id]) {
+      // 割当先の申込行が見つからない（データ不整合）。推測せず未解決のままにする。
+      return { status: 'unresolved', app_id: '', flag: 'unknown_code' };
+    }
+    return { status: 'ok', app_id: spare.assigned_app_id, flag: '' };
+  }
+  return { status: 'unresolved', app_id: '', flag: 'unknown_token' };
+}
+
+function _boothResolveByCode(ec, idx) {
+  const code = _boothPadCode(ec);
+
+  if (/^F\d{4}-/.test(code)) {
+    const app = idx.appsById[code];
+    if (app) return { status: 'ok', app_id: app.app_id, flag: '' };
+    return { status: 'unresolved', app_id: '', flag: 'unknown_code' };
+  }
+
+  if (code.indexOf('P-') === 0) {
+    const spare = idx.sparesByNo[code];
+    if (!spare) return { status: 'unresolved', app_id: '', flag: 'unknown_code' };
+    if (!spare.assigned_app_id) return { status: 'unresolved', app_id: '', flag: 'spare_unassigned' };
+    if (!idx.appsById[spare.assigned_app_id]) return { status: 'unresolved', app_id: '', flag: 'unknown_code' };
+    return { status: 'ok', app_id: spare.assigned_app_id, flag: '' };
+  }
+
+  return { status: 'unresolved', app_id: '', flag: 'unknown_code' };
+}
+
+// tt/ec から本人を解決する（§5-4）。🔴 推測して片方を採らない。
+// 返り値: { resolve_status, app_id, ticket_token, flags[] }
+function _boothResolveSubject(tt, ec, idx) {
+  const flags = [];
+  const a = tt ? _boothResolveByToken(tt, idx) : null;
+  const b = ec ? _boothResolveByCode(ec, idx) : null;
+
+  let picked = null;
+  if (a && b) {
+    if (a.status === 'ok' && b.status === 'ok' && a.app_id === b.app_id) {
+      picked = a;
+    } else if (a.status === 'ok' || b.status === 'ok') {
+      // 片方だけ解決 / 別人に解決 → 採らない（§5-4）
+      flags.push('subject_mismatch');
+    } else {
+      if (a.flag) flags.push(a.flag);
+      if (b.flag) flags.push(b.flag);
+    }
+  } else {
+    picked = (a || b);
+    if (picked && picked.status !== 'ok') {
+      if (picked.flag) flags.push(picked.flag);
+      picked = null;
+    }
+  }
+
+  if (!picked || picked.status !== 'ok') {
+    return { resolve_status: 'unresolved', app_id: '', ticket_token: '', flags: flags };
+  }
+
+  const app = idx.appsById[picked.app_id];
+  // 🔴 キャンセル済みでも受理する。控えの母集団から外すためのフラグを立てるだけ（§2-5）
+  if (app && app.status === 'cancelled') flags.push('subject_cancelled');
+
+  return {
+    resolve_status: 'ok',
+    app_id: picked.app_id,
+    ticket_token: app ? app.ticket_token : '',
+    flags: flags
+  };
+}
+
+// ------------------------------------------------------------
+// 明細の書き込み（item_id が決定的なので何度呼んでも重複しない・§5-3）
+// ------------------------------------------------------------
+function _boothSyncItems(sheets, orderId, boothId, snapItems, delivery) {
+  const sh = sheets.items;
+  const lastRow = sh.getLastRow();
+  const prefix = orderId + '-';
+  const existing = {};
+  let count = 0;
+
+  if (lastRow >= 2) {
+    const ids = sh.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (let i = 0; i < ids.length; i++) {
+      const id = String(ids[i][0] || '');
+      if (id.indexOf(prefix) === 0) { existing[id] = true; count++; }
+    }
+  }
+
+  const now = _now();
+  const rows = [];
+  for (let i = 0; i < snapItems.length; i++) {
+    const itemId = orderId + '-' + (i + 1);
+    if (existing[itemId]) continue;
+    const p = snapItems[i];
+    rows.push([itemId, orderId, boothId, p.product_id, p.product_name, p.spec,
+               p.qty, p.unit_price, delivery, now]);
+  }
+  if (rows.length > 0) {
+    sh.getRange(sh.getLastRow() + 1, 1, rows.length, BOOTH_ITEM_COLS).setValues(rows);
+    count += rows.length;
+  }
+  return count;
+}
+
+// ------------------------------------------------------------
+// boothInit（GET・認証なし・booth_token で認可・§4-1）
+// ------------------------------------------------------------
+function boothInit(data) {
+  _checkProps();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheets = _ensureBoothSheets(ss);
+
+  const auth = _boothAuth(sheets, (data || {}).b);
+  if (!auth.ok) return _err(auth.error);
+  // 🔴 新規セッションだけを止める。キュー済みの送信（boothSubmit）は受理し続ける（§4-6）
+  if (!auth.is_active) return _err('BOOTH_INACTIVE');
+
+  const rows = sheets.products.getDataRange().getValues();
+  const products = [];
+  for (let i = 1; i < rows.length; i++) {
+    const pid = String(rows[i][0]).trim();
+    if (!pid) continue;
+    if (String(rows[i][1]).trim() !== auth.booth_id) continue; // 🔴 他ブースは1バイトも返さない
+    if (!_boothIsActive(rows[i][6])) continue;
+    products.push({
+      product_id: pid,
+      product_name: String(rows[i][2] || ''),
+      spec: String(rows[i][3] || ''),
+      unit_price: (rows[i][4] === '' || rows[i][4] == null) ? '' : Number(rows[i][4]),
+      sort_order: Number(rows[i][5] || 0)
+    });
+  }
+  products.sort(function (a, b) {
+    if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+    return a.product_id < b.product_id ? -1 : (a.product_id > b.product_id ? 1 : 0);
+  });
+
+  // master_version はサーバー時刻の文字列。🔴 サーバーは判定に一切使わない（監査専用・§2-6）
+  const now = _now();
+  return _ok({
+    booth_id: auth.booth_id,
+    maker_name: auth.maker_name,
+    master_version: now,
+    server_time: now,
+    server_version: VERSION,
+    products: products
+  });
+}
+
+// ------------------------------------------------------------
+// boothSubmit（POST・認証なし・booth_token で認可・§4-2/§5-3）
+// ------------------------------------------------------------
+function _boothParseSubmit(data) {
+  const d = data || {};
+  // 文字数での近似（GASにバイト長の安価な計測がないため）。上限を超える要求は恒久失敗にする
+  if (JSON.stringify(d).length > BOOTH_MAX_REQUEST_CHARS) return { error: 'INVALID_REQUEST' };
+
+  const boothToken = String(d.b || '').trim();
+  if (!boothToken || boothToken.length > BOOTH_MAX_KEY_LEN) return { error: 'BOOTH_NOT_FOUND' };
+
+  const idemKey = String(d.idempotency_key || '').trim();
+  if (!idemKey || idemKey.length > BOOTH_MAX_KEY_LEN) return { error: 'INVALID_REQUEST' };
+
+  const tt = _boothNormKey(d.ticket_token);
+  const ec = _boothNormKey(d.entry_code).toUpperCase();
+  if (tt.length > BOOTH_MAX_KEY_LEN || ec.length > BOOTH_MAX_KEY_LEN) return { error: 'INVALID_REQUEST' };
+  if (!tt && !ec) return { error: 'INVALID_REQUEST' }; // 本人キーなしは記録として成立しない（§5-4）
+
+  const delivery = String(d.delivery || '').trim();
+  if (delivery !== 'handed' && delivery !== 'later') return { error: 'INVALID_REQUEST' };
+
+  return {
+    boothToken: boothToken,
+    idemKey: idemKey,
+    tt: tt,
+    ec: ec,
+    delivery: delivery,
+    items: d.items,
+    inputMethod: tt ? 'qr' : 'manual',
+    clientCreatedAt: String(d.client_created_at || '').trim().slice(0, 32),
+    clientInstanceId: String(d.client_instance_id || '').trim().slice(0, BOOTH_MAX_KEY_LEN),
+    masterVersion: String(d.master_version || '').trim().slice(0, 32)
+  };
+}
+
+function boothSubmit(data) {
+  _checkProps();
+
+  // ===== ロックの外（重い読み取りは全部ここ・§5-2）=====
+  const req = _boothParseSubmit(data);
+  if (req.error) return _err(req.error);
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheets = _ensureBoothSheets(ss);
+
+  const auth = _boothAuth(sheets, req.boothToken);
+  if (!auth.ok) return _err(auth.error);
+
+  const flags = [];
+  // 🔴 boothSubmit は BOOTH_INACTIVE を返さない。無効化後に届いたキューも受理する（§2-6/§4-6）
+  if (!auth.is_active) flags.push('stale_master');
+
+  const canon = _boothCanonicalizeItems(req.items);
+  if (canon.error) return _err(canon.error);
+
+  const snap = _boothSnapshotProducts(sheets, auth.booth_id, canon.items);
+  if (snap.error) return _err(snap.error);
+  if (snap.stale) flags.push('stale_master');
+
+  const hash = _boothPayloadHash(auth.booth_id, req.tt, req.ec, req.delivery, canon.items);
+
+  const idx  = _boothLoadSubjectIndex(ss);
+  const subj = _boothResolveSubject(req.tt, req.ec, idx);
+  subj.flags.forEach(function (f) { flags.push(f); });
+
+  const receivedAt = _now();
+  if (_boothClockSkew(req.clientCreatedAt, receivedAt)) flags.push('clock_skew');
+  const validationState = _boothFlags(flags);
+  const expected = canon.items.length;
+
+  // ===== ロックの中（シート書き込みだけ・狙いは0.5秒以内）=====
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(BOOTH_LOCK_WAIT_MS)) return _err('LOCK_BUSY');
+
+  let result, rowNum, notifyOrderId;
+  try {
+    const or = sheets.orders;
+    const lastRow = or.getLastRow();
+    const keys = (lastRow >= 2) ? or.getRange(2, 1, lastRow - 1, BOOTH_KEY_COLS).getValues() : [];
+
+    // 🔴 採番は「いま読んだA列の最大連番+1」。getLastRow() は使わない（手で1行消されただけで重複する）
+    let maxSeq = 0, found = -1;
+    for (let i = 0; i < keys.length; i++) {
+      const m = String(keys[i][0] || '').match(/^O-(\d+)$/);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (n > maxSeq) maxSeq = n;
+      }
+      if (found < 0 &&
+          String(keys[i][1]).trim() === auth.booth_id &&
+          String(keys[i][2]).trim() === req.idemKey) found = i;
+    }
+
+    if (found < 0) {
+      // ---- 新規 ----
+      const orderId = 'O-' + _boothPad(maxSeq + 1, 4);
+      rowNum = lastRow + 1;
+
+      const values = [];
+      for (let i = 0; i < BOOTH_ORDER_COLS; i++) values.push('');
+      values[BO.order_id - 1]            = orderId;
+      values[BO.booth_id - 1]            = auth.booth_id;
+      values[BO.idempotency_key - 1]     = req.idemKey;
+      values[BO.payload_hash - 1]        = hash;
+      values[BO.write_state - 1]         = 'PENDING';
+      values[BO.status - 1]              = 'active';
+      values[BO.expected_item_count - 1] = expected;
+      values[BO.resolve_status - 1]      = subj.resolve_status;
+      values[BO.app_id - 1]              = subj.app_id;       // 🔴 ok のときだけ値が入る
+      values[BO.ticket_token - 1]        = subj.ticket_token;
+      values[BO.ticket_token_raw - 1]    = req.tt;
+      values[BO.entry_code_raw - 1]      = req.ec;
+      values[BO.input_method - 1]        = req.inputMethod;
+      values[BO.client_created_at - 1]   = req.clientCreatedAt;
+      values[BO.received_at - 1]         = receivedAt;
+      values[BO.created_at - 1]          = receivedAt;
+      values[BO.client_instance_id - 1]  = req.clientInstanceId;
+      values[BO.master_version - 1]      = req.masterVersion;
+      values[BO.validation_state - 1]    = validationState;
+
+      // 🔴 PENDING行の追加は1回のsetValuesで全25列を書く。列を分けて書くと
+      //    「expected_item_count だけ空のPENDING行」という復旧不能な中間状態ができる（§5-2）
+      or.getRange(rowNum, 1, 1, BOOTH_ORDER_COLS).setValues([values]);
+
+      const cnt = _boothSyncItems(sheets, orderId, auth.booth_id, snap.items, req.delivery);
+      let writeState = 'PENDING';
+      if (cnt === expected) {
+        or.getRange(rowNum, BO.write_state).setValue('COMPLETE');
+        writeState = 'COMPLETE';
+      }
+
+      notifyOrderId = orderId;
+      result = _ok({
+        order_id: orderId, write_state: writeState, status: 'active',
+        resolve_status: subj.resolve_status, validation_state: validationState, duplicate: false
+      });
+
+    } else {
+      rowNum = 2 + found;
+      const row = keys[found];
+      const orderId = String(row[0]);
+      const storedHash = String(row[3] || '');
+
+      // 🔴 墓標の判定を CONFLICT より先に置く（§5-3）。墓標は payload_hash が空という1点で見分ける
+      if (storedHash === '') {
+        // ---- 墓標行を埋める（取消が先に届いていた・§2-2）----
+        // 🔴 payload_hash（D列）は最後に書く。途中で落ちても「payload_hash が空＝まだ墓標」の
+        //    ままなので、再送が同じ経路をもう一度やり直せる（順序を変えると復旧不能になる）
+        or.getRange(rowNum, BO.expected_item_count, 1, 9).setValues([[
+          expected, subj.resolve_status, subj.app_id, subj.ticket_token,
+          req.tt, req.ec, req.inputMethod, req.clientCreatedAt, receivedAt
+        ]]); // G〜O
+        or.getRange(rowNum, BO.client_instance_id, 1, 3).setValues([[
+          req.clientInstanceId, req.masterVersion, validationState
+        ]]); // Q〜S
+        or.getRange(rowNum, BO.payload_hash).setValue(hash);
+
+        const cnt = _boothSyncItems(sheets, orderId, auth.booth_id, snap.items, req.delivery);
+        let writeState = 'PENDING';
+        if (cnt === expected) {
+          or.getRange(rowNum, BO.write_state).setValue('COMPLETE');
+          writeState = 'COMPLETE';
+        }
+
+        // 🔴 status は voided のまま（絶対に active に戻さない）。通知もしない
+        result = _ok({
+          order_id: orderId, write_state: writeState, status: 'voided',
+          resolve_status: subj.resolve_status, validation_state: validationState, duplicate: false
+        });
+
+      } else if (storedHash !== hash) {
+        result = _err('IDEMPOTENCY_CONFLICT');
+
+      } else {
+        // ---- 同一キー・同一内容（＝応答喪失後の再送）----
+        // 🔴 ロック内で applications を読み直さない。解決はロック外で済んでいる（§5-3）
+        let writeState    = String(row[4] || '');
+        const rowStatus   = String(row[5] || '');
+        let resolveStatus = String(row[7] || '');
+        let vState = String(or.getRange(rowNum, BO.validation_state).getValue() || '');
+
+        if (resolveStatus !== 'ok' && subj.resolve_status === 'ok') {
+          or.getRange(rowNum, BO.resolve_status, 1, 3)
+            .setValues([[ 'ok', subj.app_id, subj.ticket_token ]]); // H〜J
+          or.getRange(rowNum, BO.validation_state).setValue(validationState);
+          resolveStatus = 'ok';
+          vState = validationState;
+        }
+
+        if (writeState === 'PENDING') {
+          // hashが一致している＝明細も同一なので、期待件数は今回の正規化結果と必ず一致する
+          const cnt = _boothSyncItems(sheets, orderId, auth.booth_id, snap.items, req.delivery);
+          if (cnt === expected) {
+            or.getRange(rowNum, BO.write_state).setValue('COMPLETE');
+            writeState = 'COMPLETE';
+          }
+        }
+        or.getRange(rowNum, BO.received_at).setValue(receivedAt);
+
+        if (writeState === 'COMPLETE' && rowStatus === 'active') notifyOrderId = orderId;
+
+        // 🔴 duplicate:true でも「いまの」resolve_status / validation_state を返す。
+        //    端末の⚠表示はこの2つだけを見て更新する
+        result = _ok({
+          order_id: orderId, write_state: writeState, status: rowStatus,
+          resolve_status: resolveStatus, validation_state: vState, duplicate: true
+        });
+      }
+    }
+  } catch (err) {
+    Logger.log('boothSubmit error: ' + err);
+    return _err('INTERNAL_ERROR');
+  } finally {
+    lock.releaseLock();
+  }
+
+  // ===== ロックの外（通知の失敗は注文の失敗にしない・§5-5）=====
+  // 🔴 subj.resolve_status も見る。再送で「行はok・今回の解決はunresolved」のときに
+  //    appsById[''] を引いて not_applicable を書き込んでしまうのを防ぐ
+  if (notifyOrderId && result && result.success && result.data.write_state === 'COMPLETE' &&
+      result.data.status === 'active' && result.data.resolve_status === 'ok' &&
+      subj.resolve_status === 'ok') {
+    try {
+      _boothNotifyLine(sheets, rowNum, idx.appsById[subj.app_id], auth.maker_name,
+                       snap.items, result.data.validation_state);
+    } catch (e) {
+      Logger.log('boothSubmit LINE通知の失敗（注文は成立）: ' + e);
+    }
+  }
+  return result;
+}
+
+// 友だちにだけ即時プッシュする（§5-5・正本§15-6）。
+// 🔴 line_notify_state が 'sent' の行には二度と送らない（冪等再送での重複防止）
+function _boothNotifyLine(sheets, rowNum, appRec, makerName, snapItems, validationState) {
+  const or = sheets.orders;
+  const current = String(or.getRange(rowNum, BO.line_notify_state).getValue() || '');
+  if (current === 'sent') return;
+
+  const friendId = appRec ? appRec.line_friend_id : '';
+  if (!friendId || String(validationState).indexOf('subject_cancelled') >= 0) {
+    if (current !== 'not_applicable') or.getRange(rowNum, BO.line_notify_state).setValue('not_applicable');
+    return;
+  }
+
+  const lines = snapItems.map(function (p) {
+    return '・' + p.product_name + (p.spec ? '（' + p.spec + '）' : '') + ' × ' + p.qty;
+  }).join('\n');
+  const text = 'ビューフェス2026\n' + makerName + 'ブースでのご注文を承りました。\n\n' +
+               lines + '\n\n※控えは当日終了後にメールでお送りします。';
+
+  try {
+    _lhSendMessage(friendId, text);
+    or.getRange(rowNum, BO.line_notify_state, 1, 2).setValues([['sent', _now()]]);
+  } catch (e) {
+    or.getRange(rowNum, BO.line_notify_state).setValue('failed');
+    or.getRange(rowNum, BO.last_error).setValue(String(e).substring(0, 300));
+  }
+}
+
+// ------------------------------------------------------------
+// boothVoid（POST・認証なし・§4-3/§2-2）
+// ------------------------------------------------------------
+function boothVoid(data) {
+  _checkProps();
+  const d = data || {};
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheets = _ensureBoothSheets(ss);
+
+  const auth = _boothAuth(sheets, d.b);
+  if (!auth.ok) return _err(auth.error);
+
+  const voidKey   = String(d.void_idempotency_key || '').trim().slice(0, BOOTH_MAX_KEY_LEN);
+  const targetKey = String(d.target_idempotency_key || '').trim().slice(0, BOOTH_MAX_KEY_LEN);
+  const targetId  = String(d.target_order_id || '').trim().slice(0, BOOTH_MAX_KEY_LEN);
+  if (!targetKey && !targetId) return _err('INVALID_REQUEST');
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(BOOTH_LOCK_WAIT_MS)) return _err('LOCK_BUSY');
+
+  try {
+    const or = sheets.orders;
+    const lastRow = or.getLastRow();
+    const keys = (lastRow >= 2) ? or.getRange(2, 1, lastRow - 1, BOOTH_KEY_COLS).getValues() : [];
+
+    let maxSeq = 0, found = -1;
+    for (let i = 0; i < keys.length; i++) {
+      const m = String(keys[i][0] || '').match(/^O-(\d+)$/);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (n > maxSeq) maxSeq = n;
+      }
+      // 🔴 他ブースの注文は取り消せない（画面制御に頼らずここで照合する）
+      if (found >= 0 || String(keys[i][1]).trim() !== auth.booth_id) continue;
+      if (targetKey && String(keys[i][2]).trim() === targetKey) found = i;
+      else if (!targetKey && targetId && String(keys[i][0]).trim() === targetId) found = i;
+    }
+
+    const now = _now();
+
+    if (found >= 0) {
+      const rowNum  = 2 + found;
+      const orderId = String(keys[found][0]);
+      if (String(keys[found][5]) === 'voided') {
+        return _ok({ order_id: orderId, status: 'voided', tombstone: false }); // 冪等
+      }
+      or.getRange(rowNum, BO.status).setValue('voided');
+      or.getRange(rowNum, BO.void_idempotency_key, 1, 2).setValues([[voidKey, now]]); // V,W
+      return _ok({ order_id: orderId, status: 'voided', tombstone: false });
+    }
+
+    if (!targetKey) return _err('ORDER_NOT_FOUND'); // order_id 指定のみで見つからない場合
+
+    // ---- 墓標行を作る（注文がまだ届いていない・§2-2）----
+    const orderId = 'O-' + _boothPad(maxSeq + 1, 4);
+    const values = [];
+    for (let i = 0; i < BOOTH_ORDER_COLS; i++) values.push('');
+    values[BO.order_id - 1]             = orderId;
+    values[BO.booth_id - 1]             = auth.booth_id;
+    values[BO.idempotency_key - 1]      = targetKey; // 後から届く注文がこの行に当たる鍵
+    values[BO.payload_hash - 1]         = '';        // 🔴 空＝墓標の目印
+    values[BO.write_state - 1]          = 'PENDING';
+    values[BO.status - 1]               = 'voided';
+    values[BO.received_at - 1]          = now;
+    values[BO.created_at - 1]           = now;
+    values[BO.void_idempotency_key - 1] = voidKey;
+    values[BO.voided_at - 1]            = now;
+    values[BO.note - 1]                 = 'tombstone: 取消が注文より先に到着';
+    or.getRange(lastRow + 1, 1, 1, BOOTH_ORDER_COLS).setValues([values]);
+
+    return _ok({ order_id: orderId, status: 'voided', tombstone: true });
+
+  } catch (err) {
+    Logger.log('boothVoid error: ' + err);
+    return _err('INTERNAL_ERROR');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ------------------------------------------------------------
+// boothRecent（POST・認証なし・§4-4）
+// 🔴 氏名・サロン名は返さない。entry_label は「解決済みなら app_id、未解決なら生の入力値」
+// ------------------------------------------------------------
+function boothRecent(data) {
+  _checkProps();
+  const d = data || {};
+  const limit = Math.min(Math.max(parseInt(d.limit, 10) || 10, 1), 50);
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheets = _ensureBoothSheets(ss);
+
+  const auth = _boothAuth(sheets, d.b);
+  if (!auth.ok) return _err(auth.error);
+
+  const rows = sheets.orders.getDataRange().getValues();
+  const picked = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (String(r[BO.booth_id - 1]).trim() !== auth.booth_id) continue;
+    if (String(r[BO.write_state - 1]) !== 'COMPLETE') continue;
+    if (String(r[BO.status - 1]) !== 'active') continue;
+    picked.push({
+      order_id: String(r[BO.order_id - 1]),
+      idempotency_key: String(r[BO.idempotency_key - 1]),
+      entry_label: String(r[BO.resolve_status - 1]) === 'ok'
+        ? String(r[BO.app_id - 1])
+        : (String(r[BO.entry_code_raw - 1] || '') || String(r[BO.ticket_token_raw - 1] || '')),
+      client_created_at: String(r[BO.client_created_at - 1] || ''),
+      items: []
+    });
+  }
+
+  picked.sort(function (a, b) { return a.order_id < b.order_id ? 1 : (a.order_id > b.order_id ? -1 : 0); });
+  const out = picked.slice(0, limit);
+
+  const wanted = {};
+  out.forEach(function (o) { wanted[o.order_id] = o; });
+
+  const itemRows = sheets.items.getDataRange().getValues();
+  for (let i = 1; i < itemRows.length; i++) {
+    const o = wanted[String(itemRows[i][1])];
+    if (!o) continue;
+    o.items.push({ product_name: String(itemRows[i][4] || ''), qty: Number(itemRows[i][6] || 0) });
+  }
+
+  return _ok({ booth_id: auth.booth_id, orders: out, server_time: _now() });
+}
+
+// ------------------------------------------------------------
+// 社員用（認証必須・§4-5）
+// ------------------------------------------------------------
+
+// 撤収照合用。ブース別に COMPLETE&active / PENDING / unresolved の件数を返す（§15-5-4）
+function boothSummary(data) {
+  const authz = _requireSession(data);
+  if (!authz.ok) return _err(authz.error);
+  _checkProps();
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheets = _ensureBoothSheets(ss);
+
+  const boothRows = sheets.booths.getDataRange().getValues();
+  const summary = {}, order = [];
+  for (let i = 1; i < boothRows.length; i++) {
+    const bid = String(boothRows[i][0]).trim();
+    if (!bid) continue;
+    summary[bid] = {
+      booth_id: bid, maker_name: String(boothRows[i][1] || ''),
+      is_active: _boothIsActive(boothRows[i][3]),
+      complete_active: 0, pending: 0, unresolved: 0, voided: 0
+    };
+    order.push(bid);
+  }
+
+  const lastRow = sheets.orders.getLastRow();
+  const rows = (lastRow >= 2) ? sheets.orders.getRange(2, 1, lastRow - 1, BOOTH_KEY_COLS).getValues() : [];
+  for (let i = 0; i < rows.length; i++) {
+    const bid = String(rows[i][1]).trim();
+    if (!bid) continue;
+    if (!summary[bid]) {
+      summary[bid] = { booth_id: bid, maker_name: '(booths未登録)', is_active: false,
+                       complete_active: 0, pending: 0, unresolved: 0, voided: 0 };
+      order.push(bid);
+    }
+    const s = summary[bid];
+    const writeState = String(rows[i][4]);
+    const status     = String(rows[i][5]);
+    if (status === 'voided') s.voided++;
+    if (writeState === 'COMPLETE' && status === 'active') s.complete_active++;
+    if (writeState === 'PENDING') s.pending++;
+    if (String(rows[i][7]) === 'unresolved') s.unresolved++;
+  }
+
+  const list = order.map(function (bid) { return summary[bid]; });
+  const total = { complete_active: 0, pending: 0, unresolved: 0, voided: 0 };
+  list.forEach(function (s) {
+    total.complete_active += s.complete_active;
+    total.pending += s.pending;
+    total.unresolved += s.unresolved;
+    total.voided += s.voided;
+  });
+
+  return _ok({ booths: list, total: total, server_time: _now(), server_version: VERSION });
+}
+
+// unresolved 行の一括再解決（§4-5）。🔴 mail_merge 生成の直前に必ず実行する（§7ルール6）
+// ロックは取らない: 書き込むのは該当行の H〜J・S だけで、boothSubmit の再送が同時に書いても
+// 同じ値になる（解決は生の入力キーから決まる）。当日終了後に社員が回す想定。
+function boothResolveUnresolved(data) {
+  const authz = _requireSession(data);
+  if (!authz.ok) return _err(authz.error);
+  _checkProps();
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheets = _ensureBoothSheets(ss);
+  const or = sheets.orders;
+
+  const lastRow = or.getLastRow();
+  if (lastRow < 2) return _ok({ checked: 0, resolved: 0, still_unresolved: 0, details: [] });
+
+  const rows = or.getRange(2, 1, lastRow - 1, BO.validation_state).getValues();
+  const idx = _boothLoadSubjectIndex(ss);
+
+  let checked = 0, resolved = 0, still = 0;
+  const details = [];
+  for (let i = 0; i < rows.length; i++) {
+    if (String(rows[i][BO.resolve_status - 1]) !== 'unresolved') continue;
+    checked++;
+
+    const tt = String(rows[i][BO.ticket_token_raw - 1] || '');
+    const ec = String(rows[i][BO.entry_code_raw - 1] || '');
+    const subj = _boothResolveSubject(tt, ec, idx);
+    const orderId = String(rows[i][BO.order_id - 1]);
+
+    if (subj.resolve_status !== 'ok') {
+      still++;
+      details.push({ order_id: orderId, resolve_status: 'unresolved',
+                     validation_state: _boothFlags(subj.flags) });
+      continue;
+    }
+
+    const rowNum = 2 + i;
+    or.getRange(rowNum, BO.resolve_status, 1, 3).setValues([['ok', subj.app_id, subj.ticket_token]]);
+
+    // 既存フラグから未解決系だけを落とし、今回の判定結果を足す
+    const keep = String(rows[i][BO.validation_state - 1] || '').split(',').filter(function (f) {
+      return f && ['spare_unassigned', 'unknown_token', 'unknown_code', 'subject_mismatch'].indexOf(f) < 0;
+    });
+    const merged = _boothFlags(keep.concat(subj.flags));
+    or.getRange(rowNum, BO.validation_state).setValue(merged);
+
+    resolved++;
+    details.push({ order_id: orderId, resolve_status: 'ok', app_id: subj.app_id,
+                   validation_state: merged });
+  }
+
+  return _ok({ checked: checked, resolved: resolved, still_unresolved: still, details: details });
+}
+
+// メーカー別・商品別の集計CSV（§4-5）。母集団は COMPLETE かつ active。
+// 🔴 subject_cancelled は**含める**（実際に発生した注文なので・§2-5）
+function boothExportCsv(data) {
+  const authz = _requireSession(data);
+  if (!authz.ok) return _err(authz.error);
+  _checkProps();
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheets = _ensureBoothSheets(ss);
+  const filterBooth = String((data || {}).booth_id || '').trim();
+
+  const makerName = {};
+  const boothRows = sheets.booths.getDataRange().getValues();
+  for (let i = 1; i < boothRows.length; i++) {
+    makerName[String(boothRows[i][0]).trim()] = String(boothRows[i][1] || '');
+  }
+
+  const lastRow = sheets.orders.getLastRow();
+  const orderRows = (lastRow >= 2) ? sheets.orders.getRange(2, 1, lastRow - 1, BOOTH_KEY_COLS).getValues() : [];
+  const target = {};
+  let orderCount = 0;
+  for (let i = 0; i < orderRows.length; i++) {
+    if (String(orderRows[i][4]) !== 'COMPLETE' || String(orderRows[i][5]) !== 'active') continue;
+    const bid = String(orderRows[i][1]).trim();
+    if (filterBooth && bid !== filterBooth) continue;
+    target[String(orderRows[i][0])] = true;
+    orderCount++;
+  }
+
+  const agg = {}, keys = [];
+  const itemRows = sheets.items.getDataRange().getValues();
+  for (let i = 1; i < itemRows.length; i++) {
+    const orderId = String(itemRows[i][1]);
+    if (!target[orderId]) continue;
+    const bid = String(itemRows[i][2]).trim();
+    const pid = String(itemRows[i][3]).trim();
+    const key = bid + ' ' + pid;
+    if (!agg[key]) {
+      agg[key] = {
+        booth_id: bid, maker_name: makerName[bid] || '', product_id: pid,
+        product_name: String(itemRows[i][4] || ''), spec: String(itemRows[i][5] || ''),
+        unit_price: (itemRows[i][7] === '' || itemRows[i][7] == null) ? '' : Number(itemRows[i][7]),
+        qty: 0, orders: 0, amount: ''
+      };
+      keys.push(key);
+    }
+    agg[key].qty += Number(itemRows[i][6] || 0);
+    agg[key].orders++;
+  }
+  keys.sort();
+
+  const header = ['booth_id', 'maker_name', 'product_id', 'product_name', 'spec',
+                  'unit_price', 'qty_total', 'order_count', 'amount_total'];
+  const lines = [header.map(_boothCsvCell).join(',')];
+  const rows = [];
+  keys.forEach(function (k) {
+    const a = agg[k];
+    a.amount = (a.unit_price === '') ? '' : a.unit_price * a.qty;
+    rows.push(a);
+    lines.push([a.booth_id, a.maker_name, a.product_id, a.product_name, a.spec,
+                a.unit_price, a.qty, a.orders, a.amount].map(_boothCsvCell).join(','));
+  });
+
+  return _ok({
+    generated_at: _now(), order_count: orderCount, row_count: rows.length,
+    rows: rows, csv: lines.join('\r\n')
+  });
+}
+
+function _boothCsvCell(v) {
+  const s = String(v == null ? '' : v);
+  return '"' + s.split('"').join('""') + '"';
+}
+
+// 退避したキューJSONをシートへ戻す（§4-5）。
+// 端末の書き出しJSONは { idempotency_key, type:'submit'|'void', payload } の配列。
+// 🔴 payload をそのまま boothSubmit / boothVoid へ流すので、投入は冪等
+//   （同じものを端末が後から送っても二重にならない）
+function boothImportQueue(data) {
+  const authz = _requireSession(data);
+  if (!authz.ok) return _err(authz.error);
+  _checkProps();
+
+  const d = data || {};
+  const entries = Array.isArray(d.entries) ? d.entries : null;
+  if (!entries) return _err('INVALID_REQUEST');
+  if (entries.length > 200) return _err('INVALID_REQUEST'); // 1回の投入は200件まで
+
+  const results = [];
+  let okCount = 0, ngCount = 0;
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i] || {};
+    const type = String(e.type || 'submit');
+    const payload = e.payload || {};
+    let res;
+    try {
+      res = (type === 'void') ? boothVoid(payload) : boothSubmit(payload);
+    } catch (err) {
+      res = _err('INTERNAL_ERROR');
+      Logger.log('boothImportQueue error: ' + err);
+    }
+    if (res && res.success) okCount++; else ngCount++;
+    results.push({
+      idempotency_key: String(e.idempotency_key || ''),
+      type: type,
+      success: !!(res && res.success),
+      error: (res && res.success) ? '' : String((res || {}).error || ''),
+      data: (res && res.success) ? res.data : null
+    });
+  }
+
+  return _ok({ total: entries.length, ok: okCount, ng: ngCount, results: results });
 }
