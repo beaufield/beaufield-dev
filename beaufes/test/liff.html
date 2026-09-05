@@ -131,6 +131,9 @@
     padding: 14px 12px 16px;
     margin-top: 8px;
   }
+  /* 🔵 「お取引はありますか？」の選択肢のすぐ下に予約欄が来て詰まって見えるため離す
+     （2026-09-05 Takashiさん指摘）。予約欄が独立したまとまりに見えるようにする */
+  #seminarBlock { margin-top: 26px; }
   .semSectionHead {
     font-size: 15px; font-weight: bold; color: var(--main-dark);
     margin: 0 0 2px;
@@ -357,7 +360,7 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.12.0';
+const APP_VERSION = '0.13.0';
 const GAS_URL = 'TEST_ENV_NO_GAS';
 const LIFF_ID  = '2010404613-cwHA5B0U';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
@@ -471,7 +474,7 @@ function mockFaceSlot(id, start, end, remaining) {
 
 const MOCK_SESSIONS = [
   { session_id: 'S1', slot: 'セミナー 第1部', title: 'オトナ女子の"巡り"に寄り添うフェムケアセミナー',
-    starts_at: '11:00', ends_at: '12:00', capacity: 30, remaining: 12, is_full: false,
+    starts_at: '11:30', ends_at: '12:30', capacity: 30, remaining: 12, is_full: false,
     bullets: ['更年期は"予防"できる！', '結局更年期の原因ってなにから来ているの？',
               '身体の変化に寄り添ったエッセンス新商品のご紹介', '今日からできるフェムケア'],
     overview: '年齢を重ねるにつれて感じる、理由のはっきりしないゆらぎや、すっきりしない毎日。\n' +
