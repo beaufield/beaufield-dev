@@ -201,9 +201,32 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .register-error { background: #fee2e2; border: 1px solid #fca5a5; border-radius: 6px; padding: 8px 12px; font-size: 13px; color: #b91c1c; margin-bottom: 12px; display: none; }
 
 /* 特別価格タブ */
-.sp-subnav { display: flex; gap: 4px; margin-bottom: 16px; align-items: center; }
+.sp-subnav { display: flex; gap: 4px; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
 .sp-subnav-btn { padding: 7px 16px; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff; cursor: pointer; font-size: 13px; color: #6b7280; }
 .sp-subnav-btn.active { background: #eff6ff; border-color: #1a56db; color: #1a56db; font-weight: 600; }
+/* ⑤ 設定系とチェック系を見た目で分ける */
+.sp-navgroup { display: flex; gap: 4px; align-items: center; }
+.sp-navgroup-label { font-size: 10px; font-weight: 700; color: #9ca3af; letter-spacing: .08em; margin-right: 2px; }
+.sp-navdivider { width: 1px; align-self: stretch; background: #e5e7eb; margin: 2px 12px; }
+.sp-subnav-btn.sp-check { background: #fffbeb; border: 1px dashed #fcd34d; color: #92400e; border-radius: 999px; }
+.sp-subnav-btn.sp-check:hover { background: #fef3c7; }
+.sp-subnav-btn.sp-check.active { background: #f59e0b; border: 1px solid #d97706; color: #fff; font-weight: 700; }
+/* ④ 特別価格設定/例外表示設定の区分けを明確にするカード */
+.sp-section { border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px 18px 18px; margin-bottom: 22px; }
+.sp-section-price { border-left: 5px solid #1a56db; background: #fbfdff; }
+.sp-section-vf { border-left: 5px solid #7c3aed; background: #fdfbff; }
+.sp-section-head { display: flex; align-items: center; gap: 8px; }
+.sp-section-title { font-size: 15px; font-weight: 700; color: #111827; }
+.sp-section-tag { font-size: 10px; font-weight: 700; border-radius: 4px; padding: 2px 7px; }
+.sp-section-tag-price { background: #dbeafe; color: #1e40af; }
+.sp-section-tag-vf { background: #ede9fe; color: #6d28d9; }
+.sp-section-desc { font-size: 12px; color: #6b7280; margin: 6px 0 16px; line-height: 1.6; }
+.sp-subhead { font-size: 12px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+.sp-filter-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.sp-filter-bar select, .sp-filter-bar input { padding: 7px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; background: #fff; }
+.sp-maker-badge { display: inline-block; background: #f5f3ff; color: #6d28d9; border: 1px solid #ddd6fe; border-radius: 4px; padding: 1px 6px; font-size: 11px; font-weight: 600; }
+.sp-match-badge { display: inline-block; background: #f3f4f6; color: #6b7280; border-radius: 3px; padding: 0 5px; font-size: 10px; margin-right: 4px; }
+.sp-kakeritsu { display: inline-block; background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; border-radius: 3px; padding: 0 5px; font-size: 10px; font-weight: 700; margin-left: 6px; }
 .sp-help-link { margin-left: auto; padding: 7px 14px; border: 1px solid #bfdbfe; border-radius: 6px; background: #eff6ff; color: #1a56db; font-size: 13px; text-decoration: none; white-space: nowrap; }
 .sp-help-link:hover { background: #dbeafe; }
 .sp-alert { background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px; color: #92400e; }
@@ -235,6 +258,16 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .member-item input[type=checkbox] { flex-shrink: 0; }
 .member-item-info { flex: 1; font-size: 13px; }
 .member-item-id { font-size: 11px; color: #9ca3af; font-family: monospace; }
+/* ② 選択中の会員は検索で絞り込んでも常に見えるようチップで固定表示する */
+.member-chips { display: flex; flex-wrap: wrap; gap: 6px; max-height: 104px; overflow-y: auto; padding: 8px; border: 1px solid #e5e7eb; border-radius: 6px; background: #f9fafb; }
+.member-chip { display: inline-flex; align-items: center; gap: 6px; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; border-radius: 999px; padding: 3px 6px 3px 10px; font-size: 12px; max-width: 100%; }
+.member-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px; }
+.member-chip button { border: none; background: #bfdbfe; color: #1e3a8a; border-radius: 50%; width: 16px; height: 16px; line-height: 14px; font-size: 11px; cursor: pointer; padding: 0; flex-shrink: 0; }
+.member-chip button:hover { background: #93c5fd; }
+.member-item.is-selected { background: #eff6ff; }
+.member-diff { font-size: 12px; }
+.member-diff .add { color: #059669; font-weight: 600; }
+.member-diff .del { color: #dc2626; font-weight: 600; }
 .badge-parent-hidden  { background: #f3f4f6; color: #6b7280; border: 1px solid #d1d5db; font-size: 11px; }
 .badge-parent-visible { background: #fef9c3; color: #b45309; border: 1px solid #fde047; font-size: 11px; }
 
@@ -448,11 +481,18 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <!-- タブ5: 特別価格 -->
     <div class="tab-panel" id="tab-special-price">
       <div class="sp-subnav">
-        <button class="sp-subnav-btn" id="sp-btn-groups" data-view="groups" onclick="switchSpSubview('groups',this)">導入サロングループ</button>
-        <button class="sp-subnav-btn active" id="sp-btn-settings" data-view="settings" onclick="switchSpSubview('settings',this)">特別価格設定</button>
-        <button class="sp-subnav-btn" id="sp-btn-individual" data-view="individual" onclick="switchSpSubview('individual',this)">個別特価</button>
-        <button class="sp-subnav-btn" id="sp-btn-audit" data-view="audit" onclick="switchSpSubview('audit',this)">🔍 マスター整合チェック</button>
-        <button class="sp-subnav-btn" id="sp-btn-salesaudit" data-view="salesaudit" onclick="switchSpSubview('salesaudit',this)">🧾 特価もれ検出</button>
+        <div class="sp-navgroup">
+          <span class="sp-navgroup-label">設定</span>
+          <button class="sp-subnav-btn" id="sp-btn-groups" data-view="groups" onclick="switchSpSubview('groups',this)">導入サロングループ</button>
+          <button class="sp-subnav-btn active" id="sp-btn-settings" data-view="settings" onclick="switchSpSubview('settings',this)">特別価格設定</button>
+          <button class="sp-subnav-btn" id="sp-btn-individual" data-view="individual" onclick="switchSpSubview('individual',this)">個別特価</button>
+        </div>
+        <div class="sp-navdivider"></div>
+        <div class="sp-navgroup">
+          <span class="sp-navgroup-label">点検</span>
+          <button class="sp-subnav-btn sp-check" id="sp-btn-audit" data-view="audit" onclick="switchSpSubview('audit',this)">🔍 マスター整合チェック</button>
+          <button class="sp-subnav-btn sp-check" id="sp-btn-salesaudit" data-view="salesaudit" onclick="switchSpSubview('salesaudit',this)">🧾 特価もれ検出</button>
+        </div>
         <a class="sp-help-link" id="spHelpLink" href="guide.html#settings" target="_blank" rel="noopener">❓ この画面の使い方</a>
       </div>
       <div id="sp-alert-area"></div>
@@ -833,6 +873,14 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     </div>
     <div class="form-row" style="margin-bottom:10px;">
       <div class="form-field" style="flex:1;">
+        <label>メーカー</label>
+        <input type="text" id="groupMaker" list="groupMakerList" placeholder="例: デミ（一覧から選択・自由入力も可）">
+        <datalist id="groupMakerList"></datalist>
+        <p style="font-size:11px;color:#9ca3af;margin-top:3px;">グループ一覧の絞り込みに使います。候補は特集管理で「種類=メーカー」にした特集名から出ます。</p>
+      </div>
+    </div>
+    <div class="form-row" style="margin-bottom:10px;">
+      <div class="form-field" style="flex:1;">
         <label>会員ID（カンマ区切り）</label>
         <input type="text" id="groupMemberIds" placeholder="例: 9888,9999,10000">
       </div>
@@ -888,16 +936,25 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <!-- 会員選択モーダル -->
 <div class="modal-overlay" id="memberSelectModal">
   <div class="modal member-modal">
-    <h3>👥 会員を選択</h3>
-    <div style="font-size:12px;color:#6b7280;margin-bottom:4px;" id="memberSelectGroupName"></div>
-    <input type="text" class="member-search-input" id="memberSearchInput" placeholder="会員名・IDで検索..." oninput="filterMembers(this.value)">
+    <h3>👥 会員を管理</h3>
+    <div style="font-size:12px;color:#6b7280;margin-bottom:8px;" id="memberSelectGroupName"></div>
+
+    <div class="sp-subhead" style="margin-bottom:6px;">このグループの会員（<span id="memberSelectedCount">0</span>名）</div>
+    <div class="member-chips" id="memberChips"></div>
+    <div class="member-diff" id="memberDiffInfo" style="margin:8px 0 2px;"></div>
+
+    <div class="sp-subhead" style="margin:14px 0 0;">会員を追加する</div>
+    <input type="text" class="member-search-input" id="memberSearchInput" placeholder="会員名・会員ID・得意先コードで検索..." oninput="filterMembers(this.value)">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+      <button class="btn btn-sm btn-gray" onclick="memberAddAllShown()">表示中をすべて追加</button>
+      <span style="font-size:11px;color:#9ca3af;" id="memberShownCount"></span>
+    </div>
     <div class="member-list" id="memberList">
       <div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>
     </div>
-    <div style="font-size:12px;color:#6b7280;margin-bottom:10px;" id="memberSelectedCount">0名選択中</div>
     <div class="actions">
       <button class="btn btn-gray" onclick="closeModal('memberSelectModal')">キャンセル</button>
-      <button class="btn btn-primary" onclick="confirmMemberSelect()">確定</button>
+      <button class="btn btn-primary" id="memberConfirmBtn" onclick="confirmMemberSelect()">確定して保存</button>
     </div>
   </div>
 </div>
@@ -1265,7 +1322,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = 'v2.13.0';
+const APP_VERSION = 'v2.14.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
 const BCART_ADMIN_BASE = 'https://beaufieldec.i16.bcart.jp/admin/products';
 
@@ -1295,6 +1352,14 @@ let spFeaturesCache = null;
 let allMembers = [];
 let membersLoaded = false;
 let pendingMemberGroupId = null;
+// ① 導入サロングループの絞り込み状態
+let spGroupFilterMaker = '';
+let spGroupFilterKw = '';
+// ② 会員管理モーダルの選択状態（DOMではなくここを唯一の正とする。
+//    検索で絞り込んでも選択が消えないようにするため）
+let memberSelIds = [];
+let memberSelOriginal = [];
+let memberShownIds = [];
 let spVfFeatureSets = [];
 let spPendingVfItems = [];
 let spPendingApplyItems = [];
@@ -3064,13 +3129,62 @@ function renderSpContent() {
   else if (spSubview === 'salesaudit') renderSalesAudit();
 }
 
+// ① メーカー候補 = 特集管理で「種類=メーカー」にした特集名 ∪ 既にグループへ入力済みのメーカー名
+function spMakerOptions() {
+  const set = {};
+  (spFeaturesCache || []).forEach(f => { if (f.type === 'メーカー' && f.name) set[f.name] = true; });
+  (spData && spData.groups ? spData.groups : []).forEach(g => { if (g.maker) set[g.maker] = true; });
+  return Object.keys(set).sort((a, b) => a.localeCompare(b, 'ja'));
+}
+
+// ① メーカー＋キーワードでグループを絞り込む（両方AND）
+function spFilterGroups(groups) {
+  const kw = String(spGroupFilterKw || '').toLowerCase().trim();
+  return groups.filter(g => {
+    if (spGroupFilterMaker) {
+      if (spGroupFilterMaker === '__none__') { if (g.maker) return false; }
+      else if (String(g.maker || '') !== spGroupFilterMaker) return false;
+    }
+    if (kw) {
+      const hay = (String(g.group_name || '') + ' ' + String(g.maker || '') + ' ' + String(g.note || '')).toLowerCase();
+      if (hay.indexOf(kw) < 0) return false;
+    }
+    return true;
+  });
+}
+
+function spMakerSelectHtml(id, onchange) {
+  const opts = spMakerOptions();
+  return '<select id="' + id + '" onchange="' + onchange + '">' +
+    '<option value="">すべてのメーカー</option>' +
+    '<option value="__none__"' + (spGroupFilterMaker === '__none__' ? ' selected' : '') + '>（メーカー未設定）</option>' +
+    opts.map(m => '<option value="' + esc(m) + '"' + (m === spGroupFilterMaker ? ' selected' : '') + '>' + esc(m) + '</option>').join('') +
+    '</select>';
+}
+
+function onSpGroupFilterMaker(v) { spGroupFilterMaker = v; renderSpContent(); }
+function onSpGroupFilterKw(v) { spGroupFilterKw = v; renderSpContent(); }
+function clearSpGroupFilter() { spGroupFilterMaker = ''; spGroupFilterKw = ''; renderSpContent(); }
+
 function renderSpGroups() {
-  const groups = spData.groups || [];
+  const allGroups = spData.groups || [];
+  const groups = spFilterGroups(allGroups);
+  const filtered = groups.length !== allGroups.length;
   let html = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">' +
     '<button class="btn btn-primary btn-sm" onclick="openGroupModal(null)">＋ 新規グループ追加</button>' +
     '</div>';
-  if (groups.length === 0) {
+  html += '<div class="sp-filter-bar">' +
+    '<span style="font-size:12px;color:#6b7280;">絞り込み:</span>' +
+    spMakerSelectHtml('spGroupFilterMakerSel', 'onSpGroupFilterMaker(this.value)') +
+    '<input type="text" id="spGroupFilterKwInput" placeholder="グループ名・メモで検索" value="' + esc(spGroupFilterKw) + '" ' +
+      'oninput="onSpGroupFilterKw(this.value)" style="width:240px;">' +
+    (filtered ? '<button class="btn btn-sm btn-gray" onclick="clearSpGroupFilter()">絞り込みを解除</button>' : '') +
+    '<span style="font-size:12px;color:#6b7280;margin-left:auto;">' + groups.length + ' / ' + allGroups.length + ' 件</span>' +
+    '</div>';
+  if (allGroups.length === 0) {
     html += '<div class="sp-empty">特価サロングループがありません。</div>';
+  } else if (groups.length === 0) {
+    html += '<div class="sp-empty">条件に一致するグループがありません。</div>';
   } else {
     html += groups.map(g => {
       const ids = String(g.member_ids || '').split(',').map(s => s.trim()).filter(s => s);
@@ -3080,7 +3194,8 @@ function renderSpGroups() {
       const detailCount = (spData.details || []).filter(d => d.group_id === g.group_id).length;
       return '<div class="sp-card">' +
         '<div class="sp-card-info">' +
-        '<div class="sp-card-title">👥 ' + esc(g.group_name) + '</div>' +
+        '<div class="sp-card-title">👥 ' + esc(g.group_name) +
+          (g.maker ? ' <span class="sp-maker-badge">' + esc(g.maker) + '</span>' : '') + '</div>' +
         '<div class="sp-card-sub">会員: ' + memberLabel + (memberLabel && codeLabel ? '　' : '') + codeLabel + '　特別価格商品: ' + detailCount + '件' + (g.note ? '　— ' + esc(g.note) : '') + '</div>' +
         '</div>' +
         '<div class="sp-card-actions">' +
@@ -3093,6 +3208,22 @@ function renderSpGroups() {
     }).join('');
   }
   document.getElementById('sp-content').innerHTML = html;
+  // 入力のたび再描画するのでフォーカスとキャレットを復元する
+  const kwEl = document.getElementById('spGroupFilterKwInput');
+  if (kwEl && spGroupFilterKw) { kwEl.focus(); kwEl.setSelectionRange(kwEl.value.length, kwEl.value.length); }
+  ensureSpFeaturesCache();
+}
+
+// メーカー候補は特集キャッシュに依存するので、無ければ裏で取ってから描き直す
+function ensureSpFeaturesCache(cb) {
+  if (spFeaturesCache) { if (cb) cb(); return; }
+  gasPost({ action: 'getFeatures' }, function(res) {
+    if (res.ok && res.specials) {
+      spFeaturesCache = res.specials;
+      if (spSubview === 'groups') renderSpGroups();
+    }
+    if (cb) cb();
+  });
 }
 
 function switchToSettings(groupId) {
@@ -3106,11 +3237,19 @@ function switchToSettings(groupId) {
 }
 
 function renderSpSettings() {
-  const groups = spData.groups || [];
-  let html = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:16px;">' +
-    '<select id="spGroupSelect" onchange="onSpGroupChange(this.value)" style="padding:7px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;background:#fff;flex:1;max-width:320px;">' +
-    '<option value="">特価サロングループを選択してください</option>' +
-    groups.map(g => '<option value="' + esc(g.group_id) + '"' + (g.group_id === spSelectedGroupId ? ' selected' : '') + '>' + esc(g.group_name) + '</option>').join('') +
+  const allGroups = spData.groups || [];
+  // ① メーカーで絞ってから選ぶ。選択中のグループは絞り込みで消えないよう必ず候補に残す
+  let groups = spFilterGroups(allGroups);
+  if (spSelectedGroupId && !groups.some(g => g.group_id === spSelectedGroupId)) {
+    const cur = allGroups.find(g => g.group_id === spSelectedGroupId);
+    if (cur) groups = [cur].concat(groups);
+  }
+  let html = '<div class="sp-filter-bar">' +
+    spMakerSelectHtml('spSetMakerSel', 'onSpGroupFilterMaker(this.value)') +
+    '<select id="spGroupSelect" onchange="onSpGroupChange(this.value)" style="padding:7px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;background:#fff;flex:1;min-width:240px;max-width:360px;">' +
+    '<option value="">特価サロングループを選択してください（' + groups.length + '件）</option>' +
+    groups.map(g => '<option value="' + esc(g.group_id) + '"' + (g.group_id === spSelectedGroupId ? ' selected' : '') + '>' +
+      esc(g.group_name) + (g.maker ? '［' + esc(g.maker) + '］' : '') + '</option>').join('') +
     '</select>' +
     '<button class="btn btn-gray btn-sm" onclick="loadSpecialPriceData()">🔄 更新</button>' +
     '</div>';
@@ -3120,17 +3259,36 @@ function renderSpSettings() {
     const memberIds = selGroup ? String(selGroup.member_ids || '').split(',').map(s => s.trim()).filter(s => s) : [];
     const details = (spData.details || []).filter(d => d.group_id === spSelectedGroupId);
 
-    // 会員情報
+    // 会員情報（③ IDだけでなく会員名も出す）
     const groupCodes = selGroup ? String(selGroup.customer_codes || '').split(',').map(s => s.trim()).filter(s => s) : [];
-    html += '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:8px 12px;margin-bottom:16px;font-size:13px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
-      '<span>👥 会員: <strong>' + memberIds.length + '名</strong>' + (memberIds.length > 0 ? '（ID: ' + memberIds.slice(0, 5).join(', ') + (memberIds.length > 5 ? ' 他' + (memberIds.length - 5) + '名' : '') + '）' : (groupCodes.length > 0 ? '' : '　未設定')) + '</span>' +
+    const NAME_SHOW = 6;
+    const namedList = memberIds.map(id => spMemberLabel(id));
+    const nameChip = n => '<span style="background:#dbeafe;border-radius:4px;padding:1px 7px;margin-right:5px;display:inline-block;">' + esc(n) + '</span>';
+    const namesHtml = memberIds.length === 0 ? ''
+      : '<div style="margin-top:6px;font-size:12px;color:#1e3a8a;line-height:1.9;">' +
+        namedList.slice(0, NAME_SHOW).map(nameChip).join('') +
+        (memberIds.length > NAME_SHOW
+          ? '<a href="javascript:void(0)" onclick="spToggleMemberNames()" id="spMemberNamesToggle" style="font-size:12px;color:#1a56db;">他' + (memberIds.length - NAME_SHOW) + '名を表示</a>' +
+            '<span id="spMemberNamesRest" style="display:none;">' + namedList.slice(NAME_SHOW).map(nameChip).join('') + '</span>'
+          : '') +
+        '</div>';
+    html += '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:10px 12px;margin-bottom:18px;font-size:13px;">' +
+      '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
+      '<span>👥 会員: <strong>' + memberIds.length + '名</strong>' + (memberIds.length === 0 && groupCodes.length === 0 ? '　未設定' : '') + '</span>' +
       (groupCodes.length > 0 ? '<span style="color:#7c3aed;">＋得意先コード: <strong>' + groupCodes.length + '件</strong>（反映時に会員へ自動解決・未登録分は保留）</span>' : '') +
       '<button class="btn btn-sm btn-wip" style="margin-left:auto;" onclick="openMemberSelectModal(\'' + jsArg(spSelectedGroupId) + '\',\'' + jsArg(selGroup ? selGroup.group_name : '') + '\')">👥 会員を管理</button>' +
+      '</div>' + namesHtml +
       '</div>';
 
-    // アプリ内保存済みの特別価格
+    // ④ ここから「特別価格」セクション（価格を決める設定）
+    html += '<div class="sp-section sp-section-price">';
+    html += '<div class="sp-section-head">' +
+      '<span class="sp-section-title">💎 特別価格の設定</span>' +
+      '<span class="sp-section-tag sp-section-tag-price">価格</span>' +
+      '</div>';
+    html += '<div class="sp-section-desc">このグループの会員が見る<strong>販売価格</strong>を決めます。BCARTの <code>special_price</code> を書き換えます。</div>';
     html += '<div style="margin-bottom:20px;">';
-    html += '<div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px;">アプリ内保存済みの特別価格</div>';
+    html += '<div class="sp-subhead">アプリ内保存済みの特別価格</div>';
     if (details.length === 0) {
       html += '<div style="font-size:13px;color:#9ca3af;padding:8px 0;">まだ特別価格が設定されていません。</div>';
     } else {
@@ -3139,17 +3297,20 @@ function renderSpSettings() {
         html += '<div class="warn-bar" style="margin-bottom:10px;">⚠️ ' + unappliedSpCount + '件がアプリ保存済みですが、BCARTにはまだ反映されていません。</div>';
       }
       html += '<div style="overflow-x:auto;"><table class="sp-table"><thead><tr>' +
-        '<th>品番</th><th>商品セット名</th><th>特別価格</th><th>更新日時</th><th>BCART反映</th><th></th>' +
+        '<th>品番</th><th>商品セット名</th><th>標準価格</th><th>特別価格</th><th>更新日時</th><th>BCART反映</th><th></th>' +
         '</tr></thead><tbody>';
       details.forEach(d => {
         const appliedAt = String(d.applied_at || '');
         const reflectBadge = appliedAt === ''
           ? '<span style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:700;">⚠️ 未反映</span>'
           : '<span style="color:#059669;font-size:10px;">✅ ' + esc(appliedAt.substring(0, 16)) + '</span>';
+        // ③ 標準価格はBカートの現在値（getSpecialPriceDataがsetPricesで返す）
+        const stdPrice = spStandardPrice(d.product_set_id);
         html += '<tr>' +
           '<td style="font-family:monospace;font-size:12px;color:#6b7280;">' + esc(d.product_no) + '</td>' +
           '<td>' + esc(d.product_set_name) + '</td>' +
-          '<td style="font-weight:700;color:#1a56db;">¥' + Number(d.unit_price).toLocaleString() + '</td>' +
+          '<td style="color:#6b7280;">' + (stdPrice === null ? '<span style="color:#d1d5db;">—</span>' : '¥' + Number(stdPrice).toLocaleString()) + '</td>' +
+          '<td style="font-weight:700;color:#1a56db;">¥' + Number(d.unit_price).toLocaleString() + spKakeritsuBadge(stdPrice, d.unit_price) + '</td>' +
           '<td style="font-size:11px;color:#9ca3af;">' + esc(String(d.updated_at || '').substring(0, 16)) + '</td>' +
           '<td>' + reflectBadge + '</td>' +
           '<td><button class="btn btn-sm btn-danger" onclick="deleteSpDetail(\'' + jsArg(d.detail_id) + '\',\'' + jsArg(d.product_no) + '\')">削除</button></td>' +
@@ -3166,14 +3327,14 @@ function renderSpSettings() {
     html += '</div>';
 
     // 商品追加セクション
-    html += '<div style="border-top:1px solid #e5e7eb;padding-top:16px;">';
-    html += '<div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;">商品を追加して特別価格を設定</div>';
+    html += '<div style="border-top:1px solid #dbeafe;padding-top:16px;">';
+    html += '<div class="sp-subhead">商品を追加して特別価格を設定</div>';
 
     // 品番テキスト検索
     html += '<div style="margin-bottom:12px;">' +
-      '<div style="font-size:12px;color:#6b7280;margin-bottom:6px;">品番・商品名で検索</div>' +
+      '<div style="font-size:12px;color:#6b7280;margin-bottom:6px;">品番・商品セット名・商品名・特集名のどれでも検索できます</div>' +
       '<div class="sp-product-search">' +
-      '<input type="text" id="spProductSearchInput" placeholder="品番または商品名を入力" onkeydown="if(event.key===\'Enter\')searchSpProduct()">' +
+      '<input type="text" id="spProductSearchInput" placeholder="例: デミ / ジャンパーニュ / 12023" onkeydown="if(event.key===\'Enter\')searchSpProduct()">' +
       '<button class="btn btn-primary btn-sm" onclick="searchSpProduct()">検索</button>' +
       '</div>' +
       '<div id="spProductSearchResult"></div>' +
@@ -3189,12 +3350,18 @@ function renderSpSettings() {
       '</div>';
     html += '<div id="spFeatureSetsArea"></div>';
     html += '</div>'; // 商品追加セクション終わり
+    html += '</div>'; // ④ 特別価格セクション終わり
 
     // ── 例外表示設定セクション ──
     const vfDetails = (spData.vfDetails || []).filter(d => d.group_id === spSelectedGroupId);
     const useVf = (selGroup && selGroup.use_view_filter) || vfDetails.length > 0;
-    html += '<div style="border-top:2px solid #e5e7eb;padding-top:20px;margin-top:8px;">';
-    html += '<div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:12px;">👁 例外表示設定</div>';
+    html += '<div class="sp-section sp-section-vf">';
+    html += '<div class="sp-section-head">' +
+      '<span class="sp-section-title">👁 例外表示設定</span>' +
+      '<span class="sp-section-tag sp-section-tag-vf">表示ON / OFF</span>' +
+      '</div>';
+    html += '<div class="sp-section-desc">上の特別価格とは<strong>別の設定</strong>です。ここは<strong>価格に一切関係ありません</strong>。' +
+      'ふだん非表示の商品を、このグループの会員にだけ見えるようにします（BCARTの <code>view_group_filter</code>）。</div>';
     html += '<label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;cursor:pointer;font-size:13px;">' +
       '<input type="checkbox" id="vfEnabledCheck"' + (useVf ? ' checked' : '') + ' onchange="toggleVfEnabled(this.checked)">' +
       '<span>例外表示設定を使用する</span>' +
@@ -3205,7 +3372,7 @@ function renderSpSettings() {
 
     // 保存済みVF商品テーブル
     html += '<div style="margin-bottom:16px;">';
-    html += '<div style="font-size:12px;font-weight:700;color:#6b7280;margin-bottom:8px;">アプリ内保存済みの例外表示商品</div>';
+    html += '<div class="sp-subhead">アプリ内保存済みの例外表示商品</div>';
     if (vfDetails.length === 0) {
       html += '<div style="font-size:13px;color:#9ca3af;padding:4px 0;">まだ例外表示商品が設定されていません。</div>';
     } else {
@@ -3236,11 +3403,11 @@ function renderSpSettings() {
 
     // 商品追加セクション（VF用）
     html += '<div style="border-top:1px solid #e5e7eb;padding-top:14px;">';
-    html += '<div style="font-size:12px;font-weight:700;color:#6b7280;margin-bottom:10px;">商品を追加（表示ON/OFFのみ・価格不要）</div>';
+    html += '<div class="sp-subhead">商品を追加（表示ON/OFFのみ・価格不要）</div>';
     html += '<div style="margin-bottom:12px;">' +
-      '<div style="font-size:12px;color:#6b7280;margin-bottom:6px;">品番・商品名で検索</div>' +
+      '<div style="font-size:12px;color:#6b7280;margin-bottom:6px;">品番・商品セット名・商品名・特集名のどれでも検索できます</div>' +
       '<div class="sp-product-search">' +
-      '<input type="text" id="vfProductSearchInput" placeholder="品番または商品名を入力" onkeydown="if(event.key===\'Enter\')searchVfProduct()">' +
+      '<input type="text" id="vfProductSearchInput" placeholder="例: デミ / ジャンパーニュ / 12023" onkeydown="if(event.key===\'Enter\')searchVfProduct()">' +
       '<button class="btn btn-primary btn-sm" onclick="searchVfProduct()">検索</button>' +
       '</div>' +
       '<div id="vfProductSearchResult"></div>' +
@@ -3276,6 +3443,41 @@ function renderSpSettings() {
     if (spFeatureSets.length > 0) renderSpFeatureSets();
     if (spVfFeatureSets.length > 0) renderVfFeatureSets();
   }
+}
+
+// ③ 会員IDを「会社名（ID:xxxx）」に。名前が引けないときはIDだけ返す
+function spMemberLabel(id) {
+  const key = String(id);
+  const m = (spData && spData.memberMap) ? spData.memberMap[key] : null;
+  if (m && m.name) return m.name + '（ID:' + key + '）';
+  const local = allMembers.find(x => x.id === key);
+  if (local && (local.comp_name || local.name)) return (local.comp_name || local.name) + '（ID:' + key + '）';
+  return 'ID:' + key;
+}
+
+// ③ Bカートの現在の標準価格。取れていなければ null（—表示）
+function spStandardPrice(setId) {
+  const map = (spData && spData.setPrices) ? spData.setPrices : null;
+  if (!map) return null;
+  const v = map[String(setId)];
+  return (v === undefined || v === null) ? null : Number(v);
+}
+
+// 標準価格に対する掛率。ひと目で「6掛け」等が分かるように
+function spKakeritsuBadge(stdPrice, spPrice) {
+  if (stdPrice === null || !stdPrice || !isFinite(stdPrice) || stdPrice <= 0) return '';
+  const rate = Number(spPrice) / Number(stdPrice);
+  if (!isFinite(rate) || rate <= 0) return '';
+  return '<span class="sp-kakeritsu">' + (Math.round(rate * 1000) / 100).toFixed(1) + '掛</span>';
+}
+
+function spToggleMemberNames() {
+  const rest = document.getElementById('spMemberNamesRest');
+  const link = document.getElementById('spMemberNamesToggle');
+  if (!rest) return;
+  const open = rest.style.display !== 'none';
+  rest.style.display = open ? 'none' : 'inline';
+  if (link) link.style.display = open ? 'inline' : 'none';
 }
 
 function onSpGroupChange(groupId) {
@@ -3499,12 +3701,14 @@ function searchVfProduct() {
     const savedVfMap = {};
     (spData.vfDetails || []).filter(d => d.group_id === spSelectedGroupId)
       .forEach(d => { savedVfMap[String(d.product_set_id)] = true; });
-    area.innerHTML = '<div style="overflow-x:auto;margin-top:8px;"><table class="sp-table"><thead><tr>' +
-      '<th>品番</th><th>商品セット名</th><th>通常価格</th><th></th></tr></thead><tbody>' +
+    area.innerHTML =
+      (res.truncated ? '<div style="font-size:12px;color:#92400e;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:6px 10px;margin-top:8px;">一致が多いため上位 ' + res.limit + '件だけ表示しています。キーワードを絞ってください。</div>' : '') +
+      '<div style="overflow-x:auto;margin-top:8px;"><table class="sp-table"><thead><tr>' +
+      '<th>品番</th><th>商品セット名 / 商品名・特集</th><th>通常価格</th><th></th></tr></thead><tbody>' +
       res.sets.map(s =>
         '<tr>' +
         '<td style="font-family:monospace;font-size:12px;">' + esc(s.product_no) + '</td>' +
-        '<td style="font-size:12px;">' + esc(s.name) + '</td>' +
+        '<td style="font-size:12px;">' + esc(s.name) + spSearchMetaHtml(s) + '</td>' +
         '<td style="color:#6b7280;">¥' + Number(s.unit_price || 0).toLocaleString() + '</td>' +
         '<td><button class="btn btn-sm ' + (savedVfMap[String(s.id)] ? 'btn-gray' : 'btn-success') + '" ' +
         (savedVfMap[String(s.id)] ? 'disabled' : 'onclick="addVfSearchResult(\'' + jsArg(s.id) + '\',\'' + jsArg(s.product_no) + '\',\'' + jsArg(s.name) + '\')"') +
@@ -3781,7 +3985,18 @@ function executeBcartApply() {
   });
 }
 
-// 品番検索
+// ④ 横断検索の結果行に「何で引っかかったか」と親商品名・特集名を出す
+function spSearchMetaHtml(s) {
+  const parts = [];
+  if (s.product_name && s.product_name !== s.name) parts.push('商品: ' + esc(s.product_name));
+  if (s.feature_names && s.feature_names.length > 0) parts.push('特集: ' + esc(s.feature_names.join(' / ')));
+  const badges = (s.match_by || []).map(b => '<span class="sp-match-badge">' + esc(b) + '一致</span>').join('');
+  if (parts.length === 0 && !badges) return '';
+  return '<div style="font-size:11px;color:#9ca3af;margin-top:2px;">' + badges +
+    (parts.length ? '<span>' + parts.join('　') + '</span>' : '') + '</div>';
+}
+
+// 品番検索（v2.14.0: 商品セット名・商品名・特集名を横断）
 function searchSpProduct() {
   const kw = (document.getElementById('spProductSearchInput') || {}).value || '';
   if (!kw.trim()) { showToast('検索キーワードを入力してください', true); return; }
@@ -3805,8 +4020,12 @@ function searchSpProduct() {
       '<button class="btn btn-gray btn-sm" onclick="applySpBulkPrice()">チェック済みに適用</button>' +
       '</div></div>';
 
+    if (res.truncated) {
+      html += '<div style="font-size:12px;color:#92400e;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:6px 10px;margin-bottom:8px;">' +
+        '一致が多いため上位 ' + res.limit + '件だけ表示しています。キーワードを絞ってください。</div>';
+    }
     html += '<div style="overflow-x:auto;"><table class="sp-table"><thead><tr>' +
-      '<th style="width:36px;"></th><th>品番</th><th>商品セット名</th><th>通常価格</th><th>特別価格</th>' +
+      '<th style="width:36px;"></th><th>品番</th><th>商品セット名 / 商品名・特集</th><th>通常価格</th><th>特別価格</th>' +
       '</tr></thead><tbody>';
 
     res.sets.forEach(s => {
@@ -3815,7 +4034,7 @@ function searchSpProduct() {
       html += '<tr>' +
         '<td style="text-align:center;"><input type="checkbox" class="sp-set-check" data-id="' + s.id + '" data-no="' + esc(s.product_no) + '" data-name="' + esc(s.name) + '"' + isChecked + '></td>' +
         '<td style="font-family:monospace;font-size:12px;color:#6b7280;">' + esc(s.product_no) + '</td>' +
-        '<td style="font-size:13px;">' + esc(s.name) + '</td>' +
+        '<td style="font-size:13px;">' + esc(s.name) + spSearchMetaHtml(s) + '</td>' +
         '<td style="color:#6b7280;">¥' + Number(s.unit_price || 0).toLocaleString() + '</td>' +
         '<td><input type="number" class="sp-price-input" data-id="' + s.id + '" value="' + (savedPrice !== undefined ? savedPrice : '') + '" placeholder="価格" min="0" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;width:100px;"></td>' +
         '</tr>';
@@ -3830,100 +4049,189 @@ function searchSpProduct() {
   });
 }
 
-// 会員選択モーダル
+// ===================== ② 会員管理モーダル =====================
+// 選択状態は memberSelIds（配列）を唯一の正とする。
+// 旧実装は確定時にDOMのチェックボックスを読んでいたため、検索で絞り込むと
+// 表示外の会員が「未チェック」とみなされて消え、実質「上書き更新」になっていた。
 function openMemberSelectModal(groupId, groupName) {
   pendingMemberGroupId = groupId;
-  document.getElementById('memberSelectGroupName').textContent = '「' + groupName + '」の会員を管理';
+  const g = spData ? (spData.groups || []).find(x => x.group_id === groupId) : null;
+  memberSelOriginal = g ? String(g.member_ids || '').split(',').map(x => x.trim()).filter(x => x) : [];
+  memberSelIds = memberSelOriginal.slice();
+  document.getElementById('memberSelectGroupName').textContent =
+    '「' + groupName + '」の会員を管理（追加しても既存の会員は消えません）';
   document.getElementById('memberSearchInput').value = '';
+  const cbtn = document.getElementById('memberConfirmBtn');
+  if (cbtn) { cbtn.textContent = '確定して保存'; cbtn.disabled = false; }
   document.getElementById('memberSelectModal').classList.add('open');
   renderMemberList('');
   if (!membersLoaded) {
     gasPost({ action: 'getMembers' }, function(res) {
-      if (res.ok && res.members) {
-        allMembers = res.members;
-      } else {
-        allMembers = [];
-      }
+      allMembers = (res.ok && res.members) ? res.members : [];
       membersLoaded = true;
-      renderMemberList('');
+      renderMemberList(document.getElementById('memberSearchInput').value || '');
     });
   }
 }
 
-function renderMemberList(filter) {
-  const groupData = pendingMemberGroupId && spData ? (spData.groups || []).find(g => g.group_id === pendingMemberGroupId) : null;
-  const currentIds = groupData ? String(groupData.member_ids || '').split(',').map(s => s.trim()).filter(s => s) : [];
-  const kw = filter.toLowerCase();
-  let shown = allMembers.filter(m =>
-    !kw || m.name.toLowerCase().includes(kw) || m.id.includes(kw) || m.code.includes(kw)
-  );
-  const el = document.getElementById('memberList');
+function memberLabelFor(id) {
+  const m = allMembers.find(x => x.id === String(id));
+  if (m) return (m.comp_name || m.name || String(id));
+  const mm = (spData && spData.memberMap) ? spData.memberMap[String(id)] : null;
+  return mm && mm.name ? mm.name : ('ID:' + id);
+}
+
+function renderMemberChips() {
+  const el = document.getElementById('memberChips');
   if (!el) return;
+  if (memberSelIds.length === 0) {
+    el.innerHTML = '<span style="font-size:12px;color:#9ca3af;">まだ会員がいません。下の検索から追加してください。</span>';
+  } else {
+    el.innerHTML = memberSelIds.map(id =>
+      '<span class="member-chip"><span title="ID:' + esc(id) + '">' + esc(memberLabelFor(id)) + '</span>' +
+      '<button type="button" title="このグループから外す" onclick="memberRemove(\'' + esc(id) + '\')">×</button></span>'
+    ).join('');
+  }
+  const cnt = document.getElementById('memberSelectedCount');
+  if (cnt) cnt.textContent = memberSelIds.length;
+
+  // 何が増えて何が減るのかを確定前に見せる
+  const added   = memberSelIds.filter(id => memberSelOriginal.indexOf(id) < 0);
+  const removed = memberSelOriginal.filter(id => memberSelIds.indexOf(id) < 0);
+  const diffEl = document.getElementById('memberDiffInfo');
+  if (diffEl) {
+    if (added.length === 0 && removed.length === 0) {
+      diffEl.innerHTML = '<span style="color:#9ca3af;">変更はありません</span>';
+    } else {
+      diffEl.innerHTML =
+        (added.length ? '<span class="add">＋' + added.length + '名 追加</span>' : '') +
+        (added.length && removed.length ? '　' : '') +
+        (removed.length ? '<span class="del">−' + removed.length + '名 解除</span>（' +
+          removed.map(id => esc(memberLabelFor(id))).join('、') + '）' : '');
+    }
+  }
+}
+
+function memberToggle(id, on) {
+  const key = String(id);
+  const i = memberSelIds.indexOf(key);
+  if (on && i < 0) memberSelIds.push(key);
+  if (!on && i >= 0) memberSelIds.splice(i, 1);
+  renderMemberChips();
+  const row = document.querySelector('.member-item[data-mid="' + key + '"]');
+  if (row) row.classList.toggle('is-selected', on);
+}
+
+function memberRemove(id) {
+  memberToggle(id, false);
+  const cb = document.querySelector('.member-check[data-id="' + String(id) + '"]');
+  if (cb) cb.checked = false;
+}
+
+function memberAddAllShown() {
+  if (memberShownIds.length === 0) { showToast('検索結果がありません', true); return; }
+  let added = 0;
+  memberShownIds.forEach(id => {
+    if (memberSelIds.indexOf(String(id)) < 0) { memberSelIds.push(String(id)); added++; }
+  });
+  document.querySelectorAll('.member-check').forEach(cb => { cb.checked = true; });
+  document.querySelectorAll('.member-item').forEach(r => r.classList.add('is-selected'));
+  renderMemberChips();
+  showToast(added + '名を追加しました（保存はまだです）');
+}
+
+function renderMemberList(filter) {
+  const kw = String(filter || '').toLowerCase().trim();
+  const shown = allMembers.filter(m =>
+    !kw || String(m.name || '').toLowerCase().includes(kw) || String(m.id).includes(kw) ||
+    String(m.code || '').includes(kw) || String(m.ext_id || '').toLowerCase().includes(kw)
+  );
+  memberShownIds = shown.map(m => String(m.id));
+  const el = document.getElementById('memberList');
+  const shownCntEl = document.getElementById('memberShownCount');
+  if (!el) return;
+
   if (!membersLoaded && allMembers.length === 0) {
-    el.innerHTML = '<div style="padding:16px;font-size:13px;color:#6b7280;">会員データを読み込み中...</div>' +
-      '<div style="padding:8px 12px;border-top:1px solid #f3f4f6;">' +
-      '<div style="font-size:12px;color:#9ca3af;margin-bottom:6px;">またはIDを直接入力：</div>' +
-      '<textarea id="memberIdsTextarea" placeholder="会員IDをカンマ区切りで入力&#10;例: 9888,9999,10000" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;min-height:80px;">' + currentIds.join(',') + '</textarea>' +
-      '</div>';
-    updateMemberCount();
+    el.innerHTML = '<div style="padding:16px;font-size:13px;color:#6b7280;">会員データを読み込み中...</div>';
+    if (shownCntEl) shownCntEl.textContent = '';
+    renderMemberChips();
     return;
   }
-  if (shown.length === 0 && allMembers.length === 0) {
+  if (allMembers.length === 0) {
+    // 会員APIが使えないときだけ、ID直接入力にフォールバックする
     el.innerHTML = '<div style="padding:16px;">' +
-      '<div style="font-size:13px;color:#9ca3af;margin-bottom:8px;">会員APIが利用できません。IDを直接入力してください：</div>' +
-      '<textarea id="memberIdsTextarea" placeholder="会員IDをカンマ区切りで入力&#10;例: 9888,9999,10000" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;min-height:80px;">' + currentIds.join(',') + '</textarea>' +
+      '<div style="font-size:13px;color:#9ca3af;margin-bottom:8px;">会員APIが利用できません。IDを直接入力してください（カンマ区切り）：</div>' +
+      '<textarea id="memberIdsTextarea" placeholder="例: 9888,9999,10000" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;min-height:80px;">' +
+      esc(memberSelIds.join(',')) + '</textarea>' +
       '</div>';
-    updateMemberCount();
+    if (shownCntEl) shownCntEl.textContent = '';
+    renderMemberChips();
     return;
   }
+  if (shown.length === 0) {
+    el.innerHTML = '<div style="padding:16px;font-size:13px;color:#9ca3af;">該当する会員がいません。</div>';
+    if (shownCntEl) shownCntEl.textContent = '';
+    renderMemberChips();
+    return;
+  }
+
   el.innerHTML = shown.map(m => {
-    const checked = currentIds.includes(m.id) ? ' checked' : '';
+    const sel = memberSelIds.indexOf(String(m.id)) >= 0;
     const displayName = m.comp_name || m.name || m.id;
-    const sub = [
-      'ID: ' + m.id,
-      m.ext_id ? '独自ID: ' + m.ext_id : '',
-      m.memo ? m.memo : ''
-    ].filter(s => s).join('　');
-    return '<label class="member-item">' +
-      '<input type="checkbox" class="member-check" data-id="' + esc(m.id) + '"' + checked + ' onchange="updateMemberCount()">' +
+    const sub = ['ID: ' + m.id, m.ext_id ? '得意先コード: ' + m.ext_id : '', m.memo ? m.memo : '']
+      .filter(x => x).join('　');
+    return '<label class="member-item' + (sel ? ' is-selected' : '') + '" data-mid="' + esc(String(m.id)) + '">' +
+      '<input type="checkbox" class="member-check" data-id="' + esc(String(m.id)) + '"' + (sel ? ' checked' : '') +
+      ' onchange="memberToggle(\'' + esc(String(m.id)) + '\', this.checked)">' +
       '<div class="member-item-info">' +
-      '<div style="font-weight:600;">' + esc(displayName) + '</div>' +
+      '<div style="font-weight:600;">' + esc(displayName) +
+        (sel ? ' <span style="font-size:10px;color:#1a56db;">✓ 追加済み</span>' : '') + '</div>' +
       '<div class="member-item-id">' + esc(sub) + '</div>' +
       '</div>' +
       '</label>';
   }).join('');
-  updateMemberCount();
+  if (shownCntEl) shownCntEl.textContent = '該当 ' + shown.length + '名' + (kw ? '（検索中）' : '');
+  renderMemberChips();
 }
 
 function filterMembers(val) { renderMemberList(val); }
 
-function updateMemberCount() {
-  const checkboxes = document.querySelectorAll('.member-check:checked');
-  const textarea = document.getElementById('memberIdsTextarea');
-  let count = checkboxes.length;
-  if (textarea) {
-    count = textarea.value.split(',').map(s => s.trim()).filter(s => s).length;
-  }
-  const el = document.getElementById('memberSelectedCount');
-  if (el) el.textContent = count + '名選択中';
-}
-
 function confirmMemberSelect() {
-  let ids = '';
-  const checkboxes = document.querySelectorAll('.member-check');
-  if (checkboxes.length > 0) {
-    ids = Array.from(checkboxes).filter(c => c.checked).map(c => c.dataset.id).join(',');
-  } else {
-    const textarea = document.getElementById('memberIdsTextarea');
-    ids = textarea ? textarea.value.trim() : '';
-  }
   if (!pendingMemberGroupId) return;
+  let ids = memberSelIds.slice();
+  const textarea = document.getElementById('memberIdsTextarea');
+  if (textarea) ids = textarea.value.split(',').map(x => x.trim()).filter(x => x);
+
+  const removed = memberSelOriginal.filter(id => ids.indexOf(id) < 0);
+  if (removed.length > 0) {
+    const names = removed.map(id => memberLabelFor(id)).join('、');
+    if (!confirm(removed.length + '名をこのグループから外します。\n\n' + names +
+      '\n\n※ 外した会員のBCART側の特別価格は、次回の「BCARTに反映」で削除されます。\nよろしいですか？')) return;
+  }
+
+  const btn = document.getElementById('memberConfirmBtn');
+  if (btn) { btn.textContent = '保存中...'; btn.disabled = true; }
+  showBusyOverlay('会員を保存しています...');
+
   const group = (spData.groups || []).find(g => g.group_id === pendingMemberGroupId);
-  gasPost({ action: 'saveCustomerGroup', group_id: pendingMemberGroupId, group_name: group ? group.group_name : '', member_ids: ids, note: group ? (group.note || '') : '' }, function(res) {
-    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+  gasPost({ action: 'saveCustomerGroup', group_id: pendingMemberGroupId,
+    group_name: group ? group.group_name : '', member_ids: ids.join(','),
+    note: group ? (group.note || '') : '' }, function(res) {
+    if (!res.ok) {
+      hideBusyOverlay();
+      if (btn) { btn.textContent = '確定して保存'; btn.disabled = false; }
+      showToast('エラー: ' + res.error, true);
+      return;
+    }
+    const addedCount = ids.filter(id => memberSelOriginal.indexOf(id) < 0).length;
     closeModal('memberSelectModal');
-    showToast('会員を保存しました');
-    loadSpecialPriceData();
+    // 一覧を取り直してから初めてオーバーレイを外す（押しても何も動かない、を無くす）
+    gasPost({ action: 'getSpecialPriceData' }, function(r2) {
+      hideBusyOverlay();
+      if (btn) { btn.textContent = '確定して保存'; btn.disabled = false; }
+      if (r2.ok) { spData = r2; renderSpContent(); }
+      showToast('会員を保存しました（' + ids.length + '名）　＋' + addedCount + '名 / −' + removed.length + '名');
+    });
   });
 }
 
@@ -3942,12 +4250,22 @@ function openGroupModal(groupId) {
   document.getElementById('groupModalTitle').textContent = groupId ? '導入サロングループを編集' : '新規導入サロングループ';
   const g = groupId ? (spData.groups || []).find(x => x.group_id === groupId) : null;
   document.getElementById('groupName').value = g ? g.group_name : '';
+  document.getElementById('groupMaker').value = g ? (g.maker || '') : '';
+  populateGroupMakerList();
+  ensureSpFeaturesCache(populateGroupMakerList);
   document.getElementById('groupMemberIds').value = g ? (g.member_ids || '') : '';
   document.getElementById('groupCustomerCodes').value = g ? (g.customer_codes || '') : '';
   document.getElementById('groupNote').value = g ? (g.note || '') : '';
   const btn = document.getElementById('saveGroupBtn');
   if (btn) { btn.textContent = '保存'; btn.disabled = false; }
   document.getElementById('groupModal').classList.add('open');
+}
+
+// ① メーカー候補（特集の種類=メーカー ∪ 入力済みの値）をdatalistへ流し込む
+function populateGroupMakerList() {
+  const dl = document.getElementById('groupMakerList');
+  if (!dl) return;
+  dl.innerHTML = spMakerOptions().map(m => '<option value="' + esc(m) + '">').join('');
 }
 
 function saveGroupModal() {
@@ -3963,6 +4281,7 @@ function saveGroupModal() {
     group_name:     name,
     member_ids:     ids,
     customer_codes: document.getElementById('groupCustomerCodes').value.trim(),
+    maker:          document.getElementById('groupMaker').value.trim(),
     note:           document.getElementById('groupNote').value.trim()
   }, function(res) {
     btn.textContent = '保存';
