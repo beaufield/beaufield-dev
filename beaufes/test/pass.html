@@ -212,6 +212,12 @@
   }
   .semChip.full .semChipTime { color: #b9bec3; }
   .semChip.full .semChipSub  { color: #b45454; font-weight: bold; }
+  /* 時間が重なって選べない枠 */
+  .semCard.conflict { background: #fafafa; }
+  .semCard.conflict .semTitle { color: #999; }
+  .semConflictMsg { color: #b45454; font-weight: bold; }
+  .semChip.conflict { background: #f4f5f6; border-color: #e6e8ea; cursor: default; }
+  .semChip.conflict .semChipTime { color: #b9bec3; }
   /* 🔴 このページだけ `.formCard label { display:block; font-weight:bold }` のほうが
      詳細度で勝ってしまい、ラジオとタイトルが縦積みになる。打ち消しておくこと。 */
   .formCard label.semPick { display: flex; font-weight: normal; margin: 0; }
@@ -357,7 +363,7 @@
 
 <script src="../lib/qrcode.min.js"></script>
 <script>
-const APP_VERSION = '0.16.0';
+const APP_VERSION = '0.17.0';
 const GAS_URL = 'TEST_ENV_NO_GAS';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
@@ -634,9 +640,9 @@ const MOCK_SESSIONS = [
               '過ごすための新しい習慣をご提案します。\n' +
               '本セミナーでは、更年期の仕組みとその解決するための秘密を詳しくご紹介。' +
               '変化の時期を、美しく心地よく迎えるためのヒントをお届けします。' },
-  { session_id: 'S2', slot: 'セミナー 第2部', title: 'ジャンパーニュ体験セミナー',
+  { session_id: 'S2', slot: '体験会', title: '整形級！炭酸ガスパック体験会',
     starts_at: '14:00', ends_at: '15:00', capacity: 30, remaining: 28, is_full: false,
-    bullets: ['ジャンパーニュの特徴をご紹介', 'サロンでの取り入れ方', '実際に体験していただけます'],
+    bullets: ['炭酸ガスパックの特徴をご紹介', 'サロンでの取り入れ方', '実際にご体験いただけます'],
     overview: '※この説明文は仮のものです。内容が決まり次第、差し替えます。' },
   mockBalanceSlot('B1', '10:00', '10:45', 1),
   mockBalanceSlot('B2', '10:45', '11:30', 0),   // 満席の見え方
@@ -679,6 +685,21 @@ function timeLabel(s) {
   return s.starts_at + '〜' + (s.ends_at || '');
 }
 
+// ---- 時間の重なり判定（サーバー側 _sessionsOverlap と同じ規則。直すときは両方直すこと）----
+// 🔴 隣り合う枠（10:45終わり ／ 10:45始まり）は**重ならない**扱い（`<` で比較する理由）。
+// 🔵 開始時刻が無い枠は判定しない。終了時刻が無い枠は開始が同じときだけ重複とみなす。
+function hhmmToMinutes(v) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(v == null ? '' : v).trim());
+  return m ? (Number(m[1]) * 60 + Number(m[2])) : null;
+}
+function sessionsOverlap(a, b) {
+  const as = hhmmToMinutes(a.starts_at), bs = hhmmToMinutes(b.starts_at);
+  if (as === null || bs === null) return false;
+  const ae = hhmmToMinutes(a.ends_at),  be = hhmmToMinutes(b.ends_at);
+  if (ae === null || be === null) return as === bs;
+  return as < be && bs < ae;
+}
+
 function hasDetail(s) {
   return !!((s.bullets && s.bullets.length) || s.overview);
 }
@@ -712,6 +733,7 @@ function sessionCardHtml(s, radioName, checked, hideTime, hideDetail) {
          '<span><span class="semTitle">' + escHtml(s.title) + '</span>' +
          (meta ? '<span class="semMeta">' + meta + '</span>' : '') +
          (s.speaker ? '<span class="semMeta">' + escHtml(s.speaker) + '</span>' : '') +
+         '<span class="semMeta semConflictMsg" hidden>⚠ 他のご予約と時間が重なります</span>' +
          '</span></label>' + (hideDetail ? '' : detailHtml(s)) + '</div>';
 }
 
@@ -729,8 +751,52 @@ function sessionChipHtml(s, radioName, checked) {
          '<input type="radio" name="' + radioName + '" value="' + escHtml(s.session_id) + '"' +
          (disabled ? ' disabled' : '') + (checked ? ' checked' : '') + '>' +
          '<span class="semChipTime">' + escHtml(s.starts_at || s.title) + '</span>' +
-         '<span class="semChipSub">' + escHtml(sub) + '</span>' +
+         '<span class="semChipSub semSubNormal">' + escHtml(sub) + '</span>' +
+         '<span class="semChipSub semConflictMsg" hidden>時間重複</span>' +
          '</label>';
+}
+
+// 🔴 いま選んでいる枠と時間が重なる枠を選べなくする（slotをまたいで全体で判定）。
+//    選択のたびに呼ぶ。**描き直さない**こと（開いている詳細が閉じ、スクロールが飛ぶ）。
+// 🔴 既にチェックが入っている枠は絶対に無効化しない。無効化すると選択が外れて見え、
+//    そのまま保存すると本人の予約が消える（サーバー側も既存予約は重複判定にかけない）。
+function refreshConflicts(container) {
+  const list = container._sessions || [];
+  if (!list.length) return;
+  const byId = {};
+  list.forEach(function (s) { byId[s.session_id] = s; });
+
+  const picked = [];
+  container.querySelectorAll('input[type=radio]').forEach(function (r) {
+    if (r.checked && r.value && byId[r.value]) picked.push(byId[r.value]);
+  });
+
+  container.querySelectorAll('[data-sid]').forEach(function (elm) {
+    const s = byId[elm.getAttribute('data-sid')];
+    if (!s) return;
+    const input = elm.querySelector('input[type=radio]');
+    if (!input) return;
+
+    if (input.checked) {                       // 選択中は常にそのまま
+      elm.classList.remove('conflict');
+      setConflictLabel(elm, false);
+      return;
+    }
+
+    const clash = picked.some(function (p) {
+      return p.slot !== s.slot && sessionsOverlap(p, s);
+    });
+    elm.classList.toggle('conflict', clash);
+    setConflictLabel(elm, clash);
+    input.disabled = clash || (s.is_full && !input.checked);
+  });
+}
+
+function setConflictLabel(elm, on) {
+  const msg = elm.querySelector('.semConflictMsg');
+  if (msg) msg.hidden = !on;
+  const normal = elm.querySelector('.semSubNormal');
+  if (normal) normal.hidden = on;
 }
 
 // slot（時間帯グループ）ごとにまとめて描く。
@@ -801,6 +867,7 @@ function renderSeminars(container, sessions, selectedIds) {
     html += '</div>';
   });
   container.innerHTML = html;
+  container._sessions = list;   // refreshConflicts が使う
 
   container.querySelectorAll('input[type=radio]').forEach(function (r) {
     r.addEventListener('change', function () {
@@ -808,8 +875,10 @@ function renderSeminars(container, sessions, selectedIds) {
         const input = c.querySelector('input[type=radio]');
         c.classList.toggle('selected', !!(input && input.checked));
       });
+      refreshConflicts(container);
     });
   });
+  refreshConflicts(container);   // 初期表示（既存の予約がある場合）にも効かせる
   return true;
 }
 
@@ -929,11 +998,16 @@ el('semSaveBtn').addEventListener('click', async function () {
     el('semMailNote').style.display = json.data.mail_sent ? 'block' : 'none';
 
     const r = json.data.result || {};
-    if ((r.full && r.full.length) || (r.invalid && r.invalid.length)) {
-      // 選んだ枠が、保存するまでの間に満席になった場合。取れた分は保存されている。
+    const ngFull = !!(r.full && r.full.length);
+    const ngConf = !!(r.conflict && r.conflict.length);
+    if (ngFull || ngConf || (r.invalid && r.invalid.length)) {
+      // 選んだ枠が、保存するまでの間に満席になった／他のご予約と時間が重なった場合。
+      // 取れた分はそのまま保存されている。
       el('semFullAlert').style.display = 'block';
       el('semFullAlert').innerHTML =
-        'ご希望の枠は満席のため、ご予約をお取りできませんでした。<br>' +
+        (ngConf && !ngFull
+          ? '他のご予約と時間が重なるため、お取りできなかった枠があります。<br>'
+          : 'ご希望の枠は満席のため、ご予約をお取りできませんでした。<br>') +
         '<span style="color:#a16207;">ご入場のお申し込みはそのまま有効です。</span>';
     } else {
       el('semFullAlert').style.display = 'none';

@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.26.0';
+const VERSION  = '0.27.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -2011,6 +2011,27 @@ function _fmtTimeCell(v) {
   return String(v).trim();
 }
 
+// "HH:mm" を0時からの分に直す。読めなければ null。
+function _hhmmToMinutes(v) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(v == null ? '' : v).trim());
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+// 2つの枠の時間が重なるか。
+// 🔴 隣り合う枠（10:45終わり ／ 10:45始まり）は**重ならない**扱いにする（`<` で比較する理由）。
+//    バランス革命の連続枠がすべて競合してしまうため。
+// 🔵 開始時刻が無い枠は判定できないので「重ならない」とする（判定できないことを理由に
+//    予約を止めるより、取れてしまうほうが害が小さい。当日の受付で調整できる）。
+// 🔵 終了時刻が無い枠は、開始が同じときだけ重複とみなす。
+function _sessionsOverlap(a, b) {
+  const as = _hhmmToMinutes(a.starts_at), bs = _hhmmToMinutes(b.starts_at);
+  if (as === null || bs === null) return false;
+  const ae = _hhmmToMinutes(a.ends_at),  be = _hhmmToMinutes(b.ends_at);
+  if (ae === null || be === null) return as === bs;
+  return as < be && bs < ae;
+}
+
 // 改行区切りのセルを配列にする（セミナー内容の箇条書き用）
 function _splitLines(v) {
   return String(v == null ? '' : v)
@@ -2200,14 +2221,15 @@ function listSessions(data) {
 //    opts.replace : true なら wantIds に無い自分の既存予約を cancelled にする
 //                   （pass.html からの変更・取消）。false なら追加のみ（申込時）。
 //
-//    返り値 { reserved: [], added: [], full: [], invalid: [], cancelled: [] }
+//    返り値 { reserved: [], added: [], full: [], invalid: [], conflict: [], cancelled: [] }
+//    conflict = 既に予約している枠と**時間が重なる**ため取れなかったもの（slotをまたいで判定）
 //    🔴 reserved は「保存後に予約されている枠」、added は「今回あらたに入った枠」。
 //       控えメールを送るかどうかは added / cancelled で判断する（同じ内容の再保存では送らない）。
 //    🔴 例外は投げない。呼び出し元（申込処理）を巻き込んで申込そのものを失敗させないため。
 // ============================================================
 function _writeReservations(ss, appId, wantIds, opts) {
   const replace = !!(opts && opts.replace);
-  const result  = { reserved: [], added: [], full: [], invalid: [], cancelled: [] };
+  const result  = { reserved: [], added: [], full: [], invalid: [], conflict: [], cancelled: [] };
   if (!appId) return result;
 
   const sh = ss.getSheetByName(SHEET_RESERVATIONS);
@@ -2251,9 +2273,12 @@ function _writeReservations(ss, appId, wantIds, opts) {
 
   // --- 2) 追加
   const slotTaken = {};          // slot -> session_id（同一slotの二重予約を防ぐ）
+  const kept      = [];          // いま保持している枠（時間の重複判定に使う）
   Object.keys(mineRow).forEach(function (sid) {
     const s = byId[sid];
-    if (s) slotTaken[s.slot] = sid;
+    if (!s) return;
+    slotTaken[s.slot] = sid;
+    kept.push(s);
   });
 
   const appends = [];
@@ -2262,12 +2287,22 @@ function _writeReservations(ss, appId, wantIds, opts) {
     if (!s || !s.is_active) { result.invalid.push(sid); return; }       // 存在しない/終了した枠
     if (mineRow[sid]) { result.reserved.push(sid); return; }            // すでに予約済み＝冪等（再送で増えない）
     if (slotTaken[s.slot]) { result.invalid.push(sid); return; }        // 同じ時間帯を二重に取ろうとした
+    // 🔴 slot をまたいで時間が重なる枠は取れない（2026-09-05・Takashiさん指定）。
+    // 満席の判定より前に見る（「重なっている」ほうが利用者に伝えるべき理由として的確なため）。
+    // 🔴 既に予約済みの枠（mineRow にあるもの）はこのチェックにかけない。
+    //    過去に入った重なりを、無関係な保存のたびに黙って消してしまうのを防ぐ。
+    if (kept.some(function (k) { return _sessionsOverlap(k, s); })) {
+      result.conflict.push(sid);
+      return;
+    }
+
     const used = counts[sid] || 0;
     if (s.capacity !== null && used >= s.capacity) { result.full.push(sid); return; }  // 満席
 
     appends.push([nextId(), String(appId), sid, _now(), RES_STATUS_RESERVED, '']);
     counts[sid]      = used + 1;
     slotTaken[s.slot] = sid;
+    kept.push(s);
     result.reserved.push(sid);
     result.added.push(sid);
   });
@@ -2417,13 +2452,13 @@ function seedSeminarSessions() {
     '本セミナーでは、更年期の仕組みとその解決するための秘密を詳しくご紹介。' +
     '変化の時期を、美しく心地よく迎えるためのヒントをお届けします。';
 
-  // 🔵 ジャンパーニュの説明文は仮置き（2026-09-04時点で本文未定）。決まり次第シートを直接編集する。
-  const janpagneBullets = [
-    'ジャンパーニュの特徴をご紹介',
+  // 🔵 炭酸ガスパック体験会の説明文は仮置き（2026-09-05時点で本文未定）。決まり次第シートを直接編集する。
+  const co2Bullets = [
+    '炭酸ガスパックの特徴をご紹介',
     'サロンでの取り入れ方',
-    '実際に体験していただけます'
+    '実際にご体験いただけます'
   ].join('\n');
-  const janpagneOverview = '※この説明文は仮のものです。内容が決まり次第、差し替えます。';
+  const co2Overview = '※この説明文は仮のものです。内容が決まり次第、差し替えます。';
 
   const balanceBullets = [
     'コンピューター精密計測で、足裏の圧力バランスと骨盤のゆがみをデータで見える化',
@@ -2462,8 +2497,10 @@ function seedSeminarSessions() {
   const rows = [
     ['S1', 'セミナー 第1部', 'オトナ女子の"巡り"に寄り添うフェムケアセミナー', '', '',
      '11:00', '12:00', 30, true, femcareBullets, femcareOverview],
-    ['S2', 'セミナー 第2部', 'ジャンパーニュ体験セミナー', '', '',
-     '14:00', '15:00', 30, true, janpagneBullets, janpagneOverview],
+    // 🔵 2026-09-05 改称: ジャンパーニュ体験セミナー → 整形級！炭酸ガスパック体験会。
+    //    セミナーではなく体験会になったので slot も「体験会」に変えている（見出しの文言）。
+    ['S2', '体験会', '整形級！炭酸ガスパック体験会', '', '',
+     '14:00', '15:00', 30, true, co2Bullets, co2Overview],
     ['B1', 'バランス革命 無料計測会', '10:00〜10:45の回', '', '', '10:00', '10:45', 1, true, balanceBullets, balanceOverview],
     ['B2', 'バランス革命 無料計測会', '10:45〜11:30の回', '', '', '10:45', '11:30', 1, true, balanceBullets, balanceOverview],
     ['B3', 'バランス革命 無料計測会', '11:30〜12:15の回', '', '', '11:30', '12:15', 1, true, balanceBullets, balanceOverview],
