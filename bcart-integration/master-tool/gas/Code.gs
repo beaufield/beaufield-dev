@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.28.0';
+const VERSION = 'v2.29.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -2617,6 +2617,29 @@ function ensureSpGroupCodesHeader(sheet) {
   }
 }
 
+// ===================== 分割反映（v2.29.0）=====================
+// 画面に進捗（n / 全件）を出すため、クライアントが items をチャンクに分けて
+// applyGroupPrices / applyViewFilters を複数回呼ぶ。
+// そのとき履歴と applied_member_ids は「最後の1回」だけ書きたいので is_final で制御する。
+//
+// ⚠️ 会員IDはクライアントから受け取らない（毎回サーバがシートから導出する）。
+//    受け取れる形にすると、任意の会員へ特価を書ける／消せる口になるため。
+//    applied_member_ids を最後まで更新しないので、途中のチャンクでも
+//    removedMemberIds は同じ値になり、分割しても結果は変わらない。
+function isFinalChunk_(params) {
+  return params.is_final === undefined || params.is_final === true;
+}
+
+// このグループの明細に未反映(applied_at空)が残っていないか。
+// クライアントが報告する集計だけを信じないための、サーバ側の裏取り。
+function hasUnappliedDetails_(groupId) {
+  const rows = getOrCreateSheet(SHEET_SP_DETAILS).getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][1]) === String(groupId) && rows[i][0] && !String(rows[i][7] || '')) return true;
+  }
+  return false;
+}
+
 // 「BCARTに反映」した時点の会員IDを記録する。
 // グループに会員を足しただけではBCARTは変わらないため、
 // 『いま反映済みの会員』と『いまグループにいる会員』の差＝未反映、を出すのに使う。
@@ -2978,23 +3001,33 @@ function applyGroupPrices(params) {
     Utilities.sleep(150);
   });
 
-  // 全件成功したときだけ「この会員構成で反映済み」と記録する。
-  // 一部失敗のまま記録すると、未反映の警告が消えて漏れに気づけなくなる。
+  // 分割反映の途中（is_final=false）では確定処理をしない。
+  // 履歴を1操作1行に保ち、applied_member_idsを最後まで動かさないため
+  // （動かすと2チャンク目以降で removedMemberIds が空になり、後始末が漏れる）。
   let appliedRecorded = false;
-  if (failCount === 0 && successCount > 0) {
-    appliedRecorded = writeAppliedMemberIds_(params.group_id, memberIds.map(String));
-  }
+  if (isFinalChunk_(params)) {
+    // 分割時はクライアントが積み上げた合計を受け取る。単発時は今回の件数がそのまま合計
+    const totalSuccess = Number(params.prior_success || 0) + successCount;
+    const totalFail    = Number(params.prior_fail || 0) + failCount;
 
-  addHistory({
-    userName: params._userName,
-    code: '', name: params.group_id,
-    type: '特別価格適用',
-    before: '',
-    after: '成功: ' + successCount + '件 / 失敗: ' + failCount + '件'
-      + (removedPriceCount > 0 ? ' / 外した会員の特価削除: ' + removedPriceCount + '件' : '')
-      + (eff.unresolvedCodes.length > 0 ? ' / 未登録保留: ' + eff.unresolvedCodes.length + '件' : ''),
-    result: failCount > 0 ? '一部失敗' : '成功'
-  });
+    // 全件成功したときだけ「この会員構成で反映済み」と記録する。
+    // 一部失敗のまま記録すると、未反映の警告が消えて漏れに気づけなくなる。
+    // クライアント申告の集計に加え、シート側にも未反映が残っていないことを確かめる。
+    if (totalFail === 0 && totalSuccess > 0 && !hasUnappliedDetails_(params.group_id)) {
+      appliedRecorded = writeAppliedMemberIds_(params.group_id, memberIds.map(String));
+    }
+
+    addHistory({
+      userName: params._userName,
+      code: '', name: params.group_id,
+      type: '特別価格適用',
+      before: '',
+      after: '成功: ' + totalSuccess + '件 / 失敗: ' + totalFail + '件'
+        + (removedPriceCount > 0 ? ' / 外した会員の特価削除: ' + removedPriceCount + '件' : '')
+        + (eff.unresolvedCodes.length > 0 ? ' / 未登録保留: ' + eff.unresolvedCodes.length + '件' : ''),
+      result: totalFail > 0 ? '一部失敗' : '成功'
+    });
+  }
 
   return {
     ok: true, successCount: successCount, failCount: failCount, errors: errors,
@@ -3165,12 +3198,17 @@ function applyViewFilters(params) {
     Utilities.sleep(150);
   });
 
-  addHistory({
-    userName: params._userName, code: '', name: params.group_id,
-    type: '例外表示適用',
-    before: '', after: '成功: ' + successCount + '件 / 失敗: ' + failCount + '件' + (eff.unresolvedCodes.length > 0 ? ' / 未登録保留: ' + eff.unresolvedCodes.length + '件' : ''),
-    result: failCount > 0 ? '一部失敗' : '成功'
-  });
+  // 分割反映の途中では履歴を書かない（1操作1行に保つ）
+  if (isFinalChunk_(params)) {
+    const totalSuccess = Number(params.prior_success || 0) + successCount;
+    const totalFail    = Number(params.prior_fail || 0) + failCount;
+    addHistory({
+      userName: params._userName, code: '', name: params.group_id,
+      type: '例外表示適用',
+      before: '', after: '成功: ' + totalSuccess + '件 / 失敗: ' + totalFail + '件' + (eff.unresolvedCodes.length > 0 ? ' / 未登録保留: ' + eff.unresolvedCodes.length + '件' : ''),
+      result: totalFail > 0 ? '一部失敗' : '成功'
+    });
+  }
   return { ok: true, successCount: successCount, failCount: failCount, errors: errors, memberCount: memberIds.length, unresolvedCodes: eff.unresolvedCodes };
 }
 
