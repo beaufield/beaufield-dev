@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.27.0';
+const VERSION = 'v2.28.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -59,6 +59,7 @@ function doPost(e) {
       'loadData', 'getIgnoreList', 'searchProducts', 'getSpecials', 'getHistory',
       'getCategories', 'getFeatures', 'getSpecialPriceData', 'getProductSetsForFeature',
       'searchProductSets', 'getSpecialPriceCurrent', 'getViewFilterCurrent', 'getMembers',
+      'getGroupViewInfo',
       'auditSpecialPrices', 'getAuditExclusions', 'auditSalesVsBcart',
       'getProductsForDescription', 'getSimilarProducts', 'getFeatureList',
       'previewSuffixName', 'previewHanbaiEnd', 'previewSetDescription',
@@ -131,6 +132,7 @@ function doPost(e) {
       case 'bulkRegisterProduct':  return jsonResponse(bulkRegisterProduct(params));
       // 機能B: 特別価格管理
       case 'getSpecialPriceData':       return jsonResponse(getSpecialPriceData());
+      case 'getGroupViewInfo':          return jsonResponse(getGroupViewInfo(params));
       case 'saveCustomerGroup':         return jsonResponse(saveCustomerGroup(params));
       case 'addCustomerCodesToGroup':   return jsonResponse(addCustomerCodesToGroup(params));
       case 'deleteCustomerGroup':       return jsonResponse(deleteCustomerGroup(params));
@@ -2252,6 +2254,80 @@ function getMembers() {
   }
 }
 
+// ===================== 商品セットのピンポイント取得（v2.28.0）=====================
+// 全件取得（bcartGetAll('/product_sets')は数千件・数秒）を避けるため、
+// BCART APIの ids / fields パラメータで必要な分だけ取る。
+//
+// ⚠️ 安全策: idsが効かずAPIが「全件」を返してくる可能性に備え、
+// 返ってきたidが要求外なら「idsが無視された」と判断して全件取得へフォールバックする。
+// （黙って別データを掴むより、遅くても正しい方を選ぶ）
+const BCART_IDS_CHUNK = 100;
+
+function bcartGetSetsByIds_(setIds, fields) {
+  const ids = [...new Set((setIds || []).map(v => String(v).trim()).filter(v => v))];
+  if (ids.length === 0) return { ok: true, data: [] };
+
+  const requested = new Set(ids);
+  const out = [];
+  for (let i = 0; i < ids.length; i += BCART_IDS_CHUNK) {
+    const chunk = ids.slice(i, i + BCART_IDS_CHUNK);
+    const extra = { ids: chunk.join(',') };
+    if (fields) extra.fields = fields;
+    const res = bcartGetAll('/product_sets', extra);
+    if (!res.ok) return res;
+
+    // idsが無視されていないかの検証
+    const unexpected = (res.data || []).some(st => !requested.has(String(st.id)));
+    if (unexpected) {
+      Logger.log('bcartGetSetsByIds_: idsパラメータが効いていないため全件取得へフォールバック');
+      const all = bcartGetAll('/product_sets');
+      if (!all.ok) return all;
+      return { ok: true, data: all.data.filter(st => requested.has(String(st.id))), fallback: true };
+    }
+    out.push(...(res.data || []));
+  }
+  return { ok: true, data: out };
+}
+
+// 商品セットID -> 標準価格(unit_price) のマップ。取得できなかったIDは入らない
+function buildSetPriceMap_(setIds) {
+  const res = bcartGetSetsByIds_(setIds, 'id,unit_price');
+  if (!res.ok) return { ok: false, error: res.error };
+  const map = {};
+  res.data.forEach(st => {
+    if (st && st.id !== undefined && st.id !== null) map[String(st.id)] = Number(st.unit_price || 0);
+  });
+  return { ok: true, map: map };
+}
+
+// 会員ID -> 表示名 のマップ。こちらも ids / fields でピンポイントに取る
+function buildMemberNameMap_(memberIds) {
+  const ids = [...new Set((memberIds || []).map(v => String(v).trim()).filter(v => v))];
+  if (ids.length === 0) return { ok: true, map: {} };
+  const requested = new Set(ids);
+  const map = {};
+  for (let i = 0; i < ids.length; i += BCART_IDS_CHUNK) {
+    const chunk = ids.slice(i, i + BCART_IDS_CHUNK);
+    const res = bcartGetAll('/customers', { ids: chunk.join(','), fields: 'id,comp_name,name,ext_id' });
+    if (!res.ok) return { ok: false, error: res.error };
+    const unexpected = (res.data || []).some(m => !requested.has(String(m.id)));
+    if (unexpected) {
+      Logger.log('buildMemberNameMap_: idsパラメータが効いていないためgetMembers()へフォールバック');
+      const all = getMembers();
+      if (!all.ok) return { ok: false, error: all.error };
+      const m2 = {};
+      all.members.forEach(m => {
+        if (requested.has(String(m.id))) m2[String(m.id)] = { name: m.comp_name || m.name || String(m.id), ext_id: m.ext_id || '' };
+      });
+      return { ok: true, map: m2, fallback: true };
+    }
+    (res.data || []).forEach(m => {
+      map[String(m.id)] = { name: m.comp_name || m.name || String(m.id), ext_id: String(m.ext_id || '') };
+    });
+  }
+  return { ok: true, map: map };
+}
+
 // ===================== 商品セット検索（v2.27.0: 横断検索）=====================
 // 商品セット名だけでなく、親商品名・特集名にもキーワードを当てて商品セットを返す。
 // 「商品名では引っかかるのにセット名では引っかからない」問題への対応。
@@ -2394,7 +2470,8 @@ function getSpecialPriceData() {
         note:           groupRows[i][4] || '',
         use_view_filter: groupRows[i][5] === true || groupRows[i][5] === 'TRUE',
         customer_codes: String(groupRows[i][6] || ''),
-        maker:          String(groupRows[i][7] || '')
+        maker:          String(groupRows[i][7] || ''),
+        applied_member_ids: String(groupRows[i][8] || '')
       });
     }
   }
@@ -2454,41 +2531,80 @@ function getSpecialPriceData() {
     }
   }
 
-  // ③ 会員名の表示用マップ（会員APIが落ちても本体は返す）
-  let memberMap = {};
-  try {
-    const c = fetchCustomersCached();
-    if (c.ok) {
-      c.members.forEach(m => {
-        memberMap[String(m.id)] = { name: m.comp_name || m.name || String(m.id), ext_id: m.ext_id || '' };
-      });
-    }
-  } catch (e) {
-    Logger.log('getSpecialPriceData memberMap error: ' + e.message);
+  // ⚠️ v2.28.0: 会員名(memberMap)と標準価格(setPrices)はここでは返さない。
+  // v2.27.0では全会員＋全商品セットをBCARTから取っていたため、
+  // タブを開くたび・保存するたびに数秒待たされていた。
+  // 表示中のグループの分だけを getGroupViewInfo で後追い取得する方式に変更した
+  // （常に最新の値を出しつつ、初期表示はシート読みだけで済ませる）。
+  return { ok: true, groups: groups, details: details, vfDetails: vfDetails, individuals: individuals };
+}
+
+// ===================== 表示中グループの付帯情報（v2.28.0）=====================
+// 特別価格設定タブで1グループを選んだときだけ呼ぶ、軽量な後追い取得。
+// ・会員名（ids指定でその会員だけ）
+// ・標準価格（ids指定でそのグループの商品セットだけ）
+// ・会員のBCART反映状況（未反映＝追加したがまだ反映していない／取り残し＝外したがBCARTに特価が残っている）
+function getGroupViewInfo(params) {
+  const groupId = String(params.group_id || '');
+  if (!groupId) return { ok: false, error: 'group_idが必要です' };
+
+  const eff = getGroupEffectiveMembers(groupId);
+  if (eff.notFound) return { ok: false, error: '指定されたグループが見つかりません' };
+  const current = eff.memberIds.map(String);
+  const applied = readAppliedMemberIds_(groupId);
+
+  // このグループの商品セットID（特価＋例外表示）
+  const setIds = [];
+  const detailRows = getOrCreateSheet(SHEET_SP_DETAILS).getDataRange().getValues();
+  for (let i = 1; i < detailRows.length; i++) {
+    if (String(detailRows[i][1]) === groupId && detailRows[i][2] !== '') setIds.push(String(detailRows[i][2]));
+  }
+  const vfRows = getOrCreateSheet(SHEET_VF_DETAILS).getDataRange().getValues();
+  for (let i = 1; i < vfRows.length; i++) {
+    if (String(vfRows[i][1]) === groupId && vfRows[i][2] !== '') setIds.push(String(vfRows[i][2]));
   }
 
-  // ③ 標準価格の表示用マップ（Bカートの商品セット単価。取得失敗時は空で返す）
-  let setPrices = {};
+  // BCART取得は個別にtry/catchし、片方が落ちてももう片方は返す
+  let setPrices = {}, priceError = '';
   try {
-    const setsRes = bcartGetAll('/product_sets');
-    if (setsRes.ok && setsRes.data) {
-      setsRes.data.forEach(st => {
-        if (st && st.id !== undefined && st.id !== null) setPrices[String(st.id)] = Number(st.unit_price || 0);
-      });
-    }
+    const r = buildSetPriceMap_(setIds);
+    if (r.ok) setPrices = r.map; else priceError = r.error || '取得失敗';
   } catch (e) {
-    Logger.log('getSpecialPriceData setPrices error: ' + e.message);
+    priceError = e.message;
+    Logger.log('getGroupViewInfo setPrices error: ' + e.message);
   }
+
+  let memberMap = {}, memberError = '';
+  try {
+    const r = buildMemberNameMap_([...new Set(current.concat(applied))]);
+    if (r.ok) memberMap = r.map; else memberError = r.error || '取得失敗';
+  } catch (e) {
+    memberError = e.message;
+    Logger.log('getGroupViewInfo memberMap error: ' + e.message);
+  }
+
+  const pendingMemberIds = current.filter(id => applied.indexOf(id) < 0);
+  const staleMemberIds   = applied.filter(id => current.indexOf(id) < 0);
 
   return {
     ok: true,
-    groups: groups, details: details, vfDetails: vfDetails, individuals: individuals,
-    memberMap: memberMap, setPrices: setPrices
+    group_id: groupId,
+    memberIds: current,
+    appliedMemberIds: applied,
+    pendingMemberIds: pendingMemberIds,
+    staleMemberIds: staleMemberIds,
+    neverApplied: applied.length === 0,
+    unresolvedCodes: eff.unresolvedCodes,
+    memberMap: memberMap,
+    setPrices: setPrices,
+    priceError: priceError,
+    memberError: memberError
   };
 }
 
-// 既存シート（6列時代）にcustomer_codes列(7)・maker列(8)のヘッダーを補う
-// ※関数名は互換のため据え置き（呼び出し箇所多数）。v2.27.0でmaker列も面倒を見るようになった
+// 既存シートにcustomer_codes列(7)・maker列(8)・applied_member_ids列(9)のヘッダーを補う
+// ※関数名は互換のため据え置き（呼び出し箇所多数）。
+//   v2.27.0でmaker列、v2.28.0でapplied_member_ids列も面倒を見るようになった
 function ensureSpGroupCodesHeader(sheet) {
   if (String(sheet.getRange(1, 7).getValue() || '') !== 'customer_codes') {
     sheet.getRange(1, 7).setValue('customer_codes').setFontWeight('bold').setBackground('#f3f4f6');
@@ -2496,6 +2612,33 @@ function ensureSpGroupCodesHeader(sheet) {
   if (String(sheet.getRange(1, 8).getValue() || '') !== 'maker') {
     sheet.getRange(1, 8).setValue('maker').setFontWeight('bold').setBackground('#f3f4f6');
   }
+  if (String(sheet.getRange(1, 9).getValue() || '') !== 'applied_member_ids') {
+    sheet.getRange(1, 9).setValue('applied_member_ids').setFontWeight('bold').setBackground('#f3f4f6');
+  }
+}
+
+// 「BCARTに反映」した時点の会員IDを記録する。
+// グループに会員を足しただけではBCARTは変わらないため、
+// 『いま反映済みの会員』と『いまグループにいる会員』の差＝未反映、を出すのに使う。
+function readAppliedMemberIds_(groupId) {
+  const row = findGroupRowValues(groupId);
+  if (!row) return [];
+  return String(row[8] || '').split(',').map(x => x.trim()).filter(x => x);
+}
+
+function writeAppliedMemberIds_(groupId, memberIds) {
+  const sheet = getOrCreateSheet(SHEET_SP_GROUPS);
+  ensureSpGroupCodesHeader(sheet);
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === String(groupId)) {
+      const cell = sheet.getRange(i + 1, 9);
+      cell.setNumberFormat('@');
+      cell.setValue(memberIds.join(','));
+      return true;
+    }
+  }
+  return false;
 }
 
 function saveCustomerGroup(params) {
@@ -2766,12 +2909,21 @@ function applyGroupPrices(params) {
   const detailSheet = getOrCreateSheet(SHEET_SP_DETAILS);
   let detailRows = detailSheet.getDataRange().getValues();
 
-  const allSets = bcartGetAll('/product_sets');
-  if (!allSets.ok) return allSets;
+  // v2.28.0: 全件取得(数千件)をやめ、反映対象の商品セットだけをidsで取る
+  const targetSetIds = (params.items || []).map(it => String(it.product_set_id));
+  const setsRes = bcartGetSetsByIds_(targetSetIds);
+  if (!setsRes.ok) return setsRes;
   const setMap = {};
-  allSets.data.forEach(s => { setMap[s.id] = s; });
+  setsRes.data.forEach(s => { setMap[s.id] = s; });
 
-  let successCount = 0, failCount = 0;
+  // v2.28.0: 「前回このグループで反映した会員」のうち、いまグループにいない会員は
+  // BCARTに特価が残り続けてしまうので、この反映のついでに消す。
+  // ⚠️ グループ外の会員を無条件に消すと個別特価や他グループの設定まで壊すため、
+  //    消すのは applied_member_ids に載っている＝このグループが自分で書いた会員に限定する。
+  const appliedBefore = readAppliedMemberIds_(params.group_id);
+  const removedMemberIds = appliedBefore.filter(id => memberIds.indexOf(id) < 0);
+
+  let successCount = 0, failCount = 0, removedPriceCount = 0;
   const errors = [];
 
   params.items.forEach(item => {
@@ -2790,6 +2942,10 @@ function applyGroupPrices(params) {
           delete newSp[key];
         }
       }
+    });
+    // グループから外した会員の特価を削除（このグループが書いた分だけ）
+    removedMemberIds.forEach(mid => {
+      if (newSp[String(mid)] !== undefined) { delete newSp[String(mid)]; removedPriceCount++; }
     });
     memberIds.forEach(mid => { newSp[String(mid)] = { unit_price: item.unit_price }; });
 
@@ -2822,16 +2978,30 @@ function applyGroupPrices(params) {
     Utilities.sleep(150);
   });
 
+  // 全件成功したときだけ「この会員構成で反映済み」と記録する。
+  // 一部失敗のまま記録すると、未反映の警告が消えて漏れに気づけなくなる。
+  let appliedRecorded = false;
+  if (failCount === 0 && successCount > 0) {
+    appliedRecorded = writeAppliedMemberIds_(params.group_id, memberIds.map(String));
+  }
+
   addHistory({
     userName: params._userName,
     code: '', name: params.group_id,
     type: '特別価格適用',
     before: '',
-    after: '成功: ' + successCount + '件 / 失敗: ' + failCount + '件' + (eff.unresolvedCodes.length > 0 ? ' / 未登録保留: ' + eff.unresolvedCodes.length + '件' : ''),
+    after: '成功: ' + successCount + '件 / 失敗: ' + failCount + '件'
+      + (removedPriceCount > 0 ? ' / 外した会員の特価削除: ' + removedPriceCount + '件' : '')
+      + (eff.unresolvedCodes.length > 0 ? ' / 未登録保留: ' + eff.unresolvedCodes.length + '件' : ''),
     result: failCount > 0 ? '一部失敗' : '成功'
   });
 
-  return { ok: true, successCount: successCount, failCount: failCount, errors: errors, memberCount: memberIds.length, unresolvedCodes: eff.unresolvedCodes };
+  return {
+    ok: true, successCount: successCount, failCount: failCount, errors: errors,
+    memberCount: memberIds.length, unresolvedCodes: eff.unresolvedCodes,
+    removedMemberIds: removedMemberIds, removedPriceCount: removedPriceCount,
+    appliedRecorded: appliedRecorded
+  };
 }
 
 function deleteSpecialPriceDetail(params) {
@@ -2872,7 +3042,8 @@ const VF_FILTER_VALUE = '非会員,通常会員,1,2';
 function getSpecialPriceCurrent(params) {
   const setIds = (params.product_set_ids || []).map(String);
 
-  const allSets = bcartGetAll('/product_sets');
+  // v2.28.0: 全件取得をやめ、必要な商品セットだけをidsで取る
+  const allSets = bcartGetSetsByIds_(setIds);
   if (!allSets.ok) return allSets;
 
   const results = setIds.map(setId => {
