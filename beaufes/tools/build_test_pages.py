@@ -57,23 +57,29 @@ BANNER_HTML = """
 MODE_MOCK = "画面の確認用です。入力しても<b>どこにも送信されません</b>。"
 MODE_LIVE = "テスト用のスプレッドシートに<b>実際に書き込みます</b>。本番の申込には影響しません。"
 
-FILES = ["index.html", "pass.html", "liff.html"]
+FILES = ["index.html", "pass.html", "liff.html", "admin.html"]
 
 
 # 🔴 本番HTMLは 227a30c でセミナー予約UIが意図的に外されている（Pages と GAS の版が揃うまでの
 #    暫定対応）。その状態のまま生成すると、テスト環境からUIが**黙って消える**。
 #    UIを直すときは先に tools/restore_from_test_pages.py で戻すこと。
-#    🔴 マーカーは3画面に共通のものだけにすること（pass.html の一覧は semList、index/liff は seminarList）。
-REQUIRED_MARKERS = ["renderSeminars", "sessionChipHtml", "selectedSessionIds"]
+#    🔴 マーカーはファイルごとに変える（pass.html の一覧は semList、index/liff は seminarList、
+#       admin.html は予約状況パネル）。
+REQUIRED_MARKERS = {
+    "index.html": ["renderSeminars", "sessionChipHtml", "selectedSessionIds"],
+    "liff.html":  ["renderSeminars", "sessionChipHtml", "selectedSessionIds"],
+    "pass.html":  ["renderSeminars", "sessionChipHtml", "selectedSessionIds"],
+    "admin.html": ["renderReservations", "listReservations"],
+}
 
 
 def preflight():
-    """🔴 1本でも書き出す前に3本すべてを検査する。
+    """🔴 1本でも書き出す前に全部を検査する。
     途中で落ちるとテスト環境が「UIのある画面」と「無い画面」の混在になる。"""
     ng = []
     for name in FILES:
         src = io.open(os.path.join(BASE, name), encoding="utf-8").read()
-        missing = [m for m in REQUIRED_MARKERS if m not in src]
+        missing = [m for m in REQUIRED_MARKERS[name] if m not in src]
         if missing:
             ng.append(name + "（" + ", ".join(missing) + " が無い）")
     if ng:
@@ -118,6 +124,10 @@ def build(name):
         src = src.replace(
             "const IS_MOCK = qs('mock') === '1';",
             "const IS_MOCK = true;   // 🔴 テスト環境では常にモック（送信しない）")
+        # admin.html はログインを通す代わりに常にモック表示にする（社員用画面の見た目確認）
+        src = src.replace(
+            "function isMock() { return qs('mock') === '1'; }",
+            "function isMock() { return true; }   // 🔴 テスト環境では常にモック（GASを呼ばない）")
         if src == before:
             raise SystemExit("IS_MOCK が見つからない: " + name)
 

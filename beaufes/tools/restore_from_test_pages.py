@@ -34,8 +34,14 @@ IS_MOCK_ORIG = {
     "index.html": "const IS_MOCK = new URLSearchParams(location.search).get('mock') === '1';",
     "liff.html":  "const IS_MOCK = new URLSearchParams(location.search).get('mock') === '1';",
     "pass.html":  "const IS_MOCK = qs('mock') === '1';",
+    "admin.html": "function isMock() { return qs('mock') === '1'; }",
 }
-IS_MOCK_TEST = "const IS_MOCK = true;   // 🔴 テスト環境では常にモック（送信しない）"
+IS_MOCK_TEST_BY_FILE = {
+    "index.html": "const IS_MOCK = true;   // 🔴 テスト環境では常にモック（送信しない）",
+    "liff.html":  "const IS_MOCK = true;   // 🔴 テスト環境では常にモック（送信しない）",
+    "pass.html":  "const IS_MOCK = true;   // 🔴 テスト環境では常にモック（送信しない）",
+    "admin.html": "function isMock() { return true; }   // 🔴 テスト環境では常にモック（GASを呼ばない）",
+}
 
 
 def gas_url_line(name):
@@ -54,7 +60,12 @@ def gas_url_line(name):
 
 
 def restore(name):
-    src = io.open(os.path.join(BASE, "test", name), encoding="utf-8").read()
+    src_path = os.path.join(BASE, "test", name)
+    # まだテスト環境に無いファイル（新しく対象に加えた直後）は、作業ツリーのものを正とする
+    if not os.path.exists(src_path):
+        print("skip (test/ にまだ無い): " + name)
+        return
+    src = io.open(src_path, encoding="utf-8").read()
 
     mark = ("\n<!-- 🔴 このファイルは tools/build_test_pages.py の生成物です。手で編集しないこと。\n"
             "     直すときは beaufes/" + name + " を編集してから再生成してください。 -->")
@@ -82,13 +93,16 @@ def restore(name):
         raise SystemExit("TEST_ENV_NO_GAS が見つからない（テスト用GASで生成した test/ からは復元できません）: " + name)
     src = src.replace("const GAS_URL = 'TEST_ENV_NO_GAS';", gas_url_line(name))
 
-    if src.count(IS_MOCK_TEST) != 1:
+    mock_test = IS_MOCK_TEST_BY_FILE[name]
+    if src.count(mock_test) != 1:
         raise SystemExit("IS_MOCK(テスト用) が見つからない: " + name)
-    src = src.replace(IS_MOCK_TEST, IS_MOCK_ORIG[name])
+    src = src.replace(mock_test, IS_MOCK_ORIG[name])
 
     src = src.replace('src="../lib/', 'src="lib/')
 
-    for bad in ("testEnvBar", "TEST_ENV_NO_GAS", "noindex", "../lib/", "build_test_pages"):
+    # 🔴 "noindex" は使わない。admin.html / badges.html は**もともと自前で noindex を持っている**ため
+    #    誤検知する（2026-09-05）。挿入したものだけに現れる文字列で判定すること。
+    for bad in ("testEnvBar", "テスト環境の帯", "TEST_ENV_NO_GAS", "../lib/", "build_test_pages"):
         if bad in src:
             raise SystemExit("テスト環境の痕跡が残っている（%s）: %s" % (bad, name))
 
@@ -96,11 +110,11 @@ def restore(name):
     print("restored: " + name)
 
 
-for f in ("index.html", "pass.html", "liff.html"):
+for f in ("index.html", "pass.html", "liff.html", "admin.html"):
     restore(f)
 
 # 🔴 コンソールが cp932 だと絵文字で UnicodeEncodeError になる。
 #    この案内は必ず出したいので、出力には絵文字を使わない。
 print("")
-print("[!] 作業が終わったら、本番HTML3本は必ずHEADへ戻すこと:")
-print("   git checkout -- beaufes/index.html beaufes/pass.html beaufes/liff.html")
+print("[!] 作業が終わったら、本番HTMLは必ずHEADへ戻すこと:")
+print("   git checkout -- beaufes/index.html beaufes/pass.html beaufes/liff.html beaufes/admin.html")
