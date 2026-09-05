@@ -63,7 +63,11 @@ const TYPE_RESULTS = APP_DATA.typeResults;
 const app = document.getElementById('app');
 let state = emptyState();
 
-function clearApp() { app.replaceChildren(); }
+function clearApp() {
+  app.replaceChildren();
+  app.classList.remove('question-screen', 'start-screen');
+  document.body.classList.remove('question-view');
+}
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -252,6 +256,7 @@ function renderModeCard(mode, description) {
 
 function showStart(shouldScrollTop) {
   clearApp();
+  app.classList.add('start-screen');
   app.append(el('h1', '', 'エニアグラム・タイプ診断'));
   app.append(el('p', 'lead', '同じ行動でも、心の奥にある「なぜそうするのか」を一つずつ確かめ、タイプ候補とウイングを探ります。'));
   const guide = el('section', 'card');
@@ -269,6 +274,22 @@ function showStart(shouldScrollTop) {
   if (shouldScrollTop) scrollPageTop();
 }
 
+// 繰り返し表示していた説明は、回答を保持したまま開けるヒントにまとめます。
+function showAnswerHelp() {
+  const dialog = el('dialog', 'answer-help');
+  dialog.setAttribute('aria-labelledby', 'answer-help-title');
+  const title = el('h2', '', '回答のヒント');
+  title.id = 'answer-help-title';
+  dialog.append(title);
+  dialog.append(el('p', '', '理想ではなく、以前から繰り返してきた自分に当てはまる度合いを選びます。'));
+  dialog.append(el('p', '', '迷うときは「保留」で次の未回答へ進めます。「少し当てはまる」は、わからないという意味ではありません。'));
+  dialog.append(el('p', '', '回答を選んだら「次へ」を押してください。「戻る」で前の回答を変更できます。'));
+  dialog.append(button('閉じる', 'primary', function () { dialog.close(); }));
+  dialog.addEventListener('close', function () { dialog.remove(); });
+  document.body.append(dialog);
+  dialog.showModal();
+}
+
 function renderRatingActions(question, selectedValue) {
   const actions = el('div', 'rating-actions');
   const ratingButtons = [];
@@ -279,12 +300,18 @@ function renderRatingActions(question, selectedValue) {
         ratingButton.setAttribute('aria-pressed', String(ratingButton === node));
       });
       const countLabel = document.querySelector('.answer-count');
-      if (countLabel) countLabel.textContent = '回答済み ' + answeredCount() + ' / ' + selectedOrder(state.mode).length;
+      if (countLabel) {
+        countLabel.textContent = '回答済み ' + answeredCount() + ' / ' + selectedOrder(state.mode).length;
+        countLabel.classList.remove('error');
+        countLabel.removeAttribute('role');
+        countLabel.removeAttribute('aria-label');
+      }
       const optionCard = actions.closest('.motive-option');
       if (optionCard) optionCard.classList.add('answered');
       const progressBar = document.querySelector('.progress > div');
       if (progressBar) {
         progressBar.style.width = ((answeredCount() / selectedOrder(state.mode).length) * 100) + '%';
+        progressBar.parentElement.setAttribute('aria-valuenow', String(answeredCount()));
       }
       const error = document.querySelector('.scenario-card .error');
       if (error) error.remove();
@@ -300,34 +327,51 @@ function renderRatingActions(question, selectedValue) {
 
 function showQuestion(shouldScrollTop, errorMessage) {
   const order = selectedOrder(state.mode);
-  if (!order.length) {
-    showStart(true);
-    return;
-  }
+  if (!order.length) { showStart(true); return; }
   const question = ALL_QUESTIONS.get(order[state.currentIndex]);
   clearApp();
+  document.body.classList.add('question-view');
+  app.classList.add('question-screen');
+  const status = el('div', 'question-status');
   const progressHead = el('div', 'progress-head');
-  progressHead.append(el('span', '', MODE_CONFIG[state.mode].name));
-  progressHead.append(el('span', '', '質問 ' + (state.currentIndex + 1) + ' / ' + order.length));
-  app.append(progressHead);
-  app.append(el('p', 'chart-help answer-count', '回答済み ' + answeredCount() + ' / ' + order.length));
+  progressHead.append(el('strong', '', '質問 ' + (state.currentIndex + 1) + ' / ' + order.length));
+  const countLabel = el('span', 'answer-count', '回答済み ' + answeredCount() + ' / ' + order.length);
+  if (errorMessage) {
+    // エラーは既存の進捗行に表示し、回答欄や「次へ」を押し下げません。
+    countLabel.classList.add('error');
+    countLabel.textContent = errorMessage.includes('だけ') ? '残りはこの1問です' : '回答を選んでください';
+    countLabel.setAttribute('role', 'alert');
+    countLabel.setAttribute('aria-label', errorMessage);
+  }
+  progressHead.append(countLabel);
+  const help = button('?', 'help-button', showAnswerHelp);
+  help.setAttribute('aria-label', '回答のヒント');
+  progressHead.append(help);
+  status.append(progressHead);
   const progress = el('div', 'progress');
+  progress.setAttribute('role', 'progressbar');
+  progress.setAttribute('aria-label', MODE_CONFIG[state.mode].name + 'の回答進捗');
+  progress.setAttribute('aria-valuemin', '0');
+  progress.setAttribute('aria-valuemax', String(order.length));
+  progress.setAttribute('aria-valuenow', String(answeredCount()));
   const progressBar = el('div');
   progressBar.style.width = ((answeredCount() / order.length) * 100) + '%';
   progress.append(progressBar);
-  app.append(progress);
+  status.append(progress);
+  app.append(status);
   const card = el('section', 'card scenario-card');
-  card.append(el('p', 'scenario-number', 'QUESTION ' + (state.currentIndex + 1)));
-  card.append(el('p', 'life-domain', '生活場面：' + LIFE_DOMAIN_LABELS[question.lifeDomain]));
-  card.append(el('h1', '', question.text));
-  card.append(el('p', 'scenario-prompt', '理想ではなく、以前から繰り返してきた自分に当てはまる度合いは？'));
-  card.append(el('p', 'chart-help', '迷うときは保留して後で戻れます。「少し当てはまる」は、わからないという意味ではありません。'));
-  if (errorMessage) card.append(showError(errorMessage));
+  const copy = el('div', 'question-copy');
+  copy.append(el('p', 'life-domain', '生活場面：' + LIFE_DOMAIN_LABELS[question.lifeDomain]));
+  const title = el('h1', '', question.text);
+  title.tabIndex = -1;
+  copy.append(title);
+  card.append(copy);
   const optionCard = el('article', 'motive-option');
   if (isRatingValue(state.answers[question.id])) optionCard.classList.add('answered');
   optionCard.append(renderRatingActions(question, state.answers[question.id]));
   card.append(optionCard);
   app.append(card);
+  // 操作は一つの行に収め、初問でも「次へ」の位置を変えません。
   const actions = el('div', 'actions');
   if (state.currentIndex > 0) {
     actions.append(button('戻る', 'secondary', function () {
@@ -335,12 +379,22 @@ function showQuestion(shouldScrollTop, errorMessage) {
       saveState();
       showQuestion(true);
     }));
-  }
-  actions.append(button('保留して次の未回答へ', 'secondary', deferQuestion));
-  actions.append(button(state.currentIndex === order.length - 1 ? '結果を見る' : '次へ', 'primary', proceedQuestion));
-  if (answeredCount() === order.length) actions.append(button('修正した回答で結果を更新', 'secondary', function () { showResults(calculateDiagnosis()); }));
+  } else actions.append(el('span', 'back-placeholder'));
+  const defer = button('保留', 'secondary', deferQuestion);
+  defer.setAttribute('aria-label', '保留して次の未回答へ');
+  actions.append(defer);
+  const complete = answeredCount() === order.length;
+  const next = button(complete ? '結果を更新' : (state.currentIndex === order.length - 1 ? '結果を見る' : '次へ'), 'primary', function () {
+    if (answeredCount() === order.length) showResults(calculateDiagnosis());
+    else proceedQuestion();
+  });
+  if (complete) next.setAttribute('aria-label', '修正した回答で結果を更新');
+  actions.append(next);
   app.append(actions);
-  if (shouldScrollTop) scrollPageTop();
+  if (shouldScrollTop) {
+    scrollPageTop();
+    requestAnimationFrame(function () { title.focus({ preventScroll:true }); });
+  }
 }
 
 // 保留は0点にせず、未回答のまま循環して再確認します。
