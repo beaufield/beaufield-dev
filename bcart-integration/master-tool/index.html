@@ -130,12 +130,48 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 
 #toast { position: fixed; bottom: 20px; right: 20px; background: #1f2937; color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 13px; display: none; z-index: 1000; }
 #toast.error { background: #dc2626; }
+/* 成功したが「まだ次の操作が要る」ときの警告トースト（v2.15.0） */
+#toast.warn { background: #b45309; }
+#toast.wide { max-width: 520px; line-height: 1.6; }
 
 .loading { text-align: center; padding: 40px; color: #9ca3af; }
 .spinner { display: inline-block; width: 24px; height: 24px; border: 3px solid #e5e7eb; border-top-color: #1a56db; border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 8px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* 全画面ビジーオーバーレイ（保存・承認等の完了までクリックを遮断） */
+/* ===== 共通ローディング（v2.15.0）=====
+   このアプリはBCART APIを叩くので1操作に数秒かかる。
+   「押したのに何も起きない」を無くすため、通信中は必ず次の2つが出る:
+   1) 画面上部の「通信中…」ピル（gasPostを通る全操作で自動）
+   2) 押したボタン自体のスピナー（クリック元を自動で特定）
+   ボタンは disabled ではなく pointer-events で止める。
+   既存ハンドラが自前で textContent や disabled を書き換えていても衝突しないため。 */
+#netBusy {
+  display: none; position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+  z-index: 900; background: #111827; color: #fff; border-radius: 999px;
+  padding: 6px 16px 6px 12px; font-size: 12px; font-weight: 600;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.25); align-items: center; gap: 8px;
+}
+#netBusy.open { display: flex; }
+#netBusy .net-spinner {
+  width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.35);
+  border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite;
+}
+.btn.is-busy, button.is-busy {
+  pointer-events: none; opacity: 0.65; position: relative;
+}
+.btn.is-busy::after, button.is-busy::after {
+  content: ''; display: inline-block; width: 11px; height: 11px; margin-left: 7px;
+  vertical-align: -1px; border: 2px solid currentColor; border-top-color: transparent;
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+}
+/* 読み込み待ちの数値・テキストのプレースホルダ */
+.val-loading { display: inline-block; color: #cbd5e1; font-size: 11px; }
+.val-loading::after {
+  content: ''; display: inline-block; width: 9px; height: 9px; margin-left: 2px;
+  vertical-align: -1px; border: 2px solid #cbd5e1; border-top-color: transparent;
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+}
 #busyOverlay { display: none; position: fixed; inset: 0; background: rgba(255,255,255,0.7); z-index: 500; align-items: center; justify-content: center; }
 #busyOverlay.open { display: flex; }
 .busy-card { background: #fff; border-radius: 12px; padding: 28px 40px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); text-align: center; }
@@ -1015,6 +1051,9 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
   </div>
 </div>
 
+<!-- 通信中インジケータ（gasPostが自動で出し入れする） -->
+<div id="netBusy"><span class="net-spinner"></span><span id="netBusyText">通信中…</span></div>
+
 <!-- 全画面ビジーオーバーレイ -->
 <div id="busyOverlay">
   <div class="busy-card">
@@ -1322,7 +1361,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = 'v2.14.0';
+const APP_VERSION = 'v2.15.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
 const BCART_ADMIN_BASE = 'https://beaufieldec.i16.bcart.jp/admin/products';
 
@@ -1355,6 +1394,10 @@ let pendingMemberGroupId = null;
 // ① 導入サロングループの絞り込み状態
 let spGroupFilterMaker = '';
 let spGroupFilterKw = '';
+// ①③ 表示中グループの付帯情報（会員名・標準価格・会員の反映状況）。
+//     重いので getSpecialPriceData には含めず、グループを選んだ時だけ後追いで取る
+let spViewInfo = null;
+let spViewInfoLoading = false;
 // ② 会員管理モーダルの選択状態（DOMではなくここを唯一の正とする。
 //    検索で絞り込んでも選択が消えないようにするため）
 let memberSelIds = [];
@@ -2453,17 +2496,66 @@ function loadHistory() {
 }
 
 // ===================== GAS通信（リトライ付き） =====================
+// ===================== 共通ローディング（v2.15.0）=====================
+// 直前にクリックされたボタンを覚えておき、そこから始まった通信の間だけ
+// そのボタンにスピナーを出す。呼び出し側の書き換えは不要。
+let _lastClickedBtn = null;
+let _lastClickedAt = 0;
+document.addEventListener('click', function(e) {
+  const t = e.target;
+  const b = (t && t.closest) ? t.closest('button, .btn') : null;
+  if (b) { _lastClickedBtn = b; _lastClickedAt = Date.now(); }
+}, true);
+
+function markBtnBusy(btn) {
+  if (!btn) return null;
+  btn._busyCount = (btn._busyCount || 0) + 1;
+  btn.classList.add('is-busy');
+  return btn;
+}
+function releaseBtnBusy(btn) {
+  if (!btn) return;
+  btn._busyCount = Math.max(0, (btn._busyCount || 1) - 1);
+  if (btn._busyCount === 0) btn.classList.remove('is-busy');
+}
+
+let _netInFlight = 0;
+function netBusyStart(label) {
+  _netInFlight++;
+  const el = document.getElementById('netBusy');
+  if (!el) return;
+  const txt = document.getElementById('netBusyText');
+  if (txt && label) txt.textContent = label;
+  el.classList.add('open');
+}
+function netBusyEnd() {
+  _netInFlight = Math.max(0, _netInFlight - 1);
+  if (_netInFlight > 0) return;
+  const el = document.getElementById('netBusy');
+  if (el) el.classList.remove('open');
+  const txt = document.getElementById('netBusyText');
+  if (txt) txt.textContent = '通信中…';
+}
+
 function gasPost(params, callback, retryCount) {
   retryCount = retryCount || 0;
   params.session = session;
+  // クリック直後（500ms以内）に始まった通信だけ、そのボタンの操作とみなす
+  const btn = (retryCount === 0 && _lastClickedBtn && (Date.now() - _lastClickedAt) < 500)
+    ? markBtnBusy(_lastClickedBtn) : null;
+  netBusyStart(retryCount > 0 ? '再試行中…' : '通信中…');
+  let done = false;
+  const finish = () => { if (done) return; done = true; netBusyEnd(); releaseBtnBusy(btn); };
+
   fetch(GAS_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify(params)
   })
   .then(r => r.json())
-  .then(res => callback(res))
+  .then(res => { finish(); callback(res); })
   .catch(err => {
+    finish();
     if (retryCount < 1) {
       showToast('通信エラー、再試行中...');
       setTimeout(() => gasPost(params, callback, retryCount + 1), 3000);
@@ -2475,11 +2567,14 @@ function gasPost(params, callback, retryCount) {
 
 function gasPostAsync(params) {
   params.session = session;
+  netBusyStart('通信中…');
   return fetch(GAS_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify(params)
-  }).then(r => r.json());
+  }).then(r => r.json())
+    .then(res => { netBusyEnd(); return res; })
+    .catch(err => { netBusyEnd(); throw err; });
 }
 
 // ===================== ユーティリティ =====================
@@ -2491,13 +2586,15 @@ function hideBusyOverlay() {
   document.getElementById('busyOverlay').classList.remove('open');
 }
 
-function showToast(msg, isError) {
+// level: 未指定/false=通常, true='error', 'warn'=成功だが次の操作が必要
+function showToast(msg, level) {
   const el = document.getElementById('toast');
+  const kind = level === 'warn' ? 'warn' : (level ? 'error' : '');
   el.textContent = msg;
-  el.className = isError ? 'error' : '';
+  el.className = kind + (msg.length > 40 ? ' wide' : '');
   el.style.display = 'block';
   clearTimeout(el._timer);
-  el._timer = setTimeout(() => el.style.display = 'none', isError ? 5000 : 3000);
+  el._timer = setTimeout(() => el.style.display = 'none', kind ? 6000 : 3000);
 }
 
 function esc(str) {
@@ -3111,12 +3208,20 @@ function gotoSpSubview(view) {
   if (btn) switchSpSubview(view, btn);
 }
 
-function loadSpecialPriceData() {
-  document.getElementById('sp-content').innerHTML = '<div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>';
+function loadSpecialPriceData(onDone) {
+  // 初回だけ全面スピナー。保存後などの再読込では今の画面を残したまま差し替える
+  // （通信中であることは画面上部の「通信中…」ピルと押したボタンのスピナーで分かる）
+  if (!spData) {
+    document.getElementById('sp-content').innerHTML =
+      '<div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>';
+  }
   gasPost({ action: 'getSpecialPriceData' }, function(res) {
-    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
+    if (!res.ok) { showToast('エラー: ' + res.error, true); if (onDone) onDone(false); return; }
     spData = res;
     renderSpContent();
+    // 会員名・標準価格・反映状況は別便で取り直す（画面はもう出ている）
+    if (spSubview === 'settings' && spSelectedGroupId) loadGroupViewInfo(spSelectedGroupId);
+    if (onDone) onDone(true);
   });
 }
 
@@ -3192,11 +3297,21 @@ function renderSpGroups() {
       const memberLabel = ids.length > 0 ? ids.length + '名登録済み' : (codes.length > 0 ? '' : '会員未設定');
       const codeLabel = codes.length > 0 ? '<span style="color:#7c3aed;">得意先コード: ' + codes.length + '件</span>' : '';
       const detailCount = (spData.details || []).filter(d => d.group_id === g.group_id).length;
+      // ② 会員をグループへ足しただけではBCARTに入らないので、一覧の段階で気づけるようにする。
+      //    ここはシートの値だけで判定する軽い目安（得意先コード解決分は含まないため、
+      //    正確な状況は特別価格設定タブで出す）
+      const appliedIds = String(g.applied_member_ids || '').split(',').map(x => x.trim()).filter(x => x);
+      const pendingIds = ids.filter(x => appliedIds.indexOf(x) < 0);
+      const staleIds   = appliedIds.filter(x => ids.indexOf(x) < 0);
+      const memberWarn = (detailCount > 0 && (pendingIds.length > 0 || staleIds.length > 0))
+        ? '<span style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:3px;padding:1px 6px;font-size:10px;font-weight:700;margin-left:6px;">⚠️ 会員未反映' +
+          (pendingIds.length ? ' +' + pendingIds.length : '') + (staleIds.length ? ' −' + staleIds.length : '') + '</span>'
+        : '';
       return '<div class="sp-card">' +
         '<div class="sp-card-info">' +
         '<div class="sp-card-title">👥 ' + esc(g.group_name) +
           (g.maker ? ' <span class="sp-maker-badge">' + esc(g.maker) + '</span>' : '') + '</div>' +
-        '<div class="sp-card-sub">会員: ' + memberLabel + (memberLabel && codeLabel ? '　' : '') + codeLabel + '　特別価格商品: ' + detailCount + '件' + (g.note ? '　— ' + esc(g.note) : '') + '</div>' +
+        '<div class="sp-card-sub">会員: ' + memberLabel + (memberLabel && codeLabel ? '　' : '') + codeLabel + '　特別価格商品: ' + detailCount + '件' + memberWarn + (g.note ? '　— ' + esc(g.note) : '') + '</div>' +
         '</div>' +
         '<div class="sp-card-actions">' +
         '<button class="btn btn-sm btn-wip" onclick="openMemberSelectModal(\'' + jsArg(g.group_id) + '\',\'' + jsArg(g.group_name) + '\')">👥 会員を管理</button>' +
@@ -3227,13 +3342,16 @@ function ensureSpFeaturesCache(cb) {
 }
 
 function switchToSettings(groupId) {
+  const changed = spSelectedGroupId !== groupId;
   spSelectedGroupId = groupId;
+  if (changed) spViewInfo = null;
   spSubview = 'settings';
   document.querySelectorAll('.sp-subnav-btn').forEach(b => b.classList.remove('active'));
   const settingsBtn = document.querySelector('.sp-subnav-btn[data-view="settings"]');
   if (settingsBtn) settingsBtn.classList.add('active');
   updateSpHelpLink('settings');
   renderSpContent();
+  loadGroupViewInfo(groupId);
 }
 
 function renderSpSettings() {
@@ -3278,6 +3396,7 @@ function renderSpSettings() {
       (groupCodes.length > 0 ? '<span style="color:#7c3aed;">＋得意先コード: <strong>' + groupCodes.length + '件</strong>（反映時に会員へ自動解決・未登録分は保留）</span>' : '') +
       '<button class="btn btn-sm btn-wip" style="margin-left:auto;" onclick="openMemberSelectModal(\'' + jsArg(spSelectedGroupId) + '\',\'' + jsArg(selGroup ? selGroup.group_name : '') + '\')">👥 会員を管理</button>' +
       '</div>' + namesHtml +
+      spMemberApplyStatusHtml(details.length) +
       '</div>';
 
     // ④ ここから「特別価格」セクション（価格を決める設定）
@@ -3306,10 +3425,14 @@ function renderSpSettings() {
           : '<span style="color:#059669;font-size:10px;">✅ ' + esc(appliedAt.substring(0, 16)) + '</span>';
         // ③ 標準価格はBカートの現在値（getSpecialPriceDataがsetPricesで返す）
         const stdPrice = spStandardPrice(d.product_set_id);
+        const stdCell = stdPrice === undefined
+          ? '<span class="val-loading">読込中</span>'
+          : (stdPrice === null ? '<span style="color:#d1d5db;" title="BCARTから標準価格を取得できませんでした">—</span>'
+                               : '¥' + Number(stdPrice).toLocaleString());
         html += '<tr>' +
           '<td style="font-family:monospace;font-size:12px;color:#6b7280;">' + esc(d.product_no) + '</td>' +
           '<td>' + esc(d.product_set_name) + '</td>' +
-          '<td style="color:#6b7280;">' + (stdPrice === null ? '<span style="color:#d1d5db;">—</span>' : '¥' + Number(stdPrice).toLocaleString()) + '</td>' +
+          '<td style="color:#6b7280;">' + stdCell + '</td>' +
           '<td style="font-weight:700;color:#1a56db;">¥' + Number(d.unit_price).toLocaleString() + spKakeritsuBadge(stdPrice, d.unit_price) + '</td>' +
           '<td style="font-size:11px;color:#9ca3af;">' + esc(String(d.updated_at || '').substring(0, 16)) + '</td>' +
           '<td>' + reflectBadge + '</td>' +
@@ -3320,7 +3443,10 @@ function renderSpSettings() {
     }
     // BCARTに反映ボタン
     if (details.length > 0) {
-      html += '<div style="margin-top:10px;text-align:right;">' +
+      const needMemberApply = spViewInfo &&
+        (((spViewInfo.pendingMemberIds || []).length > 0) || ((spViewInfo.staleMemberIds || []).length > 0));
+      html += '<div style="margin-top:10px;display:flex;align-items:center;gap:10px;justify-content:flex-end;">' +
+        (needMemberApply ? '<span style="font-size:12px;color:#92400e;">⚠️ 会員の変更が未反映です</span>' : '') +
         '<button class="btn btn-success" onclick="openSpApplyPreview()">💎 BCARTに反映する（' + details.length + '件）</button>' +
         '</div>';
     }
@@ -3448,27 +3574,92 @@ function renderSpSettings() {
 // ③ 会員IDを「会社名（ID:xxxx）」に。名前が引けないときはIDだけ返す
 function spMemberLabel(id) {
   const key = String(id);
-  const m = (spData && spData.memberMap) ? spData.memberMap[key] : null;
+  const m = (spViewInfo && spViewInfo.memberMap) ? spViewInfo.memberMap[key] : null;
   if (m && m.name) return m.name + '（ID:' + key + '）';
   const local = allMembers.find(x => x.id === key);
   if (local && (local.comp_name || local.name)) return (local.comp_name || local.name) + '（ID:' + key + '）';
   return 'ID:' + key;
 }
 
-// ③ Bカートの現在の標準価格。取れていなければ null（—表示）
+// ③ Bカートの現在の標準価格。
+//    まだ取得中なら undefined（読込中表示）、取得済みで無い場合は null（—表示）
 function spStandardPrice(setId) {
-  const map = (spData && spData.setPrices) ? spData.setPrices : null;
-  if (!map) return null;
+  if (!spViewInfo) return undefined;
+  const map = spViewInfo.setPrices || {};
   const v = map[String(setId)];
   return (v === undefined || v === null) ? null : Number(v);
 }
 
+// ①③ 表示中グループの付帯情報を後追いで取得する。
+//     画面はすぐ出して、届いた分だけ差し替える（全体の再描画はしない）
+function loadGroupViewInfo(groupId) {
+  if (!groupId) { spViewInfo = null; return; }
+  spViewInfo = null;
+  spViewInfoLoading = true;
+  gasPost({ action: 'getGroupViewInfo', group_id: groupId }, function(res) {
+    spViewInfoLoading = false;
+    if (!res.ok) {
+      spViewInfo = { memberMap: {}, setPrices: {}, loadError: res.error || '取得に失敗しました' };
+    } else if (res.group_id !== spSelectedGroupId) {
+      return;  // 待っている間に別のグループへ切り替わっていたら捨てる
+    } else {
+      spViewInfo = res;
+    }
+    if (spSubview === 'settings') renderSpSettings();
+  });
+}
+
 // 標準価格に対する掛率。ひと目で「6掛け」等が分かるように
 function spKakeritsuBadge(stdPrice, spPrice) {
-  if (stdPrice === null || !stdPrice || !isFinite(stdPrice) || stdPrice <= 0) return '';
+  if (stdPrice === undefined || stdPrice === null || !stdPrice || !isFinite(stdPrice) || stdPrice <= 0) return '';
   const rate = Number(spPrice) / Number(stdPrice);
   if (!isFinite(rate) || rate <= 0) return '';
   return '<span class="sp-kakeritsu">' + (Math.round(rate * 1000) / 100).toFixed(1) + '掛</span>';
+}
+
+// ② 会員のBCART反映状況。
+//    会員をグループに足しただけではBCARTは変わらない（変わるのは「BCARTに反映する」を押したとき）。
+//    その差を可視化しないと更新漏れになるので、ここで必ず出す。
+function spMemberApplyStatusHtml(detailCount) {
+  if (!spViewInfo) {
+    return '<div style="margin-top:8px;font-size:12px;color:#6b7280;">' +
+      '<span class="val-loading">BCARTへの反映状況を確認中</span></div>';
+  }
+  if (spViewInfo.loadError) {
+    return '<div style="margin-top:8px;font-size:12px;color:#b45309;">⚠️ 反映状況を確認できませんでした（' +
+      esc(spViewInfo.loadError) + '）</div>';
+  }
+  const pending = spViewInfo.pendingMemberIds || [];
+  const stale   = spViewInfo.staleMemberIds || [];
+  const nameOf  = id => spMemberLabel(id);
+
+  if (detailCount === 0) {
+    return '<div style="margin-top:8px;font-size:12px;color:#6b7280;">' +
+      'このグループにはまだ特別価格がありません（会員だけではBCARTには何も入りません）。</div>';
+  }
+
+  if (pending.length === 0 && stale.length === 0) {
+    return '<div style="margin-top:8px;font-size:12px;color:#047857;">' +
+      '✅ 会員 ' + (spViewInfo.memberIds || []).length + '名ぶん、BCARTへ反映済みです。</div>';
+  }
+
+  let h = '<div class="warn-bar" style="margin-top:10px;">';
+  if (pending.length > 0) {
+    h += '<div><strong>⚠️ ' + pending.length + '名がBCARTに未反映です。</strong>' +
+      'グループに会員を追加しても、それだけではBCARTの特別価格は入りません。' +
+      '下の「💎 BCARTに反映する」を押してください。</div>' +
+      '<div style="margin-top:4px;font-size:12px;">未反映: ' +
+      pending.map(id => esc(nameOf(id))).join('、') + '</div>';
+  }
+  if (stale.length > 0) {
+    h += '<div style="margin-top:' + (pending.length ? '8px' : '0') + ';">' +
+      '<strong>🧹 ' + stale.length + '名はグループから外れましたが、BCARTに特別価格が残っています。</strong>' +
+      '「💎 BCARTに反映する」を押すと削除されます。</div>' +
+      '<div style="margin-top:4px;font-size:12px;">取り残し: ' +
+      stale.map(id => esc(nameOf(id))).join('、') + '</div>';
+  }
+  h += '</div>';
+  return h;
 }
 
 function spToggleMemberNames() {
@@ -3485,6 +3676,7 @@ function onSpGroupChange(groupId) {
   spFeatureSets = [];
   spVfFeatureSets = [];
   renderSpSettings();
+  loadGroupViewInfo(spSelectedGroupId);
 }
 
 // ── 例外表示設定 関数群 ──
@@ -3835,11 +4027,25 @@ function openSpApplyPreview() {
   const selGroup = (spData.groups || []).find(g => g.group_id === spSelectedGroupId);
   const memberIds = selGroup ? String(selGroup.member_ids || '').split(',').map(s => s.trim()).filter(s => s) : [];
 
+  // ② この反映で会員がどう変わるかを先に見せる
+  const pend = (spViewInfo && spViewInfo.pendingMemberIds) || [];
+  const stale = (spViewInfo && spViewInfo.staleMemberIds) || [];
+  let memberDelta = '';
+  if (pend.length > 0) {
+    memberDelta += '<div style="margin-top:6px;color:#047857;font-size:12px;">' +
+      '＋ 新たに特価が入る会員 ' + pend.length + '名: ' + pend.map(id => esc(spMemberLabel(id))).join('、') + '</div>';
+  }
+  if (stale.length > 0) {
+    memberDelta += '<div style="margin-top:4px;color:#dc2626;font-size:12px;">' +
+      '− 特価を削除する会員 ' + stale.length + '名（グループから外れた分）: ' +
+      stale.map(id => esc(spMemberLabel(id))).join('、') + '</div>';
+  }
+
   // ローディング状態でモーダルを開く
   document.getElementById('spPreviewInfo').innerHTML =
     '<strong>' + esc(selGroup ? selGroup.group_name : '') + '</strong>' +
     '　会員: ' + memberIds.length + '名　→　' + details.length + '件　' +
-    '<span style="color:#9ca3af;">BCARTから現在値を取得中...</span>';
+    '<span style="color:#9ca3af;">BCARTから現在値を取得中...</span>' + memberDelta;
   document.getElementById('spPreviewBody').innerHTML =
     '<tr><td colspan="4" style="text-align:center;padding:24px;color:#9ca3af;">読み込み中...</td></tr>';
   document.getElementById('spApplyConfirmBtn').disabled = true;
@@ -3911,7 +4117,9 @@ function openSpApplyPreview() {
       // 変更後セル: グループ各会員の状態を判定
       const getMemberName = mid => {
         const m = allMembers.find(m => m.id === String(mid));
-        return (m && (m.comp_name || m.name)) ? (m.comp_name || m.name) : 'ID:' + mid;
+        if (m && (m.comp_name || m.name)) return m.comp_name || m.name;
+        const v = (spViewInfo && spViewInfo.memberMap) ? spViewInfo.memberMap[String(mid)] : null;
+        return (v && v.name) ? v.name : 'ID:' + mid;
       };
       const newMids     = memberIds.filter(mid => idPriceMap[String(mid)] === undefined);
       const changedMids = memberIds.filter(mid => idPriceMap[String(mid)] !== undefined && idPriceMap[String(mid)] != d.unit_price);
@@ -3976,6 +4184,9 @@ function executeBcartApply() {
     let msg = res.failCount > 0
       ? res.successCount + '件成功、' + res.failCount + '件失敗'
       : spPendingApplyItems.length + '件をBCARTに反映しました';
+    if (res.removedPriceCount > 0) {
+      msg += '（グループから外れた会員の特価 ' + res.removedPriceCount + '件を削除）';
+    }
     if (res.unresolvedCodes && res.unresolvedCodes.length > 0) {
       msg += '（未登録の得意先コード ' + res.unresolvedCodes.length + '件は保留: ' + res.unresolvedCodes.slice(0, 5).join(', ') + (res.unresolvedCodes.length > 5 ? ' 他' : '') + '）';
     }
@@ -4206,7 +4417,9 @@ function confirmMemberSelect() {
   if (removed.length > 0) {
     const names = removed.map(id => memberLabelFor(id)).join('、');
     if (!confirm(removed.length + '名をこのグループから外します。\n\n' + names +
-      '\n\n※ 外した会員のBCART側の特別価格は、次回の「BCARTに反映」で削除されます。\nよろしいですか？')) return;
+      '\n\n※ この操作ではBCARTは変わりません。\n' +
+      '　外した会員のBCART側の特別価格は、次に「BCARTに反映する」を押したときに削除されます\n' +
+      '　（このアプリが反映した記録のある会員のみ）。\nよろしいですか？')) return;
   }
 
   const btn = document.getElementById('memberConfirmBtn');
@@ -4229,8 +4442,16 @@ function confirmMemberSelect() {
     gasPost({ action: 'getSpecialPriceData' }, function(r2) {
       hideBusyOverlay();
       if (btn) { btn.textContent = '確定して保存'; btn.disabled = false; }
-      if (r2.ok) { spData = r2; renderSpContent(); }
-      showToast('会員を保存しました（' + ids.length + '名）　＋' + addedCount + '名 / −' + removed.length + '名');
+      if (r2.ok) {
+        spData = r2;
+        renderSpContent();
+        // 会員が変わった＝反映状況も変わるので取り直す
+        if (spSubview === 'settings' && spSelectedGroupId) loadGroupViewInfo(spSelectedGroupId);
+      }
+      const changed = addedCount > 0 || removed.length > 0;
+      showToast('会員を保存しました（' + ids.length + '名）　＋' + addedCount + '名 / −' + removed.length + '名' +
+        (changed ? '　⚠️ BCARTにはまだ反映されていません。「💎 BCARTに反映する」を押してください' : ''),
+        changed ? 'warn' : false);
     });
   });
 }
