@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>受付スキャン | ビューフェス2026</title>
+
+<!-- jsQR（QRコード専用エンジン。iPhone Safariでも動作）。
+     booth.html / serial-apps と同じ版・同じSRIハッシュ。読めなくても受付番号の手入力で運用できる。 -->
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"
+        integrity="sha384-b5Ya4Bq3qCyz39m2ISh+4DxjAIljdeFwK/BsXLuj9gugaNwAcj/ia15fxNZL9Nlx"
+        crossorigin="anonymous"></script>
+<style>
+  :root {
+    --main: #5BC8E8; --main-dark: #10617c; --border: #e5e7eb;
+    --ok: #059669; --warn: #d97706; --error: #dc2626; --bg: #f7f9fb;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; background: var(--bg); color: #222;
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+    font-size: 16px; line-height: 1.6; padding-bottom: 40px;
+  }
+  header {
+    background: var(--main-dark); color: #fff; padding: 10px 14px;
+    position: sticky; top: 0; z-index: 20;
+  }
+  .hTitle { font-size: 16px; font-weight: bold; }
+  .hSub   { font-size: 12px; opacity: .85; }
+  .statusBar {
+    display: flex; gap: 6px; padding: 8px 10px; background: #fff;
+    border-bottom: 1px solid var(--border); position: sticky; top: 54px; z-index: 19;
+    font-size: 13px;
+  }
+  .stat { flex: 1; text-align: center; border-radius: 8px; padding: 6px 4px; background: #f3f4f6; }
+  .stat b { display: block; font-size: 17px; line-height: 1.3; }
+  .stat.wait.on { background: #fff7ed; color: #b45309; }
+  .stat.net.off { background: #fef2f2; color: var(--error); }
+
+  main { padding: 12px; max-width: 640px; margin: 0 auto; }
+  .card {
+    background: #fff; border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px; margin-bottom: 12px;
+  }
+  h2 { font-size: 15px; margin: 0 0 10px; color: var(--main-dark); }
+  button {
+    font-family: inherit; font-size: 16px; border-radius: 10px; border: 1px solid var(--main-dark);
+    background: var(--main-dark); color: #fff; padding: 12px 16px; cursor: pointer;
+  }
+  button.ghost  { background: #fff; color: var(--main-dark); }
+  button.danger { background: #fff; color: var(--error); border-color: var(--error); }
+  button:disabled { opacity: .45; cursor: default; }
+  .btnRow { display: flex; gap: 10px; }
+  .btnRow button { flex: 1; }
+  .bigBtn { width: 100%; font-size: 20px; padding: 20px 16px; font-weight: bold; }
+
+  input[type="text"] {
+    font-family: inherit; font-size: 18px; padding: 12px; width: 100%;
+    border: 1px solid var(--border); border-radius: 10px;
+  }
+  .hint { font-size: 12px; color: #666; margin-top: 6px; }
+  .err  { color: var(--error); font-size: 13px; margin-top: 6px; }
+
+  #camWrap { position: relative; background: #000; border-radius: 12px; overflow: hidden; }
+  #cam { width: 100%; display: block; }
+  #camGuide { position: absolute; inset: 12% 12%; border: 3px solid rgba(255,255,255,.85); border-radius: 12px; }
+
+  /* 判定表示（§3-1 の 🟢/🟡/🔴）。受付が離れて見ても色で分かる大きさにする */
+  .verdict { border-radius: 12px; padding: 18px 16px; margin-bottom: 12px; border: 3px solid; }
+  .verdict .vHead { font-size: 15px; font-weight: bold; margin-bottom: 6px; }
+  .verdict .vName { font-size: 30px; font-weight: bold; line-height: 1.25; word-break: break-word; }
+  .verdict .vSalon { font-size: 18px; margin-top: 2px; }
+  .verdict .vMeta { font-size: 13px; margin-top: 8px; opacity: .85; }
+  .verdict.ok    { background: #ecfdf5; border-color: var(--ok);    color: #065f46; }
+  .verdict.dup   { background: #fffbeb; border-color: var(--warn);  color: #92400e; }
+  .verdict.miss  { background: #fef2f2; border-color: var(--error); color: #7f1d1d; }
+  .bandChip {
+    display: inline-block; font-size: 13px; font-weight: bold; border-radius: 999px;
+    padding: 3px 12px; margin-top: 8px; border: 2px solid rgba(0,0,0,.15); background: #fff; color: #222;
+  }
+
+  .recent { font-size: 14px; padding-left: 0; margin: 0; }
+  .recent li {
+    list-style: none; border-bottom: 1px solid var(--border); padding: 9px 0;
+    display: flex; gap: 10px; align-items: flex-start;
+  }
+  .recent li:last-child { border-bottom: none; }
+  .recBody { flex: 1; }
+  .recHead { font-weight: bold; }
+  .recMeta { font-size: 12px; color: #888; }
+  .badge { font-size: 11px; border-radius: 999px; padding: 2px 8px; margin-left: 6px; }
+  .badge.wait { background: #fff7ed; color: #b45309; }
+  .badge.dup  { background: #fef3c7; color: #92400e; }
+  .badge.warn { background: #fef2f2; color: var(--error); }
+
+  .fatal {
+    background: #fef2f2; border: 2px solid var(--error); color: #7f1d1d;
+    border-radius: 12px; padding: 16px; margin: 12px;
+  }
+  .fatal h2 { color: #7f1d1d; }
+  .notice { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  .gate { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin: 12px; }
+  .gate a.btn {
+    display: inline-block; margin-top: 10px; background: var(--main-dark); color: #fff;
+    text-decoration: none; border-radius: 10px; padding: 12px 16px;
+  }
+  footer { text-align: center; font-size: 11px; color: #999; padding: 16px; }
+  textarea { width: 100%; height: 120px; font-size: 12px; font-family: monospace; }
+  details summary { cursor: pointer; color: var(--main-dark); font-size: 14px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hTitle">ビューフェス2026 受付</div>
+  <div class="hSub"><span id="hName">社員用</span> ・ <span id="hVer"></span></div>
+</header>
+
+<div class="statusBar" id="statusBar" style="display:none;">
+  <div class="stat" id="statDone">受付済み<b>0</b></div>
+  <div class="stat wait" id="statWait">送信待ち<b>0</b></div>
+  <div class="stat" id="statRoster">名簿<b>—</b></div>
+  <div class="stat net" id="statNet">通信<b>○</b></div>
+</div>
+
+<!-- 未ログイン・権限なし・保存できない端末のときはこれだけを出す -->
+<div class="gate" id="gateCard" style="display:none;">
+  <div id="gateText"></div>
+  <a class="btn" href="https://beaufield.github.io/beaufield-dev/">ポータルを開く</a>
+</div>
+
+<div id="fatalCard" class="fatal" style="display:none;">
+  <h2 id="fatalTitle"></h2>
+  <div id="fatalBody"></div>
+</div>
+
+<main id="app" style="display:none;">
+
+  <!-- 判定表示（🟢/🟡/🔴）。🔴 常に画面の一番上に出す。受付の人はここしか見ない -->
+  <div id="verdictBox"></div>
+
+  <!-- ① 朝の準備（§3-6）。名簿を取ったら畳んで、受付の邪魔をしない -->
+  <div class="card" id="prepCard">
+    <h2>① 開場前の準備</h2>
+    <div id="prepState" class="notice">
+      この端末にはまだ名簿がありません。<b>開場前に「名簿を取得」を押してください。</b>
+    </div>
+    <details id="prepDetails" open>
+      <summary>名簿の取得・端末の準備</summary>
+      <button class="bigBtn" id="btnRoster" style="margin-top:10px;">名簿を取得</button>
+      <div class="err" id="rosterErr"></div>
+      <div class="hint">
+        🔴 予備の端末も含めて、朝のうちに全台でここまで済ませてください。
+        壊れてから初めて開くと、その時点で電波が細いと名簿を取れません。<br>
+        あわせて「設定 → 画面表示と明るさ → 自動ロック なし」にして、電源に挿してください。
+      </div>
+    </details>
+  </div>
+
+  <!-- ② 受付（名簿を取得したら出る） -->
+  <div id="scanSection" style="display:none;">
+
+    <div class="card">
+      <h2>② 受付</h2>
+      <div id="scanArea" style="display:none;">
+        <div id="camWrap"><video id="cam" muted playsinline></video><div id="camGuide"></div></div>
+        <div class="btnRow" style="margin-top:10px;">
+          <button class="ghost" id="btnStopScan">閉じる</button>
+        </div>
+      </div>
+      <div id="scanErr" class="err"></div>
+
+      <div id="scanButtons">
+        <button class="bigBtn" id="btnScan">QRを読む</button>
+        <div class="btnRow" style="margin-top:10px;">
+          <button class="ghost" id="btnManual">受付番号で検索</button>
+          <button class="ghost" id="btnName">お名前で検索</button>
+        </div>
+      </div>
+
+      <div id="manualArea" style="display:none; margin-top:12px;">
+        <input type="text" id="manualInput" placeholder="F2026-0123 または P-07"
+               autocomplete="off" autocapitalize="off" spellcheck="false">
+        <div class="btnRow" style="margin-top:10px;">
+          <button id="btnManualGo">この番号で受付</button>
+          <button class="ghost" id="btnManualClose">閉じる</button>
+        </div>
+        <div class="hint">QRが出せないお客様はこちら。ハイフンまで入れてください（P-7 でも通ります）。</div>
+      </div>
+
+      <div id="nameArea" style="display:none; margin-top:12px;">
+        <input type="text" id="nameInput" placeholder="お名前・サロン名の一部" autocomplete="off">
+        <div class="btnRow" style="margin-top:10px;">
+          <button class="ghost" id="btnNameClose">閉じる</button>
+        </div>
+        <ul class="recent" id="nameResults"></ul>
+        <div class="hint">名簿の中だけを探します（通信しません）。</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>③ 直近の受付</h2>
+      <ul class="recent" id="recentList"></ul>
+    </div>
+
+    <div class="card">
+      <h2>④ 終了後</h2>
+      <div class="hint" id="wipeHint"></div>
+      <div class="btnRow" style="margin-top:10px;">
+        <button class="ghost" id="btnExport">記録を書き出す</button>
+        <button class="danger" id="btnWipe">データを消去</button>
+      </div>
+      <div class="hint">
+        🔴 この端末には来場者の氏名・サロン名が入っています。終了後は必ず「データを消去」を押してください。
+      </div>
+      <textarea id="exportBox" style="display:none;" readonly></textarea>
+    </div>
+
+    <details class="card">
+      <summary>困ったとき</summary>
+      <div class="hint" style="margin-top:10px;">
+        ・カメラが出ない → 「受付番号で検索」で通せます。受付は止まりません。<br>
+        ・電波が切れた → 受付は続けてください。記録は端末に残り、つながり次第ひとりでに届きます。<br>
+        ・🟡が出た → 別のレーンで入場済みです。お客様に確認してください。<br>
+        ・🔴が出た → 「受付番号で検索」か「お名前で検索」。見つからなければ紙の名簿へ。<br>
+        ・「送信待ち」が減らない → 電波の問題です。<b>データを消去しないでください</b>（消えます）。
+      </div>
+    </details>
+
+  </div>
+</main>
+
+<footer>ビューフェス2026 受付スキャン <span id="fVer"></span></footer>
+
+<script>
+// ============================================================
+// 受付スキャン scan.html
+// 設計: `当日運用_堅牢化設計.md` §3（正本 §5-3 を具体化・上書き）
+//
+// 🔴 この画面が守る3つの構造ルール（設計 §1-2）。直すときは必ずここを読むこと。
+//   R1 表示に必要なものを通信から切り離す
+//      → 名簿は朝1回だけ取り、判定は端末内で完結する。1件あたりの通信はゼロ
+//   R2 書き込みはローカルキューに積み、裏で送る
+//      → 受付の人はサーバーの返事を待たない。記録は localStorage に残り自動再送する
+//   R3 同期通信は「待たされても誰も困らない場面」にだけ置く
+//      → 朝の名簿取得と、30秒ごとの入場済み一覧の2つだけ
+//
+// 🔴 端末に置くのは受付に必要な項目だけ（§3-3）。メール・電話・住所・紹介者は持たない。
+//    予備の私物スマホにも入る前提の設計であり、「ついでに持たせる」をしないこと。
+// 🔴 名簿はあくまでキャッシュ。名簿に無い＝入場不可ではない（当日その場で割り当てた
+//    予備名札は朝の名簿に載らない）。最終的な照合はサーバーが行う。
+// ============================================================
+
+const APP_VERSION = '0.1.0';
+
+// 本番GAS（HTML=GitHub Pages / GAS=版番号固定の分離型。ローカル検証はモックに差し替える）
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
+
+const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
+const SESSION_KEY = 'bf_session';   // ポータルと共通（badges.html と同じ）
+
+const K_DEVICE    = 'bf_scan_device_id';
+const K_ROSTER    = 'bf_scan_roster';
+const K_QUEUE     = 'bf_scan_queue';
+const K_REMOTE    = 'bf_scan_remote';
+const K_EVACUATED = 'bf_scan_evacuated_at';
+
+const FETCH_TIMEOUT_MS = 10000;
+const SEND_BATCH       = 25;                                  // 1回のPOSTで送るチェックイン数
+const BACKOFF_SEC      = [1, 2, 3, 5, 8, 13, 21, 34, 55, 60];
+const PUMP_TICK_MS     = 3000;
+const REMOTE_REFRESH_MS = 30000;                              // §3-1「30秒ごと」
+const VERDICT_HOLD_MS  = 12000;                               // 判定表示を残す時間
+
+// 送っても直らないエラー。これ以上再送しても意味がないので要確認に落とす
+const PERMANENT_ERRORS = ['INVALID_REQUEST', 'NO_CHECKINS'];
+// 認証エラーは「再送しても無駄」だが端末側では直せない。止めずに知らせるだけにする
+const AUTH_ERRORS = ['NO_TOKEN', 'SESSION_INVALID', 'USER_INACTIVE', 'NO_ROLE'];
+
+let roster = null;        // { fetched_at, total, bands, roster:[], spares:[] }
+let byToken = {};         // ticket_token → 名簿エントリ
+let byCode  = {};         // 受付番号(F2026-0123) / 予備番号(P-07) → 名簿エントリ
+let queue   = [];         // 端末のチェックインキュー
+let remote  = [];         // 30秒ごとに取る他端末ぶんの入場済み
+let deviceId = '';
+let sending = false;
+let storageOk = false;
+let authWarning = '';
+let scanStream = null, scanTimer = null, verdictTimer = null;
+
+function el(id) { return document.getElementById(id); }
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function nowStr() {
+  const d = new Date(), p = function (n) { return ('0' + n).slice(-2); };
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' +
+         p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+function hhmm(s) { return String(s || '').slice(11, 16); }
+function uuid() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return 'x' + Date.now().toString(16) + Math.random().toString(16).slice(2, 10);
+}
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+// ------------------------------------------------------------
+// localStorage（§3-1 の設計どおり。IndexedDBは使わない）
+// 🔴 読み書きは必ずここを通す。プライベートブラウズ等では例外が飛ぶ
+// ------------------------------------------------------------
+function lsGet(k, fallback) {
+  try {
+    const raw = localStorage.getItem(k);
+    return raw === null ? fallback : JSON.parse(raw);
+  } catch (e) { return fallback; }
+}
+function lsSet(k, v) {
+  try { localStorage.setItem(k, JSON.stringify(v)); return true; }
+  catch (e) { return false; }
+}
+function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
+
+// 起動時に必ず書き込みテストをする。保存できない端末で受付を始めると記録が消える
+function testStorage() {
+  try {
+    const probe = '__bf_scan_probe__';
+    localStorage.setItem(probe, '1');
+    const ok = localStorage.getItem(probe) === '1';
+    localStorage.removeItem(probe);
+    return ok;
+  } catch (e) { return false; }
+}
+
+function fatal(title, body) {
+  el('fatalTitle').textContent = title;
+  el('fatalBody').innerHTML = body;
+  el('fatalCard').style.display = 'block';
+  el('app').style.display = 'none';
+  el('gateCard').style.display = 'none';
+  el('statusBar').style.display = 'none';
+}
+function showGate(html) {
+  el('gateText').innerHTML = html;
+  el('gateCard').style.display = 'block';
+  el('app').style.display = 'none';
+  el('statusBar').style.display = 'none';
+}
+
+// ------------------------------------------------------------
+// セッション（beaufield-authの共通セッションを読むだけ。発行はポータル側の役目）
+// ------------------------------------------------------------
+function getSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    if (Date.now() > s.expires) return null;
+    return s;
+  } catch (e) { return null; }
+}
+
+const LOGIN_REQUIRED_HTML =
+  'ログインが必要です。ポータルからログインしてください。<br>' +
+  '<span class="hint">🔴 当日の朝、開場前にログインを済ませておいてください。</span>';
+const AUTH_ERROR_HTML = {
+  NO_TOKEN:
+    'ログイン情報がサーバーに届きませんでした。ポータルからログインし直してください。',
+  SESSION_INVALID:
+    'ログインの有効期限が切れています。ポータルからログインし直してください。',
+  USER_INACTIVE:
+    'このアカウントは現在利用停止になっています（前島さんに連絡してください）。',
+  NO_ROLE:
+    '<b>ログインは有効ですが、この画面を使う権限がありません。</b><br>' +
+    '権限管理アプリで <code>beaufes</code> を <code>user</code> 以上にしてください。',
+  AUTH_TRANSIENT:
+    'ログインの確認が一時的にできませんでした。少し待ってからもう一度お試しください。'
+};
+
+// ------------------------------------------------------------
+// GASへのPOST（全画面共通のルール・設計 §5）
+// 🔴 res.ok を見てから text() を JSON.parse する。GASは失敗時にHTMLを返すことがある
+// ------------------------------------------------------------
+async function postJson(action, payload) {
+  const ctrl  = new AbortController();
+  const timer = setTimeout(function () { ctrl.abort(); }, FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      body: new URLSearchParams({ action: action, data: JSON.stringify(payload || {}) }),
+      redirect: 'follow',
+      signal: ctrl.signal
+    });
+    if (!res.ok) throw new Error('HTTP_' + res.status);
+    const text = await res.text();
+    try { return JSON.parse(text); }
+    catch (e) { throw new Error('NON_JSON'); }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function withSession(payload) {
+  const s = getSession();
+  const p = payload || {};
+  p.session_token = (s && s.token) || '';
+  return p;
+}
+
+// ------------------------------------------------------------
+// 名簿（朝1回）
+// ------------------------------------------------------------
+function indexRoster() {
+  byToken = {}; byCode = {};
+  if (!roster) return;
+  (roster.roster || []).forEach(function (r) {
+    if (r.ticket_token) byToken[r.ticket_token] = r;
+    if (r.app_id) byCode[r.app_id] = r;
+  });
+  // 予備名札は「割当済み」だけが来る。割当先の申込行に紐づけて同じ人として扱う
+  (roster.spares || []).forEach(function (sp) {
+    const owner = byCode[sp.app_id];
+    if (!owner) return;
+    if (sp.ticket_token) byToken[sp.ticket_token] = owner;
+    if (sp.spare_no) byCode[sp.spare_no] = owner;
+  });
+}
+
+async function fetchRoster() {
+  el('rosterErr').textContent = '';
+  el('btnRoster').disabled = true;
+  el('btnRoster').textContent = '取得しています…';
+  try {
+    const json = await postJson('scanRoster', withSession({}));
+    if (!json || json.success !== true) {
+      const err = String((json || {}).error || 'UNKNOWN');
+      if (AUTH_ERROR_HTML[err]) { showGate(AUTH_ERROR_HTML[err]); return; }
+      el('rosterErr').textContent = '名簿を取得できませんでした（' + err + '）。もう一度お試しください。';
+      return;
+    }
+    roster = json.data;
+    if (!lsSet(K_ROSTER, roster)) {
+      el('rosterErr').textContent = 'この端末に名簿を保存できませんでした。別の端末をお使いください。';
+      return;
+    }
+    indexRoster();
+    renderPrep();
+    render();
+    // 名簿を取った直後に他端末ぶんも取っておく（開場前に別レーンが先に始めていることがある）
+    refreshRemote();
+    alert(roster.total + '件を取得しました（' + hhmm(roster.fetched_at) + '時点）');
+  } catch (e) {
+    el('rosterErr').textContent = '通信できませんでした（' + ((e && e.message) || 'NETWORK') + '）。' +
+      '電波を確認してもう一度お試しください。';
+  } finally {
+    el('btnRoster').disabled = false;
+    el('btnRoster').textContent = roster ? '名簿を取り直す' : '名簿を取得';
+  }
+}
+
+function renderPrep() {
+  const box = el('prepState');
+  if (!roster) {
+    box.className = 'notice';
+    box.innerHTML = 'この端末にはまだ名簿がありません。<b>開場前に「名簿を取得」を押してください。</b>';
+    el('prepDetails').open = true;
+    el('scanSection').style.display = 'none';
+    return;
+  }
+  box.className = 'notice';
+  box.style.background = '#ecfdf5';
+  box.style.borderColor = '#6ee7b7';
+  box.innerHTML = '✅ <b>' + roster.total + '件</b>を取得済みです（' + esc(roster.fetched_at) + ' 時点）。' +
+    (roster.skipped_no_token ? '<br><span class="hint">※ 入場トークンが無い申込が ' +
+      roster.skipped_no_token + '件あります（QRでは来られません。受付番号で検索してください）</span>' : '');
+  el('btnRoster').textContent = '名簿を取り直す';
+  el('prepDetails').open = false;   // 開場後は畳む。受付の判定表示を画面の上に出したい
+  el('scanSection').style.display = 'block';
+}
+
+// ------------------------------------------------------------
+// 本人解決（端末内・通信ゼロ）
+// 🔴 booth と同じゆらぎ補正（F2026-123 → F2026-0123 / P-7 → P-07）
+// ------------------------------------------------------------
+function normCode(raw) {
+  let s = String(raw || '').trim().normalize('NFKC').toUpperCase().replace(/\s+/g, '');
+  let m = s.match(/^(F\d{4}-)(\d{1,4})$/);
+  if (m) return m[1] + ('0000' + m[2]).slice(-4);
+  m = s.match(/^(P-)(\d{1,2})$/);
+  if (m) return m[1] + ('00' + m[2]).slice(-2);
+  return s;
+}
+
+// 名札QRは pass.html?t=<ticket_token>&n=<氏名>（badges.html v0.1.3）。
+// 🔴 scan.html は t= だけ見る。n= は名簿と食い違ったときに名簿を勝たせるため使わない
+function parseBadgeQr(text) {
+  try {
+    const u = new URL(String(text), location.href);
+    const t = u.searchParams.get('t') || '';
+    return t ? { t: t } : null;
+  } catch (e) {
+    const m = String(text).match(/[?&]t=([^&\s]+)/);
+    return m ? { t: decodeURIComponent(m[1]) } : null;
+  }
+}
+
+// 人のキー。app_id が取れたらそれ。予備名札の割当で ticket_token は上書きされうるため
+// （booth実装設計_確定版.md §2-7）、token だけで見ると同一人物が2人に割れる
+function subjectKey(appId, raw) {
+  const a = String(appId || '').trim();
+  if (a) return 'a:' + a;
+  const r = String(raw || '').trim();
+  return r ? 'r:' + r : '';
+}
+
+// 重複入場の判定（§3-4）: 自端末のキュー ∪ 他端末ぶん の和集合で見る
+function findPriorCheckin(key) {
+  if (!key) return null;
+  let best = null;
+  queue.forEach(function (q) {
+    if (q.key !== key) return;
+    if (!best || String(q.checked_in_at) < String(best.checked_in_at)) {
+      best = { checked_in_at: q.checked_in_at, device: q.device_id, local: true };
+    }
+  });
+  remote.forEach(function (r) {
+    if (r.key !== key) return;
+    if (!best || String(r.checked_at) < String(best.checked_in_at)) {
+      best = { checked_in_at: r.checked_at, device: r.device, local: false };
+    }
+  });
+  return best;
+}
+
+// ------------------------------------------------------------
+// 受付する（QR・受付番号・名前検索から呼ばれる唯一の入口）
+// ------------------------------------------------------------
+function checkIn(input) {
+  // input: { ticket_token } または { entry_code } または { entry: 名簿エントリ }
+  let entry = input.entry || null;
+  let tt = String(input.ticket_token || '');
+  let ec = input.entry_code ? normCode(input.entry_code) : '';
+
+  if (!entry) entry = tt ? (byToken[tt] || null) : (ec ? (byCode[ec] || null) : null);
+  if (entry && !tt && !ec) ec = entry.app_id;   // 名前検索から来た場合
+
+  const key   = subjectKey(entry ? entry.app_id : '', tt || ec);
+  const prior = findPriorCheckin(key);
+
+  const item = {
+    checkin_id:    uuid(),                 // 🔴 冪等キー。再送しても行は増えない
+    ticket_token:  tt,
+    entry_code:    tt ? '' : ec,
+    checked_in_at: nowStr(),               // 🔴 端末側の時刻（§3-5）。送信時刻ではない
+    device_id:     deviceId,
+    note:          entry ? '' : 'local_unknown',
+    key:           key,
+    app_id:        entry ? entry.app_id : '',
+    staff_name:    entry ? entry.staff_name : '',
+    salon_name:    entry ? entry.salon_name : '',
+    business_type: entry ? entry.business_type : '',
+    band:          entry ? entry.band : '',
+    state:         'queued',
+    attempts:      0,
+    next_attempt_at: 0,
+    last_error:    ''
+  };
+
+  queue.push(item);
+  // 🔴 保存できたことを確認してから「受付しました」と出す。保存が失敗したら受付は成立していない
+  if (!lsSet(K_QUEUE, queue)) {
+    queue.pop();
+    showVerdict('miss', '保存できませんでした', {
+      lead: 'この端末に記録できませんでした',
+      body: '紙の名簿でお通しし、この端末は使わないでください。'
+    });
+    return;
+  }
+
+  showVerdict(prior ? 'dup' : (entry ? 'ok' : 'miss'), '', { item: item, prior: prior });
+  render();
+  pump();
+}
+
+function showVerdict(kind, title, opt) {
+  const o = opt || {};
+  const item = o.item || null;
+  const prior = o.prior || null;
+  let html = '';
+
+  if (kind === 'ok') {
+    html = '<div class="verdict ok">' +
+      '<div class="vHead">🟢 受付しました</div>' +
+      '<div class="vName">' + esc(item.staff_name || '（お名前なし）') + ' 様</div>' +
+      '<div class="vSalon">' + esc(item.salon_name) + '</div>' +
+      bandChip(item) +
+      '<div class="vMeta">' + esc(item.app_id) + ' ・ ' + hhmm(item.checked_in_at) + '</div>' +
+      '</div>';
+  } else if (kind === 'dup') {
+    html = '<div class="verdict dup">' +
+      '<div class="vHead">🟡 すでに入場済みです</div>' +
+      '<div class="vName">' + esc(item.staff_name || '（お名前なし）') + ' 様</div>' +
+      '<div class="vSalon">' + esc(item.salon_name) + '</div>' +
+      bandChip(item) +
+      '<div class="vMeta">' + esc(hhmm(prior.checked_in_at)) + ' に入場済み' +
+      (prior.local ? '（この端末）' : '（別の受付）') + '<br>' +
+      'お客様にご確認ください。今回の分も記録は残ります。</div>' +
+      '</div>';
+  } else if (item) {
+    // 名簿に無い。🔴 ここで拒否しない。当日その場で割り当てた予備名札は朝の名簿に載らない
+    html = '<div class="verdict miss">' +
+      '<div class="vHead">🔴 名簿に見つかりません</div>' +
+      '<div class="vName" style="font-size:22px;">記録はしました</div>' +
+      '<div class="vMeta">' +
+      '読み取った値: ' + esc(item.ticket_token || item.entry_code) + '<br>' +
+      'この端末の名簿には無い方です（当日発行の予備名札などは朝の名簿に載りません）。<br>' +
+      '<b>「受付番号で検索」または紙の名簿でご確認ください。</b>送信後にサーバー側で照合されます。' +
+      '</div></div>';
+  } else {
+    html = '<div class="verdict miss">' +
+      '<div class="vHead">🔴 ' + esc(title) + '</div>' +
+      '<div class="vMeta">' + esc(o.lead || '') + '<br>' + esc(o.body || '') + '</div></div>';
+  }
+
+  el('verdictBox').innerHTML = html;
+  if (verdictTimer) clearTimeout(verdictTimer);
+  verdictTimer = setTimeout(function () { el('verdictBox').innerHTML = ''; }, VERDICT_HOLD_MS);
+  try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) { window.scrollTo(0, 0); }
+}
+
+function bandChip(item) {
+  if (!item.business_type) return '';
+  const bands = (roster && roster.bands) || {};
+  const b = bands[item.band] || {};
+  const color = b.color || '#e5e7eb';
+  return '<div class="bandChip" style="border-color:' + esc(color) + ';">' +
+         '名札 ' + esc(item.band || '?') + '（' + esc(item.business_type) + '）</div>';
+}
+
+// ------------------------------------------------------------
+// 送信ループ（🔴 直列。まとめて送るが、1リクエストずつ順番に）
+// ------------------------------------------------------------
+function backoffMs(attempts) {
+  const base = BACKOFF_SEC[Math.min(attempts, BACKOFF_SEC.length - 1)] * 1000;
+  return base + Math.floor(base * 0.3 * Math.random());
+}
+
+async function pump() {
+  if (sending) return;
+  sending = true;
+  try {
+    for (;;) {
+      const now = Date.now();
+      const due = queue.filter(function (q) {
+        return q.state === 'queued' && (q.next_attempt_at || 0) <= now;
+      }).slice(0, SEND_BATCH);
+      if (!due.length) break;
+      const ok = await sendBatch(due);
+      render();
+      if (!ok) break;   // 失敗したら次のタイマーに任せる。畳みかけない
+    }
+  } catch (e) {
+    // ここで落ちても次のタイマーで再開する
+  } finally {
+    sending = false;
+  }
+}
+
+async function sendBatch(batch) {
+  batch.forEach(function (q) { q.attempts = (q.attempts || 0) + 1; });
+
+  const payload = withSession({
+    checkins: batch.map(function (q) {
+      return {
+        checkin_id: q.checkin_id, ticket_token: q.ticket_token, entry_code: q.entry_code,
+        checked_in_at: q.checked_in_at, device_id: q.device_id, note: q.note
+      };
+    })
+  });
+
+  let json = null, transportError = '';
+  try { json = await postJson('scanCheckin', payload); }
+  catch (e) { transportError = (e && e.message) ? e.message : 'NETWORK'; }
+
+  if (transportError || !json) {
+    // 🔴 配送が失われただけでサーバーは書けているかもしれない（調査レポート §3-2）。
+    //    checkin_id が冪等キーなので、そのまま再送してよい
+    batch.forEach(function (q) {
+      q.last_error = transportError || 'EMPTY';
+      q.next_attempt_at = Date.now() + backoffMs(q.attempts);
+    });
+    lsSet(K_QUEUE, queue);
+    return false;
+  }
+
+  if (json.success) {
+    const results = (json.data && json.data.results) || [];
+    const byId = {};
+    results.forEach(function (r) { byId[r.checkin_id] = r; });
+    authWarning = '';
+    batch.forEach(function (q) {
+      const r = byId[q.checkin_id];
+      if (!r) { q.next_attempt_at = Date.now() + backoffMs(q.attempts); return; }
+      q.state = 'sent';
+      q.last_error = '';
+      q.server_app_id = r.app_id || '';
+      q.resolve_status = r.resolve_status || '';
+      q.already_checked_in = !!r.already_checked_in;
+      // 🔴 サーバーが解決できた app_id で端末側のキーを直す。
+      //    端末の名簿はキャッシュにすぎず、サーバーの答えを上書きさせない
+      if (r.app_id && !q.app_id) {
+        q.app_id = r.app_id;
+        q.key = subjectKey(r.app_id, '');
+      }
+    });
+    lsSet(K_QUEUE, queue);
+    return true;
+  }
+
+  const err = String(json.error || 'UNKNOWN');
+  if (AUTH_ERRORS.indexOf(err) >= 0) {
+    // 🔴 受付は止めない。記録はキューに残り続ける。ログインし直せばまとめて届く
+    authWarning = AUTH_ERROR_HTML[err] || 'ログインし直してください。';
+    batch.forEach(function (q) {
+      q.last_error = err;
+      q.next_attempt_at = Date.now() + 30000;
+    });
+    lsSet(K_QUEUE, queue);
+    return false;
+  }
+  if (PERMANENT_ERRORS.indexOf(err) >= 0) {
+    batch.forEach(function (q) { q.state = 'failed_permanent'; q.last_error = err; });
+    lsSet(K_QUEUE, queue);
+    return true;
+  }
+  if (err === 'LOCK_BUSY') batch.forEach(function (q) { q.attempts++; });
+  batch.forEach(function (q) {
+    q.last_error = err;
+    q.next_attempt_at = Date.now() + backoffMs(q.attempts);
+  });
+  lsSet(K_QUEUE, queue);
+  return false;
+}
+
+// 30秒ごとの裏更新（§3-1）。取れなくても受付は止まらない
+async function refreshRemote() {
+  try {
+    const json = await postJson('scanCheckedIn', withSession({}));
+    if (json && json.success) {
+      remote = (json.data.entries || []);
+      lsSet(K_REMOTE, remote);
+      authWarning = '';
+      render();
+    } else if (json && AUTH_ERRORS.indexOf(String(json.error)) >= 0) {
+      authWarning = AUTH_ERROR_HTML[String(json.error)] || 'ログインし直してください。';
+      render();
+    }
+  } catch (e) { /* オフラインなら自端末ぶんだけで判定する */ }
+}
+
+// ------------------------------------------------------------
+// 表示
+// ------------------------------------------------------------
+function counts() {
+  let wait = 0, warn = 0;
+  const keys = {};
+  queue.forEach(function (q) {
+    if (q.state === 'queued') wait++;
+    if (q.state === 'failed_permanent') warn++;
+    if (q.key) keys[q.key] = true;
+  });
+  remote.forEach(function (r) { if (r.key) keys[r.key] = true; });
+  return { wait: wait, warn: warn, done: Object.keys(keys).length };
+}
+
+function render() {
+  const c = counts();
+  el('statDone').innerHTML   = '受付済み<b>' + c.done + '</b>';
+  el('statWait').innerHTML   = '送信待ち<b>' + (c.wait + c.warn) + '</b>';
+  el('statWait').classList.toggle('on', (c.wait + c.warn) > 0);
+  el('statRoster').innerHTML = '名簿<b>' + (roster ? roster.total : '—') + '</b>';
+  const online = navigator.onLine !== false;
+  el('statNet').innerHTML = '通信<b>' + (online ? '○' : '×') + '</b>';
+  el('statNet').classList.toggle('off', !online);
+
+  // 消去ガード: 送信待ちが残っているうちは押せない。書き出せば押せる
+  const evacuated = lsGet(K_EVACUATED, '');
+  const canWipe = ((c.wait + c.warn) === 0) || !!evacuated;
+  el('btnWipe').disabled = !canWipe;
+  el('wipeHint').textContent = canWipe
+    ? (evacuated ? '書き出し済みです。社員の確認のうえ消去してください。'
+                 : '送信待ちは0件です。社員の確認のうえ消去してください。')
+    : '送信待ちが0件になるか、書き出しを済ませると消去できます（' + (c.wait + c.warn) + '件が未送信）。';
+
+  renderAuthWarning();
+  renderRecent();
+}
+
+function renderAuthWarning() {
+  let box = el('authWarn');
+  if (!authWarning) { if (box) box.remove(); return; }
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'authWarn';
+    box.className = 'notice';
+    el('scanSection').insertBefore(box, el('scanSection').firstChild);
+  }
+  box.innerHTML = '⚠ 記録はこの端末に残っていますが、まだサーバーへ届いていません。<br>' +
+    authWarning + '<br><span class="hint">受付はこのまま続けて構いません。' +
+    '<b>データを消去しないでください。</b></span>';
+}
+
+function renderRecent() {
+  const rows = queue.slice().sort(function (a, b) {
+    return a.checked_in_at < b.checked_in_at ? 1 : -1;
+  }).slice(0, 12);
+  const box = el('recentList');
+  if (!rows.length) {
+    box.innerHTML = '<li><span class="recMeta">まだ受付はありません。</span></li>';
+    return;
+  }
+  box.innerHTML = rows.map(function (q) {
+    let badge = '';
+    if (q.state === 'queued') badge = '<span class="badge wait">送信待ち</span>';
+    else if (q.state === 'failed_permanent') badge = '<span class="badge warn">要確認</span>';
+    if (q.already_checked_in) badge += '<span class="badge dup">重複</span>';
+    const name = q.staff_name || (q.server_app_id ? '（照合済み ' + q.server_app_id + '）' : '（名簿になし）');
+    return '<li><div class="recBody">' +
+      '<div class="recHead">' + esc(name) + badge + '</div>' +
+      '<div class="recMeta">' + esc(q.salon_name || q.ticket_token || q.entry_code) + ' ・ ' +
+      esc(hhmm(q.checked_in_at)) + '</div>' +
+      '</div></li>';
+  }).join('');
+}
+
+// ------------------------------------------------------------
+// QRスキャン（BarcodeDetector優先・無ければ jsQR）
+// ------------------------------------------------------------
+async function startScan() {
+  el('manualArea').style.display = 'none';
+  el('nameArea').style.display = 'none';
+  el('scanErr').textContent = '';
+  el('scanArea').style.display = 'block';
+  el('scanButtons').style.display = 'none';
+
+  const video = el('cam');
+  try {
+    scanStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } }, audio: false
+    });
+  } catch (e) {
+    el('scanErr').innerHTML = 'カメラを使えませんでした。<b>「受付番号で検索」</b>でお通しください。' +
+      '<span class="hint">（カメラの利用を「許可」にすると使えます）</span>';
+    stopScan();
+    return;
+  }
+  video.srcObject = scanStream;
+  video.setAttribute('playsinline', 'true');
+  await video.play();
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  let detector = null;
+  if (window.BarcodeDetector) {
+    try { detector = new BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { detector = null; }
+  }
+
+  scanTimer = setInterval(async function () {
+    if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
+    let text = '';
+    try {
+      if (detector) {
+        const found = await detector.detect(video);
+        if (found && found.length) text = found[0].rawValue || '';
+      } else if (window.jsQR) {
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const r = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+        if (r) text = r.data || '';
+      } else {
+        el('scanErr').innerHTML = 'QRの読み取り部品を読み込めませんでした。' +
+          '<b>「受付番号で検索」</b>をお使いください。';
+        stopScan();
+        return;
+      }
+    } catch (e) { return; }
+    if (!text) return;
+    const parsed = parseBadgeQr(text);
+    if (!parsed) { el('scanErr').textContent = 'この名札のQRではないようです。もう一度お試しください。'; return; }
+    stopScan();
+    checkIn({ ticket_token: parsed.t });
+  }, 250);
+}
+
+function stopScan() {
+  if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
+  if (scanStream) { scanStream.getTracks().forEach(function (t) { t.stop(); }); scanStream = null; }
+  el('cam').srcObject = null;
+  el('scanArea').style.display = 'none';
+  el('scanButtons').style.display = 'block';
+}
+
+// ------------------------------------------------------------
+// 名前検索（名簿の中だけ・通信しない）
+// ------------------------------------------------------------
+function searchByName(q) {
+  const box = el('nameResults');
+  const s = String(q || '').trim().normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+  if (!s || !roster) { box.innerHTML = ''; return; }
+  const hits = (roster.roster || []).filter(function (r) {
+    const hay = (String(r.staff_name) + String(r.salon_name) + String(r.app_id))
+      .normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+    return hay.indexOf(s) >= 0;
+  }).slice(0, 12);
+
+  if (!hits.length) { box.innerHTML = '<li><span class="recMeta">見つかりませんでした。</span></li>'; return; }
+  box.innerHTML = hits.map(function (r) {
+    return '<li><div class="recBody">' +
+      '<div class="recHead">' + esc(r.staff_name) + '</div>' +
+      '<div class="recMeta">' + esc(r.salon_name) + ' ・ ' + esc(r.app_id) + '</div>' +
+      '</div><button data-pick="' + esc(r.app_id) + '">受付</button></li>';
+  }).join('');
+  box.querySelectorAll('[data-pick]').forEach(function (b) {
+    b.onclick = function () {
+      const entry = byCode[b.getAttribute('data-pick')];
+      if (!entry) return;
+      el('nameArea').style.display = 'none';
+      el('nameInput').value = '';
+      box.innerHTML = '';
+      checkIn({ entry: entry });
+    };
+  });
+}
+
+// ------------------------------------------------------------
+// 終了後（書き出し・消去）
+// ------------------------------------------------------------
+function csvCell(v) { return '"' + String(v == null ? '' : v).split('"').join('""') + '"'; }
+function stamp() { return nowStr().replace(/[-: ]/g, '').slice(0, 12); }
+function download(name, text, mime) {
+  try {
+    const url = URL.createObjectURL(new Blob([text], { type: mime + ';charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = name; document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 1000);
+  } catch (e) { /* 保存できない端末では画面のテキストを使う */ }
+}
+
+function exportQueue() {
+  const pending = queue.filter(function (q) { return q.state !== 'sent'; });
+  // 🔴 scanCheckin にそのまま投入できる形（checkins 配列）で出す
+  const json = JSON.stringify({
+    exported_at: nowStr(), device_id: deviceId, pending: pending.length,
+    checkins: pending.map(function (q) {
+      return {
+        checkin_id: q.checkin_id, ticket_token: q.ticket_token, entry_code: q.entry_code,
+        checked_in_at: q.checked_in_at, device_id: q.device_id, note: q.note
+      };
+    })
+  }, null, 2);
+
+  const lines = [['checkin_id', 'app_id', 'ticket_token', 'entry_code', 'checked_in_at',
+                  'state', 'last_error'].map(csvCell).join(',')];
+  pending.forEach(function (q) {
+    lines.push([q.checkin_id, q.app_id, q.ticket_token, q.entry_code, q.checked_in_at,
+                q.state, q.last_error].map(csvCell).join(','));
+  });
+
+  download('beaufes_scan_' + deviceId.slice(0, 6) + '_' + stamp() + '.json', json, 'application/json');
+  download('beaufes_scan_' + deviceId.slice(0, 6) + '_' + stamp() + '.csv',
+           '﻿' + lines.join('\r\n'), 'text/csv');
+  const box = el('exportBox');
+  box.style.display = 'block';
+  box.value = json;
+  box.select();
+
+  lsSet(K_EVACUATED, nowStr());
+  render();
+  alert('書き出しました（未送信 ' + pending.length + '件）。\nこの画面のテキストを社員にお渡しいただいても構いません。');
+}
+
+function wipeAll() {
+  const c = counts();
+  if (!confirm('この端末の名簿と記録をすべて消去します。\n' +
+               '未送信 ' + (c.wait + c.warn) + '件\n\n社員の確認は済んでいますか？')) return;
+  lsDel(K_ROSTER); lsDel(K_QUEUE); lsDel(K_REMOTE); lsDel(K_EVACUATED);
+  roster = null; queue = []; remote = [];
+  byToken = {}; byCode = {};
+  el('verdictBox').innerHTML = '';
+  el('exportBox').style.display = 'none';
+  renderPrep();
+  render();
+  alert('消去しました。ご協力ありがとうございました。');
+}
+
+// ------------------------------------------------------------
+// 起動
+// ------------------------------------------------------------
+function wireUi() {
+  el('btnRoster').onclick = fetchRoster;
+  el('btnScan').onclick = startScan;
+  el('btnStopScan').onclick = stopScan;
+
+  el('btnManual').onclick = function () {
+    el('manualArea').style.display = 'block';
+    el('nameArea').style.display = 'none';
+    el('manualInput').focus();
+  };
+  el('btnManualClose').onclick = function () { el('manualArea').style.display = 'none'; };
+  el('btnManualGo').onclick = function () {
+    const v = el('manualInput').value;
+    if (!String(v).trim()) return;
+    el('manualInput').value = '';
+    el('manualArea').style.display = 'none';
+    checkIn({ entry_code: v });
+  };
+  el('manualInput').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); el('btnManualGo').click(); }
+  });
+
+  el('btnName').onclick = function () {
+    el('nameArea').style.display = 'block';
+    el('manualArea').style.display = 'none';
+    el('nameInput').focus();
+  };
+  el('btnNameClose').onclick = function () {
+    el('nameArea').style.display = 'none';
+    el('nameResults').innerHTML = '';
+  };
+  el('nameInput').addEventListener('input', function () { searchByName(el('nameInput').value); });
+
+  el('btnExport').onclick = exportQueue;
+  el('btnWipe').onclick = wipeAll;
+
+  window.addEventListener('online', function () { render(); pump(); });
+  window.addEventListener('offline', render);
+}
+
+async function boot() {
+  el('hVer').textContent = 'v' + APP_VERSION;
+  el('fVer').textContent = 'v' + APP_VERSION;
+
+  storageOk = testStorage();
+  if (!storageOk) {
+    fatal('この端末では受付できません',
+      'ブラウザがデータを保存できない設定になっています（プライベートブラウズなど）。<br>' +
+      'このまま使うと<b>受付の記録が消えます</b>。<br><br>' +
+      '通常のブラウザで開き直すか、別の端末をお使いください。');
+    return;
+  }
+
+  const session = getSession();
+  if (!session) { showGate(LOGIN_REQUIRED_HTML); return; }
+  el('hName').textContent = (session.name || session.user_id || '社員用');
+
+  deviceId = lsGet(K_DEVICE, '');
+  if (!deviceId) { deviceId = uuid(); lsSet(K_DEVICE, deviceId); }
+
+  roster = lsGet(K_ROSTER, null);
+  queue  = lsGet(K_QUEUE, []) || [];
+  remote = lsGet(K_REMOTE, []) || [];
+  indexRoster();
+
+  el('statusBar').style.display = 'flex';
+  el('app').style.display = 'block';
+  wireUi();
+  renderPrep();
+  render();
+
+  // 裏の仕事: 送信キューと入場済み一覧
+  setInterval(pump, PUMP_TICK_MS);
+  setInterval(function () { if (roster) refreshRemote(); }, REMOTE_REFRESH_MS);
+  pump();
+  if (roster) refreshRemote();
+}
+
+boot();
+</script>
+</body>
+</html>
