@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.25.0';
+const VERSION  = '0.26.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -438,6 +438,10 @@ function doPost(e) {
       case 'boothResolveUnresolved': return _jsonResponse(boothResolveUnresolved(data));
       case 'boothExportCsv':         return _jsonResponse(boothExportCsv(data));
       case 'boothImportQueue':       return _jsonResponse(boothImportQueue(data));
+      // 🆕 v0.26.0 受付 scan.html 用（当日運用_堅牢化設計.md §3）。🔒 3本とも認証必須（_requireSession）
+      case 'scanRoster':             return _jsonResponse(scanRoster(data));
+      case 'scanCheckin':            return _jsonResponse(scanCheckin(data));
+      case 'scanCheckedIn':          return _jsonResponse(scanCheckedIn(data));
       default:                  return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
@@ -4136,4 +4140,270 @@ function boothImportQueue(data) {
   }
 
   return _ok({ total: entries.length, ok: okCount, ng: ngCount, results: results });
+}
+
+// ============================================================
+// 🆕 v0.26.0（2026-09-05）受付 scan.html 用（`当日運用_堅牢化設計.md` §3）
+//
+// 設計の要点（この3本を実装する理由）:
+//   R1 表示に必要なものを通信から切り離す → 朝1回 scanRoster で名簿を端末に落とす
+//   R2 書き込みはローカルキューに積み、裏で送る → scanCheckin は端末のキューから届く
+//   R3 同期通信は待たされても誰も困らない場面にだけ置く → scanCheckedIn は30秒ごとの裏更新
+//
+// 🔒 3本とも認証必須（_requireSession）。名簿は氏名・サロン名を含むため公開しない。
+// 🔴 端末に渡すのは受付に必要な項目だけ（§3-3）。メール・電話・住所・紹介者は返さない。
+//    端末紛失時の被害を減らすための設計であり、「ついでに返す」をしないこと。
+// 🔴 本人解決は booth と同じ _boothResolveByToken / _boothResolveByCode を使う。
+//    受付とブースで解決規則がずれると、同じ名札が画面ごとに違う人になる。
+// ============================================================
+
+const SCAN_LOCK_WAIT_MS = 25000; // boothと同じ待ち方（実測: 30件同時でもLOCK_BUSYゼロ）
+const SCAN_MAX_BATCH    = 50;    // 1リクエストで受け取るチェックインの上限
+
+// checkins シートの列（1始まり・setupSheets が作るヘッダーと1対1）
+const CK = {
+  checkin_id: 1, app_id: 2, ticket_token: 3, session_id: 4,
+  checked_at: 5, staff_user_id: 6, device: 7, note: 8
+};
+const CHECKIN_COLS = 8;
+
+// checkins シートが無ければヘッダー付きで作成する（_ensureSpareBadgesSheet と同じ形）。
+// 🔴 setupSheets() と同じヘッダーにすること。片方だけ直すと列がずれる。
+function _ensureCheckinsSheet(ss) {
+  let sh = ss.getSheetByName(SHEET_CHECKINS);
+  if (!sh) {
+    sh = ss.insertSheet(SHEET_CHECKINS);
+    sh.getRange(1, 1, 1, CHECKIN_COLS).setValues([[
+      'checkin_id', 'app_id', 'ticket_token', 'session_id',
+      'checked_at', 'staff_user_id', 'device', 'note'
+    ]]);
+    sh.setFrozenRows(1);
+    Logger.log('checkinsシート作成完了');
+  }
+  return sh;
+}
+
+// ------------------------------------------------------------
+// 名簿取得（doPost: action=scanRoster）。当日朝に各端末で1回だけ叩く。
+// data: { session_token }
+// ------------------------------------------------------------
+function scanRoster(data) {
+  const auth = _requireSession(data);
+  if (!auth.ok) return _err(auth.error);
+  _checkProps();
+
+  const ss   = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const rows = _getSheet(ss, SHEET_APPLICATIONS).getDataRange().getValues();
+  const cfg  = _getConfig();
+
+  let skippedNoToken = 0;
+  const roster = [];
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][17]) !== 'confirmed') continue; // status（listBadges と同じ絞り込み）
+
+    const token = String(rows[i][16] || '').trim();
+    if (!token) { skippedNoToken++; continue; } // ticket_tokenが空＝データ異常。QRで来られない
+
+    const businessType = String(rows[i][20] || '');
+    roster.push({
+      app_id:        String(rows[i][0]),
+      ticket_token:  token,
+      staff_name:    String(rows[i][5]),
+      salon_name:    String(rows[i][4]),
+      business_type: businessType,
+      band:          _resolveBand(cfg, businessType)
+    });
+    // 🔴 メール・電話・住所・紹介者は入れない（§3-3）。
+    //    追加要望が出たら「端末紛失時の被害を減らす」という理由ごと再確認すること
+  }
+  roster.sort(function (a, b) { return a.app_id < b.app_id ? -1 : (a.app_id > b.app_id ? 1 : 0); });
+
+  // 予備名札は「割当済み」のものだけ渡す。未割当は誰でもないので端末では解決できない
+  // （その場で割り当てた予備名札は朝の名簿には載らない。受付番号の手入力で通す運用・§3-8）
+  const spRows = _ensureSpareBadgesSheet(ss).getDataRange().getValues();
+  const spares = [];
+  for (let i = 1; i < spRows.length; i++) {
+    const no    = String(spRows[i][0] || '').trim();
+    const token = String(spRows[i][1] || '').trim();
+    const appId = String(spRows[i][2] || '').trim();
+    if (!no || !appId) continue;
+    spares.push({ spare_no: no, ticket_token: token, app_id: appId });
+  }
+
+  return _ok({
+    fetched_at:       _now(),
+    server_version:   VERSION,
+    total:            roster.length,
+    skipped_no_token: skippedNoToken,
+    bands:            _buildBandsFromConfig(cfg),
+    roster:           roster,
+    spares:           spares
+  });
+}
+
+// ------------------------------------------------------------
+// チェックイン記録（doPost: action=scanCheckin）。端末のキューからまとめて届く。
+// data: { session_token, checkins: [{ checkin_id, ticket_token, entry_code,
+//                                     checked_in_at, device_id, note }] }
+//
+// 🔴 冪等キーは端末が生成する checkin_id。配送が失われて再送されても行は増えない
+//    （GASの故障モードは「書けたのに返事が来ない」・調査レポート §3-2）。
+// 🔴 同じ人が2回スキャンされたら checkin_id が違うので2行とも残す。
+//    checkins は監査用の生ログであり、重複入場の判断材料そのものを消してはいけない。
+//    画面へは already_checked_in で知らせる。
+// ------------------------------------------------------------
+function scanCheckin(data) {
+  const auth = _requireSession(data);
+  if (!auth.ok) return _err(auth.error);
+  _checkProps();
+
+  const d    = data || {};
+  const list = Array.isArray(d.checkins) ? d.checkins : null;
+  if (!list || list.length === 0) return _err('NO_CHECKINS');
+  if (list.length > SCAN_MAX_BATCH) return _err('INVALID_REQUEST');
+
+  // ===== ロックの外（重い読み取りは全部ここ）=====
+  const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh  = _ensureCheckinsSheet(ss);
+  const idx = _boothLoadSubjectIndex(ss);
+
+  const parsed = [];
+  for (let i = 0; i < list.length; i++) {
+    const c  = list[i] || {};
+    const id = String(c.checkin_id || '').trim();
+    const tt = String(c.ticket_token || '').trim();
+    const ec = String(c.entry_code || '').trim();
+    if (!id) return _err('INVALID_REQUEST');
+    if (!tt && !ec) return _err('INVALID_REQUEST');
+
+    // 本人解決は booth と同じ規則。QRのtokenを優先し、無ければ受付番号で引く
+    const r = tt ? _boothResolveByToken(tt, idx) : _boothResolveByCode(ec, idx);
+    parsed.push({
+      checkin_id:   id,
+      ticket_token: tt,
+      entry_code:   ec,
+      checked_at:   String(c.checked_in_at || '').trim() || _now(),
+      device:       String(c.device_id || '').trim(),
+      note:         String(c.note || '').trim(),
+      resolve:      r
+    });
+  }
+
+  // ===== ロックの中（シート書き込みだけ）=====
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(SCAN_LOCK_WAIT_MS)) return _err('LOCK_BUSY');
+
+  const results = [];
+  try {
+    const lastRow  = sh.getLastRow();
+    const existing = (lastRow >= 2)
+      ? sh.getRange(2, 1, lastRow - 1, CHECKIN_COLS).getValues() : [];
+
+    const seenId  = {};   // checkin_id → true（既に書かれている）
+    const firstBy = {};   // 人のキー → 最初のチェックイン { checkin_id, checked_at }
+    for (let i = 0; i < existing.length; i++) {
+      const id = String(existing[i][CK.checkin_id - 1] || '').trim();
+      if (id) seenId[id] = true;
+      const key = _scanSubjectKey(String(existing[i][CK.app_id - 1] || ''),
+                                  String(existing[i][CK.ticket_token - 1] || ''));
+      if (key && !firstBy[key]) {
+        firstBy[key] = { checkin_id: id, checked_at: String(existing[i][CK.checked_at - 1] || '') };
+      }
+    }
+
+    const toAppend = [];
+    for (let i = 0; i < parsed.length; i++) {
+      const p     = parsed[i];
+      const key   = _scanSubjectKey(p.resolve.app_id, p.ticket_token || p.entry_code);
+      const prior = firstBy[key] || null;
+
+      if (seenId[p.checkin_id]) {
+        // 再送。行は増やさない
+        results.push({
+          checkin_id: p.checkin_id, status: 'duplicate',
+          app_id: p.resolve.app_id, resolve_status: p.resolve.status, flag: p.resolve.flag,
+          already_checked_in: !!(prior && prior.checkin_id !== p.checkin_id),
+          first_checked_at: prior ? prior.checked_at : ''
+        });
+        continue;
+      }
+
+      const values = [];
+      for (let k = 0; k < CHECKIN_COLS; k++) values.push('');
+      values[CK.checkin_id - 1]    = p.checkin_id;
+      values[CK.app_id - 1]        = p.resolve.app_id;   // 🔴 ok のときだけ値が入る
+      values[CK.ticket_token - 1]  = p.ticket_token || p.entry_code;
+      values[CK.session_id - 1]    = '';                 // 受付では使わない（セミナー出欠用の列）
+      values[CK.checked_at - 1]    = p.checked_at;       // 🔴 端末側の時刻。送信時刻ではない（§3-5）
+      values[CK.staff_user_id - 1] = String(auth.session.user_id || '');
+      values[CK.device - 1]        = p.device;
+      values[CK.note - 1]          = [p.resolve.flag, p.note].filter(String).join(' ');
+      toAppend.push(values);
+
+      seenId[p.checkin_id] = true;
+      if (key && !firstBy[key]) firstBy[key] = { checkin_id: p.checkin_id, checked_at: p.checked_at };
+
+      results.push({
+        checkin_id: p.checkin_id, status: 'recorded',
+        app_id: p.resolve.app_id, resolve_status: p.resolve.status, flag: p.resolve.flag,
+        already_checked_in: !!(prior && prior.checkin_id !== p.checkin_id),
+        first_checked_at: prior ? prior.checked_at : ''
+      });
+    }
+
+    // 🔴 まとめて1回のsetValuesで書く。1件ずつ書くとロック保持時間が件数に比例して伸びる
+    if (toAppend.length > 0) {
+      sh.getRange(sh.getLastRow() + 1, 1, toAppend.length, CHECKIN_COLS).setValues(toAppend);
+    }
+  } catch (err) {
+    Logger.log('scanCheckin error: ' + err);
+    return _err('INTERNAL_ERROR');
+  } finally {
+    lock.releaseLock();
+  }
+
+  return _ok({ received: parsed.length, results: results, server_time: _now() });
+}
+
+// 重複入場の判定キー。app_id が取れたらそれ、取れなければ生のtoken/受付番号で見る。
+// 🔴 app_id を正キーにする理由: 予備名札の割当で applications.ticket_token は上書きされうる
+//    （booth実装設計_確定版.md §2-7）。tokenだけで見ると同一人物が2人に割れる。
+function _scanSubjectKey(appId, raw) {
+  const a = String(appId || '').trim();
+  if (a) return 'a:' + a;
+  const r = String(raw || '').trim();
+  return r ? 'r:' + r : '';
+}
+
+// ------------------------------------------------------------
+// 入場済み一覧（doPost: action=scanCheckedIn）。30秒ごとに裏で取り、他端末の入場を反映する。
+// data: { session_token }
+// 🔴 これが取れなくても受付は止まらない。失われるのは「重複入場の検知」だけ（§3-2）。
+// ------------------------------------------------------------
+function scanCheckedIn(data) {
+  const auth = _requireSession(data);
+  if (!auth.ok) return _err(auth.error);
+  _checkProps();
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh = _ensureCheckinsSheet(ss);
+  const lastRow = sh.getLastRow();
+  const rows = (lastRow >= 2) ? sh.getRange(2, 1, lastRow - 1, CHECKIN_COLS).getValues() : [];
+
+  const seen = {};
+  const entries = [];
+  for (let i = 0; i < rows.length; i++) {
+    const appId = String(rows[i][CK.app_id - 1] || '').trim();
+    const raw   = String(rows[i][CK.ticket_token - 1] || '').trim();
+    const key   = _scanSubjectKey(appId, raw);
+    if (!key || seen[key]) continue;   // 最初の1件だけ返す（入場時刻は最初のスキャンが正）
+    seen[key] = true;
+    entries.push({
+      key: key, app_id: appId, ticket_token: raw,
+      checked_at: String(rows[i][CK.checked_at - 1] || ''),
+      device: String(rows[i][CK.device - 1] || '')
+    });
+  }
+
+  return _ok({ as_of: _now(), total: entries.length, entries: entries });
 }
