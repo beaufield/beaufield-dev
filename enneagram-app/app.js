@@ -9,7 +9,7 @@ const LEGACY_STORAGE_KEYS = [
   'enneagramApp:v11:state', 'enneagramApp:v12:state'
 ];
 const MODE_CONFIG = {
-  standard: { name:'精度優先・標準版', count:78, typeItemsPerType:8, maxTypeScore:32 },
+  standard: { name:'標準版', count:78, typeItemsPerType:8, maxTypeScore:32 },
   short: { name:'短縮版', count:42, typeItemsPerType:4, maxTypeScore:16 }
 };
 const RATING_OPTIONS = [
@@ -104,8 +104,12 @@ function emptyState() {
   return { mode:null, currentIndex:0, answers:{} };
 }
 
+function isMode(mode) {
+  return Object.prototype.hasOwnProperty.call(MODE_CONFIG, mode);
+}
+
 function selectedOrder(mode) {
-  return mode && MODE_CONFIG[mode] ? APP_DATA.orders[mode] : [];
+  return isMode(mode) ? APP_DATA.orders[mode] : [];
 }
 
 function validateData() {
@@ -158,7 +162,7 @@ function isRatingValue(value) {
 }
 
 function normalizeState(candidate) {
-  if (!candidate || candidate.schemaVersion !== 13 || !MODE_CONFIG[candidate.mode] ||
+  if (!candidate || candidate.schemaVersion !== 13 || !isMode(candidate.mode) ||
       !Number.isInteger(candidate.currentIndex) || candidate.currentIndex < 0 ||
       candidate.currentIndex >= selectedOrder(candidate.mode).length ||
       !candidate.answers || typeof candidate.answers !== 'object' || Array.isArray(candidate.answers)) return null;
@@ -200,7 +204,7 @@ function answeredCount() {
 }
 
 function beginMode(mode) {
-  if (!MODE_CONFIG[mode]) return;
+  if (!isMode(mode)) return;
   const continuing = state.mode === mode && answeredCount() > 0;
   if (!continuing && answeredCount() > 0 && !window.confirm('進行中の回答を消して、別の版を始めますか？')) return;
   if (!continuing) state = { mode:mode, currentIndex:0, answers:{} };
@@ -221,7 +225,7 @@ function showRoleOffWarmup(shouldScrollTop) {
   scenes.append(el('p', '', '親しい人と気楽に過ごした時間'));
   scenes.append(el('p', '', '自分のためだけに何かを選んだ時間'));
   card.append(scenes);
-  card.append(el('p', 'scenario-prompt', 'どの文も成熟した心の使い方です。理想ではなく、私生活で自然に優先する方向で答えます。'));
+  card.append(el('p', 'scenario-prompt', '最近の気分だけでなく、以前から繰り返してきた傾向を思い出してください。理想や役割上の振る舞いではなく、自然に優先する方向で答えます。'));
   app.append(card);
   const actions = el('div', 'actions');
   actions.append(button('版の選択へ戻る', 'secondary', function () { showStart(true); }));
@@ -253,12 +257,14 @@ function showStart(shouldScrollTop) {
   const guide = el('section', 'card');
   guide.append(el('h2', '', '答えるときの基準'));
   guide.append(el('p', '', '診断を始める前に、家で一人の時間、親しい人との時間、自分のための選択を思い出します。'));
+  guide.append(el('p', '', '最近の出来事だけでなく、長年、場面が変わっても繰り返してきた傾向を振り返ります。迷った質問は「保留して次の未回答へ」で後から答えられます。'));
   guide.append(el('p', '', 'どの文も良し悪しを決めるものではありません。理想の自分ではなく、私生活で自然に繰り返す心の動きで答えてください。'));
   app.append(guide);
   const modes = el('div', 'mode-grid');
   modes.append(renderModeCard('standard', '9タイプを各8側面から確認する72問と、判定を別角度から確かめる6問で、候補を詳しく比較します。'));
   modes.append(renderModeCard('short', '日常の具体的な場面で、各タイプの恐れ・欲求・戦略・自動反応を確認する独自36問と、6問のクロスチェックで傾向を見ます。'));
   app.append(modes);
+  app.append(el('p', 'chart-help', '標準版は確認する質問数が多い版です。両版の診断精度の差は実測していません。'));
   app.append(el('p', 'privacy', '回答内容はこの端末のセッション内だけで一時保存され、外部へ送信されません。結果はタイプを確定するものではなく、自己観察の候補です。'));
   if (shouldScrollTop) scrollPageTop();
 }
@@ -272,6 +278,8 @@ function renderRatingActions(question, selectedValue) {
       ratingButtons.forEach(function (ratingButton) {
         ratingButton.setAttribute('aria-pressed', String(ratingButton === node));
       });
+      const countLabel = document.querySelector('.answer-count');
+      if (countLabel) countLabel.textContent = '回答済み ' + answeredCount() + ' / ' + selectedOrder(state.mode).length;
       const optionCard = actions.closest('.motive-option');
       if (optionCard) optionCard.classList.add('answered');
       const progressBar = document.querySelector('.progress > div');
@@ -302,6 +310,7 @@ function showQuestion(shouldScrollTop, errorMessage) {
   progressHead.append(el('span', '', MODE_CONFIG[state.mode].name));
   progressHead.append(el('span', '', '質問 ' + (state.currentIndex + 1) + ' / ' + order.length));
   app.append(progressHead);
+  app.append(el('p', 'chart-help answer-count', '回答済み ' + answeredCount() + ' / ' + order.length));
   const progress = el('div', 'progress');
   const progressBar = el('div');
   progressBar.style.width = ((answeredCount() / order.length) * 100) + '%';
@@ -311,7 +320,8 @@ function showQuestion(shouldScrollTop, errorMessage) {
   card.append(el('p', 'scenario-number', 'QUESTION ' + (state.currentIndex + 1)));
   card.append(el('p', 'life-domain', '生活場面：' + LIFE_DOMAIN_LABELS[question.lifeDomain]));
   card.append(el('h1', '', question.text));
-  card.append(el('p', 'scenario-prompt', '理想ではなく、普段の自分が自然にこの方向を優先する度合いは？'));
+  card.append(el('p', 'scenario-prompt', '理想ではなく、以前から繰り返してきた自分に当てはまる度合いは？'));
+  card.append(el('p', 'chart-help', '迷うときは保留して後で戻れます。「少し当てはまる」は、わからないという意味ではありません。'));
   if (errorMessage) card.append(showError(errorMessage));
   const optionCard = el('article', 'motive-option');
   if (isRatingValue(state.answers[question.id])) optionCard.classList.add('answered');
@@ -326,9 +336,27 @@ function showQuestion(shouldScrollTop, errorMessage) {
       showQuestion(true);
     }));
   }
+  actions.append(button('保留して次の未回答へ', 'secondary', deferQuestion));
   actions.append(button(state.currentIndex === order.length - 1 ? '結果を見る' : '次へ', 'primary', proceedQuestion));
+  if (answeredCount() === order.length) actions.append(button('修正した回答で結果を更新', 'secondary', function () { showResults(calculateDiagnosis()); }));
   app.append(actions);
   if (shouldScrollTop) scrollPageTop();
+}
+
+// 保留は0点にせず、未回答のまま循環して再確認します。
+function deferQuestion() {
+  const order = selectedOrder(state.mode);
+  for (let step = 1; step < order.length; step += 1) {
+    const index = (state.currentIndex + step) % order.length;
+    if (!isRatingValue(state.answers[order[index]])) {
+      state.currentIndex = index;
+      saveState();
+      showQuestion(true);
+      return;
+    }
+  }
+  if (answeredCount() === order.length) showResults(calculateDiagnosis());
+  else showQuestion(false, '未回答はこの質問だけです。思い浮かぶ具体例を振り返ってから選んでください。');
 }
 
 function proceedQuestion() {
@@ -374,6 +402,7 @@ function scoreRanking(scores) {
 
 function highestKeys(scoreObject) {
   const maxScore = Math.max.apply(null, Object.values(scoreObject));
+  if (new Set(Object.values(scoreObject)).size === 1) return [];
   return Object.keys(scoreObject).filter(function (key) { return scoreObject[key] === maxScore; });
 }
 
@@ -383,11 +412,12 @@ function determineWing(coreType, scores) {
   const leftScore = scores[leftType];
   const rightScore = scores[rightType];
   const balanced = leftScore === rightScore;
-  const wingType = balanced ? null : (leftScore > rightScore ? leftType : rightType);
+  const inconclusive = Math.abs(leftScore - rightScore) <= 1;
+  const wingType = inconclusive ? null : (leftScore > rightScore ? leftType : rightType);
   return {
     coreType:coreType,
     wingType:wingType,
-    wingLabel:balanced ? coreType + '（左右同点）' : coreType + 'w' + wingType,
+    wingLabel:inconclusive ? coreType + (balanced ? '（左右同点・保留）' : '（左右1点差・保留）') : coreType + 'w' + wingType,
     wingAType:leftType,
     wingBType:rightType,
     wingAScore:leftScore,
@@ -397,6 +427,7 @@ function determineWing(coreType, scores) {
 }
 
 function calculateDiagnosis() {
+  if (!isMode(state.mode)) throw new Error('診断版を選択してください。');
   const scores = { 1:0, 2:0, 3:0, 4:0, 5:0, 6:0, 7:0, 8:0, 9:0 };
   const facetScores = {};
   const crossScores = {
@@ -425,7 +456,10 @@ function calculateDiagnosis() {
     }
   });
   const ranking = scoreRanking(scores);
-  const topCandidates = ranking.slice(0, 3);
+  // 3番目の得点に並ぶタイプをすべて含め、番号順による候補の脱落を防ぎます。
+  const flatProfile = new Set(Object.values(scores)).size === 1;
+  const cutoff = ranking[2].score;
+  const topCandidates = flatProfile ? [] : ranking.filter(function (item) { return item.score > 0 && item.score >= cutoff; });
   const topScore = ranking[0].score;
   const exactTopTypes = ranking.filter(function (item) { return item.score === topScore; }).map(function (item) { return item.typeId; });
   const centerKeys = highestKeys(crossScores.center);
@@ -449,8 +483,36 @@ function calculateDiagnosis() {
     centerKeys:centerKeys,
     strategyKeys:strategyKeys,
     crossCandidates:crossCandidates,
-    uniformAnswers:new Set(Object.values(state.answers)).size === 1
+    flatProfile:flatProfile,
+    sensitivity:calculateSensitivity(scores),
+    uniformAnswers:new Set(TYPE_QUESTIONS.filter(function (q) { return q.version === state.mode; }).map(function (q) { return state.answers[q.id]; })).size === 1
   };
+}
+
+// 1つの回答を1段階だけ変えた場合の最高点集合を実際に再計算します。
+// これは採点の感度であり、統計的な信頼度や正答確率ではありません。
+function calculateSensitivity(scores) {
+  const topSet = function (values) {
+    const max = Math.max.apply(null, Object.values(values));
+    return Object.keys(values).map(Number).filter(function (id) { return values[id] === max; });
+  };
+  const original = topSet(scores).join(',');
+  const alternatives = new Set();
+  let changeable = false;
+  TYPE_QUESTIONS.filter(function (q) { return q.version === state.mode; }).forEach(function (q) {
+    const value = RATING_SCORE_MAP[state.answers[q.id]];
+    [-1, 1].forEach(function (delta) {
+      if (value + delta < 0 || value + delta > 4) return;
+      const changed = Object.assign({}, scores);
+      changed[q.typeId] += delta;
+      const leaders = topSet(changed);
+      if (leaders.join(',') !== original) {
+        changeable = true;
+        leaders.forEach(function (id) { alternatives.add(id); });
+      }
+    });
+  });
+  return { changeable:changeable, types:Array.from(alternatives).sort(function (a, b) { return a - b; }) };
 }
 
 function renderWingReference(wingResult) {
@@ -471,11 +533,11 @@ function renderFacetSummary(result, typeId) {
   return list;
 }
 
-function renderCandidate(result, item, position) {
+function renderCandidate(result, item) {
   const type = TYPE_RESULTS[item.typeId];
   const config = MODE_CONFIG[result.mode];
   const card = el('section', 'card candidate-card');
-  card.append(el('p', 'scenario-number', '候補 ' + position));
+  card.append(el('p', 'scenario-number', '得点 ' + item.rank + '位' + (result.ranking.filter(function (other) { return other.score === item.score; }).length > 1 ? '（同点）' : '')));
   card.append(el('h2', '', 'タイプ' + item.typeId + '：' + type.nameJa));
   card.append(el('p', 'lead', item.score + ' / ' + config.maxTypeScore + '点（平均 ' + (item.score / config.typeItemsPerType).toFixed(2) + ' / 4）'));
   card.append(el('p', '', '根元的恐れ：' + TYPE_CORES[item.typeId].fear));
@@ -496,17 +558,24 @@ function renderCrossCheck(result) {
   const section = el('section', 'card');
   section.append(el('h2', '', '構造クロスチェック'));
   section.append(el('p', '', 'タイプ点とは別に、「何を求めるか」と「どう得ようとするか」の組み合わせを確認します。'));
-  section.append(el('p', 'lead', '中心：' + result.centerKeys.map(function (key) { return crossLabel('center', key); }).join('・') + ' ／ 方法：' + result.strategyKeys.map(function (key) { return crossLabel('strategy', key); }).join('・')));
-  const candidateText = result.crossCandidates.map(function (typeId) {
-    return 'タイプ' + typeId + '「' + TYPE_RESULTS[typeId].nameJa + '」';
-  }).join('・');
-  section.append(el('p', '', 'この組み合わせが示す候補：' + candidateText));
-  const topIds = result.topCandidates.map(function (item) { return item.typeId; });
-  const matches = result.crossCandidates.filter(function (typeId) { return topIds.includes(typeId); });
-  if (matches.length) {
-    section.append(el('div', 'answer-summary', '上位3候補との一致：タイプ' + matches.join('・タイプ')));
+  ['center', 'strategy'].forEach(function (axis) {
+    const keys = axis === 'center' ? result.centerKeys : result.strategyKeys;
+    const label = axis === 'center' ? '中心' : '方法';
+    section.append(el('p', '', label + '：' + (keys.length ? keys.map(function (key) { return crossLabel(axis, key); }).join('・') : '3項目が同点のため絞り込めません')));
+    section.append(el('p', 'chart-help', Object.entries(result.crossScores[axis]).map(function (entry) {
+      return crossLabel(axis, entry[0]) + ' ' + entry[1] + '/4点';
+    }).join(' ／ ')));
+  });
+  if (!result.crossCandidates.length) {
+    section.append(el('div', 'notice', '軸の得点に差がないため、組み合わせによる確認は保留です。'));
   } else {
-    section.append(el('div', 'notice', '上位3候補とは一致しませんでした。回答の誤りとは決めず、クロスチェック側の候補も読み比べてください。'));
+    section.append(el('p', '', '組み合わせ上の参考候補：タイプ' + result.crossCandidates.join('・タイプ')));
+    if (result.centerKeys.length > 1 || result.strategyKeys.length > 1 || result.flatProfile) {
+      section.append(el('p', 'chart-help', '候補を絞り切れないため、一致による裏付けとは扱いません。'));
+    } else {
+      const match = result.topCandidates.some(function (item) { return result.crossCandidates.includes(item.typeId); });
+      section.append(el('p', 'chart-help', match ? '上位候補に共通するタイプがあります。ただし、各方向1問だけの確認であり、タイプ確定や独立した検証にはなりません。' : '上位候補とは異なるタイプです。誤回答とは決めず、こちらの動機も読み比べてください。'));
+    }
   }
   return section;
 }
@@ -607,7 +676,13 @@ function renderAnswerReview(result) {
     const question = ALL_QUESTIONS.get(id);
     const rating = ratingOption(result.answers[id]);
     const target = question.typeId ? 'タイプ' + question.typeId : 'クロスチェック';
-    list.append(el('li', '', target + '・' + rating.label + '（' + rating.score + '点）— ' + question.text));
+    const row = el('li', '', target + '・' + rating.label + '（' + rating.score + '点）— ' + question.text);
+    row.append(button('この回答を見直す', 'secondary', function () {
+      state.currentIndex = selectedOrder(state.mode).indexOf(id);
+      saveState();
+      showQuestion(true);
+    }));
+    list.append(row);
   });
   body.append(list);
   details.append(body);
@@ -648,13 +723,11 @@ function renderTypeDetail(type, open) {
   const body = el('div', 'type-detail-body');
   body.append(el('p', 'subtitle', '〜' + type.subtitle + '〜'));
   body.append(renderTypeIllustration(type));
-  body.append(paragraphSection('根元的恐れ', TYPE_CORES[type.typeId].fear));
-  body.append(paragraphSection('根元的欲求', TYPE_CORES[type.typeId].desire));
-  body.append(paragraphSection('唯一無二の至高の才能', type.essence));
-  body.append(paragraphSection('自動操縦（トランス状態）に陥るサイン', type.warningSignal));
-  body.append(paragraphSection('内なる「超自我の行進命令」', type.innerCommand));
-  body.append(paragraphSection('強みが裏目に出る悲劇（自己成就的予言）', type.tragedy, 'runaway'));
-  body.append(paragraphSection('心の鎧を脱ぐための「癒しの態度」', type.healing, 'healing'));
+  body.append(el('p', 'chart-help', '以下はタイプ理論上の傾向の例です。すべてが本人に当てはまると決めず、具体例と照合してください。'));
+  body.append(paragraphSection('注意が向きやすいところ', type.warningSignal));
+  body.append(paragraphSection('強みとして生かせるところ', type.essence));
+  body.append(paragraphSection('行き過ぎたときに起こりうること', type.tragedy, 'runaway'));
+  body.append(paragraphSection('助けになる関わり方', type.healing, 'healing'));
   details.append(body);
   return details;
 }
@@ -686,17 +759,127 @@ function renderClosingMessage() {
   return section;
 }
 
+// 原票の文章・採点表は移植せず、既存の動機定義から独自に作成した比較用の原稿です。
+// 各列は「満たしたいこと」「予定外への初動」「手放しにくいこと」をそろえています。
+const COMPARISON_PROMPTS = [
+  '長い目で見ると、どちらを満たしたときに安心しやすいですか？',
+  '思いどおりに進まないとき、どちらへ心が向きやすいですか？',
+  '自分の選択を振り返ると、どちらを手放しにくいですか？'
+];
+const COMPARISON_MOTIVES = {
+  1:['自分で納得できる筋道に沿って選べていること。', 'どこを直せば納得できる状態に戻るかを考える。', '気になる点を残したまま終えず、自分の納得する形まで整えること。'],
+  2:['自分の働きかけが身近な人に届き、必要とされていること。', '相手が何を望んでいるかを探り、こちらから働きかける。', '自分から関わることで、大切な人との結びつきを保つこと。'],
+  3:['自分の工夫や努力が形になり、価値を認められること。', '今できる方法に切り替え、うまくできる自分を取り戻す。', '自分にはできると感じられ、人にも伝わる形を残すこと。'],
+  4:['自分の感じ方を置き去りにせず、自分らしくいられること。', '自分にとって何が失われたように感じるのかを見つめる。', '周りに合わせるだけで終えず、自分にしかない意味を大切にすること。'],
+  5:['自分で理解でき、必要な力を蓄えられていること。', 'いったん距離と時間を取り、状況を理解してから関わる。', '十分に理解するための時間と、自分で使える余力を確保すること。'],
+  6:['不安な点を確かめ、頼れる支えがあると感じられること。', '見落としや別の可能性を確認し、信頼できる手掛かりを探す。', '自分だけで決めつけず、確かめられる根拠や信頼関係を持つこと。'],
+  7:['この先に楽しみや選べる道があり、気持ちが開けること。', 'ほかに試せる道や、気持ちを前に向けられる可能性を探す。', '一つのつらい状態に閉じ込められず、次の可能性を残すこと。'],
+  8:['自分の大切な領域を守り、決める力を持てていること。', '自分で状況に働きかけ、決める力を取り戻そうとする。', '大切な選択を人任せにせず、自分の意思で引き受けること。'],
+  9:['周りとのつながりが穏やかで、自分のペースも保てること。', 'まず波立ちを鎮め、無理なく続けられる落ち着きどころを探す。', '自分の主張で関係を揺らすより、つながりと心の落ち着きを保つこと。']
+};
+
+function renderResultGuidance(result) {
+  const section = el('section', 'card');
+  section.append(el('h2', '', '結果の読み方と、次の確認'));
+  if (!result.flatProfile) {
+    const gap = result.ranking[0].score - result.ranking[1].score;
+    section.append(el('p', '', '最高点と次の得点の差：' + gap + '点。点数は当てはまりの合計で、確率や能力の高さではありません。'));
+    section.append(el('p', 'chart-help', result.sensitivity.changeable ?
+      'タイプ質問の回答を1つ、1段階だけ変えると最高点の候補が変わるか同点になります。タイプ' + result.sensitivity.types.join('・タイプ') + 'の違いを丁寧に確認してください。' :
+      'タイプ質問の回答を1つ、1段階だけ変えても最高点の候補は変わりません。ただし、診断が正しいことを保証する検証ではありません。'));
+  }
+  section.append(el('p', '', '得点と合わない候補も比較できます。具体的な出来事を一つ思い出し、「その行動で何を守りたかったか」を確かめてください。決めきれなければ保留で構いません。'));
+  section.append(el('p', 'privacy', '自己理解のための独自質問です。心理測定上の精度・再検査信頼性は未検証です。採用・配置・人事評価の判断には使いません。'));
+  return section;
+}
+
+function summarizeComparison(typeA, typeB, choices) {
+  if (!Number.isInteger(typeA) || !Number.isInteger(typeB) || typeA === typeB ||
+      !COMPARISON_MOTIVES[typeA] || !COMPARISON_MOTIVES[typeB]) throw new Error('異なる2タイプを選んでください。');
+  if (!Array.isArray(choices) || choices.length !== 3 || choices.some(function (value) {
+    return ![null, 'a', 'b', 'hold'].includes(value);
+  })) throw new Error('比較回答が不正です。');
+  const count = function (value) { return choices.filter(function (choice) { return choice === value; }).length; };
+  return { complete:!choices.includes(null), a:count('a'), b:count('b'), hold:count('hold') };
+}
+
+function renderPairComparison(result) {
+  const section = el('section', 'card pair-comparison');
+  section.append(el('h2', '', '2タイプの動機を比べる（任意）'));
+  section.append(el('p', '', '9タイプから気になる2つを選び、3つの観点で「長年の自分により近い方」を比べます。両方に当てはまるときも優先しやすい方を考え、選べなければ保留にしてください。'));
+  section.append(el('p', 'chart-help', 'TK式の二者比較・同点確認の考え方を参考にした独自の振り返りです。正式なTK式診断ではありません。元の得点や順位は変更しません。比較の回答はこの画面を離れると消えます。'));
+  const controls = el('div', 'pair-select');
+  const selectors = ['A', 'B'].map(function (side) {
+    const label = el('label', '', '比較するタイプ ' + side);
+    const select = el('select');
+    select.setAttribute('aria-label', '比較するタイプ ' + side);
+    const placeholder = el('option', '', 'タイプを選択');
+    placeholder.value = '';
+    select.append(placeholder);
+    for (let id = 1; id <= 9; id += 1) {
+      const option = el('option', '', 'タイプ' + id + '：' + TYPE_RESULTS[id].nameJa);
+      option.value = String(id);
+      select.append(option);
+    }
+    label.append(select);
+    controls.append(label);
+    return select;
+  });
+  section.append(controls);
+  const body = el('div');
+  section.append(body);
+  function updatePair() {
+    body.replaceChildren();
+    const a = Number(selectors[0].value);
+    const b = Number(selectors[1].value);
+    if (!a || !b) return;
+    if (a === b) {
+      body.append(showError('異なる2タイプを選んでください。'));
+      return;
+    }
+    const choices = [null, null, null];
+    const output = el('p', 'comparison-output', '3つの観点に答えると比較内容をまとめます。');
+    output.setAttribute('role', 'status');
+    COMPARISON_PROMPTS.forEach(function (prompt, index) {
+      const field = el('fieldset', 'pair-question');
+      field.append(el('legend', '', (index + 1) + '. ' + prompt));
+      const actions = el('div', 'pair-options');
+      const nodes = [];
+      [['a', 'A：' + COMPARISON_MOTIVES[a][index]], ['b', 'B：' + COMPARISON_MOTIVES[b][index]], ['hold', '保留（選べない・どちらも違う）']].forEach(function (entry) {
+        const node = button(entry[1], 'secondary', function () {
+          choices[index] = entry[0];
+          nodes.forEach(function (item) { item.setAttribute('aria-pressed', String(item === node)); });
+          const summary = summarizeComparison(a, b, choices);
+          output.textContent = summary.complete ?
+            '今回選んだ動機：タイプ' + a + 'が' + summary.a + '件、タイプ' + b + 'が' + summary.b + '件、保留が' + summary.hold + '件。これは3観点の振り返りで、診断の確定や順位の決着ではありません。選んだ理由が説明できる実体験と、当てはまらない例も思い出してください。' :
+            '確認済み ' + choices.filter(function (value) { return value !== null; }).length + ' / 3。すべて確認してから読み比べます。';
+        });
+        node.setAttribute('aria-pressed', 'false');
+        nodes.push(node);
+        actions.append(node);
+      });
+      field.append(actions);
+      body.append(field);
+    });
+    body.append(output);
+  }
+  selectors.forEach(function (select) { select.addEventListener('change', updatePair); });
+  return section;
+}
+
 function showResults(result) {
   clearApp();
   app.append(el('p', 'scenario-number', MODE_CONFIG[result.mode].name));
-  app.append(el('h1', '', '最も強く表れたタイプ候補'));
-  app.append(el('p', 'lead', '行動そのものではなく、その奥にある恐れ・欲求・反応の得点から、上位3候補を表示しています。'));
-  if (result.exactTopTypes.length > 1) {
+  app.append(el('h1', '', result.flatProfile ? '今回はタイプを絞り込めません' : '比較して確かめるタイプ候補'));
+  app.append(el('p', 'lead', result.flatProfile ? '9タイプすべてが同点です。番号順で候補を選ばず、判定を保留します。' : '得点があるタイプの上位3件を目安に、3件目と同点のタイプもすべて表示します。同点の表示順はタイプ番号順です。'));
+  if (!result.flatProfile && result.exactTopTypes.length > 1) {
     app.append(el('div', 'notice', '最高得点が同点です：タイプ' + result.exactTopTypes.join('・タイプ') + '。1つへ絞らず、動機を読み比べてください。'));
   }
   if (result.uniformAnswers) {
-    app.append(el('div', 'notice', 'すべての質問に同じ段階で回答しています。タイプ間の違いが出にくいため、結果は判定保留として読み、必要なら回答を見直してください。'));
+    app.append(el('div', 'notice', 'タイプ質問すべてに同じ段階で回答しています。タイプ間の違いが出にくいため、結果は判定保留として読み、必要なら回答を見直してください。'));
   }
+  app.append(renderResultGuidance(result));
+  app.append(renderPairComparison(result));
   result.topCandidates.forEach(function (item, index) { app.append(renderCandidate(result, item, index + 1)); });
   app.append(renderCrossCheck(result));
   app.append(renderRadarSection(result));
