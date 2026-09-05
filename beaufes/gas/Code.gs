@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.32.0';
+const VERSION  = '0.32.1';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -3393,8 +3393,11 @@ function seedTestApplication() {
     }
   }
 
-  const email = PropertiesService.getScriptProperties().getProperty('TEST_MAIL_TO') ||
-                Session.getActiveUser().getEmail();
+  // 🔴 Session.getActiveUser().getEmail() は使わない。
+  //    OAuthスコープ（userinfo.email）が増えてプロジェクト全体の再承認ダイアログが出るため。
+  //    本番Webアプリの認可に触りたくないので、宛先はスクリプトプロパティだけで決める。
+  //    未設定なら空欄のまま作る（予約の検証はできる。控えメールを見たいときだけ設定する）。
+  const email = PropertiesService.getScriptProperties().getProperty('TEST_MAIL_TO') || '';
   const token  = _genToken();
   const now    = _now();
   const newRow = rows.length + 1;
@@ -3409,7 +3412,11 @@ function seedTestApplication() {
   ]]);
 
   Logger.log('seedTestApplication 完了: app_id=' + TEST_APP_ID + ' / ticket_token=' + token);
-  Logger.log('控えメールの宛先: ' + email);
+  Logger.log(email
+    ? '控えメールの宛先: ' + email
+    : '控えメールの宛先は空欄です。メールも確認するなら、スクリプトプロパティ TEST_MAIL_TO に'
+      + 'アドレスを入れてから deleteTestApplication() → seedTestApplication() の順で作り直すか、'
+      + 'applications シートの ' + TEST_APP_ID + ' の行のG列にアドレスを直接入れてください。');
 }
 
 // テスト申込と、その予約行を消す。何度実行しても安全。
