@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.31.0';
+const VERSION  = '0.32.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -2527,11 +2527,13 @@ function reserveSessions(data) {
   // GASの結果配送は約7%失敗するので、往復回数そのものを減らすことに意味がある）
   const ss2      = SpreadsheetApp.openById(SPREADSHEET_ID);
   const resRows2 = _readReservationRows(ss2);
+  // 🔴 v0.32.0: ここでも キャンセル済み申込を除外する。listSessions は除外しているのに
+  //    ここだけ渡し忘れていたため、予約直後の画面だけ残席が少なく（＝満席に）見えていた。
   return _ok({
     app_id:    appId,
     result:    result,
     mail_sent: mailSent,   // 画面に「控えをメールでお送りしました」と出すため
-    sessions:  _sessionCatalog(ss2, resRows2),
+    sessions:  _sessionCatalog(ss2, resRows2, _readCancelledAppIds(ss2)),
     reserved:  _reservedSessionIdsOf(resRows2, appId)
   });
 }
@@ -3351,6 +3353,90 @@ function seedTestBooth() {
   Logger.log('seedTestBooth完了: B99 / booth_token=' + token);
   Logger.log('確認URL例: <WebアプリURL>?action=boothInit&data=' +
     encodeURIComponent(JSON.stringify({ b: token })));
+}
+
+// ============================================================
+// 🆕 v0.32.0 検証用: 予約まわりの動作確認に使うテスト申込を1行だけ作る。
+//    【GASエディタから手動で実行する】
+//    🔴 applyApplication を通らないので、全社員へのLINE WORKS通知は飛ばない。
+//    🔴 2回実行しても増えない（既にあれば ticket_token をログに出すだけ）。
+//    🔴 確認が終わったら必ず deleteTestApplication() で消すこと
+//       （消さないと申込者一覧・名札の枚数に混ざる）。
+//    控えメールの宛先はスクリプトプロパティ TEST_MAIL_TO、無ければ実行者のアドレス。
+//    🔴 コードに個人のメールアドレスは書かない（公開リポジトリのため）。
+// ============================================================
+const TEST_APP_ID = 'TEST-RES';
+
+function seedTestApplication() {
+  _checkProps();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+
+  // 🔴 reservations シートが無いと予約が一切書けない（_writeReservations が invalid を返す）
+  let resSh = ss.getSheetByName(SHEET_RESERVATIONS);
+  if (!resSh) {
+    resSh = ss.insertSheet(SHEET_RESERVATIONS);
+    resSh.getRange(1, 1, 1, 6).setValues([[
+      'res_id', 'app_id', 'session_id', 'created_at', 'status', 'attended_at'
+    ]]);
+    resSh.setFrozenRows(1);
+    Logger.log('reservations シートを作成しました。');
+  } else {
+    Logger.log('reservations シートは既にあります。');
+  }
+
+  const sh   = _getSheet(ss, SHEET_APPLICATIONS);
+  const rows = sh.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]).trim() === TEST_APP_ID) {
+      Logger.log('テスト申込は既にあります。ticket_token=' + rows[i][16]);
+      return;
+    }
+  }
+
+  const email = PropertiesService.getScriptProperties().getProperty('TEST_MAIL_TO') ||
+                Session.getActiveUser().getEmail();
+  const token  = _genToken();
+  const now    = _now();
+  const newRow = rows.length + 1;
+  sh.getRange(newRow, 9, 1, 1).setNumberFormat('@');   // 電話番号列はPlain Text（既存の作法に合わせる）
+  sh.getRange(newRow, 1, 1, 23).setValues([[
+    TEST_APP_ID, now, now, 'test',
+    'テストサロン（動作確認用）', '検証 用', email, String(email).toLowerCase(), '', '',
+    'なし', '', '', true,
+    '', '',
+    token, 'confirmed', '', '🔴 動作確認用。終わったら deleteTestApplication() で消すこと',
+    '美容室', '', ''
+  ]]);
+
+  Logger.log('seedTestApplication 完了: app_id=' + TEST_APP_ID + ' / ticket_token=' + token);
+  Logger.log('控えメールの宛先: ' + email);
+}
+
+// テスト申込と、その予約行を消す。何度実行しても安全。
+function deleteTestApplication() {
+  _checkProps();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+
+  const resSh = ss.getSheetByName(SHEET_RESERVATIONS);
+  if (resSh) {
+    const rows = resSh.getDataRange().getValues();
+    let n = 0;
+    for (let i = rows.length - 1; i >= 1; i--) {   // 🔴 下から消す（先に上を消すと行番号がずれる）
+      if (String(rows[i][RES_COL.appId]).trim() === TEST_APP_ID) { resSh.deleteRow(i + 1); n++; }
+    }
+    Logger.log('テスト予約を' + n + '行削除しました。');
+  }
+
+  const sh   = _getSheet(ss, SHEET_APPLICATIONS);
+  const rows = sh.getDataRange().getValues();
+  for (let i = rows.length - 1; i >= 1; i--) {
+    if (String(rows[i][0]).trim() === TEST_APP_ID) {
+      sh.deleteRow(i + 1);
+      Logger.log('テスト申込を削除しました。');
+      return;
+    }
+  }
+  Logger.log('テスト申込は見つかりませんでした（既に削除済み）。');
 }
 
 // ------------------------------------------------------------
