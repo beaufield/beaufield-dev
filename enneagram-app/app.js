@@ -1,12 +1,12 @@
 'use strict';
 
-const STORAGE_KEY = 'enneagramApp:v13:state';
+const STORAGE_KEY = 'enneagramApp:v14:state';
 const LEGACY_STORAGE_KEYS = [
   'enneagramApp:v1:state', 'enneagramApp:v2:state', 'enneagramApp:v3:state',
   'enneagramApp:v4:state', 'enneagramApp:v5:state', 'enneagramApp:v6:state',
   'enneagramApp:v7:state', 'enneagramApp:v8:state', 'enneagramApp:v9:state',
   'enneagramApp:v10:state',
-  'enneagramApp:v11:state', 'enneagramApp:v12:state'
+  'enneagramApp:v11:state', 'enneagramApp:v12:state', 'enneagramApp:v13:state'
 ];
 const MODE_CONFIG = {
   standard: { name:'標準版', count:78, typeItemsPerType:8, maxTypeScore:32 },
@@ -42,11 +42,6 @@ const TYPE_CORES = {
   8:{ fear:'人に傷つけられ、コントロールされること', desire:'自分自身を守りたい' },
   9:{ fear:'つながりの喪失や分裂', desire:'平和でありたい' }
 };
-const CROSS_TYPE_MAP = {
-  'autonomy|effort':1, 'attention|effort':2, 'attention|demand':3,
-  'attention|withdraw':4, 'security|withdraw':5, 'security|effort':6,
-  'security|demand':7, 'autonomy|demand':8, 'autonomy|withdraw':9
-};
 const TYPE_CHARACTER_FILES = {
   1:'type-01-reformer-v1.png', 2:'type-02-helper-v1.png', 3:'type-03-achiever-v1.png',
   4:'type-04-individualist-v1.png', 5:'type-05-investigator-v1.png', 6:'type-06-loyalist-v1.png',
@@ -62,6 +57,7 @@ const ALL_QUESTIONS = new Map(TYPE_QUESTIONS.concat(CROSS_QUESTIONS).map(functio
 const TYPE_RESULTS = APP_DATA.typeResults;
 const app = document.getElementById('app');
 let state = emptyState();
+let previousQuestionsCleared = false;
 
 function clearApp() {
   app.replaceChildren();
@@ -166,7 +162,7 @@ function isRatingValue(value) {
 }
 
 function normalizeState(candidate) {
-  if (!candidate || candidate.schemaVersion !== 13 || !isMode(candidate.mode) ||
+  if (!candidate || candidate.schemaVersion !== 14 || !isMode(candidate.mode) ||
       !Number.isInteger(candidate.currentIndex) || candidate.currentIndex < 0 ||
       candidate.currentIndex >= selectedOrder(candidate.mode).length ||
       !candidate.answers || typeof candidate.answers !== 'object' || Array.isArray(candidate.answers)) return null;
@@ -181,7 +177,10 @@ function normalizeState(candidate) {
 
 function loadState() {
   try {
-    LEGACY_STORAGE_KEYS.forEach(function (key) { sessionStorage.removeItem(key); });
+    LEGACY_STORAGE_KEYS.forEach(function (key) {
+      if (sessionStorage.getItem(key) !== null) previousQuestionsCleared = true;
+      sessionStorage.removeItem(key);
+    });
     return normalizeState(JSON.parse(sessionStorage.getItem(STORAGE_KEY))) || emptyState();
   } catch (_) {
     return emptyState();
@@ -191,7 +190,7 @@ function loadState() {
 function saveState() {
   try {
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
-      schemaVersion:13,
+      schemaVersion:14,
       mode:state.mode,
       currentIndex:state.currentIndex,
       answers:state.answers
@@ -257,6 +256,7 @@ function renderModeCard(mode, description) {
 function showStart(shouldScrollTop) {
   clearApp();
   app.classList.add('start-screen');
+  if (previousQuestionsCleared) app.append(el('p', 'notice', '質問を改訂したため、旧版の途中回答をリセットしました。新しい質問で最初から回答してください。'));
   app.append(el('h1', '', 'エニアグラム・タイプ診断'));
   app.append(el('p', 'lead', '同じ行動でも、心の奥にある「なぜそうするのか」を一つずつ確かめ、タイプ候補とウイングを探ります。'));
   const guide = el('section', 'card');
@@ -266,8 +266,8 @@ function showStart(shouldScrollTop) {
   guide.append(el('p', '', 'どの文も良し悪しを決めるものではありません。理想の自分ではなく、私生活で自然に繰り返す心の動きで答えてください。'));
   app.append(guide);
   const modes = el('div', 'mode-grid');
-  modes.append(renderModeCard('standard', '9タイプを各8側面から確認する72問と、判定を別角度から確かめる6問で、候補を詳しく比較します。'));
-  modes.append(renderModeCard('short', '日常の具体的な場面で、各タイプの恐れ・欲求・戦略・自動反応を確認する独自36問と、6問のクロスチェックで傾向を見ます。'));
+  modes.append(renderModeCard('standard', '9タイプを各8側面から確認する72問と、回答傾向を振り返る補助6問で、候補を詳しく比較します。'));
+  modes.append(renderModeCard('short', '日常の具体的な場面で、各タイプの恐れ・欲求・戦略・自動反応を確認する独自36問と、補助6問で傾向を振り返ります。'));
   app.append(modes);
   app.append(el('p', 'chart-help', '標準版は確認する質問数が多い版です。両版の診断精度の差は実測していません。'));
   app.append(el('p', 'privacy', '回答内容はこの端末のセッション内だけで一時保存され、外部へ送信されません。結果はタイプを確定するものではなく、自己観察の候補です。'));
@@ -454,12 +454,6 @@ function scoreRanking(scores) {
   }, []);
 }
 
-function highestKeys(scoreObject) {
-  const maxScore = Math.max.apply(null, Object.values(scoreObject));
-  if (new Set(Object.values(scoreObject)).size === 1) return [];
-  return Object.keys(scoreObject).filter(function (key) { return scoreObject[key] === maxScore; });
-}
-
 function determineWing(coreType, scores) {
   const leftType = coreType === 1 ? 9 : coreType - 1;
   const rightType = coreType === 9 ? 1 : coreType + 1;
@@ -516,15 +510,6 @@ function calculateDiagnosis() {
   const topCandidates = flatProfile ? [] : ranking.filter(function (item) { return item.score > 0 && item.score >= cutoff; });
   const topScore = ranking[0].score;
   const exactTopTypes = ranking.filter(function (item) { return item.score === topScore; }).map(function (item) { return item.typeId; });
-  const centerKeys = highestKeys(crossScores.center);
-  const strategyKeys = highestKeys(crossScores.strategy);
-  const crossCandidates = [];
-  centerKeys.forEach(function (center) {
-    strategyKeys.forEach(function (strategy) {
-      const typeId = CROSS_TYPE_MAP[center + '|' + strategy];
-      if (typeId && !crossCandidates.includes(typeId)) crossCandidates.push(typeId);
-    });
-  });
   return {
     mode:state.mode,
     answers:Object.assign({}, state.answers),
@@ -534,13 +519,46 @@ function calculateDiagnosis() {
     topCandidates:topCandidates,
     exactTopTypes:exactTopTypes,
     crossScores:crossScores,
-    centerKeys:centerKeys,
-    strategyKeys:strategyKeys,
-    crossCandidates:crossCandidates,
+    domainStability:calculateDomainStability(scores),
     flatProfile:flatProfile,
     sensitivity:calculateSensitivity(scores),
     uniformAnswers:new Set(TYPE_QUESTIONS.filter(function (q) { return q.version === state.mode; }).map(function (q) { return state.answers[q.id]; })).size === 1
   };
+}
+
+// 各タイプで同数の質問を外し、残る3領域の最高点集合を比較します。
+// 生活場面と質問内容の影響は分離できず、正答確率を表すものではありません。
+function calculateDomainStability(scores) {
+  const leaders = function (values) {
+    if (new Set(Object.values(values)).size === 1) return [];
+    const maximum = Math.max.apply(null, Object.values(values));
+    return Object.keys(values).map(Number).filter(function (id) { return values[id] === maximum; });
+  };
+  const original = leaders(scores);
+  const checks = Object.keys(LIFE_DOMAIN_LABELS).map(function (domain) {
+    const remaining = Object.assign({}, scores);
+    TYPE_QUESTIONS.filter(function (q) { return q.version === state.mode && q.lifeDomain === domain; }).forEach(function (q) {
+      remaining[q.typeId] -= RATING_SCORE_MAP[state.answers[q.id]];
+    });
+    const topTypes = leaders(remaining);
+    return { excludedDomain:domain, scores:remaining, topTypes:topTypes,
+      sameTop:original.length > 0 && original.join(',') === topTypes.join(','),
+      maxScore:MODE_CONFIG[state.mode].maxTypeScore * 3 / 4 };
+  });
+  return { checks:checks, stable:checks.every(function (check) { return check.sameTop; }) };
+}
+
+function renderDomainStability(result) {
+  const section = el('details', 'card domain-stability');
+  section.append(el('summary', '', '生活場面による違いを確認する'));
+  section.append(el('p', '', '一つの生活場面の回答を外し、残る3場面で最高点の候補を比べます。質問内容も同時に変わるため、違いの原因を場面だけに特定することはできません。'));
+  result.domainStability.checks.forEach(function (check) {
+    section.append(el('p', '', LIFE_DOMAIN_LABELS[check.excludedDomain] + 'を除く：' +
+      (check.topTypes.length ? 'タイプ' + check.topTypes.join('・タイプ') : '全タイプ同点・保留') +
+      '（各タイプ' + check.maxScore + '点満点）'));
+  });
+  section.append(el('p', 'chart-help', '違いがあっても誤回答とは限りません。具体的な場面を振り返る手がかりです。'));
+  return section;
 }
 
 // 1つの回答を1段階だけ変えた場合の最高点集合を実際に再計算します。
@@ -609,28 +627,15 @@ function crossLabel(axis, key) {
 }
 
 function renderCrossCheck(result) {
-  const section = el('section', 'card');
-  section.append(el('h2', '', '構造クロスチェック'));
-  section.append(el('p', '', 'タイプ点とは別に、「何を求めるか」と「どう得ようとするか」の組み合わせを確認します。'));
-  ['center', 'strategy'].forEach(function (axis) {
-    const keys = axis === 'center' ? result.centerKeys : result.strategyKeys;
-    const label = axis === 'center' ? '中心' : '方法';
-    section.append(el('p', '', label + '：' + (keys.length ? keys.map(function (key) { return crossLabel(axis, key); }).join('・') : '3項目が同点のため絞り込めません')));
-    section.append(el('p', 'chart-help', Object.entries(result.crossScores[axis]).map(function (entry) {
-      return crossLabel(axis, entry[0]) + ' ' + entry[1] + '/4点';
-    }).join(' ／ ')));
+  const section = el('details', 'card auxiliary-reflection');
+  section.append(el('summary', '', '補助6問の振り返り'));
+  section.append(el('p', '', 'この6問は、気になりやすいことや行動の取り方を振り返る項目です。組み合わせからタイプを推定せず、タイプ点にも加えません。'));
+  CROSS_QUESTIONS.filter(function (q) { return q.version === result.mode; }).forEach(function (q) {
+    section.append(el('h3', '', q.label));
+    section.append(el('p', '', q.text));
+    const answer = RATING_OPTIONS.find(function (option) { return option.value === result.answers[q.id]; });
+    section.append(el('p', 'chart-help', answer.label + '（' + answer.score + '/4）'));
   });
-  if (!result.crossCandidates.length) {
-    section.append(el('div', 'notice', '軸の得点に差がないため、組み合わせによる確認は保留です。'));
-  } else {
-    section.append(el('p', '', '組み合わせ上の参考候補：タイプ' + result.crossCandidates.join('・タイプ')));
-    if (result.centerKeys.length > 1 || result.strategyKeys.length > 1 || result.flatProfile) {
-      section.append(el('p', 'chart-help', '候補を絞り切れないため、一致による裏付けとは扱いません。'));
-    } else {
-      const match = result.topCandidates.some(function (item) { return result.crossCandidates.includes(item.typeId); });
-      section.append(el('p', 'chart-help', match ? '上位候補に共通するタイプがあります。ただし、各方向1問だけの確認であり、タイプ確定や独立した検証にはなりません。' : '上位候補とは異なるタイプです。誤回答とは決めず、こちらの動機も読み比べてください。'));
-    }
-  }
   return section;
 }
 
@@ -724,12 +729,12 @@ function renderAnswerReview(result) {
   const details = el('details', 'type-detail answer-review');
   details.append(el('summary', '', '回答内容とタイプ対応を確認する'));
   const body = el('div', 'type-detail-body');
-  body.append(el('p', 'chart-help', '診断中は伏せていたタイプ対応と点数を、ここで確認できます。クロスチェック項目はタイプ点に加えていません。'));
+  body.append(el('p', 'chart-help', '診断中は伏せていたタイプ対応と点数を、ここで確認できます。補助項目はタイプ点に加えていません。'));
   const list = el('ol');
   selectedOrder(result.mode).forEach(function (id) {
     const question = ALL_QUESTIONS.get(id);
     const rating = ratingOption(result.answers[id]);
-    const target = question.typeId ? 'タイプ' + question.typeId : 'クロスチェック';
+    const target = question.typeId ? 'タイプ' + question.typeId : '補助項目';
     const row = el('li', '', target + '・' + rating.label + '（' + rating.score + '点）— ' + question.text);
     row.append(button('この回答を見直す', 'secondary', function () {
       state.currentIndex = selectedOrder(state.mode).indexOf(id);
@@ -789,8 +794,8 @@ function renderTypeDetail(type, open) {
 function renderAllTypeDetails(result) {
   const section = el('section', 'type-details');
   section.append(el('h2', '', '各タイプの特徴'));
-  section.append(el('p', 'chart-help', '上位候補だけでなく、クロスチェックが示した候補も読み比べられます。'));
-  const openTypes = new Set(result.topCandidates.map(function (item) { return item.typeId; }).concat(result.crossCandidates));
+  section.append(el('p', 'chart-help', '上位候補に限らず、気になるタイプを読み比べられます。'));
+  const openTypes = new Set(result.topCandidates.map(function (item) { return item.typeId; }));
   for (let typeId = 1; typeId <= 9; typeId += 1) section.append(renderTypeDetail(TYPE_RESULTS[typeId], openTypes.has(typeId)));
   return section;
 }
@@ -835,6 +840,14 @@ const COMPARISON_MOTIVES = {
 function renderResultGuidance(result) {
   const section = el('section', 'card');
   section.append(el('h2', '', '結果の読み方と、次の確認'));
+  const status = result.flatProfile ? '全タイプ同点のため保留' :
+    result.exactTopTypes.length > 1 ? '最高点が同点の候補を比較' :
+    result.sensitivity.changeable ? '僅差のため候補を比較' :
+    !result.domainStability.stable ? '生活場面・質問による違いを確認' : '上位候補の動機を比較';
+  section.append(el('p', 'notice result-status', status));
+  if (!result.flatProfile) section.append(el('p', 'chart-help', result.domainStability.stable ?
+    'どの生活場面を一つ外しても最高点の候補は同じでした。正しさの保証ではありません。' :
+    '生活場面を一つ外すと最高点の候補が変わる場合があります。下の「生活場面による違い」で確認できます。'));
   if (!result.flatProfile) {
     const gap = result.ranking[0].score - result.ranking[1].score;
     section.append(el('p', '', '最高点と次の得点の差：' + gap + '点。点数は当てはまりの合計で、確率や能力の高さではありません。'));
@@ -935,6 +948,7 @@ function showResults(result) {
   app.append(renderResultGuidance(result));
   app.append(renderPairComparison(result));
   result.topCandidates.forEach(function (item, index) { app.append(renderCandidate(result, item, index + 1)); });
+  app.append(renderDomainStability(result));
   app.append(renderCrossCheck(result));
   app.append(renderRadarSection(result));
   app.append(el('p', 'notice', '点差だけでタイプを確定しません。根元的恐れと根元的欲求が、繰り返す反応を最もよく説明する候補を本人が確認してください。短縮版は標準版より確認する側面が少ないため、より暫定的な結果です。'));
@@ -950,7 +964,10 @@ function restart() {
   state = emptyState();
   try {
     sessionStorage.removeItem(STORAGE_KEY);
-    LEGACY_STORAGE_KEYS.forEach(function (key) { sessionStorage.removeItem(key); });
+    LEGACY_STORAGE_KEYS.forEach(function (key) {
+      if (sessionStorage.getItem(key) !== null) previousQuestionsCleared = true;
+      sessionStorage.removeItem(key);
+    });
   } catch (_) {
     // 保存不可の場合も開始画面へ戻します。
   }
