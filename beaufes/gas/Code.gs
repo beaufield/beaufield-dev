@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.30.0';
+const VERSION  = '0.31.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -420,6 +420,7 @@ function doPost(e) {
       // 🆕 v0.20.0 セミナー予約（認証なし・ticket_tokenが本人確認を兼ねる）
       case 'listSessions':      return _jsonResponse(listSessions(data));
       case 'reserveSessions':   return _jsonResponse(reserveSessions(data));
+      case 'listReservations':  return _jsonResponse(listReservations(data));   // 🆕 v0.31.0 社員用 🔒
       // 🆕 診断用（diag.html）。読み取りのみ・データを一切変更しない
       case 'ping':              return _jsonResponse(pingLight(data));
       case 'pingHeavy':         return _jsonResponse(pingHeavy(data));
@@ -844,7 +845,8 @@ function applyApplication(data, clientAttempt) {
         // 🔴 予約の書き込みが落ちても申込行は残す。ここでthrowすると「申込できない」に化ける。
         if (wantSessions.length) {
           try {
-            sessionsResult = _writeReservations(ss, appId, wantSessions, { replace: false });
+            sessionsResult = _writeReservations(ss, appId, wantSessions,
+                               { replace: false, cancelledAppIds: _cancelledAppIdSet(rows) });
           } catch (e) {
             Logger.log('セミナー予約の書き込みに失敗（申込自体は成立済み）: ' + e);
             sessionsResult = { reserved: [], full: [], invalid: wantSessions.slice(), cancelled: [], error: String(e) };
@@ -972,7 +974,8 @@ function updateApplication(data) {
 
     if (touchSessions) {
       try {
-        sessionsResult = _writeReservations(ss, appId, wantSessions, { replace: true });
+        sessionsResult = _writeReservations(ss, appId, wantSessions,
+                           { replace: true, cancelledAppIds: _cancelledAppIdSet(rows) });
       } catch (e) {
         Logger.log('セミナー予約の書き込みに失敗（申込内容の更新は成立済み）: ' + e);
         sessionsResult = { reserved: [], full: [], invalid: wantSessions.slice(), cancelled: [], error: String(e) };
@@ -1090,7 +1093,8 @@ function applyLiff(data) {
 
     // 🔴 申込を止めない（設計書§4-2）。satisfiedでなくても申込行は既に書けている。
     try {
-      sessionsResult = _writeReservations(ss, appId, wantSessions, { replace: true });
+      sessionsResult = _writeReservations(ss, appId, wantSessions,
+                         { replace: true, cancelledAppIds: _cancelledAppIdSet(rows) });
     } catch (e) {
       Logger.log('セミナー予約の書き込みに失敗（申込自体は成立済み）: ' + e);
       sessionsResult = { reserved: [], full: [], invalid: wantSessions.slice(), cancelled: [], error: String(e) };
@@ -2076,11 +2080,33 @@ function _readReservationRows(ss) {
   return sh.getDataRange().getValues();
 }
 
-// 予約済み（reserved）の件数を session_id ごとに数える
-function _countReserved(resRows) {
+// 🆕 v0.31.0: キャンセル済み申込の app_id 集合。
+// 🔴 申込のキャンセルはスプレッドシートの status 列を手で書き換えて行われる（専用の画面が無い）。
+//    つまり「キャンセルされた瞬間」をコードで捕まえることはできない。
+//    そこで**数えるときに毎回除外する**ことで、手作業のキャンセルでも席が確実に戻るようにしている。
+//    予約行そのものを消しに行く方式にしないこと（手編集を取りこぼす）。
+function _cancelledAppIdSet(appRows) {
+  const set = {};
+  for (let i = 1; i < appRows.length; i++) {
+    if (String(appRows[i][17]) === 'cancelled') set[String(appRows[i][0])] = true;
+  }
+  return set;
+}
+
+// applications シートを読んでキャンセル済み集合を作る
+function _readCancelledAppIds(ss) {
+  const sh = ss.getSheetByName(SHEET_APPLICATIONS);
+  if (!sh) return {};
+  return _cancelledAppIdSet(sh.getDataRange().getValues());
+}
+
+// 予約済み（reserved）の件数を session_id ごとに数える。
+// 🔴 cancelled（キャンセル済み申込の集合）を渡すと、その人の予約は数えない＝席が戻る。
+function _countReserved(resRows, cancelled) {
   const counts = {};
   for (let i = 1; i < resRows.length; i++) {
     if (String(resRows[i][RES_COL.status]) !== RES_STATUS_RESERVED) continue;
+    if (cancelled && cancelled[String(resRows[i][RES_COL.appId])]) continue;
     const sid = String(resRows[i][RES_COL.sessionId] == null ? '' : resRows[i][RES_COL.sessionId]).trim();
     if (!sid) continue;
     counts[sid] = (counts[sid] || 0) + 1;
@@ -2111,8 +2137,8 @@ function _resIdIssuer(resRows) {
 }
 
 // 公開されている枠（is_active）だけを、残席つきで返す共通部品
-function _sessionCatalog(ss, resRows) {
-  const counts = _countReserved(resRows);
+function _sessionCatalog(ss, resRows, cancelled) {
+  const counts = _countReserved(resRows, cancelled);
   return _readSessions(ss)
     .filter(function (s) { return s.is_active; })
     .map(function (s) {
@@ -2135,12 +2161,9 @@ function _sessionCatalog(ss, resRows) {
     });
 }
 
-// ticket_token から申込者を引く（見つからなければ null）。
-// 予約の控えメールに宛先と氏名が要るので、app_id だけでなく行の内容も返す。
-function _applicantByTicketToken(ss, token) {
+// 読み込み済みの applications 行から ticket_token で申込者を引く
+function _findApplicantInRows(rows, token) {
   if (!token) return null;
-  const sh   = _getSheet(ss, SHEET_APPLICATIONS);
-  const rows = sh.getDataRange().getValues();
   for (let i = 1; i < rows.length; i++) {
     if (String(rows[i][16]) !== token) continue;
     return {
@@ -2152,6 +2175,14 @@ function _applicantByTicketToken(ss, token) {
     };
   }
   return null;
+}
+
+// ticket_token から申込者を引く（見つからなければ null）。
+// 予約の控えメールに宛先と氏名が要るので、app_id だけでなく行の内容も返す。
+function _applicantByTicketToken(ss, token) {
+  if (!token) return null;
+  const sh = _getSheet(ss, SHEET_APPLICATIONS);
+  return _findApplicantInRows(sh.getDataRange().getValues(), token);
 }
 
 // ticket_token から app_id を引く（見つからなければ null）
@@ -2201,15 +2232,115 @@ function listSessions(data) {
   _checkProps();
   const ss      = SpreadsheetApp.openById(SPREADSHEET_ID);
   const resRows = _readReservationRows(ss);
-  const catalog = _sessionCatalog(ss, resRows);
+  // 🔴 キャンセル済み申込の予約は席を占有しない（v0.31.0）。ここを外すと
+  //    キャンセルした人の分だけ定員が減ったままになる。
+  const appSh    = _getSheet(ss, SHEET_APPLICATIONS);
+  const appRows  = appSh.getDataRange().getValues();
+  const cancelled = _cancelledAppIdSet(appRows);
+  const catalog  = _sessionCatalog(ss, resRows, cancelled);
 
   const token = String((data && data.ticket_token) || '').trim();
   let reserved = [];
   if (token) {
-    const appId = _appIdByTicketToken(ss, token);
+    let appId = null;
+    for (let i = 1; i < appRows.length; i++) {
+      if (String(appRows[i][16]) === token) { appId = String(appRows[i][0]); break; }
+    }
     if (appId) reserved = _reservedSessionIdsOf(resRows, appId);
   }
   return _ok({ sessions: catalog, reserved: reserved });
+}
+
+// ============================================================
+// 🆕 v0.31.0 社員用: 予約状況の一覧（doPost: action=listReservations）🔒
+//    admin.html から呼ぶ。枠ごとの予約数と、誰が予約しているかを返す。
+//    🔴 キャンセル済み申込の予約は `app_status='cancelled'` を付けて返し、
+//       件数（reserved_count）には数えない。画面側で「席は戻っている」と分かるようにするため。
+// ============================================================
+function listReservations(data) {
+  const auth = _requireSession(data);
+  if (!auth.ok) return _err(auth.error);
+
+  _checkProps();
+  const ss      = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const appSh   = _getSheet(ss, SHEET_APPLICATIONS);
+  const appRows = appSh.getDataRange().getValues();
+  const resRows = _readReservationRows(ss);
+  const cancelled = _cancelledAppIdSet(appRows);
+
+  // app_id -> 申込の表示用情報
+  const byApp = {};
+  for (let i = 1; i < appRows.length; i++) {
+    const id = String(appRows[i][0]);
+    if (!id) continue;
+    byApp[id] = {
+      salon_name: String(appRows[i][4]),
+      staff_name: String(appRows[i][5]),
+      phone:      String(appRows[i][8]),
+      tantou:     String(appRows[i][22] == null ? '' : appRows[i][22]),
+      app_status: String(appRows[i][17])
+    };
+  }
+
+  const rows = [];
+  for (let i = 1; i < resRows.length; i++) {
+    if (String(resRows[i][RES_COL.status]) !== RES_STATUS_RESERVED) continue;
+    const appId = String(resRows[i][RES_COL.appId]);
+    const info  = byApp[appId] || { salon_name: '(申込が見つかりません)', staff_name: '', phone: '', tantou: '', app_status: '' };
+    rows.push({
+      res_id:     String(resRows[i][RES_COL.id]),
+      app_id:     appId,
+      session_id: String(resRows[i][RES_COL.sessionId]).trim(),
+      created_at: String(resRows[i][RES_COL.createdAt]),
+      salon_name: info.salon_name,
+      staff_name: info.staff_name,
+      phone:      info.phone,
+      tantou:     info.tantou,
+      app_status: info.app_status
+    });
+  }
+
+  // 枠の一覧（非公開の枠も社員には見せる。当日の名簿づくりで必要になるため）
+  const counts = _countReserved(resRows, cancelled);
+  const sessions = _readSessions(ss).map(function (s) {
+    const used = counts[s.session_id] || 0;
+    return {
+      session_id: s.session_id,
+      slot:       s.slot,
+      title:      s.title,
+      starts_at:  s.starts_at,
+      ends_at:    s.ends_at,
+      capacity:   s.capacity,
+      is_active:  s.is_active,
+      reserved_count: used,
+      remaining:  (s.capacity === null) ? null : Math.max(0, s.capacity - used)
+    };
+  });
+
+  return _ok({ sessions: sessions, reservations: rows, viewer: auth.session.name || '' });
+}
+
+// ============================================================
+// 🆕 v0.31.0 手動実行: キャンセル済み申込の予約行を cancelled にする（後片付け）
+//    席の計算は _countReserved が毎回除外するので**実行しなくても定員は正しい**。
+//    reservations シートを人が見たときに紛らわしくないよう整えるためだけのもの。
+// ============================================================
+function releaseCancelledReservations() {
+  _checkProps();
+  const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh  = ss.getSheetByName(SHEET_RESERVATIONS);
+  if (!sh) { Logger.log('reservationsシートがありません。'); return; }
+
+  const cancelled = _readCancelledAppIds(ss);
+  const rows = sh.getDataRange().getValues();
+  let n = 0;
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][RES_COL.status]) !== RES_STATUS_RESERVED) continue;
+    if (!cancelled[String(rows[i][RES_COL.appId])]) continue;
+    sh.getRange(i + 1, RES_COL.status + 1).setValue(RES_STATUS_CANCELLED);
+    n++;
+  }
+  Logger.log('キャンセル済み申込の予約を' + n + '件 cancelled にしました。');
 }
 
 // ============================================================
@@ -2220,6 +2351,9 @@ function listSessions(data) {
 //    wantIds : 予約したい session_id の配列（[] なら「全部取消」の意味になる・replace時）
 //    opts.replace : true なら wantIds に無い自分の既存予約を cancelled にする
 //                   （pass.html からの変更・取消）。false なら追加のみ（申込時）。
+//    opts.cancelledAppIds : キャンセル済み申込の集合（席の計算から除外する）。
+//                   🔵 呼び出し元が applications を既に読んでいるなら渡すこと。
+//                   渡さないとここで読み直す＝ロックの中でシート読み込みが1回増える。
 //
 //    返り値 { reserved: [], added: [], full: [], invalid: [], conflict: [], cancelled: [] }
 //    conflict = 既に予約している枠と**時間が重なる**ため取れなかったもの（slotをまたいで判定）
@@ -2242,8 +2376,9 @@ function _writeReservations(ss, appId, wantIds, opts) {
   const byId  = {};
   all.forEach(function (s) { byId[s.session_id] = s; });
 
+  const cancelled = (opts && opts.cancelledAppIds) || _readCancelledAppIds(ss);
   const rows     = sh.getDataRange().getValues();
-  const counts   = _countReserved(rows);
+  const counts   = _countReserved(rows, cancelled);
   const nextId   = _resIdIssuer(rows);
   const mineRow  = {};           // session_id -> 自分の予約行（1始まり）
   for (let i = 1; i < rows.length; i++) {
@@ -2349,11 +2484,16 @@ function reserveSessions(data) {
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
-    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-    applicant = _applicantByTicketToken(ss, token);
+    const ss     = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const appSh  = _getSheet(ss, SHEET_APPLICATIONS);
+    const appRows = appSh.getDataRange().getValues();
+    applicant = _findApplicantInRows(appRows, token);
     if (!applicant) return _err('NOT_FOUND');
+    // 🔴 キャンセル済みの申込から予約させない。放置すると「来場しない人が席を持つ」ことになる。
+    if (applicant.status === 'cancelled') return _err('APPLICATION_CANCELLED');
     appId  = applicant.appId;
-    result = _writeReservations(ss, appId, want, { replace: true });
+    result = _writeReservations(ss, appId, want,
+               { replace: true, cancelledAppIds: _cancelledAppIdSet(appRows) });
   } finally {
     lock.releaseLock();
   }

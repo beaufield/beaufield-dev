@@ -1,0 +1,1958 @@
+<!DOCTYPE html>
+<!-- 🔴 このファイルは tools/build_test_pages.py の生成物です。手で編集しないこと。
+     直すときは beaufes/admin.html を編集してから再生成してください。 -->
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="robots" content="noindex,nofollow">
+<style>
+  /* === テスト環境の帯（build_test_pages.py が挿入・本番には存在しない） === */
+  #testEnvBar {
+    position: sticky; top: 0; z-index: 999;
+    background: #b91c1c; color: #fff;
+    font-size: 12px; line-height: 1.6; text-align: center;
+    padding: 8px 10px;
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+  }
+  #testEnvBar b { font-size: 13px; }
+  #testEnvBar .navs { margin-top: 6px; }
+  #testEnvBar a {
+    color: #fff; text-decoration: underline; margin: 0 6px; white-space: nowrap;
+  }
+</style>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- 🔴 名簿画面なので検索エンジンに拾わせない（badges.html と同じ扱い） -->
+<meta name="robots" content="noindex,nofollow">
+<title>ビューフェス2026 申込者一覧（社員用）</title>
+<style>
+  :root {
+    --main: #5BC8E8;
+    --main-dark: #2fa8cc;
+    --text: #333;
+    --bg: #f7fafc;
+    --border: #e0e6ea;
+    --error: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  header.appHeader {
+    background: linear-gradient(135deg, var(--main), var(--main-dark));
+    color: #fff;
+    padding: 16px 20px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  }
+  header.appHeader h1 { margin: 0; font-size: 17px; }
+  /* ポータルのタイルは app_name 1つにつき1枚しか置けないため、社員用の2画面は
+     ヘッダーの相互リンクで行き来する（apps シートの beaufes 行は admin.html を指す） */
+  header.appHeader a.navLink {
+    color: #fff; font-size: 13px; text-decoration: none; white-space: nowrap;
+    border: 1px solid rgba(255,255,255,.6); border-radius: 999px; padding: 5px 12px;
+  }
+  header.appHeader a.navLink:hover,
+  header.appHeader button.navLink:hover { background: rgba(255,255,255,.18); }
+  header.appHeader button.navLink {
+    color: #fff; font-size: 13px; white-space: nowrap; background: transparent;
+    border: 1px solid rgba(255,255,255,.6); border-radius: 999px; padding: 5px 12px;
+    font-family: inherit; cursor: pointer;
+  }
+  .headActions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  /* 申込フォームQRのモーダル */
+  .modalOverlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 50;
+    display: flex; align-items: center; justify-content: center; padding: 16px;
+  }
+  .modalOverlay[hidden] { display: none; }
+  .modalCard {
+    background: #fff; border-radius: 12px; padding: 20px; max-width: 340px; width: 100%;
+    text-align: center; box-shadow: 0 6px 24px rgba(0,0,0,.25);
+  }
+  .modalCard h2 { margin: 0 0 4px; font-size: 16px; }
+  .modalCard .modalNote { font-size: 12px; color: #666; margin-bottom: 14px; }
+  #qrBox { display: block; margin: 0 auto; width: 100%; max-width: 240px; }
+  #qrBox svg { display: block; width: 100%; height: auto; }
+  .qrUrl {
+    font-size: 11px; color: #666; word-break: break-all; margin: 12px 0 16px; line-height: 1.6;
+  }
+  .modalCard button {
+    padding: 10px 22px; font-size: 14px; font-weight: bold; border: none; border-radius: 8px;
+    cursor: pointer; color: #fff; background: var(--main-dark); font-family: inherit;
+  }
+
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 16px 16px 60px; }
+
+  .mockBanner {
+    display: none;
+    background: #fee2e2; color: #991b1b; border: 1px solid #fecaca;
+    border-radius: 8px; padding: 10px 14px; font-size: 13px; font-weight: bold; margin-bottom: 14px;
+  }
+
+  .gateCard {
+    background: #fff; border-radius: 12px; padding: 28px 22px; max-width: 480px; margin: 40px auto;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08); line-height: 1.9; text-align: center;
+  }
+  .gateCard a { color: var(--main-dark); font-weight: bold; }
+  .gateCard .btn {
+    display: inline-block; margin-top: 14px; padding: 10px 20px;
+    font-size: 14px; font-weight: bold; color: #fff; background: var(--main-dark);
+    border: none; border-radius: 8px; cursor: pointer; text-decoration: none;
+  }
+
+  .panel {
+    background: #fff; border-radius: 12px; padding: 18px 20px; margin-bottom: 18px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  }
+  .panel .row { margin-bottom: 14px; }
+  .panel .row:last-child { margin-bottom: 0; }
+  .panel label.rowLabel { display: block; font-weight: bold; font-size: 13px; margin-bottom: 6px; color: #555; }
+  .panel .choices { display: flex; flex-wrap: wrap; gap: 10px 16px; font-size: 14px; }
+  .panel .choices label { display: flex; align-items: center; gap: 5px; }
+  .panel input[type=date], .panel input[type=search], .panel select {
+    padding: 7px 8px; font-size: 14px; border: 1px solid var(--border); border-radius: 6px;
+    background: #fff; color: var(--text);
+  }
+  .panel input[type=search] { width: 260px; max-width: 100%; }
+  .panel .dateRange { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; }
+  .panel .btnRow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+  .panel button {
+    padding: 10px 18px; font-size: 14px; font-weight: bold; border-radius: 8px; cursor: pointer;
+    border: none; color: #fff; background: var(--main-dark);
+  }
+  .panel button:disabled { opacity: .5; cursor: default; }
+  .panel button.secondary { background: #fff; color: var(--main-dark); border: 1px solid var(--main-dark); }
+  .statusLine { font-size: 13px; color: #555; }
+  .warnLine {
+    display: none; margin-top: 8px; font-size: 13px; color: #92400e; background: #fffbeb;
+    border: 1px solid #fde68a; border-radius: 6px; padding: 8px 10px; line-height: 1.7;
+  }
+  .errLine {
+    display: none; margin-top: 8px; font-size: 13px; color: var(--error); background: #fef2f2;
+    border: 1px solid #fecaca; border-radius: 6px; padding: 8px 10px; line-height: 1.7;
+  }
+  .versionLine { font-size: 11px; color: #ccc; text-align: center; margin-top: 20px; }
+
+  /* ------------------------------------------------------------
+     担当別サマリー（クリックでその担当に絞り込む）
+     ------------------------------------------------------------ */
+  /* 🔴 スマホで必ず横3列になるよう grid で列数を固定する
+     （flex + min-width だと端末幅次第で2列に折り返されてしまう） */
+  /* 🆕 v0.3.0 セミナー・体験会の予約状況 */
+  .resGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+  .resCard {
+    border: 1px solid #e0e6ea; border-left: 4px solid var(--acc, #5BC8E8);
+    border-radius: 10px; background: #fff; overflow: hidden;
+  }
+  .resCard.inactive { opacity: .6; }
+  .resCardHead {
+    background: var(--accBg, #eef8fc); padding: 8px 10px;
+    font-size: 12px; font-weight: bold; color: var(--acc, #2fa8cc);
+  }
+  .resCardBody { padding: 8px 10px 10px; }
+  .resTitle { font-size: 13px; font-weight: bold; line-height: 1.5; }
+  .resCount { font-size: 13px; margin-top: 6px; }
+  .resCount b { font-size: 18px; }
+  .resCount .full { color: #dc2626; font-weight: bold; }
+  .resCount .few  { color: #d97706; font-weight: bold; }
+  .resNames { margin-top: 8px; }
+  .resNames summary { cursor: pointer; font-size: 12px; color: #2fa8cc; }
+  .resNames ol { margin: 6px 0 0; padding-left: 1.4em; font-size: 12px; line-height: 1.8; }
+  .resNames li.cancelledRes { color: #999; text-decoration: line-through; }
+  .resNames .resTantou { color: #888; }
+  .resEmpty { font-size: 12px; color: #999; margin-top: 6px; }
+  .resNote { font-size: 12px; color: #888; margin-top: 10px; line-height: 1.7; }
+
+  .summaryGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  @media (min-width: 720px) {
+    .summaryGrid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  }
+  /* 🔴 チップは .panel の中にあるため、下の指定を `.sumChip` だけで書くと
+     `.panel button`（背景=var(--main-dark)・文字=#fff）に負ける。実際 v0.1.4 では
+     未選択が水色・文字が白なのに、選択中だけ薄い水色（#eaf8fd）の背景に白い文字が
+     載って読めなくなっていた（2026-08-28 指摘）。`.summaryGrid` を付けて必ず
+     こちらが勝つようにし、選択中は「濃いティール＋白い内側リング」で示す。 */
+  .summaryGrid .sumChip {
+    border: 1px solid var(--main-dark); background: var(--main-dark); border-radius: 10px;
+    padding: 7px 9px; cursor: pointer; text-align: left; min-width: 0;
+    font-family: inherit; color: #fff;
+  }
+  .summaryGrid .sumChip:hover { border-color: #fff; }
+  /* 選択中。未選択の水色とは明度がはっきり違うので、色覚特性によらず見分けられる */
+  .summaryGrid .sumChip.active {
+    background: #10617c; border-color: #10617c; color: #fff;
+    box-shadow: inset 0 0 0 2px #fff, 0 2px 6px rgba(0,0,0,.28);
+  }
+  .summaryGrid .sumChip .chipName {
+    display: block; font-size: 11px; color: rgba(255,255,255,.92); margin-bottom: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .summaryGrid .sumChip .chipCount { display: block; font-size: 19px; font-weight: bold; line-height: 1.2; }
+  .summaryGrid .sumChip .chipSub { display: block; font-size: 11px; color: rgba(255,255,255,.85); margin-top: 2px; }
+  /* 未割当だけ件数の色を変えて目立たせる。🔴 水色（未選択）と濃いティール（選択中）の
+     両方で読める明るいアンバーにする。従来の #b45309 は選択中の背景と同じ暗さで消えた */
+  .summaryGrid .sumChip.unassigned .chipCount { color: #ffe0b0; }
+
+  /* ------------------------------------------------------------
+     申込ペースの折れ線グラフ（今年 vs 昨年・開催日を0として「何日前」で重ねる）
+     ------------------------------------------------------------ */
+  .paceHead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .paceHero { font-size: 22px; font-weight: bold; color: var(--main-dark); line-height: 1.2; }
+  .paceHeroSub { font-size: 13px; color: #555; }
+  /* 🔴 増減は色だけで示さない（色覚特性・白黒印刷）。必ず ▲▼ と符号付きの数字を添える */
+  .paceHeroSub .up { color: #15803d; font-weight: bold; }
+  .paceHeroSub .down { color: #b45309; font-weight: bold; }
+  .paceLegend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: #555; margin-bottom: 6px; }
+  .paceLegend span.key { display: inline-flex; align-items: center; gap: 6px; }
+  .paceLegend i { display: inline-block; width: 20px; height: 0; border-top-width: 2px; }
+  .chartBox { position: relative; width: 100%; }
+  .chartBox svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
+  .chartTip {
+    position: absolute; pointer-events: none; z-index: 3; display: none;
+    background: rgba(255,255,255,.97); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.14); padding: 7px 10px; font-size: 12px; line-height: 1.7;
+    white-space: nowrap; color: var(--text);
+  }
+  .chartTip .tipHead { font-weight: bold; margin-bottom: 2px; }
+  .chartTip .tipKey { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+  .chartNote { font-size: 11px; color: #888; margin-top: 8px; line-height: 1.7; }
+  details.paceDetails { margin-top: 8px; font-size: 12px; }
+  details.paceDetails summary { cursor: pointer; color: var(--main-dark); }
+  table.paceTable { border-collapse: collapse; margin-top: 8px; font-size: 12px; white-space: nowrap; }
+  table.paceTable th, table.paceTable td { border: 1px solid var(--border); padding: 4px 10px; text-align: right; }
+  table.paceTable th { background: #f1f6f9; font-weight: normal; color: #555; }
+  table.paceTable th.lbl, table.paceTable td.lbl { text-align: left; }
+  table.paceTable tr.now td, table.paceTable tr.now th { background: #eaf8fd; font-weight: bold; }
+
+  /* ------------------------------------------------------------
+     一覧テーブル
+     ------------------------------------------------------------ */
+  .tableWrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table.list { border-collapse: collapse; width: 100%; font-size: 13px; white-space: nowrap; }
+  table.list th, table.list td {
+    border-bottom: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: middle;
+  }
+  table.list thead th {
+    position: sticky; top: 0; background: #f1f6f9; z-index: 1; font-size: 12px; color: #555;
+  }
+  table.list thead th.sortable { cursor: pointer; user-select: none; }
+  table.list thead th.sortable:hover { color: var(--main-dark); }
+  table.list tbody tr:hover { background: #f9fdff; }
+  table.list tbody tr.selected { background: #eaf8fd; }
+  table.list td.wrapCell { white-space: normal; min-width: 160px; }
+  table.list td.num { text-align: right; }
+  .rowSaveMark { font-size: 12px; margin-left: 6px; color: #16a34a; }
+  .rowSaveMark.err { color: var(--error); }
+  .rowSaveMark.busy { color: #888; }
+  select.tantouSelect { padding: 4px 6px; font-size: 13px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+  select.tantouSelect.unassigned { color: #b45309; }
+  .badge {
+    display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border);
+  }
+  .badge.cancelled { background: #fef2f2; color: #991b1b; border-color: #fecaca; }
+  .badge.liff { background: #ecfdf5; color: #065f46; border-color: #a7f3d0; }
+  .emptyLine { padding: 24px 4px; color: #888; font-size: 14px; }
+
+  /* 検索・絞り込みパネルの開閉 */
+  .panelHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  #filterBody { margin-top: 14px; }
+  #filterBody[hidden] { display: none; }
+
+  .bulkBar {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    background: #f1f6f9; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+    margin-bottom: 12px; font-size: 13px;
+  }
+  .bulkBar select { padding: 6px 8px; font-size: 13px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+  .bulkBar button { padding: 7px 14px; font-size: 13px; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; color: #fff; background: var(--main-dark); }
+  .bulkBar button:disabled { opacity: .5; cursor: default; }
+  .bulkBar button.secondary { background: #fff; color: var(--main-dark); border: 1px solid var(--main-dark); }
+</style>
+</head>
+<body>
+<div id="testEnvBar">
+  <b>🔴 テスト環境（本番ではありません）</b><br>
+  画面の確認用です。入力しても<b>どこにも送信されません</b>。
+  <div class="navs">
+    <a href="index.html">申込フォーム</a>
+    <a href="pass.html?t=TESTTOKEN&amp;new=1">入場パス</a>
+    <a href="liff.html">LINE版</a>
+  </div>
+</div>
+
+<header class="appHeader">
+  <h1>ビューフェス2026 申込者一覧（社員用）</h1>
+  <div class="headActions">
+    <a class="navLink" href="badges.html">🖨 名札印刷へ</a>
+    <button type="button" class="navLink" id="qrBtn">📱 申込フォームQR</button>
+  </div>
+</header>
+
+<!-- 申込フォームのQR（その場でお客様に読み取ってもらう用） -->
+<div class="modalOverlay" id="qrModal" hidden>
+  <div class="modalCard" role="dialog" aria-modal="true" aria-labelledby="qrModalTitle">
+    <h2 id="qrModalTitle">申込フォームQR</h2>
+    <div class="modalNote">お客様にこの画面を読み取ってもらってください</div>
+    <div id="qrBox"></div>
+    <div class="qrUrl" id="qrUrl"></div>
+    <button type="button" id="qrCloseBtn">閉じる</button>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="mockBanner" id="mockBanner">⚠ モック表示中（ダミーデータ・GAS未接続）</div>
+
+  <!-- 未ログイン・権限なしのときはこれだけを出し、下のUIは一切出さない（badges.html と同じ） -->
+  <div class="gateCard" id="gateCard" style="display:none;">
+    <div id="gateText"></div>
+    <a class="btn" href="https://beaufield.github.io/beaufield-dev/">ポータルを開く</a>
+  </div>
+
+  <div id="app" style="display:none;">
+    <div class="panel">
+      <div class="row statusLine" id="loginStatusLine"></div>
+
+      <div class="row">
+        <label class="rowLabel">申込の推移（開催日を基準に「何日前」で昨年と重ねる）</label>
+        <div class="paceHead">
+          <span class="paceHero" id="paceHero">—</span>
+          <span class="paceHeroSub" id="paceHeroSub"></span>
+        </div>
+        <div class="paceLegend">
+          <span class="key"><i style="border-top: 2px solid #0284c7;"></i>今年（2026年10月26日 開催）</span>
+          <span class="key"><i style="border-top: 2px dashed #b45309;"></i>昨年（2025年6月23日 開催）</span>
+        </div>
+        <div class="chartBox" id="chartBox">
+          <svg id="paceChart" role="img" aria-label="申込件数の累計推移（今年と昨年の比較）"></svg>
+          <div class="chartTip" id="chartTip"></div>
+        </div>
+        <div class="chartNote" id="chartNote"></div>
+        <details class="paceDetails">
+          <summary>数字で見る（10日ごとの対比表）</summary>
+          <div class="tableWrap"><table class="paceTable" id="paceTable"></table></div>
+        </details>
+      </div>
+
+      <div class="row" id="resPanelRow" style="display:none;">
+        <label class="rowLabel">セミナー・体験会の予約状況</label>
+        <div class="resGrid" id="resGrid"></div>
+        <div class="resNote" id="resNote"></div>
+      </div>
+
+      <div class="row">
+        <label class="rowLabel">担当別の申込件数（クリックでその担当に絞り込み）</label>
+        <div class="summaryGrid" id="summaryGrid"></div>
+        <div class="statusLine" id="tantouConfigHint" style="display:none; margin-top:8px;"></div>
+      </div>
+
+      <div class="row">
+        <div class="btnRow">
+          <button id="fetchBtn" type="button">最新の申込を取得</button>
+          <button id="csvBtn" type="button" class="secondary" disabled>CSVダウンロード</button>
+          <span class="statusLine" id="fetchStatusLine"></span>
+        </div>
+        <div class="warnLine" id="fetchWarning"></div>
+        <div class="errLine" id="fetchError"></div>
+      </div>
+    </div>
+
+    <div class="panel" id="filterPanel" style="display:none;">
+      <div class="panelHead">
+        <button type="button" class="secondary" id="filterToggle" aria-expanded="true" aria-controls="filterBody">🔎 検索・絞り込み ▾</button>
+        <span class="statusLine" id="filterStatusLine"></span>
+      </div>
+
+      <div id="filterBody">
+      <div class="row">
+        <label class="rowLabel" for="q">検索（サロン名・お名前・メール・電話・住所・紹介者・備考）</label>
+        <input type="search" id="q" placeholder="例: 青島 / tanaka@ / 090">
+      </div>
+
+      <div class="row">
+        <label class="rowLabel">業態</label>
+        <div class="choices" id="businessTypeChoices"></div>
+      </div>
+
+      <div class="row">
+        <label class="rowLabel">お取引</label>
+        <div class="choices">
+          <label><input type="radio" name="trade" value="all" checked> すべて</label>
+          <label><input type="radio" name="trade" value="yes"> 既存（お取引あり）</label>
+          <label><input type="radio" name="trade" value="no"> 新規</label>
+        </div>
+      </div>
+
+      <div class="row">
+        <label class="rowLabel">担当</label>
+        <div class="choices">
+          <select id="tantouFilter"></select>
+        </div>
+      </div>
+
+      <div class="row">
+        <label class="rowLabel">申込日（空なら全期間）</label>
+        <div class="dateRange">
+          <input type="date" id="dateFrom"> 〜 <input type="date" id="dateTo">
+        </div>
+      </div>
+
+      <div class="row">
+        <label class="rowLabel">状態・経路</label>
+        <div class="choices">
+          <label><input type="checkbox" id="showCancelled"> キャンセル済みも表示する</label>
+          <label><input type="checkbox" id="onlyUnassigned"> 担当が未割当のものだけ</label>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="btnRow">
+          <button id="resetBtn" type="button" class="secondary">絞り込みを解除</button>
+        </div>
+      </div>
+      </div><!-- /#filterBody -->
+    </div>
+
+    <div class="panel" id="listPanel" style="display:none;">
+      <div class="bulkBar">
+        <span id="selectedCountLine">0件を選択中</span>
+        <select id="bulkTantou"></select>
+        <button id="bulkApplyBtn" type="button" disabled>選択した申込にまとめて設定</button>
+        <button id="selectAllBtn" type="button" class="secondary">表示中をすべて選択</button>
+        <button id="clearSelBtn" type="button" class="secondary">選択解除</button>
+        <span class="statusLine" id="bulkStatusLine"></span>
+      </div>
+      <div class="errLine" id="bulkError"></div>
+
+      <div class="tableWrap">
+        <table class="list" id="listTable">
+          <thead id="listHead"></thead>
+          <tbody id="listBody"></tbody>
+        </table>
+      </div>
+      <div class="emptyLine" id="emptyLine" style="display:none;">該当する申込がありません。</div>
+    </div>
+
+    <div class="versionLine" id="versionLine"></div>
+  </div>
+</div>
+
+<script src="../lib/qrcode.min.js"></script>
+<script>
+// ============================================================
+// admin.html（申込者一覧・社員用・閲覧＋担当欄のみ）
+// 認証・GAS通信ルールは badges.html からそのまま移植している（自分で別方式にしないこと）
+// 版数の定義はこの APP_VERSION 1箇所だけ（AGENTS.md バージョン管理ルール）
+// ============================================================
+const APP_VERSION = '0.3.0';
+const GAS_URL = 'TEST_ENV_NO_GAS';
+const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
+// お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
+const FORM_URL = 'https://beaufield.github.io/beaufield-dev/beaufes/';
+const SESSION_KEY = 'bf_session'; // ポータルと共通
+
+// GAS通信ルール（badges.html §2-5 と同じ）
+const FETCH_TIMEOUT_MS = 10000;
+const MAX_ATTEMPTS     = 6;
+const RETRY_WAIT_MS    = [1000, 2000, 3000, 5000, 8000];
+const TRANSPORT_ERROR_PATTERN = /^(不明なアクション|INVALID_REQUEST)/;
+
+const UNASSIGNED = '__unassigned__';
+
+function el(id) { return document.getElementById(id); }
+function qs(name) { return new URLSearchParams(location.search).get(name); }
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+function isMock() { return true; }   // 🔴 テスト環境では常にモック（GASを呼ばない）
+
+// ------------------------------------------------------------
+// セッション（beaufield-authの共通セッションを読むだけ。発行はポータル側の役目）
+// ------------------------------------------------------------
+function getSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    if (Date.now() > s.expires) { localStorage.removeItem(SESSION_KEY); return null; }
+    return s;
+  } catch (e) { return null; }
+}
+
+// ------------------------------------------------------------
+// GASへのPOST
+// ------------------------------------------------------------
+async function postOnce(params) {
+  const ctrl  = new AbortController();
+  const timer = setTimeout(function () { ctrl.abort(); }, FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      body: new URLSearchParams(params),
+      redirect: 'follow',
+      signal: ctrl.signal
+    });
+    if (!res.ok) throw new Error('HTTP_' + res.status);
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new Error('NON_JSON');
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function postWithRetry(params, onProgress) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      if (onProgress) onProgress(attempt + 1, MAX_ATTEMPTS);
+      await sleep(RETRY_WAIT_MS[attempt - 1] || 8000);
+    }
+    try {
+      const json = await postOnce(params);
+      if (json && json.success === false && TRANSPORT_ERROR_PATTERN.test(String(json.error || ''))) {
+        lastErr = json.error;
+        continue; // 輸送路の破損とみなしリトライ
+      }
+      return json;
+    } catch (e) {
+      lastErr = e && e.message ? e.message : String(e);
+    }
+  }
+  throw new Error(lastErr || 'UNKNOWN');
+}
+
+// ------------------------------------------------------------
+// 画面の出し分け
+// ------------------------------------------------------------
+function showGate(html) {
+  el('gateText').innerHTML = html;
+  el('gateCard').style.display = 'block';
+  el('app').style.display = 'none';
+}
+function showApp() {
+  el('gateCard').style.display = 'none';
+  el('app').style.display = 'block';
+}
+
+const LOGIN_REQUIRED_HTML =
+  'ログインが必要です。ポータルからログインしてください。';
+
+// 🆕 GAS v0.18.0 から、認証エラーは理由別のコードで返る（Code.gs の _requireSession）。
+// 「ログインし直せば直るのか」「権限を足す必要があるのか」を画面で言い切れるようにするため。
+const AUTH_ERROR_HTML = {
+  NO_TOKEN:
+    'ログイン情報がサーバーに届きませんでした。ポータルからログインし直してください。<br><br>' +
+    '<b>ログインし直しても同じ表示が出る場合は不具合です</b>（前島さんに連絡してください）。',
+  SESSION_INVALID:
+    'ログインの有効期限が切れています。ポータルからログインし直してください。',
+  USER_INACTIVE:
+    'このアカウントは現在利用停止になっています（前島さんに連絡してください）。',
+  NO_ROLE:
+    '<b>ログインは有効ですが、この画面を使う権限がありません。</b><br><br>' +
+    '権限管理アプリで、ご自分の <code>beaufes</code> を <code>user</code>（または <code>admin</code>）に' +
+    'してください（前島さんに連絡してください）。'
+};
+
+// 認証エラーならゲートを出して true を返す。それ以外は false（呼び出し側が通常のエラー表示をする）
+function showAuthGate(code) {
+  if (code === 'AUTH_TRANSIENT') return false; // 一時障害はゲートでなくエラー行で出す
+  const html = AUTH_ERROR_HTML[code];
+  if (!html) return false;
+  showGate(html);
+  return true;
+}
+
+// ------------------------------------------------------------
+// 状態
+// ------------------------------------------------------------
+const state = {
+  apps: [],           // サーバーから取得した全申込
+  tantouList: [],     // config の tantou_list
+  businessTypes: [],
+  filtered: [],
+  selected: {},       // app_id -> true
+  sortKey: 'app_id',
+  sortAsc: true,
+  // 🆕 v0.3.0 セミナー・体験会の予約
+  sessions: [],       // 枠の一覧（定員・予約数つき）
+  reservations: [],   // 予約1件ごと（予約者の氏名・サロン名つき）
+  resByApp: {}        // app_id -> 予約の表示名の配列
+};
+
+// ------------------------------------------------------------
+// 業態チェックボックス
+// ------------------------------------------------------------
+function buildBusinessTypeChoices(types) {
+  const box = el('businessTypeChoices');
+  box.textContent = '';
+  const frag = document.createDocumentFragment();
+  types.concat(['未設定']).forEach(function (label) {
+    const value = (label === '未設定') ? '__empty__' : label;
+    const lb = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'btFilter';
+    cb.value = value;
+    cb.addEventListener('change', applyFilters);
+    lb.appendChild(cb);
+    lb.appendChild(document.createTextNode(' ' + label));
+    frag.appendChild(lb);
+  });
+  box.appendChild(frag);
+}
+
+// ------------------------------------------------------------
+// 担当プルダウン（絞り込み用・行内用・一括用）
+// ------------------------------------------------------------
+function fillTantouFilter() {
+  const sel = el('tantouFilter');
+  sel.textContent = '';
+  const opts = [['', 'すべて'], [UNASSIGNED, '未割当']];
+  state.tantouList.forEach(function (t) { opts.push([t, t]); });
+  opts.forEach(function (pair) {
+    const o = document.createElement('option');
+    o.value = pair[0];
+    o.textContent = pair[1];
+    sel.appendChild(o);
+  });
+  sel.addEventListener('change', applyFilters);
+}
+
+function fillBulkTantou() {
+  const sel = el('bulkTantou');
+  sel.textContent = '';
+  const first = document.createElement('option');
+  first.value = '';
+  first.textContent = '（未割当に戻す）';
+  sel.appendChild(first);
+  state.tantouList.forEach(function (t) {
+    const o = document.createElement('option');
+    o.value = t;
+    o.textContent = t;
+    sel.appendChild(o);
+  });
+  sel.disabled = state.tantouList.length === 0;
+}
+
+function makeRowSelect(app) {
+  const sel = document.createElement('select');
+  sel.className = 'tantouSelect';
+  const first = document.createElement('option');
+  first.value = '';
+  first.textContent = '― 未割当 ―';
+  sel.appendChild(first);
+
+  state.tantouList.forEach(function (t) {
+    const o = document.createElement('option');
+    o.value = t;
+    o.textContent = t;
+    sel.appendChild(o);
+  });
+  // 🔴 config から消された担当者が既に入っている行でも、その値を選択肢に残す。
+  //    残さないとプルダウンが勝手に「未割当」表示になり、シートの実データとズレる。
+  if (app.tantou && state.tantouList.indexOf(app.tantou) < 0) {
+    const o = document.createElement('option');
+    o.value = app.tantou;
+    o.textContent = app.tantou + '（リスト外）';
+    sel.appendChild(o);
+  }
+  sel.value = app.tantou || '';
+  sel.className = 'tantouSelect' + (app.tantou ? '' : ' unassigned');
+  sel.disabled = state.tantouList.length === 0;
+  return sel;
+}
+
+// ------------------------------------------------------------
+// 🆕 v0.3.0 セミナー・体験会の予約
+// ------------------------------------------------------------
+// 予約ごとの色。index.html / pass.html と同じ並び（画面をまたいで同じ枠が同じ色になる）
+const RES_ACCENTS = [
+  { line: '#2f9fc4', bg: '#eef8fc' },
+  { line: '#3f9d6b', bg: '#edf9f2' },
+  { line: '#c2851d', bg: '#fdf5e8' },
+  { line: '#8b6fc4', bg: '#f3f0fb' }
+];
+
+function resTimeLabel(s) {
+  if (!s.starts_at) return '';
+  return s.starts_at + '〜' + (s.ends_at || '');
+}
+
+function applyReservations(data) {
+  state.sessions = (data && Array.isArray(data.sessions)) ? data.sessions : [];
+  state.reservations = (data && Array.isArray(data.reservations)) ? data.reservations : [];
+
+  // app_id -> その人の予約（申込一覧の「予約」列で使う）
+  state.resByApp = {};
+  const titleById = {};
+  state.sessions.forEach(function (s) {
+    const t = resTimeLabel(s);
+    // 🔴 タイトルが時刻そのものの枠（計測会）は slot 名を使う。サーバー側 _sessionDisplayName と同じ規則
+    const isDup = !!(s.starts_at && String(s.title).indexOf(s.starts_at) >= 0);
+    titleById[s.session_id] = (t ? t + ' ' : '') + ((isDup && s.slot) ? s.slot : s.title);
+  });
+  state.reservations.forEach(function (r) {
+    if (!state.resByApp[r.app_id]) state.resByApp[r.app_id] = [];
+    state.resByApp[r.app_id].push(titleById[r.session_id] || r.session_id);
+  });
+
+  renderReservations();
+  renderTable();   // 「予約」列を反映する
+}
+
+function renderReservations() {
+  const grid = el('resGrid');
+  grid.textContent = '';
+
+  if (!state.sessions.length) {
+    el('resPanelRow').style.display = 'block';
+    el('resNote').textContent = 'セミナー・体験会の枠がまだ登録されていません（sessions シート）。';
+    return;
+  }
+
+  // slot ごとに色を割り当てる（枠が増えても順番に回る）
+  const slotOrder = [];
+  state.sessions.forEach(function (s) {
+    if (slotOrder.indexOf(s.slot) < 0) slotOrder.push(s.slot);
+  });
+
+  state.sessions.forEach(function (s) {
+    const acc = RES_ACCENTS[slotOrder.indexOf(s.slot) % RES_ACCENTS.length];
+    const card = document.createElement('div');
+    card.className = 'resCard' + (s.is_active ? '' : ' inactive');
+    card.style.setProperty('--acc', acc.line);
+    card.style.setProperty('--accBg', acc.bg);
+
+    const head = document.createElement('div');
+    head.className = 'resCardHead';
+    head.textContent = s.slot + (s.is_active ? '' : '（非公開）');
+    card.appendChild(head);
+
+    const body = document.createElement('div');
+    body.className = 'resCardBody';
+
+    const title = document.createElement('div');
+    title.className = 'resTitle';
+    title.textContent = s.title;
+    body.appendChild(title);
+
+    const time = document.createElement('div');
+    time.className = 'statusLine';
+    time.textContent = resTimeLabel(s);
+    body.appendChild(time);
+
+    const cnt = document.createElement('div');
+    cnt.className = 'resCount';
+    const strong = document.createElement('b');
+    strong.textContent = String(s.reserved_count);
+    cnt.appendChild(strong);
+    const rest = document.createElement('span');
+    if (s.capacity === null || s.capacity === undefined) {
+      rest.textContent = ' 名（定員なし）';
+    } else {
+      rest.textContent = ' / ' + s.capacity + ' 名　';
+      const r = document.createElement('span');
+      if (s.remaining <= 0) { r.className = 'full'; r.textContent = '満席'; }
+      else { r.className = (s.remaining <= 3) ? 'few' : ''; r.textContent = '残り' + s.remaining; }
+      rest.appendChild(r);
+    }
+    cnt.appendChild(rest);
+    body.appendChild(cnt);
+
+    const list = state.reservations.filter(function (r) { return r.session_id === s.session_id; });
+    if (!list.length) {
+      const em = document.createElement('div');
+      em.className = 'resEmpty';
+      em.textContent = 'まだ予約はありません';
+      body.appendChild(em);
+    } else {
+      const det = document.createElement('details');
+      det.className = 'resNames';
+      const sum = document.createElement('summary');
+      sum.textContent = '予約した方（' + list.length + '名）';
+      det.appendChild(sum);
+      const ol = document.createElement('ol');
+      list.forEach(function (r) {
+        const li = document.createElement('li');
+        // 🔴 textContent で入れる（名前に < > が入っていてもHTMLとして解釈させない）
+        li.textContent = r.salon_name + '　' + r.staff_name +
+                         (r.phone ? '　' + r.phone : '');
+        if (r.tantou) {
+          const t = document.createElement('span');
+          t.className = 'resTantou';
+          t.textContent = '（担当: ' + r.tantou + '）';
+          li.appendChild(t);
+        }
+        // 🔴 キャンセル済み申込の予約は席を数えていないが、名簿には残して見えるようにする
+        if (r.app_status === 'cancelled') {
+          li.className = 'cancelledRes';
+          li.title = '申込がキャンセル済み（席は戻っています）';
+        }
+        ol.appendChild(li);
+      });
+      det.appendChild(ol);
+      body.appendChild(det);
+    }
+
+    card.appendChild(body);
+    grid.appendChild(card);
+  });
+
+  const cancelledCount = state.reservations.filter(function (r) { return r.app_status === 'cancelled'; }).length;
+  el('resNote').textContent =
+    '予約は' + state.reservations.length + '件。' +
+    (cancelledCount ? 'うち' + cancelledCount + '件は申込がキャンセル済みで、席は戻っています（名簿では取り消し線）。' : '') +
+    '枠・定員の変更は sessions シートで行えます。';
+  el('resPanelRow').style.display = 'block';
+}
+
+// ------------------------------------------------------------
+// 取得
+// ------------------------------------------------------------
+async function fetchApplications() {
+  const btn = el('fetchBtn');
+  el('fetchError').style.display = 'none';
+  el('fetchWarning').style.display = 'none';
+  btn.disabled = true;
+  el('fetchStatusLine').textContent = '取得中…';
+
+  try {
+    let data;
+    if (isMock()) {
+      data = generateMockData();
+      await sleep(200);
+    } else {
+      const session = getSession();
+      if (!session) { showGate(LOGIN_REQUIRED_HTML); return; }
+      // 🔴 GASの doPost は POST本文を `data` パラメータのJSONからしか読まない（Code.gs の doPost）。
+      //    session_token をフラットなフォーム項目で送ると、サーバーには一切届かず必ず
+      //    SESSION_INVALID になる（v0.1.1までの実際のバグ）。この形を崩さないこと。
+      const json = await postWithRetry(
+        { action: 'listApplications', data: JSON.stringify({ session_token: session.token || '' }) },
+        function (n, max) { el('fetchStatusLine').textContent = '再試行中… (' + n + '/' + max + ')'; }
+      );
+      if (!json || json.success !== true) {
+        const err = String((json && json.error) || 'UNKNOWN');
+        if (showAuthGate(err)) return;
+        if (err === 'AUTH_TRANSIENT') {
+          throw new Error('認証シートを読めませんでした（Google側の一時的な不調の可能性）。少し待ってからもう一度お試しください。');
+        }
+        throw new Error(err);
+      }
+      data = json.data;
+    }
+
+    applyFetchResult(data);
+
+    // 🆕 v0.3.0: 予約状況。🔴 ここが失敗しても申込一覧は出したままにする
+    //    （予約はあとから足した機能で、一覧の表示を止める理由にならない）。
+    try {
+      let res;
+      if (isMock()) {
+        res = generateMockReservations();
+      } else {
+        const session = getSession();
+        const rj = await postWithRetry(
+          { action: 'listReservations', data: JSON.stringify({ session_token: (session && session.token) || '' }) });
+        res = (rj && rj.success === true) ? rj.data : null;
+      }
+      applyReservations(res);
+    } catch (e) {
+      el('resNote').textContent = '予約状況を取得できませんでした: ' + (e && e.message ? e.message : String(e));
+      el('resPanelRow').style.display = 'block';
+    }
+  } catch (e) {
+    el('fetchError').textContent = '取得に失敗しました: ' + (e && e.message ? e.message : String(e));
+    el('fetchError').style.display = 'block';
+    el('fetchStatusLine').textContent = '';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function applyFetchResult(data) {
+  state.apps = Array.isArray(data.applications) ? data.applications : [];
+  state.tantouList = Array.isArray(data.tantou_list) ? data.tantou_list : [];
+  state.businessTypes = Array.isArray(data.business_types) ? data.business_types : [];
+  state.selected = {};
+
+  buildBusinessTypeChoices(state.businessTypes);
+  fillTantouFilter();
+  fillBulkTantou();
+
+  el('filterPanel').style.display = 'block';
+  el('listPanel').style.display = 'block';
+  el('csvBtn').disabled = false;
+  el('fetchStatusLine').textContent = '全' + state.apps.length + '件を取得（' + nowLabel() + ' 時点）';
+
+  const hint = el('tantouConfigHint');
+  if (state.tantouList.length === 0) {
+    hint.textContent = '⚠ 担当者リストが未設定です。スプレッドシートの config シートに key=tantou_list / value=「（担当者名をカンマ区切りで）」の行を追加すると、担当の入力ができるようになります。';
+    hint.style.display = 'block';
+  } else {
+    hint.style.display = 'none';
+  }
+
+  applyFilters();
+}
+
+function nowLabel() {
+  const d = new Date();
+  function p(n) { return ('0' + n).slice(-2); }
+  return p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+// ------------------------------------------------------------
+// 絞り込み
+// ------------------------------------------------------------
+function checkedBusinessTypes() {
+  const out = [];
+  document.querySelectorAll('.btFilter').forEach(function (cb) { if (cb.checked) out.push(cb.value); });
+  return out;
+}
+
+function applyFilters() {
+  const q = String(el('q').value || '').trim().toLowerCase();
+  const bts = checkedBusinessTypes();
+  const wantAllBt = bts.length === 0;
+  const wantEmptyBt = bts.indexOf('__empty__') >= 0;
+  const tradeEl = document.querySelector('input[name=trade]:checked');
+  const trade = tradeEl ? tradeEl.value : 'all';
+  const tantouSel = el('tantouFilter').value;
+  const from = String(el('dateFrom').value || '');
+  const to   = String(el('dateTo').value || '');
+  const showCancelled = el('showCancelled').checked;
+  const onlyUnassigned = el('onlyUnassigned').checked;
+
+  state.filtered = state.apps.filter(function (a) {
+    if (!showCancelled && a.status !== 'confirmed') return false;
+    if (onlyUnassigned && a.tantou) return false;
+
+    if (!wantAllBt) {
+      const known = state.businessTypes.indexOf(a.business_type) >= 0;
+      const ok = known ? (bts.indexOf(a.business_type) >= 0) : wantEmptyBt;
+      if (!ok) return false;
+    }
+    if (trade !== 'all' && a.has_transaction !== trade) return false;
+
+    if (tantouSel === UNASSIGNED) { if (a.tantou) return false; }
+    else if (tantouSel) { if (a.tantou !== tantouSel) return false; }
+
+    if (from && String(a.created_key || '') < from) return false;
+    if (to   && String(a.created_key || '') > to)   return false;
+
+    if (q) {
+      const hay = [a.salon_name, a.staff_name, a.email, a.phone, a.address, a.referrer, a.note, a.app_id]
+        .join(' ').toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+
+  sortFiltered();
+  renderChart();
+  renderSummary();
+  renderTable();
+
+  // 🔴 パネルを畳んでいるときは中身が見えないので、絞り込み中かどうかをこの行に出す
+  el('filterStatusLine').textContent =
+    '表示 ' + state.filtered.length + '件 / 全' + state.apps.length + '件' +
+    (hasActiveFilter() ? '・絞り込み中' : '');
+}
+
+function hasActiveFilter() {
+  return !!(
+    String(el('q').value || '').trim() ||
+    checkedBusinessTypes().length ||
+    (document.querySelector('input[name=trade]:checked') || {}).value !== 'all' ||
+    el('tantouFilter').value ||
+    el('dateFrom').value ||
+    el('dateTo').value ||
+    el('showCancelled').checked ||
+    el('onlyUnassigned').checked
+  );
+}
+
+function sortFiltered() {
+  const key = state.sortKey;
+  const dir = state.sortAsc ? 1 : -1;
+  state.filtered.sort(function (a, b) {
+    const av = String(a[key] || '');
+    const bv = String(b[key] || '');
+    if (av === bv) return a.app_id < b.app_id ? -1 : 1;
+    return av < bv ? -dir : dir;
+  });
+}
+
+// ------------------------------------------------------------
+// 申込フォームQR（画像を置かず、pass.html / badges.html と同じ自前ホストの
+// lib/qrcode.min.js で生成する。外部APIに依存しない・拡大しても粗くならない）
+// ------------------------------------------------------------
+let qrRendered = false;
+
+function openQrModal() {
+  if (!qrRendered) {
+    const qr = qrcode(0, 'M'); // 0=自動バージョン・'M'は pass.html / badges.html と同じ設定
+    qr.addData(FORM_URL);
+    qr.make();
+    el('qrBox').innerHTML = qr.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
+    el('qrUrl').textContent = FORM_URL;
+    qrRendered = true;
+  }
+  el('qrModal').hidden = false;
+  document.body.style.overflow = 'hidden'; // お客様に見せている間、背景がスクロールしないようにする
+}
+
+function closeQrModal() {
+  el('qrModal').hidden = true;
+  document.body.style.overflow = '';
+}
+
+// ------------------------------------------------------------
+// 検索・絞り込みパネルの開閉（既定はスマホ=畳む・PC=開く。以後は端末ごとに記憶する）
+// ------------------------------------------------------------
+const FILTER_OPEN_KEY = 'bf_admin_filter_open';
+
+function defaultFilterOpen() {
+  try {
+    const v = localStorage.getItem(FILTER_OPEN_KEY);
+    if (v === '1') return true;
+    if (v === '0') return false;
+  } catch (e) {} // プライベートブラウズ等で読めなくても既定値で動く
+  return window.matchMedia('(min-width: 720px)').matches;
+}
+
+function setFilterOpen(open, persist) {
+  el('filterBody').hidden = !open;
+  el('filterToggle').textContent = '🔎 検索・絞り込み ' + (open ? '▾' : '▸');
+  el('filterToggle').setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (persist) {
+    try { localStorage.setItem(FILTER_OPEN_KEY, open ? '1' : '0'); } catch (e) {}
+  }
+}
+
+function resetFilters() {
+  el('q').value = '';
+  document.querySelectorAll('.btFilter').forEach(function (cb) { cb.checked = false; });
+  const t = document.querySelector('input[name=trade][value=all]');
+  if (t) t.checked = true;
+  el('tantouFilter').value = '';
+  el('dateFrom').value = '';
+  el('dateTo').value = '';
+  el('showCancelled').checked = false;
+  el('onlyUnassigned').checked = false;
+  applyFilters();
+}
+
+// ------------------------------------------------------------
+// 申込ペースの折れ線グラフ（今年 vs 昨年・開催日を0とした「何日前」で重ねる）
+// ------------------------------------------------------------
+// 🔴 昨年（2025年・6/23開催）の実績は「開催何日前に何件」だけを持つ。
+//    元データ（MS Forms の申込一覧）にはサロン名・氏名・電話・メールが入っているが、
+//    このリポジトリは Public なので日別件数の集計値以外は絶対に持ち込まない（GITHUB-RULES.md）。
+//    集計基準: フォームの「完了時刻」ベース・全214件。昨年はキャンセルの記録が
+//    元データに無いため、申込全件をそのまま計上している（今年側との差はこの注記で吸収する）。
+const EVENT_DATE_2026 = '2026-10-26'; // 開催当日。index.html の日時と必ず一致させること
+const EVENT_DATE_2025 = '2025-06-23'; // 昨年の開催当日（重ね合わせの基準）
+const LAST_YEAR_DAILY = [
+  [-70,1],[-69,1],[-68,2],[-66,1],[-65,1],[-63,1],[-62,1],[-61,2],[-59,10],[-58,3],[-57,1],
+  [-56,5],[-54,5],[-53,5],[-52,2],[-50,1],[-47,3],[-46,7],[-45,8],[-42,2],[-41,3],[-40,4],
+  [-39,3],[-38,4],[-37,3],[-35,1],[-34,4],[-33,8],[-32,2],[-31,1],[-30,1],[-27,6],[-26,6],
+  [-25,9],[-24,12],[-23,4],[-20,6],[-19,3],[-18,7],[-17,1],[-16,4],[-15,1],[-13,2],[-12,7],
+  [-11,8],[-10,6],[-7,3],[-6,9],[-5,10],[-4,3],[-3,9],[-2,2]
+];
+
+// 色は「今年＝青・昨年＝オレンジ」。P型/D型/T型のいずれでも判別できる組み合わせを
+// 選んである（加えて昨年は破線にし、凡例と直接ラベルも付けて色だけに頼らせない）
+const COLOR_TY = '#0284c7';
+const COLOR_LY = '#b45309';
+
+let chartModel = null;   // 直近の描画結果。ホバー時の座標逆算に使う
+let chartResizeTimer = null;
+
+function pad2(n) { return ('0' + n).slice(-2); }
+
+// 'YYYY-MM-DD' → UTCミリ秒。日付だけを扱うので時差の影響を受けない
+function keyToUTC(key) {
+  const s = String(key || '');
+  if (s.length < 10) return NaN;
+  const y = Number(s.slice(0, 4)), m = Number(s.slice(5, 7)), d = Number(s.slice(8, 10));
+  if (!y || !m || !d) return NaN;
+  return Date.UTC(y, m - 1, d);
+}
+
+// 開催日を0として「何日前か」を負の数で返す（-70 なら開催70日前）
+function dayOffset(key, eventKey) {
+  const a = keyToUTC(key), b = keyToUTC(eventKey);
+  if (isNaN(a) || isNaN(b)) return NaN;
+  return Math.round((a - b) / 86400000);
+}
+
+function offsetToKey(offset, eventKey) {
+  const d = new Date(keyToUTC(eventKey) + offset * 86400000);
+  return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate());
+}
+
+function todayKey() {
+  const d = new Date();
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+}
+
+function offsetLabel(o) { return (o === 0) ? '当日' : (-o) + '日前'; }
+
+function niceYStep(maxValue) {
+  const cands = [5, 10, 20, 25, 50, 100, 200, 250, 500];
+  for (let i = 0; i < cands.length; i++) if (maxValue / cands[i] <= 5) return cands[i];
+  return 1000;
+}
+
+function pickXStep(span, maxTicks) {
+  const cands = [7, 10, 14, 20, 30, 60];
+  for (let i = 0; i < cands.length; i++) if (span / cands[i] <= maxTicks) return cands[i];
+  return 90;
+}
+
+function esc(s) {
+  return String(s).split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;');
+}
+
+// ------------------------------------------------------------
+// 描画本体
+// ------------------------------------------------------------
+function renderChart() {
+  const box = el('chartBox');
+  const oldSvg = el('paceChart');
+  if (!box || !oldSvg) return;
+
+  // ---- 1. 「開催何日前」ごとの累計に直す
+  const lyDaily = {};
+  LAST_YEAR_DAILY.forEach(function (p) { lyDaily[p[0]] = p[1]; });
+
+  // 🔴 母集団は担当別サマリーと必ず同じにする（キャンセルの扱いだけチェックに従う）。
+  //    担当・業態などの絞り込みは無視する（全体のペースを見るためのグラフなので）
+  const showCancelled = el('showCancelled').checked;
+  const tyDaily = {};
+  let tyUndated = 0;
+  state.apps.forEach(function (a) {
+    if (!showCancelled && a.status !== 'confirmed') return;
+    const o = dayOffset(a.created_key, EVENT_DATE_2026);
+    if (isNaN(o)) { tyUndated++; return; }
+    tyDaily[o] = (tyDaily[o] || 0) + 1;
+  });
+
+  const today = dayOffset(todayKey(), EVENT_DATE_2026);
+  const maxX = 0;
+
+  // 今年の線は「今日」まで引く（その先はまだ分からないので引かない）。
+  // 🔴 ただし端末の時計ずれ等で今日より後の申込日が入っていたら、そこまで伸ばす。
+  //    ここを today で切ると、担当別サマリーの合計とグラフの件数が黙って食い違う
+  let tyLast = today;
+  Object.keys(tyDaily).forEach(function (k) { const o = Number(k); if (o > tyLast) tyLast = o; });
+  const tyEnd = Math.min(tyLast, 0);
+
+  let minX = LAST_YEAR_DAILY[0][0];
+  Object.keys(tyDaily).forEach(function (k) { const o = Number(k); if (o < minX) minX = o; });
+  if (tyEnd < minX) minX = tyEnd;    // 受付開始前でも「今日」が軸に入るようにする
+
+  const lyCum = {}, tyCum = {};
+  let acc = 0;
+  for (let o = minX; o <= maxX; o++) { acc += (lyDaily[o] || 0); lyCum[o] = acc; }
+  const lyTotal = acc;
+  acc = 0;
+  for (let o = minX; o <= tyEnd; o++) { acc += (tyDaily[o] || 0); tyCum[o] = acc; }
+  const tyNow = (tyEnd >= minX) ? acc : 0;
+  const lyNow = lyCum[Math.max(minX, Math.min(tyEnd, maxX))] || 0;
+
+  // ---- 2. 座標
+  const w = Math.max(320, Math.round(box.clientWidth || 640));
+  const h = (w >= 560) ? 250 : 208;
+  const padL = 44, padR = 14, padT = 18, padB = 28;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
+  const spanX = Math.max(1, maxX - minX);
+  const yStep = niceYStep(Math.max(lyTotal, tyNow, 1));
+  const yMax = Math.max(yStep, Math.ceil(Math.max(lyTotal, tyNow, 1) / yStep) * yStep);
+
+  function X(o) { return padL + (o - minX) / spanX * plotW; }
+  function Y(v) { return padT + plotH - (v / yMax) * plotH; }
+  function anchorFor(x) {
+    if (x < padL + 20) return 'start';
+    if (x > w - padR - 20) return 'end';
+    return 'middle';
+  }
+
+  // ---- 3. SVGを組み立てる（入る値はすべてこちらで計算した数値・固定文字列のみ）
+  const p = [];
+
+  for (let v = 0; v <= yMax; v += yStep) {
+    const y = Y(v).toFixed(1);
+    p.push('<line x1="' + padL + '" y1="' + y + '" x2="' + (w - padR) + '" y2="' + y +
+           '" stroke="#eef2f5" stroke-width="1"/>');
+    p.push('<text x="' + (padL - 7) + '" y="' + (Y(v) + 4).toFixed(1) +
+           '" text-anchor="end" font-size="11" fill="#9aa5ad">' + v + '</text>');
+  }
+  p.push('<line x1="' + padL + '" y1="' + Y(0).toFixed(1) + '" x2="' + (w - padR) +
+         '" y2="' + Y(0).toFixed(1) + '" stroke="#d7dee3" stroke-width="1"/>');
+
+  const xStep = pickXStep(spanX, (w >= 560) ? 7 : 4);
+  for (let o = 0; o >= minX; o -= xStep) {
+    const x = X(o);
+    p.push('<line x1="' + x.toFixed(1) + '" y1="' + Y(0).toFixed(1) + '" x2="' + x.toFixed(1) +
+           '" y2="' + (Y(0) + 4).toFixed(1) + '" stroke="#d7dee3" stroke-width="1"/>');
+    p.push('<text x="' + x.toFixed(1) + '" y="' + (h - 9) + '" text-anchor="' + anchorFor(x) +
+           '" font-size="11" fill="#9aa5ad">' + esc(offsetLabel(o)) + '</text>');
+  }
+
+  if (today >= minX && today <= maxX) {
+    const x = X(today);
+    p.push('<line x1="' + x.toFixed(1) + '" y1="' + padT + '" x2="' + x.toFixed(1) + '" y2="' +
+           Y(0).toFixed(1) + '" stroke="#b9c6cd" stroke-width="1" stroke-dasharray="3 3"/>');
+    p.push('<text x="' + x.toFixed(1) + '" y="' + (padT - 5) + '" text-anchor="' + anchorFor(x) +
+           '" font-size="10" fill="#8b969e">今日</text>');
+  }
+
+  function linePath(cum, from, to) {
+    const seg = [];
+    for (let o = from; o <= to; o++) {
+      seg.push((seg.length ? 'L' : 'M') + X(o).toFixed(1) + ' ' + Y(cum[o]).toFixed(1));
+    }
+    return seg.join(' ');
+  }
+
+  // 線の上に文字が乗っても読めるように、白フチ（縁取り）を付けてから塗る
+  function endLabel(x, y, anchor, text) {
+    return '<text x="' + x + '" y="' + y + '" text-anchor="' + anchor +
+           '" font-size="11" font-weight="bold" fill="#555" stroke="#fff" stroke-width="3"' +
+           ' paint-order="stroke" stroke-linejoin="round">' + esc(text) + '</text>';
+  }
+
+  // 昨年（破線）→ 今年（実線）の順に描き、今年を必ず上に重ねる
+  p.push('<path d="' + linePath(lyCum, minX, maxX) + '" fill="none" stroke="' + COLOR_LY +
+         '" stroke-width="2" stroke-dasharray="6 4" stroke-linecap="round" stroke-linejoin="round"/>');
+  p.push('<circle cx="' + X(maxX).toFixed(1) + '" cy="' + Y(lyTotal).toFixed(1) +
+         '" r="4" fill="' + COLOR_LY + '" stroke="#fff" stroke-width="2"/>');
+  p.push(endLabel(w - padR, (Y(lyTotal) + 20).toFixed(1), 'end', '昨年 ' + lyTotal));
+
+  if (tyEnd >= minX) {
+    p.push('<path d="' + linePath(tyCum, minX, tyEnd) + '" fill="none" stroke="' + COLOR_TY +
+           '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>');
+    p.push('<circle cx="' + X(tyEnd).toFixed(1) + '" cy="' + Y(tyNow).toFixed(1) +
+           '" r="4" fill="' + COLOR_TY + '" stroke="#fff" stroke-width="2"/>');
+    p.push(endLabel(X(tyEnd).toFixed(1), (Y(tyNow) - 10).toFixed(1), anchorFor(X(tyEnd)), '今年 ' + tyNow));
+  }
+
+  // ホバー用（十字線と点は最初は隠しておく）
+  p.push('<g id="paceCross" style="display:none">' +
+         '<line id="paceCrossLine" y1="' + padT + '" y2="' + Y(0).toFixed(1) +
+         '" stroke="#8b969e" stroke-width="1" stroke-dasharray="3 3"/>' +
+         '<circle id="paceDotLy" r="4.5" fill="' + COLOR_LY + '" stroke="#fff" stroke-width="2"/>' +
+         '<circle id="paceDotTy" r="4.5" fill="' + COLOR_TY + '" stroke="#fff" stroke-width="2"/>' +
+         '</g>');
+  // 当たり判定（線より広く取る）
+  p.push('<rect x="' + padL + '" y="' + padT + '" width="' + plotW + '" height="' + plotH +
+         '" fill="transparent"/>');
+
+  // 🔴 SVG要素への直接 innerHTML は環境によって落ちるため、
+  //    div にHTMLとして組んでからノードごと差し替える
+  const holder = document.createElement('div');
+  holder.innerHTML =
+    '<svg id="paceChart" role="img" viewBox="0 0 ' + w + ' ' + h + '" width="' + w + '" height="' + h +
+    '" aria-label="申込件数の累計推移。今年は' + tyNow + '件、昨年の同時期は' + lyNow + '件。">' +
+    p.join('') + '</svg>';
+  const newSvg = holder.firstChild;
+  oldSvg.parentNode.replaceChild(newSvg, oldSvg);
+
+  chartModel = {
+    minX: minX, maxX: maxX, tyEnd: tyEnd, today: today,
+    lyCum: lyCum, tyCum: tyCum, lyTotal: lyTotal, tyNow: tyNow, lyNow: lyNow,
+    w: w, h: h, padL: padL, padT: padT, plotW: plotW, plotH: plotH, yMax: yMax,
+    X: X, Y: Y
+  };
+
+  newSvg.addEventListener('pointermove', onChartPoint);
+  newSvg.addEventListener('pointerdown', onChartPoint);
+  newSvg.addEventListener('pointerleave', hideChartTip);
+  newSvg.addEventListener('pointercancel', hideChartTip);
+
+  renderPaceHero(tyNow, lyNow, tyEnd);
+  renderPaceNote(showCancelled, tyUndated);
+  renderPaceTable();
+}
+
+// ------------------------------------------------------------
+// 見出し（今日時点でどこまで来ているか）
+// ------------------------------------------------------------
+function renderPaceHero(tyNow, lyNow, tyEnd) {
+  el('paceHero').textContent = '今年 ' + tyNow + '件';
+
+  const parts = [];
+  parts.push('（' + esc(offsetLabel(Math.max(tyEnd, chartModel.minX))) + '時点');
+  parts.push('昨年の同時期 ' + lyNow + '件');
+  const diff = tyNow - lyNow;
+  if (lyNow > 0) {
+    // 🔴 増減は色だけで示さない（▲▼と符号を必ず添える）
+    const cls  = (diff >= 0) ? 'up' : 'down';
+    const mark = (diff >= 0) ? '▲' : '▼';
+    const sign = (diff >= 0) ? '+' : '−';
+    parts.push('<span class="' + cls + '">' + mark + ' ' + sign + Math.abs(diff) +
+               '件（昨年比 ' + Math.round(tyNow / lyNow * 100) + '%）</span>');
+  }
+  parts.push('昨年の最終 ' + chartModel.lyTotal + '件）');
+  el('paceHeroSub').innerHTML = parts.join(' ・ ');
+}
+
+function renderPaceNote(showCancelled, tyUndated) {
+  let s = '※ 開催日を0日として重ねています。今年＝2026年10月26日（月）開催、昨年＝2025年6月23日（月）開催・最終' +
+          chartModel.lyTotal + '件。' +
+          '昨年はフォームの完了時刻ベースで、キャンセルの記録が元データに無いため申込全件を計上しています。' +
+          '今年は' + (showCancelled ? 'キャンセル済みも含めた' : 'キャンセルを除いた（確定分の）') + '件数です。' +
+          'このグラフは担当・業態などの絞り込みには連動しません（全体のペースを見るため）。';
+  if (tyUndated > 0) s += ' ⚠ 申込日が読み取れない申込が' + tyUndated + '件あり、グラフから除いています。';
+  el('chartNote').textContent = s;
+}
+
+// ------------------------------------------------------------
+// 対比表（グラフを読まなくても数字で追えるようにする）
+// ------------------------------------------------------------
+function renderPaceTable() {
+  const m = chartModel;
+  const table = el('paceTable');
+  table.textContent = '';
+
+  const step = 10;
+  const marks = [];
+  for (let o = Math.ceil(m.minX / step) * step; o <= 0; o += step) marks.push(o);
+  if (marks.indexOf(0) < 0) marks.push(0);
+  if (m.tyEnd >= m.minX && m.tyEnd <= 0 && marks.indexOf(m.tyEnd) < 0) marks.push(m.tyEnd);
+  marks.sort(function (a, b) { return a - b; });
+
+  const thead = document.createElement('thead');
+  const htr = document.createElement('tr');
+  [['時点', 'lbl'], ['今年', ''], ['昨年', ''], ['差', '']].forEach(function (c) {
+    const th = document.createElement('th');
+    th.className = c[1];
+    th.textContent = c[0];
+    htr.appendChild(th);
+  });
+  thead.appendChild(htr);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  marks.forEach(function (o) {
+    const tr = document.createElement('tr');
+    const isNow = (o === m.tyEnd);
+    if (isNow) tr.className = 'now';
+
+    const th = document.createElement('th');
+    th.className = 'lbl';
+    // 通常 tyEnd は今日。ずれている場合（時計ずれ等）は「今日」と言い切らない
+    th.textContent = offsetLabel(o) + (o === m.today ? '（今日）' : (isNow ? '（最新）' : ''));
+    tr.appendChild(th);
+
+    const known = (o <= m.tyEnd && o >= m.minX);
+    const ty = known ? m.tyCum[o] : null;
+    const ly = m.lyCum[o] || 0;
+    const cells = [
+      known ? (ty + '件') : '—',
+      ly + '件',
+      known ? (((ty - ly) >= 0 ? '+' : '−') + Math.abs(ty - ly) + '件') : '—'
+    ];
+    cells.forEach(function (v) {
+      const td = document.createElement('td');
+      td.textContent = v;
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+}
+
+// ------------------------------------------------------------
+// ホバー（十字線＋吹き出し）
+// ------------------------------------------------------------
+function hideChartTip() {
+  const g = el('paceCross');
+  if (g) g.style.display = 'none';
+  el('chartTip').style.display = 'none';
+}
+
+function onChartPoint(ev) {
+  const m = chartModel;
+  const svg = el('paceChart');
+  if (!m || !svg) return;
+
+  const rect = svg.getBoundingClientRect();
+  if (!rect.width) return;
+  // SVGは幅100%で拡縮されるので、描画時の座標系に戻してから日数に直す
+  const scale = m.w / rect.width;
+  const px = (ev.clientX - rect.left) * scale;
+  let o = Math.round(m.minX + (px - m.padL) / m.plotW * (m.maxX - m.minX));
+  if (o < m.minX) o = m.minX;
+  if (o > m.maxX) o = m.maxX;
+
+  const x = m.X(o);
+  el('paceCross').style.display = '';
+  const line = el('paceCrossLine');
+  line.setAttribute('x1', x.toFixed(1));
+  line.setAttribute('x2', x.toFixed(1));
+
+  const ly = m.lyCum[o] || 0;
+  const dotLy = el('paceDotLy');
+  dotLy.setAttribute('cx', x.toFixed(1));
+  dotLy.setAttribute('cy', m.Y(ly).toFixed(1));
+
+  const known = (o <= m.tyEnd);
+  const ty = known ? (m.tyCum[o] || 0) : null;
+  const dotTy = el('paceDotTy');
+  if (known) {
+    dotTy.style.display = '';
+    dotTy.setAttribute('cx', x.toFixed(1));
+    dotTy.setAttribute('cy', m.Y(ty).toFixed(1));
+  } else {
+    dotTy.style.display = 'none';
+  }
+
+  const rows = [];
+  rows.push('<div class="tipHead">' + esc(offsetLabel(o)) + '（今年 ' + esc(offsetToKey(o, EVENT_DATE_2026)) + '）</div>');
+  rows.push('<div><span class="tipKey" style="background:' + COLOR_TY + '"></span>今年 ' +
+            (known ? (ty + '件') : '—') + '</div>');
+  rows.push('<div><span class="tipKey" style="background:' + COLOR_LY + '"></span>昨年 ' + ly + '件' +
+            '<span style="color:#999"> / ' + esc(offsetToKey(o, EVENT_DATE_2025)) + '</span></div>');
+  if (known) {
+    const d = ty - ly;
+    rows.push('<div>差 ' + ((d >= 0) ? '+' : '−') + Math.abs(d) + '件' +
+              (ly > 0 ? '（昨年比 ' + Math.round(ty / ly * 100) + '%）' : '') + '</div>');
+  }
+
+  const tip = el('chartTip');
+  tip.innerHTML = rows.join('');
+  tip.style.display = 'block';
+
+  const bx = el('chartBox').getBoundingClientRect();
+  let left = (ev.clientX - bx.left) + 14;
+  if (left + tip.offsetWidth > bx.width) left = (ev.clientX - bx.left) - tip.offsetWidth - 14;
+  if (left < 0) left = 0;
+  let top = (ev.clientY - bx.top) - 12;
+  if (top + tip.offsetHeight > bx.height) top = bx.height - tip.offsetHeight;
+  if (top < 0) top = 0;
+  tip.style.left = Math.round(left) + 'px';
+  tip.style.top = Math.round(top) + 'px';
+}
+
+// ------------------------------------------------------------
+// 担当別サマリー
+// ------------------------------------------------------------
+function renderSummary() {
+  // 🔴 サマリーは「絞り込み前の全件」ではなく、キャンセルを除いた母集団で数える。
+  //    担当フィルタだけは無視する（担当で絞ったら全部1本になってしまうため）。
+  const showCancelled = el('showCancelled').checked;
+  const base = state.apps.filter(function (a) { return showCancelled || a.status === 'confirmed'; });
+
+  const counts = {};
+  let unassigned = 0;
+  base.forEach(function (a) {
+    if (a.tantou) counts[a.tantou] = (counts[a.tantou] || 0) + 1;
+    else unassigned++;
+  });
+
+  const grid = el('summaryGrid');
+  grid.textContent = '';
+  const cur = el('tantouFilter').value;
+
+  function chip(name, label, count, sub, extraClass) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'sumChip' + (extraClass ? ' ' + extraClass : '') + (cur === name ? ' active' : '');
+    const n = document.createElement('span'); n.className = 'chipName'; n.textContent = label;
+    const c = document.createElement('span'); c.className = 'chipCount'; c.textContent = String(count);
+    b.appendChild(n); b.appendChild(c);
+    if (sub) { const s = document.createElement('span'); s.className = 'chipSub'; s.textContent = sub; b.appendChild(s); }
+    b.addEventListener('click', function () {
+      el('tantouFilter').value = (cur === name) ? '' : name; // もう一度押したら解除
+      el('onlyUnassigned').checked = false;
+      applyFilters();
+    });
+    return b;
+  }
+
+  // 合計（担当フィルタ解除）
+  const all = document.createElement('button');
+  all.type = 'button';
+  all.className = 'sumChip' + (cur === '' ? ' active' : '');
+  const an = document.createElement('span'); an.className = 'chipName'; an.textContent = '全体';
+  const ac = document.createElement('span'); ac.className = 'chipCount'; ac.textContent = String(base.length);
+  all.appendChild(an); all.appendChild(ac);
+  all.addEventListener('click', function () { el('tantouFilter').value = ''; applyFilters(); });
+  grid.appendChild(all);
+
+  state.tantouList.forEach(function (t) {
+    grid.appendChild(chip(t, t, counts[t] || 0, ''));
+  });
+  // config から消えた担当者が実データに残っている場合も出す（数が合わなくなるため）
+  Object.keys(counts).forEach(function (t) {
+    if (state.tantouList.indexOf(t) < 0) grid.appendChild(chip(t, t + '（リスト外）', counts[t], ''));
+  });
+
+  grid.appendChild(chip(UNASSIGNED, '未割当', unassigned, '', 'unassigned'));
+}
+
+// ------------------------------------------------------------
+// 一覧テーブル
+// ------------------------------------------------------------
+const COLUMNS = [
+  { key: '',              label: '',        sortable: false },
+  { key: 'app_id',        label: '受付番号', sortable: true },
+  { key: 'created_key',   label: '申込日',   sortable: true },
+  { key: 'salon_name',    label: 'サロン名', sortable: true },
+  { key: 'staff_name',    label: 'お名前',   sortable: true },
+  { key: 'business_type', label: '業態',     sortable: true },
+  { key: 'has_transaction', label: 'お取引', sortable: true },
+  { key: 'tantou',        label: '担当',     sortable: true },
+  { key: 'reservations',  label: '予約',     sortable: false },   // 🆕 v0.3.0
+  { key: 'phone',         label: '電話',     sortable: false },
+  { key: 'email',         label: 'メール',   sortable: false },
+  { key: 'referrer',      label: '紹介者',   sortable: false },
+  { key: 'note',          label: '備考',     sortable: false },
+  { key: 'status',        label: '状態',     sortable: true }
+];
+
+function renderHead() {
+  const head = el('listHead');
+  head.textContent = '';
+  const tr = document.createElement('tr');
+  COLUMNS.forEach(function (col) {
+    const th = document.createElement('th');
+    if (col.key === '') {
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.id = 'headCheck';
+      cb.title = '表示中をすべて選択';
+      cb.addEventListener('change', function () {
+        if (cb.checked) selectAllVisible(); else clearSelection();
+      });
+      th.appendChild(cb);
+    } else {
+      let label = col.label;
+      if (col.sortable && state.sortKey === col.key) label += state.sortAsc ? ' ▲' : ' ▼';
+      th.textContent = label;
+      if (col.sortable) {
+        th.className = 'sortable';
+        th.addEventListener('click', function () {
+          if (state.sortKey === col.key) state.sortAsc = !state.sortAsc;
+          else { state.sortKey = col.key; state.sortAsc = true; }
+          sortFiltered();
+          renderTable();
+        });
+      }
+    }
+    tr.appendChild(th);
+  });
+  head.appendChild(tr);
+}
+
+function tdText(text, cls) {
+  const td = document.createElement('td');
+  td.textContent = text == null ? '' : String(text);
+  if (cls) td.className = cls;
+  return td;
+}
+
+// その人の予約を1セルぶんの文字列にする
+function reservationLabelOf(appId) {
+  const list = (state.resByApp && state.resByApp[appId]) || [];
+  return list.join('\n');
+}
+
+function renderTable() {
+  renderHead();
+  const body = el('listBody');
+  body.textContent = '';
+
+  el('emptyLine').style.display = state.filtered.length ? 'none' : 'block';
+
+  const frag = document.createDocumentFragment();
+  state.filtered.forEach(function (a) {
+    const tr = document.createElement('tr');
+    tr.dataset.appId = a.app_id;
+    if (state.selected[a.app_id]) tr.className = 'selected';
+
+    // 選択チェックボックス
+    const tdCb = document.createElement('td');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!state.selected[a.app_id];
+    cb.addEventListener('change', function () {
+      if (cb.checked) state.selected[a.app_id] = true;
+      else delete state.selected[a.app_id];
+      tr.className = cb.checked ? 'selected' : '';
+      updateSelectionUI();
+    });
+    tdCb.appendChild(cb);
+    tr.appendChild(tdCb);
+
+    tr.appendChild(tdText(a.app_id));
+    tr.appendChild(tdText(a.created_key));
+    tr.appendChild(tdText(a.salon_name, 'wrapCell'));
+    tr.appendChild(tdText(a.staff_name));
+    tr.appendChild(tdText(a.business_type));
+    tr.appendChild(tdText(a.has_transaction === 'yes' ? '既存' : (a.has_transaction === 'no' ? '新規' : '')));
+
+    // 担当（その場で保存）
+    const tdT = document.createElement('td');
+    const sel = makeRowSelect(a);
+    const mark = document.createElement('span');
+    mark.className = 'rowSaveMark';
+    sel.addEventListener('change', function () {
+      saveTantou([a.app_id], sel.value, mark, sel);
+    });
+    tdT.appendChild(sel);
+    tdT.appendChild(mark);
+    tr.appendChild(tdT);
+
+    // 🆕 v0.3.0 予約（複数ある場合は改行で並べる）
+    tr.appendChild(tdText(reservationLabelOf(a.app_id), 'wrapCell'));
+
+    tr.appendChild(tdText(a.phone));
+    tr.appendChild(tdText(a.email, 'wrapCell'));
+    tr.appendChild(tdText(a.referrer));
+    tr.appendChild(tdText(a.note, 'wrapCell'));
+
+    const tdS = document.createElement('td');
+    if (a.status !== 'confirmed') {
+      const b = document.createElement('span');
+      b.className = 'badge cancelled';
+      b.textContent = a.status || '不明';
+      tdS.appendChild(b);
+    } else if (a.source === 'liff') {
+      const b = document.createElement('span');
+      b.className = 'badge liff';
+      b.textContent = 'LINE';
+      tdS.appendChild(b);
+    } else {
+      tdS.textContent = '—';
+    }
+    tr.appendChild(tdS);
+
+    frag.appendChild(tr);
+  });
+  body.appendChild(frag);
+
+  updateSelectionUI();
+}
+
+// ------------------------------------------------------------
+// 選択（一括設定用）
+// ------------------------------------------------------------
+function selectedIds() {
+  return Object.keys(state.selected);
+}
+function selectAllVisible() {
+  state.filtered.forEach(function (a) { state.selected[a.app_id] = true; });
+  renderTable();
+}
+function clearSelection() {
+  state.selected = {};
+  renderTable();
+}
+function updateSelectionUI() {
+  const n = selectedIds().length;
+  el('selectedCountLine').textContent = n + '件を選択中';
+  el('bulkApplyBtn').disabled = (n === 0) || state.tantouList.length === 0;
+  const head = el('headCheck');
+  if (head) head.checked = (n > 0 && n >= state.filtered.length);
+}
+
+// ------------------------------------------------------------
+// 担当の保存
+// ------------------------------------------------------------
+async function saveTantou(appIds, tantou, mark, selEl) {
+  if (isMock()) {
+    appIds.forEach(function (id) {
+      const a = state.apps.filter(function (x) { return x.app_id === id; })[0];
+      if (a) a.tantou = tantou;
+    });
+    if (mark) { mark.className = 'rowSaveMark'; mark.textContent = '✓'; }
+    renderSummary();
+    return { updated: appIds.length };
+  }
+
+  const session = getSession();
+  if (!session) { showGate(LOGIN_REQUIRED_HTML); return null; }
+
+  if (mark) { mark.className = 'rowSaveMark busy'; mark.textContent = '保存中…'; }
+  if (selEl) selEl.disabled = true;
+
+  try {
+    // 🔴 上と同じ理由で、必ず data パラメータのJSONにまとめて送る
+    const json = await postWithRetry({
+      action: 'setTantou',
+      data: JSON.stringify({
+        session_token: session.token || '',
+        app_ids: appIds.join(','),
+        tantou: tantou
+      })
+    });
+    if (!json || json.success !== true) {
+      const err = String((json && json.error) || 'UNKNOWN');
+      if (showAuthGate(err)) return null;
+      throw new Error(err);
+    }
+
+    // 手元のデータにも反映（再取得しない＝1件変えるたびに全件取り直さない）
+    appIds.forEach(function (id) {
+      const a = state.apps.filter(function (x) { return x.app_id === id; })[0];
+      if (a) a.tantou = tantou;
+    });
+    if (mark) { mark.className = 'rowSaveMark'; mark.textContent = '✓'; }
+    if (selEl) selEl.className = 'tantouSelect' + (tantou ? '' : ' unassigned');
+    renderSummary();
+    return json.data;
+  } catch (e) {
+    if (mark) { mark.className = 'rowSaveMark err'; mark.textContent = '✗ 保存失敗'; }
+    // 🔴 保存に失敗したらプルダウンの見た目を元の値に戻す。
+    //    画面だけ変わったまま残ると「入れたはずの担当が入っていない」事故になる。
+    if (selEl) {
+      const a = state.apps.filter(function (x) { return x.app_id === appIds[0]; })[0];
+      selEl.value = (a && a.tantou) || '';
+    }
+    alert('担当の保存に失敗しました: ' + (e && e.message ? e.message : String(e)));
+    return null;
+  } finally {
+    if (selEl) selEl.disabled = false;
+  }
+}
+
+async function bulkApply() {
+  const ids = selectedIds();
+  if (!ids.length) return;
+  const tantou = el('bulkTantou').value;
+  const label = tantou || '未割当';
+  if (!confirm(ids.length + '件の担当を「' + label + '」に設定します。よろしいですか？')) return;
+
+  const btn = el('bulkApplyBtn');
+  btn.disabled = true;
+  el('bulkError').style.display = 'none';
+  el('bulkStatusLine').textContent = '保存中…';
+
+  const res = await saveTantou(ids, tantou, null, null);
+  if (res) {
+    el('bulkStatusLine').textContent = res.updated + '件を「' + label + '」に設定しました';
+    if (res.not_found && res.not_found.length) {
+      el('bulkError').textContent = '見つからなかった申込があります: ' + res.not_found.join(', ') + '（画面が古い可能性があります。再取得してください）';
+      el('bulkError').style.display = 'block';
+    }
+    state.selected = {};
+    applyFilters();
+  } else {
+    el('bulkStatusLine').textContent = '';
+  }
+  btn.disabled = false;
+  updateSelectionUI();
+}
+
+// ------------------------------------------------------------
+// CSVダウンロード（絞り込み後の表示中データ）
+// ------------------------------------------------------------
+const CSV_HEADERS = [
+  ['app_id', '受付番号'], ['created_at', '申込日時'], ['updated_at', '更新日時'],
+  ['salon_name', 'サロン名'], ['staff_name', 'お名前'], ['email', 'メール'], ['phone', '電話'],
+  ['business_type', '業態'], ['has_transaction', 'お取引'], ['address', '住所'], ['referrer', '紹介者'],
+  ['tantou', '担当'], ['reservations', '予約'],
+  ['status', '状態'], ['source', '経路'], ['checked_in_at', '入場時刻'], ['note', '備考']
+];
+
+function csvCell(v) {
+  const s = (v == null) ? '' : String(v);
+  // 🔴 セル内の " は "" にエスケープしたうえで全体を " で囲む（CSVの決まり）
+  return '"' + s.split('"').join('""') + '"';
+}
+
+// 表示中（絞り込み後）のデータからCSV本文を組み立てる。
+// 🔴 改行はCRLF（Excel向け）。BOMは書き出し側で付ける
+function buildCsv() {
+  const rows = [];
+  rows.push(CSV_HEADERS.map(function (h) { return csvCell(h[1]); }).join(','));
+  state.filtered.forEach(function (a) {
+    rows.push(CSV_HEADERS.map(function (h) {
+      let v = a[h[0]];
+      if (h[0] === 'has_transaction') v = (v === 'yes') ? '既存' : (v === 'no' ? '新規' : '');
+      // 🆕 v0.3.0 予約はセル内改行だと表計算で扱いにくいので「/」でつなぐ
+      if (h[0] === 'reservations') v = ((state.resByApp && state.resByApp[a.app_id]) || []).join(' / ');
+      return csvCell(v);
+    }).join(','));
+  });
+  return rows.join('\r\n') + '\r\n';
+}
+
+function downloadCsv() {
+  // 🔴 Excelで開いたときに文字化けしないようBOM付きUTF-8
+  const blob = new Blob(['﻿' + buildCsv()], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const d = new Date();
+  function p(n) { return ('0' + n).slice(-2); }
+  a.href = url;
+  a.download = 'beaufes_applications_' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+}
+
+// ------------------------------------------------------------
+// モック（?mock=1・ログイン不要・GAS未接続で画面だけ確認する用）
+// ------------------------------------------------------------
+// ?mock=1 用の予約データ（本物の枠と同じ構成にしてある）
+function generateMockReservations() {
+  const sessions = [
+    { session_id: 'S1', slot: 'セミナー 第1部', title: 'オトナ女子の"巡り"に寄り添うフェムケアセミナー',
+      starts_at: '11:30', ends_at: '12:30', capacity: 20, is_active: true, reserved_count: 3, remaining: 17 },
+    { session_id: 'S2', slot: 'セミナー 第2部', title: '整形級！炭酸ガスパック体験会',
+      starts_at: '14:00', ends_at: '15:00', capacity: 20, is_active: true, reserved_count: 1, remaining: 19 },
+    { session_id: 'B1', slot: 'バランス革命 無料計測会', title: '10:00〜10:45の回',
+      starts_at: '10:00', ends_at: '10:45', capacity: 1, is_active: true, reserved_count: 1, remaining: 0 },
+    { session_id: 'B2', slot: 'バランス革命 無料計測会', title: '10:45〜11:30の回',
+      starts_at: '10:45', ends_at: '11:30', capacity: 1, is_active: true, reserved_count: 0, remaining: 1 },
+    { session_id: 'F1', slot: 'フェイスメーカー 体験会', title: '10:10〜11:00の回',
+      starts_at: '10:10', ends_at: '11:00', capacity: 1, is_active: true, reserved_count: 1, remaining: 0 }
+  ];
+  const reservations = [
+    { res_id: 'R0001', app_id: 'MOCK-001', session_id: 'S1', created_at: '2026-09-02 10:00:00',
+      salon_name: '【見本】サンプルサロン1', staff_name: 'テスト 太郎1', phone: '0000-00-0001',
+      tantou: '担当A', app_status: 'confirmed' },
+    { res_id: 'R0002', app_id: 'MOCK-002', session_id: 'S1', created_at: '2026-09-02 11:00:00',
+      salon_name: '【見本】サンプルサロン2', staff_name: 'テスト 太郎2', phone: '0000-00-0002',
+      tantou: '', app_status: 'confirmed' },
+    { res_id: 'R0003', app_id: 'MOCK-011', session_id: 'S1', created_at: '2026-09-03 09:00:00',
+      salon_name: '【見本】サンプルサロン11', staff_name: 'テスト 太郎11', phone: '0000-00-0011',
+      tantou: '担当B', app_status: 'cancelled' },
+    { res_id: 'R0004', app_id: 'MOCK-003', session_id: 'S2', created_at: '2026-09-03 12:00:00',
+      salon_name: '【見本】サンプルサロン3', staff_name: 'テスト 太郎3', phone: '0000-00-0003',
+      tantou: '担当C', app_status: 'confirmed' },
+    { res_id: 'R0005', app_id: 'MOCK-001', session_id: 'B1', created_at: '2026-09-02 10:01:00',
+      salon_name: '【見本】サンプルサロン1', staff_name: 'テスト 太郎1', phone: '0000-00-0001',
+      tantou: '担当A', app_status: 'confirmed' },
+    { res_id: 'R0006', app_id: 'MOCK-004', session_id: 'F1', created_at: '2026-09-04 15:00:00',
+      salon_name: '【見本】サンプルサロン4', staff_name: 'テスト 太郎4', phone: '0000-00-0004',
+      tantou: '', app_status: 'confirmed' }
+  ];
+  return { sessions: sessions, reservations: reservations, viewer: 'モック' };
+}
+
+function generateMockData() {
+  const bts = ['美容室', '理容室', 'エステサロン', 'ネイルサロン', 'アイサロン', 'その他'];
+  // 🔴 実在の社員名は書かない（GITHUB-RULES.md）。担当欄の見た目確認はこれで足りる
+  const tantou = ['担当A', '担当B', '担当C'];
+  const apps = [];
+  for (let i = 1; i <= 37; i++) {
+    const day = 1 + (i % 20);
+    const key = '2026-09-' + ('0' + day).slice(-2);
+    apps.push({
+      // 🔴 F2026-形式にしない（本物との混同防止。badges.html のモックと同じ方針）
+      app_id: 'MOCK-' + ('000' + i).slice(-3),
+      created_at: key + ' 10:' + ('0' + (i % 60)).slice(-2) + ':00',
+      created_key: key,
+      updated_at: key + ' 10:00:00',
+      source: (i % 5 === 0) ? 'liff' : 'web',
+      salon_name: '【見本】サンプルサロン' + i,
+      staff_name: 'テスト 太郎' + i,
+      email: 'sample' + i + '@example.com',
+      phone: '0000-00-' + ('0000' + i).slice(-4),
+      has_transaction: (i % 3 === 0) ? 'no' : 'yes',
+      address: (i % 3 === 0) ? '宮崎市青島2-12-11' : '',
+      referrer: (i % 3 === 0) ? '紹介元サロン' + i : '',
+      has_line: (i % 5 === 0),
+      status: (i % 11 === 0) ? 'cancelled' : 'confirmed',
+      checked_in_at: '',
+      note: (i % 7 === 0) ? '駐車場について問い合わせあり' : '',
+      business_type: (i % 9 === 0) ? '' : bts[i % bts.length],
+      tantou: (i % 4 === 0) ? '' : tantou[i % tantou.length]
+    });
+  }
+  // textContent で描画していること（HTMLとして解釈されないこと）の確認用。
+  // 🔴 スクリプト終了タグの文字列そのものはインラインscriptを閉じてしまうため <\/ でエスケープ必須
+  apps.push({
+    app_id: 'MOCK-999',
+    created_at: '2026-09-21 10:00:00', created_key: '2026-09-21', updated_at: '2026-09-21 10:00:00',
+    source: 'web',
+    salon_name: '<script>alert(1)<\/script>サロン',
+    staff_name: '<b>危険太郎</b>',
+    email: 'xss@example.com', phone: '0000-00-9999',
+    has_transaction: 'yes', address: '', referrer: '', has_line: false,
+    status: 'confirmed', checked_in_at: '', note: '', business_type: '美容室',
+    tantou: ''
+  });
+  return { total: apps.length, tantou_list: tantou, business_types: bts, applications: apps, viewer: 'モック' };
+}
+
+// ------------------------------------------------------------
+// 起動
+// ------------------------------------------------------------
+function init() {
+  el('versionLine').textContent = 'v' + APP_VERSION;
+
+  el('fetchBtn').addEventListener('click', fetchApplications);
+  el('csvBtn').addEventListener('click', downloadCsv);
+  el('resetBtn').addEventListener('click', resetFilters);
+  el('qrBtn').addEventListener('click', openQrModal);
+  el('qrCloseBtn').addEventListener('click', closeQrModal);
+  // 背景をタップしたときも閉じる（カード内のタップでは閉じない）
+  el('qrModal').addEventListener('click', function (ev) {
+    if (ev.target === el('qrModal')) closeQrModal();
+  });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape' && !el('qrModal').hidden) closeQrModal();
+  });
+
+  el('filterToggle').addEventListener('click', function () {
+    setFilterOpen(el('filterBody').hidden, true); // 畳んでいたら開く・開いていたら畳む
+  });
+  setFilterOpen(defaultFilterOpen(), false); // 初期表示は記憶または画面幅で決める（保存はしない）
+
+  // グラフは幅に合わせて実寸で描くので、画面幅が変わったら描き直す（連打を防ぐため間引く）
+  window.addEventListener('resize', function () {
+    if (chartResizeTimer) clearTimeout(chartResizeTimer);
+    chartResizeTimer = setTimeout(function () { hideChartTip(); renderChart(); }, 180);
+  });
+  el('bulkApplyBtn').addEventListener('click', bulkApply);
+  el('selectAllBtn').addEventListener('click', selectAllVisible);
+  el('clearSelBtn').addEventListener('click', clearSelection);
+
+  el('q').addEventListener('input', applyFilters);
+  el('dateFrom').addEventListener('change', applyFilters);
+  el('dateTo').addEventListener('change', applyFilters);
+  el('showCancelled').addEventListener('change', applyFilters);
+  el('onlyUnassigned').addEventListener('change', applyFilters);
+  document.querySelectorAll('input[name=trade]').forEach(function (r) {
+    r.addEventListener('change', applyFilters);
+  });
+
+  renderChart(); // 取得前でも昨年の線と目盛りは出しておく（申込を取ると今年の線が乗る）
+
+  if (isMock()) {
+    el('mockBanner').style.display = 'block';
+    el('loginStatusLine').textContent = 'モック表示中（ログイン不要・GAS未接続）';
+    showApp();
+    fetchApplications();
+    return;
+  }
+
+  const session = getSession();
+  if (!session) {
+    showGate(LOGIN_REQUIRED_HTML);
+    return;
+  }
+  el('loginStatusLine').textContent = (session.name || session.user_id || '') + ' でログイン中';
+  showApp();
+  fetchApplications(); // 開いた時点で自動取得する（見るだけの画面なので1手減らす）
+}
+
+init();
+</script>
+</body>
+</html>
