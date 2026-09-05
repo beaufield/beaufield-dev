@@ -129,11 +129,42 @@
   /* ===== 🆕 v0.13.0 セミナー予約 =====
      🔴 liff.html / pass.html にも同じ見た目のものを置いてある。直すときは3つとも直すこと。 */
   .semNote  { font-size: 12px; color: #888; margin: 4px 0 10px; line-height: 1.7; }
-  .semSlot  { margin-top: 14px; }
-  .semSlotHead {
-    font-size: 13px; font-weight: bold; color: var(--main-dark);
-    border-left: 3px solid var(--main); padding-left: 8px;
+
+  /* 予約のスペース全体。ここが「予約する場所」だと分かるように、
+     フォームの他の項目とは違う面にする */
+  .semSection {
+    background: #f4fafc;
+    border: 1px solid #dceef4;
+    border-radius: 12px;
+    padding: 14px 12px 16px;
+    margin-top: 8px;
   }
+  .semSectionHead {
+    font-size: 15px; font-weight: bold; color: var(--main-dark);
+    margin: 0 0 2px;
+  }
+  .semOptional { color: #888; font-size: 12px; font-weight: normal; margin-left: 6px; }
+
+  /* 予約ごと（slotごと）のかたまり。1つ1つが別の予約だと分かるように、
+     白いカード＋左の色帯＋色付きの見出しバーで囲う。
+     🔴 色は --acc / --accBg を renderSeminars がインラインで入れる（枠が増えても順番に回る） */
+  .semSlot {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--acc, #5BC8E8);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-top: 12px;
+  }
+  .semSlot:first-child { margin-top: 4px; }
+  .semSlotHead {
+    font-size: 13px; font-weight: bold;
+    color: var(--acc, #2fa8cc);
+    background: var(--accBg, #eef8fc);
+    border-bottom: 1px solid var(--border);
+    padding: 9px 12px;
+  }
+  .semSlotBody { padding: 8px 12px 12px; }
   .semCard {
     border: 1px solid var(--border); border-radius: 10px;
     padding: 12px 14px; margin-top: 8px; background: #fff;
@@ -168,7 +199,7 @@
   .semSlotDetail { margin-top: 10px; }
   .semSlotDetail .semDetail { border-top: none; padding-top: 0; }
   /* 時間チップの一覧（同じ内容の枠が4つ以上並ぶとき） */
-  .semSlotHint { font-size: 12px; color: #888; margin: 6px 0 0; }
+  .semSlotHint { font-size: 12px; color: #888; margin: 2px 0 0; }
   .semGrid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
@@ -203,6 +234,10 @@
   .semCard.conflict { background: #fafafa; }
   .semCard.conflict .semTitle { color: #999; }
   .semConflictMsg { color: #b45454; font-weight: bold; }
+  /* 🔴🔴 `.semMeta { display:block }` は UAスタイルの `[hidden]{display:none}` に
+     詳細度で勝ってしまう。これが無いと「時間が重なります」が**常に表示される**
+     （2026-09-05に実際に起きた）。要素を隠すときは必ずこの2行が効いていること。 */
+  .semMeta[hidden], .semChipSub[hidden] { display: none !important; }
   .semChip.conflict { background: #f4f5f6; border-color: #e6e8ea; cursor: default; }
   .semChip.conflict .semChipTime { color: #b9bec3; }
   .semLoading { font-size: 13px; color: #888; padding: 6px 0; }
@@ -284,8 +319,8 @@
       </div>
 
       <!-- 🆕 v0.13.0 セミナー予約。枠は sessions シートから取得して描く（コードに枠を書かない） -->
-      <div id="seminarBlock">
-        <label>セミナー・体験会のご予約<span style="color:#888;font-size:12px;margin-left:6px;">任意</span></label>
+      <div id="seminarBlock" class="semSection">
+        <div class="semSectionHead">セミナー・体験会のご予約<span class="semOptional">任意</span></div>
         <div class="semNote">
           ご予約がなくてもご入場いただけます。時間帯ごとに1つお選びいただけます。<br>
           ご予約の変更・取り消しは、お申し込み後の入場パス画面からいつでも行えます。
@@ -374,7 +409,7 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.19.0';
+const APP_VERSION = '0.20.0';
 const GAS_URL = 'TEST_ENV_NO_GAS';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
@@ -546,6 +581,15 @@ const MOCK_SESSIONS = [
   mockFaceSlot('F5', '13:30', '14:20', 0),   // 満席の見え方
   mockFaceSlot('F6', '14:20', '15:10', 1),
   mockFaceSlot('F7', '15:10', '16:00', 1)
+];
+
+// 予約ごとの色。上から順に使い、足りなくなったら先頭へ戻る。
+// 🔵 枠（slot）が増えても勝手に色が付くので、コードを触らずに予約を足せる。
+const SEM_ACCENTS = [
+  { line: '#2f9fc4', bg: '#eef8fc' },   // 青（ブランド色）
+  { line: '#3f9d6b', bg: '#edf9f2' },   // 緑
+  { line: '#c2851d', bg: '#fdf5e8' },   // 山吹
+  { line: '#8b6fc4', bg: '#f3f0fb' }    // 紫
 ];
 
 function escHtml(s) {
@@ -731,8 +775,10 @@ function renderSeminars(container, sessions, selectedIds) {
 
     const anySelected = g.some(function (s) { return sel.indexOf(s.session_id) >= 0; });
 
-    html += '<div class="semSlot">' +
-            '<div class="semSlotHead">' + escHtml(slot) + (headTime ? '　' + headTime : '') + '</div>';
+    const acc = SEM_ACCENTS[gi % SEM_ACCENTS.length];
+    html += '<div class="semSlot" style="--acc:' + acc.line + ';--accBg:' + acc.bg + ';">' +
+            '<div class="semSlotHead">' + escHtml(slot) + (headTime ? '　' + headTime : '') + '</div>' +
+            '<div class="semSlotBody">';
     if (useGrid) {
       html += '<div class="semSlotHint">ご希望の時間を1つお選びください' +
               (capHint ? '（' + capHint + '）' : '') + '</div>' +
@@ -749,7 +795,7 @@ function renderSeminars(container, sessions, selectedIds) {
     html += '<label class="semSkip"><input type="radio" name="' + name + '" value=""' +
             (anySelected ? '' : ' checked') + '><span>予約しない</span></label>';
     if (detailOwner) html += '<div class="semSlotDetail">' + detailHtml(detailOwner) + '</div>';
-    html += '</div>';
+    html += '</div></div>';   // semSlotBody / semSlot
   });
   container.innerHTML = html;
   container._sessions = list;   // refreshConflicts が使う
