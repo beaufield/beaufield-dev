@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.26.0';
+const VERSION = 'v2.27.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -2252,7 +2252,12 @@ function getMembers() {
   }
 }
 
-// ===================== 商品セット検索 =====================
+// ===================== 商品セット検索（v2.27.0: 横断検索）=====================
+// 商品セット名だけでなく、親商品名・特集名にもキーワードを当てて商品セットを返す。
+// 「商品名では引っかかるのにセット名では引っかからない」問題への対応。
+// どの項目で一致したかを match_by に入れて返し、画面側で理由を表示できるようにする。
+const SEARCH_SET_LIMIT = 80;
+
 function searchProductSets(params) {
   const keyword = (params.keyword || '').toLowerCase().trim();
   if (!keyword) return { ok: false, error: 'キーワードを入力してください' };
@@ -2260,20 +2265,63 @@ function searchProductSets(params) {
   const sets = bcartGetAll('/product_sets');
   if (!sets.ok) return sets;
 
-  const filtered = sets.data.filter(s =>
-    (String(s.product_no || '')).toLowerCase().includes(keyword) ||
-    (String(s.name || '')).toLowerCase().includes(keyword)
-  ).slice(0, 30);
+  // 親商品（商品名・特集ID）。取得に失敗してもセット名検索だけは動かす
+  const productById = {};
+  try {
+    const prods = bcartGetAll('/products');
+    if (prods.ok && prods.data) {
+      prods.data.forEach(p => {
+        productById[String(p.id)] = {
+          name: String(p.name || ''),
+          featureIds: [p.feature_id1, p.feature_id2, p.feature_id3]
+            .filter(v => v !== undefined && v !== null && v !== '')
+            .map(v => String(v))
+        };
+      });
+    }
+  } catch (e) {
+    Logger.log('searchProductSets products error: ' + e.message);
+  }
 
-  return {
-    ok: true,
-    sets: filtered.map(s => ({
-      id:         s.id,
-      product_no: s.product_no || '',
-      name:       s.name || '',
-      unit_price: s.unit_price || 0
-    }))
-  };
+  // 特集名（種類=メーカー/シリーズ等はシート側の管理値）
+  const featureById = {};
+  try {
+    const f = getSpecials();
+    if (f.ok && f.specials) f.specials.forEach(x => { featureById[String(x.id)] = String(x.name || ''); });
+  } catch (e) {
+    Logger.log('searchProductSets features error: ' + e.message);
+  }
+
+  const hit = [];
+  for (let i = 0; i < sets.data.length; i++) {
+    const st = sets.data[i];
+    const setNo   = String(st.product_no || '');
+    const setName = String(st.name || '');
+    const prod    = productById[String(st.product_id)] || null;
+    const prodName = prod ? prod.name : '';
+    const featureNames = prod ? prod.featureIds.map(fid => featureById[fid] || '').filter(n => n) : [];
+
+    const matchBy = [];
+    if (setNo.toLowerCase().indexOf(keyword) >= 0) matchBy.push('品番');
+    if (setName.toLowerCase().indexOf(keyword) >= 0) matchBy.push('商品セット名');
+    if (prodName && prodName.toLowerCase().indexOf(keyword) >= 0) matchBy.push('商品名');
+    const hitFeatures = featureNames.filter(n => n.toLowerCase().indexOf(keyword) >= 0);
+    if (hitFeatures.length > 0) matchBy.push('特集');
+    if (matchBy.length === 0) continue;
+
+    hit.push({
+      id:            st.id,
+      product_no:    setNo,
+      name:          setName,
+      unit_price:    st.unit_price || 0,
+      product_name:  prodName,
+      feature_names: featureNames,
+      match_by:      matchBy
+    });
+    if (hit.length >= SEARCH_SET_LIMIT) break;
+  }
+
+  return { ok: true, sets: hit, limit: SEARCH_SET_LIMIT, truncated: hit.length >= SEARCH_SET_LIMIT };
 }
 
 // ===================== 機能B: 特別価格管理 =====================
@@ -2345,7 +2393,8 @@ function getSpecialPriceData() {
         created_at:     String(groupRows[i][3]),
         note:           groupRows[i][4] || '',
         use_view_filter: groupRows[i][5] === true || groupRows[i][5] === 'TRUE',
-        customer_codes: String(groupRows[i][6] || '')
+        customer_codes: String(groupRows[i][6] || ''),
+        maker:          String(groupRows[i][7] || '')
       });
     }
   }
@@ -2405,13 +2454,47 @@ function getSpecialPriceData() {
     }
   }
 
-  return { ok: true, groups: groups, details: details, vfDetails: vfDetails, individuals: individuals };
+  // ③ 会員名の表示用マップ（会員APIが落ちても本体は返す）
+  let memberMap = {};
+  try {
+    const c = fetchCustomersCached();
+    if (c.ok) {
+      c.members.forEach(m => {
+        memberMap[String(m.id)] = { name: m.comp_name || m.name || String(m.id), ext_id: m.ext_id || '' };
+      });
+    }
+  } catch (e) {
+    Logger.log('getSpecialPriceData memberMap error: ' + e.message);
+  }
+
+  // ③ 標準価格の表示用マップ（Bカートの商品セット単価。取得失敗時は空で返す）
+  let setPrices = {};
+  try {
+    const setsRes = bcartGetAll('/product_sets');
+    if (setsRes.ok && setsRes.data) {
+      setsRes.data.forEach(st => {
+        if (st && st.id !== undefined && st.id !== null) setPrices[String(st.id)] = Number(st.unit_price || 0);
+      });
+    }
+  } catch (e) {
+    Logger.log('getSpecialPriceData setPrices error: ' + e.message);
+  }
+
+  return {
+    ok: true,
+    groups: groups, details: details, vfDetails: vfDetails, individuals: individuals,
+    memberMap: memberMap, setPrices: setPrices
+  };
 }
 
-// 既存シート（6列時代）にcustomer_codes列ヘッダーを補う
+// 既存シート（6列時代）にcustomer_codes列(7)・maker列(8)のヘッダーを補う
+// ※関数名は互換のため据え置き（呼び出し箇所多数）。v2.27.0でmaker列も面倒を見るようになった
 function ensureSpGroupCodesHeader(sheet) {
   if (String(sheet.getRange(1, 7).getValue() || '') !== 'customer_codes') {
     sheet.getRange(1, 7).setValue('customer_codes').setFontWeight('bold').setBackground('#f3f4f6');
+  }
+  if (String(sheet.getRange(1, 8).getValue() || '') !== 'maker') {
+    sheet.getRange(1, 8).setValue('maker').setFontWeight('bold').setBackground('#f3f4f6');
   }
 }
 
@@ -2422,6 +2505,8 @@ function saveCustomerGroup(params) {
   const memberIds = params.member_ids || '';
   // customer_codes は渡されたときだけ更新（会員選択モーダル等からの保存で消さない）
   const hasCodes = params.customer_codes !== undefined && params.customer_codes !== null;
+  // maker も同様に、渡されたときだけ更新する
+  const hasMaker = params.maker !== undefined && params.maker !== null;
 
   const uvf = params.use_view_filter === true || params.use_view_filter === 'TRUE' ? 'TRUE' : 'FALSE';
   if (params.group_id) {
@@ -2438,6 +2523,11 @@ function saveCustomerGroup(params) {
           cCell.setNumberFormat('@');
           cCell.setValue(String(params.customer_codes));
         }
+        if (hasMaker) {
+          const kCell = sheet.getRange(i + 1, 8);
+          kCell.setNumberFormat('@');
+          kCell.setValue(String(params.maker));
+        }
         return { ok: true, group_id: params.group_id };
       }
     }
@@ -2453,6 +2543,11 @@ function saveCustomerGroup(params) {
     const cCell = sheet.getRange(lastRow, 7);
     cCell.setNumberFormat('@');
     cCell.setValue(String(params.customer_codes));
+  }
+  if (hasMaker) {
+    const kCell = sheet.getRange(lastRow, 8);
+    kCell.setNumberFormat('@');
+    kCell.setValue(String(params.maker));
   }
   return { ok: true, group_id: newId };
 }
