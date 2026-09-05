@@ -60,6 +60,31 @@ MODE_LIVE = "テスト用のスプレッドシートに<b>実際に書き込み�
 FILES = ["index.html", "pass.html", "liff.html"]
 
 
+# 🔴 本番HTMLは 227a30c でセミナー予約UIが意図的に外されている（Pages と GAS の版が揃うまでの
+#    暫定対応）。その状態のまま生成すると、テスト環境からUIが**黙って消える**。
+#    UIを直すときは先に tools/restore_from_test_pages.py で戻すこと。
+#    🔴 マーカーは3画面に共通のものだけにすること（pass.html の一覧は semList、index/liff は seminarList）。
+REQUIRED_MARKERS = ["renderSeminars", "sessionChipHtml", "selectedSessionIds"]
+
+
+def preflight():
+    """🔴 1本でも書き出す前に3本すべてを検査する。
+    途中で落ちるとテスト環境が「UIのある画面」と「無い画面」の混在になる。"""
+    ng = []
+    for name in FILES:
+        src = io.open(os.path.join(BASE, name), encoding="utf-8").read()
+        missing = [m for m in REQUIRED_MARKERS if m not in src]
+        if missing:
+            ng.append(name + "（" + ", ".join(missing) + " が無い）")
+    if ng:
+        raise SystemExit(
+            "🔴 本番HTMLに予約UIがありません: " + " / ".join(ng) + "\n"
+            "   本番HTMLは 227a30c でUIを外した状態がgitの正です。このまま生成すると\n"
+            "   テスト環境からUIが消えます。先に次を実行してください:\n"
+            "     py -3.12 tools/restore_from_test_pages.py\n"
+            "   （何も書き出していません）")
+
+
 def build(name):
     src = io.open(os.path.join(BASE, name), encoding="utf-8").read()
 
@@ -111,6 +136,7 @@ def build(name):
     print("generated: test/" + name + ("  [LIVE]" if LIVE else "  [mock only]"))
 
 
+preflight()
 for f in FILES:
     build(f)
 
