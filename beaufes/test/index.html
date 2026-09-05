@@ -412,7 +412,7 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.21.0';
+const APP_VERSION = '0.22.0';
 const GAS_URL = 'TEST_ENV_NO_GAS';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
@@ -556,7 +556,7 @@ function mockFaceSlot(id, start, end, remaining) {
 
 const MOCK_SESSIONS = [
   { session_id: 'S1', slot: 'セミナー 第1部', title: 'オトナ女子の"巡り"に寄り添うフェムケアセミナー',
-    starts_at: '11:30', ends_at: '12:30', capacity: 30, remaining: 12, is_full: false,
+    starts_at: '11:30', ends_at: '12:30', capacity: 20, remaining: 12, is_full: false,
     bullets: ['更年期は"予防"できる！', '結局更年期の原因ってなにから来ているの？',
               '身体の変化に寄り添ったエッセンス新商品のご紹介', '今日からできるフェムケア'],
     overview: '年齢を重ねるにつれて感じる、理由のはっきりしないゆらぎや、すっきりしない毎日。\n' +
@@ -567,7 +567,7 @@ const MOCK_SESSIONS = [
               '本セミナーでは、更年期の仕組みとその解決するための秘密を詳しくご紹介。' +
               '変化の時期を、美しく心地よく迎えるためのヒントをお届けします。' },
   { session_id: 'S2', slot: 'セミナー 第2部', title: '整形級！炭酸ガスパック体験会',
-    starts_at: '14:00', ends_at: '15:00', capacity: 30, remaining: 28, is_full: false,
+    starts_at: '14:00', ends_at: '15:00', capacity: 20, remaining: 18, is_full: false,
     bullets: ['炭酸ガスパックの特徴をご紹介', 'サロンでの取り入れ方', '実際にご体験いただけます'],
     overview: '※この説明文は仮のものです。内容が決まり次第、差し替えます。' },
   mockBalanceSlot('B1', '10:00', '10:45', 1),
