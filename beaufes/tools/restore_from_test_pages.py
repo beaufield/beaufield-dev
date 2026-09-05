@@ -99,5 +99,8 @@ def restore(name):
 for f in ("index.html", "pass.html", "liff.html"):
     restore(f)
 
-print("\n🔴 作業が終わったら、本番HTML3本は必ずHEADへ戻すこと:")
+# 🔴 コンソールが cp932 だと絵文字で UnicodeEncodeError になる。
+#    この案内は必ず出したいので、出力には絵文字を使わない。
+print("")
+print("[!] 作業が終わったら、本番HTML3本は必ずHEADへ戻すこと:")
 print("   git checkout -- beaufes/index.html beaufes/pass.html beaufes/liff.html")
