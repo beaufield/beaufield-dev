@@ -1065,7 +1065,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <!-- 進捗オーバーレイ -->
 <div id="progressOverlay">
   <div class="progress-card">
-    <h3>BCARTに反映中...</h3>
+    <h3 id="progressTitle">BCARTに反映中...</h3>
     <div class="progress-count" id="progressCount">0 / 0</div>
     <div class="progress-bar-wrap">
       <div class="progress-bar-fill" id="progressBarFill"></div>
@@ -1361,7 +1361,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = 'v2.15.0';
+const APP_VERSION = 'v2.16.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
 const BCART_ADMIN_BASE = 'https://beaufieldec.i16.bcart.jp/admin/products';
 
@@ -1945,7 +1945,11 @@ function bulkMarkWipAll() {
 }
 
 // ===================== 進捗オーバーレイ =====================
-function showProgressOverlay(total) {
+// 差異一覧のまとめて更新で使っている表示を、特別価格タブの反映でも共用する。
+// 完了後の再読込は画面ごとに違うので、finishProgressOverlayにコールバックで渡す。
+function showProgressOverlay(total, title) {
+  const t = document.getElementById('progressTitle');
+  if (t) t.textContent = title || 'BCARTに反映中...';
   document.getElementById('progressCount').textContent = '0 / ' + total;
   document.getElementById('progressBarFill').style.width = '0%';
   document.getElementById('progressDetail').textContent = '準備中...';
@@ -1959,7 +1963,8 @@ function updateProgressOverlay(current, total, label) {
   document.getElementById('progressDetail').textContent = label || '';
 }
 
-function finishProgressOverlay(resultMsg, isError, failedItems) {
+// onDone を渡すとその処理を、渡さなければ従来どおり loadData()（差異一覧）を実行する
+function finishProgressOverlay(resultMsg, isError, failedItems, onDone) {
   document.getElementById('progressCount').textContent = '完了';
   document.getElementById('progressBarFill').style.width = '100%';
   document.getElementById('progressDetail').textContent = '';
@@ -1982,8 +1987,20 @@ function finishProgressOverlay(resultMsg, isError, failedItems) {
   setTimeout(function() {
     document.getElementById('progressOverlay').classList.remove('open');
     showToast(resultMsg, isError);
-    loadData();
+    if (onDone) onDone(); else loadData();
   }, isError ? 4000 : 1800);
+}
+
+// 進捗の刻みを決める。件数が少ないときは1件ずつ、多いときは最大12ステップにまとめる。
+// 1件ずつだと通信回数が増えて逆に遅くなるため（GAS呼び出しは1回あたり数百msかかる）
+function progressChunkSize(total, maxSteps) {
+  const steps = maxSteps || 12;
+  return total <= steps ? 1 : Math.ceil(total / steps);
+}
+function chunkArray(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
 }
 
 // ===================== 個別更新 =====================
@@ -3851,26 +3868,54 @@ function applyVfToBcart() {
   });
 }
 
-function executeVfApply() {
+async function executeVfApply() {
   if (spPendingVfItems.length === 0) return;
+  const items = spPendingVfItems.slice();
+  const groupId = spSelectedGroupId;
   const btn = document.getElementById('vfApplyConfirmBtn');
   btn.textContent = '反映中...';
   btn.disabled = true;
-  gasPost({ action: 'applyViewFilters', group_id: spSelectedGroupId, items: spPendingVfItems }, function(res) {
-    btn.textContent = '✅ BCARTに反映する';
-    btn.disabled = false;
-    closeModal('vfPreviewModal');
-    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
-    let msg = res.failCount > 0
-      ? res.successCount + '件成功、' + res.failCount + '件失敗'
-      : spPendingVfItems.length + '件をBCARTに反映しました';
-    if (res.unresolvedCodes && res.unresolvedCodes.length > 0) {
-      msg += '（未登録の得意先コード ' + res.unresolvedCodes.length + '件は保留）';
+  closeModal('vfPreviewModal');
+
+  const chunks = chunkArray(items, progressChunkSize(items.length));
+  showProgressOverlay(items.length, '👁 例外表示設定をBCARTに反映中...');
+
+  let done = 0, success = 0, fail = 0;
+  let unresolved = [];
+  const failedItems = [];
+
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const chunk = chunks[ci];
+    const isLast = ci === chunks.length - 1;
+    updateProgressOverlay(done + chunk.length, items.length, spApplyChunkLabel(chunk));
+    try {
+      const res = await gasPostAsync({
+        action: 'applyViewFilters', group_id: groupId, items: chunk,
+        is_final: isLast, prior_success: success, prior_fail: fail
+      });
+      if (!res.ok) {
+        fail += chunk.length;
+        chunk.forEach(it => failedItems.push({ code: it.product_no, name: it.product_set_name, error: res.error || '' }));
+        break;
+      }
+      success += res.successCount || 0;
+      fail += res.failCount || 0;
+      if (res.unresolvedCodes && res.unresolvedCodes.length) unresolved = res.unresolvedCodes;
+      (res.errors || []).forEach(e => failedItems.push({ code: '', name: '', error: e }));
+    } catch (e) {
+      fail += chunk.length;
+      chunk.forEach(it => failedItems.push({ code: it.product_no, name: it.product_set_name, error: e.message || '' }));
     }
-    showToast(msg, res.failCount > 0);
-    spPendingVfItems = [];
-    loadSpecialPriceData();
-  });
+    done += chunk.length;
+  }
+
+  btn.textContent = '✅ BCARTに反映する';
+  btn.disabled = false;
+
+  let msg = fail > 0 ? success + '件成功、' + fail + '件失敗' : items.length + '件をBCARTに反映しました';
+  if (unresolved.length > 0) msg += '（未登録の得意先コード ' + unresolved.length + '件は保留）';
+  spPendingVfItems = [];
+  finishProgressOverlay(msg, fail > 0, failedItems, function() { loadSpecialPriceData(); });
 }
 
 function deleteVfDetail(detailId, setId, productNo) {
@@ -4170,30 +4215,71 @@ function openSpApplyPreview() {
   });
 }
 
-// BCARTへ実際に反映
-function executeBcartApply() {
+// BCARTへ実際に反映（差異一覧のまとめて更新と同じ進捗表示を使う）
+async function executeBcartApply() {
   if (spPendingApplyItems.length === 0) return;
+  const items = spPendingApplyItems.slice();
+  const groupId = spSelectedGroupId;
   const btn = document.getElementById('spApplyConfirmBtn');
   btn.textContent = '反映中...';
   btn.disabled = true;
-  gasPost({ action: 'applyGroupPrices', group_id: spSelectedGroupId, items: spPendingApplyItems }, function(res) {
-    btn.textContent = '✅ BCARTに反映する';
-    btn.disabled = false;
-    closeModal('spApplyPreviewModal');
-    if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
-    let msg = res.failCount > 0
-      ? res.successCount + '件成功、' + res.failCount + '件失敗'
-      : spPendingApplyItems.length + '件をBCARTに反映しました';
-    if (res.removedPriceCount > 0) {
-      msg += '（グループから外れた会員の特価 ' + res.removedPriceCount + '件を削除）';
+  closeModal('spApplyPreviewModal');
+
+  const chunks = chunkArray(items, progressChunkSize(items.length));
+  showProgressOverlay(items.length, '💎 特別価格をBCARTに反映中...');
+
+  let done = 0, success = 0, fail = 0, removedPrice = 0;
+  let unresolved = [];
+  const failedItems = [];
+
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const chunk = chunks[ci];
+    const isLast = ci === chunks.length - 1;
+    updateProgressOverlay(done + chunk.length, items.length, spApplyChunkLabel(chunk));
+    try {
+      const res = await gasPostAsync({
+        action: 'applyGroupPrices', group_id: groupId, items: chunk,
+        is_final: isLast, prior_success: success, prior_fail: fail
+      });
+      if (!res.ok) {
+        // グループ設定そのものが不正（会員未設定など）は全体を止める
+        fail += chunk.length;
+        chunk.forEach(it => failedItems.push({ code: it.product_no, name: it.product_set_name, error: res.error || '' }));
+        break;
+      }
+      success += res.successCount || 0;
+      fail += res.failCount || 0;
+      removedPrice += res.removedPriceCount || 0;
+      if (res.unresolvedCodes && res.unresolvedCodes.length) unresolved = res.unresolvedCodes;
+      (res.errors || []).forEach(e => failedItems.push({ code: '', name: '', error: e }));
+    } catch (e) {
+      fail += chunk.length;
+      chunk.forEach(it => failedItems.push({ code: it.product_no, name: it.product_set_name, error: e.message || '' }));
     }
-    if (res.unresolvedCodes && res.unresolvedCodes.length > 0) {
-      msg += '（未登録の得意先コード ' + res.unresolvedCodes.length + '件は保留: ' + res.unresolvedCodes.slice(0, 5).join(', ') + (res.unresolvedCodes.length > 5 ? ' 他' : '') + '）';
-    }
-    showToast(msg, res.failCount > 0);
-    spPendingApplyItems = [];
-    loadSpecialPriceData();
-  });
+    done += chunk.length;
+  }
+
+  btn.textContent = '✅ BCARTに反映する';
+  btn.disabled = false;
+
+  let msg = fail > 0 ? success + '件成功、' + fail + '件失敗' : items.length + '件をBCARTに反映しました';
+  if (removedPrice > 0) msg += '（グループから外れた会員の特価 ' + removedPrice + '件を削除）';
+  if (unresolved.length > 0) {
+    msg += '（未登録の得意先コード ' + unresolved.length + '件は保留: ' +
+      unresolved.slice(0, 5).join(', ') + (unresolved.length > 5 ? ' 他' : '') + '）';
+  }
+  spPendingApplyItems = [];
+  finishProgressOverlay(msg, fail > 0, failedItems, function() { loadSpecialPriceData(); });
+}
+
+// 進捗の「いま何を処理しているか」欄。1件なら品番＋名前、複数なら先頭＋他N件
+function spApplyChunkLabel(chunk) {
+  if (chunk.length === 1) {
+    const it = chunk[0];
+    return (it.product_no || '') + ' ' + (it.product_set_name || '');
+  }
+  const head = chunk[0];
+  return (head.product_no || '') + ' ' + (head.product_set_name || '') + ' 他' + (chunk.length - 1) + '件';
 }
 
 // ④ 横断検索の結果行に「何で引っかかったか」と親商品名・特集名を出す
@@ -4649,29 +4735,48 @@ function applyIndPrices() {
   if (targets.length === 0) { showToast('反映対象がありません', true); return; }
   if (!confirm('個別特価をBCARTに反映します。\n\n対象: ' + targets.length + '件（うち会員未登録の保留 ' + pendingCount + '件は反映前に再解決を試みます）\n\nよろしいですか？')) return;
 
-  const CHUNK = 150;
-  const chunks = [];
-  for (let i = 0; i < targets.length; i += CHUNK) chunks.push(targets.slice(i, i + CHUNK));
-  let done = 0, success = 0, fail = 0, resolved = 0, pendingLeft = 0;
+  // 1リクエストあたり150件までは従来どおり。ただし進捗が見えるよう、
+  // 件数が多いときは最大12ステップに割って表示する（上限は150件）
+  const CHUNK = Math.min(150, progressChunkSize(targets.length));
+  const chunks = chunkArray(targets, CHUNK);
+  const byId = {};
+  individuals.forEach(d => { byId[String(d.detail_id)] = d; });
 
-  showToast('反映中... 0/' + targets.length);
+  showProgressOverlay(targets.length, '🧾 個別特価をBCARTに反映中...');
+  let done = 0, success = 0, fail = 0, resolved = 0, pendingLeft = 0;
+  const failedItems = [];
+
   (function next(ci) {
     if (ci >= chunks.length) {
-      let msg = '完了: 成功' + success + '件・失敗' + fail + '件';
-      if (resolved > 0) msg += '・新たに会員解決' + resolved + '件';
-      if (pendingLeft > 0) msg += '・保留のまま' + pendingLeft + '件';
-      showToast(msg, fail > 0);
-      loadSpecialPriceData();
+      let msg = fail > 0 ? '成功' + success + '件・失敗' + fail + '件' : targets.length + '件をBCARTに反映しました';
+      if (resolved > 0) msg += '（新たに会員解決 ' + resolved + '件）';
+      if (pendingLeft > 0) msg += '（保留のまま ' + pendingLeft + '件）';
+      finishProgressOverlay(msg, fail > 0, failedItems, function() { loadSpecialPriceData(); });
       return;
     }
-    gasPost({ action: 'applyIndividualPrices', detail_ids: chunks[ci] }, function(res) {
-      if (!res.ok) { showToast('エラー: ' + res.error + '（' + done + '件まで処理済み）', true); loadSpecialPriceData(); return; }
+    const chunk = chunks[ci];
+    const head = byId[String(chunk[0])] || {};
+    const label = chunk.length === 1
+      ? (head.customer_name || head.customer_code || '') + ' ' + (head.product_no || '')
+      : (head.customer_name || head.customer_code || '') + ' ' + (head.product_no || '') + ' 他' + (chunk.length - 1) + '件';
+    updateProgressOverlay(done + chunk.length, targets.length, label);
+
+    gasPost({ action: 'applyIndividualPrices', detail_ids: chunk }, function(res) {
+      if (!res.ok) {
+        chunk.forEach(id => {
+          const d = byId[String(id)] || {};
+          failedItems.push({ code: d.customer_code || '', name: d.product_no || '', error: res.error || '' });
+        });
+        finishProgressOverlay('エラー: ' + res.error + '（' + done + '件まで処理済み）', true, failedItems,
+          function() { loadSpecialPriceData(); });
+        return;
+      }
       success += res.successCount || 0;
       fail += res.failCount || 0;
       resolved += res.resolvedNow || 0;
       pendingLeft = (res.skippedPending || []).length;
-      done += chunks[ci].length;
-      showToast('反映中... ' + done + '/' + targets.length);
+      (res.errors || []).forEach(e => failedItems.push({ code: '', name: '', error: e }));
+      done += chunk.length;
       next(ci + 1);
     });
   })(0);
