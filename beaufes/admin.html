@@ -228,6 +228,43 @@
   .bulkBar button { padding: 7px 14px; font-size: 13px; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; color: #fff; background: var(--main-dark); }
   .bulkBar button:disabled { opacity: .5; cursor: default; }
   .bulkBar button.secondary { background: #fff; color: var(--main-dark); border: 1px solid var(--main-dark); }
+
+  /* 🆕 v0.3.0 当日機能（代理登録・予備名札の割当・パス再送） */
+  .modalCard.formCard { max-width: 420px; text-align: left; }
+  .formRow { margin-bottom: 10px; }
+  .formRow label { display: block; font-size: 12px; color: #555; margin-bottom: 4px; }
+  .formRow .req { color: #dc2626; font-weight: bold; }
+  .formRow input[type="text"], .formRow select, .formRow textarea {
+    width: 100%; font-family: inherit; font-size: 15px; padding: 9px 10px;
+    border: 1px solid #d5dde3; border-radius: 8px; background: #fff;
+  }
+  .formRow textarea { height: 56px; resize: vertical; }
+  .formHint { font-size: 11px; color: #888; margin-top: 3px; }
+  .formMsg { font-size: 13px; margin: 10px 0 0; line-height: 1.5; }
+  .formMsg.err { color: #dc2626; }
+  .formMsg.ok  { color: #047857; }
+  .modalBtns { display: flex; gap: 8px; margin-top: 14px; }
+  .modalBtns button { flex: 1; }
+  .subjectLine {
+    background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px;
+    padding: 8px 10px; font-size: 13px; margin-bottom: 12px;
+  }
+  .opsCell { white-space: nowrap; }
+  .opsCell button {
+    font-size: 11px; padding: 4px 7px; margin-right: 4px; border-radius: 6px; cursor: pointer;
+    border: 1px solid #10617c; background: #fff; color: #10617c;
+  }
+  .opsCell button:disabled { opacity: .4; cursor: default; }
+  .spareList {
+    max-height: 210px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px;
+  }
+  .spareList label {
+    display: flex; gap: 8px; align-items: center; padding: 9px 10px;
+    border-bottom: 1px solid #f1f5f9; font-size: 14px; cursor: pointer;
+  }
+  .spareList label:last-child { border-bottom: none; }
+  .spareList .taken { color: #999; cursor: default; }
+  .modalCard .ghostBtn { background: #fff; color: #10617c; border: 1px solid #10617c; }
 </style>
 </head>
 <body>
@@ -237,6 +274,7 @@
   <div class="headActions">
     <a class="navLink" href="badges.html">🖨 名札印刷へ</a>
     <button type="button" class="navLink" id="qrBtn">📱 申込フォームQR</button>
+    <button type="button" class="navLink" id="walkInBtn">➕ 飛び込み登録</button>
   </div>
 </header>
 
@@ -248,6 +286,70 @@
     <div id="qrBox"></div>
     <div class="qrUrl" id="qrUrl"></div>
     <button type="button" id="qrCloseBtn">閉じる</button>
+  </div>
+</div>
+
+<!-- 🆕 v0.3.0 飛び込み客の代理登録。
+     🔴 名札は当日刷らない。予備名札（事前に刷ってある「予備 P-07」）を手渡し、
+        登録のあとに続けて割り当てる。ここで集める情報は名札には出ない（台帳と突合のため）。 -->
+<div class="modalOverlay" id="walkInModal" hidden>
+  <div class="modalCard formCard" role="dialog" aria-modal="true" aria-labelledby="walkInTitle">
+    <h2 id="walkInTitle">飛び込み登録</h2>
+    <div class="modalNote">受付でその場で登録します。控えメールは送りません。</div>
+
+    <div class="formRow">
+      <label for="wiName">お名前 <span class="req">必須</span></label>
+      <input type="text" id="wiName" autocomplete="off">
+    </div>
+    <div class="formRow">
+      <label for="wiSalon">サロン名 <span class="req">必須</span></label>
+      <input type="text" id="wiSalon" autocomplete="off">
+    </div>
+    <div class="formRow">
+      <label for="wiBiz">業態 <span class="req">必須</span></label>
+      <select id="wiBiz"></select>
+    </div>
+    <div class="formRow">
+      <label for="wiEmail">メール（任意）</label>
+      <input type="text" id="wiEmail" autocomplete="off" inputmode="email">
+      <div class="formHint">聞けたときだけで構いません。空欄でも登録できます。</div>
+    </div>
+    <div class="formRow">
+      <label for="wiPhone">電話（任意）</label>
+      <input type="text" id="wiPhone" autocomplete="off" inputmode="tel">
+    </div>
+    <div class="formRow">
+      <label for="wiNote">備考（任意）</label>
+      <textarea id="wiNote"></textarea>
+    </div>
+
+    <div class="formMsg" id="wiMsg"></div>
+    <div class="modalBtns">
+      <button type="button" id="wiSubmit">登録して名札へ</button>
+      <button type="button" id="wiClose" class="ghostBtn">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- 🆕 v0.3.0 予備名札の割当。
+     🔴 一度割り当てた予備名札は別人に付け替えられない（サーバーが SPARE_ALREADY_ASSIGNED で拒否）。
+        ブースの未解決注文の自己修復がこの一意性に依存しているため。 -->
+<div class="modalOverlay" id="spareModal" hidden>
+  <div class="modalCard formCard" role="dialog" aria-modal="true" aria-labelledby="spareTitle">
+    <h2 id="spareTitle">予備名札の割当</h2>
+    <div class="modalNote">お渡しする予備名札の番号を選んでください。</div>
+
+    <div class="subjectLine" id="spSubject"></div>
+    <div class="spareList" id="spList"></div>
+    <div class="formHint">
+      🔴 割り当てると、その方のQRは予備名札のものに切り替わります（前のQRは使えなくなります）。
+    </div>
+
+    <div class="formMsg" id="spMsg"></div>
+    <div class="modalBtns">
+      <button type="button" id="spSubmit">この番号を割り当てる</button>
+      <button type="button" id="spClose" class="ghostBtn">閉じる</button>
+    </div>
   </div>
 </div>
 
@@ -390,7 +492,7 @@
 // 認証・GAS通信ルールは badges.html からそのまま移植している（自分で別方式にしないこと）
 // 版数の定義はこの APP_VERSION 1箇所だけ（AGENTS.md バージョン管理ルール）
 // ============================================================
-const APP_VERSION = '0.2.0';
+const APP_VERSION = '0.3.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
@@ -1293,7 +1395,8 @@ const COLUMNS = [
   { key: 'email',         label: 'メール',   sortable: false },
   { key: 'referrer',      label: '紹介者',   sortable: false },
   { key: 'note',          label: '備考',     sortable: false },
-  { key: 'status',        label: '状態',     sortable: true }
+  { key: 'status',        label: '状態',     sortable: true },
+  { key: '__ops',         label: '操作',     sortable: false }   // 🆕 v0.3.0 当日機能
 ];
 
 function renderHead() {
@@ -1403,6 +1506,31 @@ function renderTable() {
       tdS.textContent = '—';
     }
     tr.appendChild(tdS);
+
+    // 🆕 v0.3.0 当日の操作（予備名札の割当・パスの再送）
+    const tdOps = document.createElement('td');
+    tdOps.className = 'opsCell';
+
+    const bSpare = document.createElement('button');
+    bSpare.type = 'button';
+    bSpare.textContent = '予備名札';
+    bSpare.title = '予備名札を割り当てる';
+    bSpare.addEventListener('click', function () { openSpareModal(a); });
+    tdOps.appendChild(bSpare);
+
+    const bMail = document.createElement('button');
+    bMail.type = 'button';
+    bMail.textContent = 'パス再送';
+    if (!a.email) {
+      bMail.disabled = true;
+      bMail.title = 'メールアドレスが未登録です';
+    } else {
+      bMail.title = a.email + ' へ入場パスを送り直す';
+      bMail.addEventListener('click', function () { doResendPass(a, bMail); });
+    }
+    tdOps.appendChild(bMail);
+
+    tr.appendChild(tdOps);
 
     frag.appendChild(tr);
   });
@@ -1617,6 +1745,316 @@ function generateMockData() {
 }
 
 // ------------------------------------------------------------
+// 🆕 v0.3.0 当日機能（代理登録・予備名札の割当・パス再送）
+//
+// 🔴 書き込みAPIは3本とも冪等。受付で二度押ししても、GASが応答を落としても二重にならない
+//    （GASの故障モードは「書けたのに返事が来ない」・GAS配送障害_調査レポート §3-2）。
+//      adminCreateApplication : request_id（画面が作る）
+//      assignSpare            : 同じ(予備番号, 受付番号)の再実行は成功として返る
+//      adminResendPass        : 直近10分の送信済みはサーバーが抑止する
+// ------------------------------------------------------------
+let walkInRequestId = '';   // フォームを開くたびに1つ作り、成功するまで使い回す
+let spareTarget = null;     // 予備名札を割り当てる相手（申込1件）
+let spareRows = [];
+
+function uuid() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return 'x' + Date.now().toString(16) + Math.random().toString(16).slice(2, 10);
+}
+
+function openModal(id) {
+  el(id).hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+function closeModal(id) {
+  el(id).hidden = true;
+  if (el('qrModal').hidden && el('walkInModal').hidden && el('spareModal').hidden) {
+    document.body.style.overflow = '';
+  }
+}
+
+// ---- 飛び込み登録 ----
+function openWalkIn() {
+  walkInRequestId = uuid();
+  ['wiName', 'wiSalon', 'wiEmail', 'wiPhone', 'wiNote'].forEach(function (id) { el(id).value = ''; });
+
+  const sel = el('wiBiz');
+  sel.textContent = '';
+  const types = state.businessTypes.length ? state.businessTypes
+    : ['美容室', '理容室', 'エステサロン', 'ネイルサロン', 'アイサロン', 'その他'];
+  const blank = document.createElement('option');
+  blank.value = ''; blank.textContent = '（選んでください）';
+  sel.appendChild(blank);
+  types.forEach(function (t) {
+    const o = document.createElement('option');
+    o.value = t; o.textContent = t;
+    sel.appendChild(o);
+  });
+
+  setMsg('wiMsg', '', '');
+  el('wiSubmit').disabled = false;
+  openModal('walkInModal');
+  el('wiName').focus();
+}
+
+function setMsg(id, text, cls) {
+  const box = el(id);
+  box.textContent = text;
+  box.className = 'formMsg' + (cls ? ' ' + cls : '');
+}
+
+async function submitWalkIn() {
+  const payload = {
+    request_id:    walkInRequestId,
+    staff_name:    el('wiName').value.trim(),
+    salon_name:    el('wiSalon').value.trim(),
+    business_type: el('wiBiz').value,
+    email:         el('wiEmail').value.trim(),
+    phone:         el('wiPhone').value.trim(),
+    note:          el('wiNote').value.trim()
+  };
+  if (!payload.staff_name)    { setMsg('wiMsg', 'お名前を入力してください', 'err'); el('wiName').focus(); return; }
+  if (!payload.salon_name)    { setMsg('wiMsg', 'サロン名を入力してください', 'err'); el('wiSalon').focus(); return; }
+  if (!payload.business_type) { setMsg('wiMsg', '業態を選んでください', 'err'); el('wiBiz').focus(); return; }
+
+  el('wiSubmit').disabled = true;
+  setMsg('wiMsg', '登録しています…', '');
+
+  try {
+    let data;
+    if (isMock()) {
+      await sleep(200);
+      data = { app_id: 'F2026-' + ('0000' + (9000 + state.apps.length + 1)).slice(-4),
+               staff_name: payload.staff_name, salon_name: payload.salon_name, duplicate: false };
+    } else {
+      const session = getSession();
+      if (!session) { showGate(LOGIN_REQUIRED_HTML); return; }
+      const json = await postWithRetry({
+        action: 'adminCreateApplication',
+        data: JSON.stringify(Object.assign({ session_token: session.token || '' }, payload))
+      }, function (n, max) { setMsg('wiMsg', '再試行中… (' + n + '/' + max + ')', ''); });
+
+      if (!json || json.success !== true) {
+        const err = String((json && json.error) || 'UNKNOWN');
+        if (showAuthGate(err)) return;
+        setMsg('wiMsg', err, 'err');
+        el('wiSubmit').disabled = false;
+        return;
+      }
+      data = json.data;
+    }
+
+    // 台帳に載せたので一覧を取り直す（新しい行が出る）
+    state.apps.push({
+      app_id: data.app_id, created_at: '', created_key: '', updated_at: '', source: 'admin',
+      salon_name: data.salon_name, staff_name: data.staff_name,
+      email: payload.email, phone: payload.phone, has_transaction: '', address: '', referrer: '',
+      has_line: false, status: 'confirmed', checked_in_at: '', note: payload.note,
+      business_type: payload.business_type, tantou: ''
+    });
+    applyFilters();
+
+    closeModal('walkInModal');
+    // 🔴 続けて予備名札の割当へ。ここで切れると「登録はしたが名札が紐づいていない人」が生まれる
+    openSpareModal(state.apps[state.apps.length - 1],
+                   data.duplicate ? '登録済みでした（' + data.app_id + '）。続けて名札を割り当ててください。'
+                                  : '登録しました（' + data.app_id + '）。続けて名札を割り当ててください。');
+  } catch (e) {
+    setMsg('wiMsg', '登録に失敗しました: ' + (e && e.message ? e.message : String(e)), 'err');
+    el('wiSubmit').disabled = false;
+  }
+}
+
+// ---- 予備名札の割当 ----
+async function openSpareModal(app, lead) {
+  spareTarget = app;
+  el('spSubject').textContent = app.staff_name + '（' + app.salon_name + '） ' + app.app_id;
+  el('spList').textContent = '読み込んでいます…';
+  setMsg('spMsg', lead || '', lead ? 'ok' : '');
+  el('spSubmit').disabled = true;
+  openModal('spareModal');
+
+  try {
+    if (isMock()) {
+      await sleep(150);
+      spareRows = [
+        { spare_no: 'P-01', assigned_app_id: '' },
+        { spare_no: 'P-02', assigned_app_id: 'F2026-0031' },
+        { spare_no: 'P-03', assigned_app_id: '' }
+      ];
+    } else {
+      const session = getSession();
+      if (!session) { showGate(LOGIN_REQUIRED_HTML); return; }
+      const json = await postWithRetry({
+        action: 'listSpareBadges',
+        data: JSON.stringify({ session_token: session.token || '' })
+      });
+      if (!json || json.success !== true) {
+        const err = String((json && json.error) || 'UNKNOWN');
+        if (showAuthGate(err)) return;
+        el('spList').textContent = '';
+        setMsg('spMsg', '予備名札の一覧を取れませんでした（' + err + '）', 'err');
+        return;
+      }
+      spareRows = json.data.spares || [];
+    }
+    renderSpareList();
+  } catch (e) {
+    el('spList').textContent = '';
+    setMsg('spMsg', '通信できませんでした: ' + (e && e.message ? e.message : String(e)), 'err');
+  }
+}
+
+function renderSpareList() {
+  const box = el('spList');
+  box.textContent = '';
+  const free = spareRows.filter(function (r) { return !r.assigned_app_id; });
+  if (!free.length) {
+    box.textContent = '';
+    setMsg('spMsg', '未割当の予備名札がありません。名札印刷から追加で刷ってください。', 'err');
+    return;
+  }
+  spareRows.forEach(function (r) {
+    const lab = document.createElement('label');
+    if (r.assigned_app_id) {
+      // 🔴 割当済みは選べない。サーバーも拒否するが、押せてしまう時点で受付が迷う
+      lab.className = 'taken';
+      lab.textContent = r.spare_no + '（' + r.assigned_app_id + ' に割当済み）';
+      box.appendChild(lab);
+      return;
+    }
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'spareNo';
+    radio.value = r.spare_no;
+    radio.addEventListener('change', function () { el('spSubmit').disabled = false; });
+    lab.appendChild(radio);
+    const txt = document.createElement('span');
+    txt.textContent = r.spare_no;
+    lab.appendChild(txt);
+    box.appendChild(lab);
+  });
+}
+
+async function doAssignSpare() {
+  const picked = document.querySelector('input[name=spareNo]:checked');
+  if (!picked || !spareTarget) return;
+  const spareNo = picked.value;
+
+  el('spSubmit').disabled = true;
+  setMsg('spMsg', '割り当てています…', '');
+
+  try {
+    if (isMock()) {
+      await sleep(200);
+      spareRows.forEach(function (r) {
+        if (r.spare_no === spareNo) r.assigned_app_id = spareTarget.app_id;
+      });
+      setMsg('spMsg', spareNo + ' を ' + spareTarget.staff_name + ' 様に割り当てました。', 'ok');
+      renderSpareList();
+      return;
+    }
+
+    const session = getSession();
+    if (!session) { showGate(LOGIN_REQUIRED_HTML); return; }
+    const json = await postWithRetry({
+      action: 'assignSpare',
+      data: JSON.stringify({ session_token: session.token || '',
+                             spare_no: spareNo, app_id: spareTarget.app_id })
+    }, function (n, max) { setMsg('spMsg', '再試行中… (' + n + '/' + max + ')', ''); });
+
+    if (!json || json.success !== true) {
+      const err = String((json && json.error) || 'UNKNOWN');
+      if (showAuthGate(err)) return;
+      // 🔴 再割当の拒否はエラーではなく「そういう仕様」。誰に割当済みかまで出す
+      if (err === 'SPARE_ALREADY_ASSIGNED') {
+        setMsg('spMsg', spareNo + ' は既に ' + (json.assigned_app_id || '別の方') +
+               ' に割当済みです。別の番号を選んでください。', 'err');
+        spareRows.forEach(function (r) {
+          if (r.spare_no === spareNo) r.assigned_app_id = json.assigned_app_id || '(割当済み)';
+        });
+        renderSpareList();
+        return;
+      }
+      setMsg('spMsg', SPARE_ERROR_TEXT[err] || err, 'err');
+      el('spSubmit').disabled = false;
+      return;
+    }
+
+    setMsg('spMsg', spareNo + ' を ' + spareTarget.staff_name + ' 様に割り当てました。' +
+           '名札をお渡しください。', 'ok');
+    spareRows.forEach(function (r) {
+      if (r.spare_no === spareNo) r.assigned_app_id = spareTarget.app_id;
+    });
+    renderSpareList();
+  } catch (e) {
+    setMsg('spMsg', '通信できませんでした: ' + (e && e.message ? e.message : String(e)), 'err');
+    el('spSubmit').disabled = false;
+  }
+}
+
+const SPARE_ERROR_TEXT = {
+  SPARE_NOT_FOUND: 'その予備番号は登録されていません。',
+  SPARE_NO_TOKEN:  'その予備名札はまだ発行されていません（名札印刷で刷ってから使ってください）。',
+  APP_NOT_FOUND:   'この申込が見つかりませんでした。一覧を取り直してください。',
+  LOCK_BUSY:       '混み合っています。もう一度押してください。'
+};
+
+// ---- パスの再送 ----
+async function doResendPass(app, btn) {
+  if (!confirm(app.staff_name + ' 様（' + app.email + '）へ入場パスを送り直します。よろしいですか？')) return;
+
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '送信中…';
+
+  try {
+    let data;
+    if (isMock()) {
+      await sleep(200);
+      data = { sent: true, to: 'te***@example.com', remaining_quota: 96 };
+    } else {
+      const session = getSession();
+      if (!session) { showGate(LOGIN_REQUIRED_HTML); return; }
+      const json = await postWithRetry({
+        action: 'adminResendPass',
+        data: JSON.stringify({ session_token: session.token || '', app_id: app.app_id })
+      });
+      if (!json || json.success !== true) {
+        const err = String((json && json.error) || 'UNKNOWN');
+        if (showAuthGate(err)) return;
+        alert(RESEND_ERROR_TEXT[err] || ('送信できませんでした: ' + err));
+        return;
+      }
+      data = json.data;
+    }
+
+    if (data.sent) {
+      // 🔴 メール枠は100通/日（2026-09-04 実測）。残りを毎回見せて、当日に枯らさないようにする
+      alert('送信しました（' + data.to + '）。\n本日の残りメール枠: ' +
+            (data.remaining_quota == null ? '不明' : data.remaining_quota + '通'));
+    } else if (data.reason === 'RECENTLY_SENT') {
+      alert('直近10分に同じ宛先へ送っているため、重ねて送りませんでした（' + data.to + '）。\n' +
+            '届いていない場合は迷惑メールフォルダをご確認ください。');
+    } else {
+      alert('送信されませんでした（' + (data.reason || '理由不明') + '）');
+    }
+  } catch (e) {
+    alert('通信できませんでした: ' + (e && e.message ? e.message : String(e)));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+const RESEND_ERROR_TEXT = {
+  NO_EMAIL:         'この方はメールアドレスが未登録です（飛び込み登録など）。',
+  APP_CANCELLED:    'キャンセル済みの申込には送れません。',
+  APP_NOT_FOUND:    'この申込が見つかりませんでした。一覧を取り直してください。',
+  NO_TICKET_TOKEN:  '入場トークンがありません（データ不整合・前島さんに連絡してください）。'
+};
+
+// ------------------------------------------------------------
 // 起動
 // ------------------------------------------------------------
 function init() {
@@ -1633,6 +2071,18 @@ function init() {
   });
   document.addEventListener('keydown', function (ev) {
     if (ev.key === 'Escape' && !el('qrModal').hidden) closeQrModal();
+  });
+
+  // 🆕 v0.3.0 当日機能
+  el('walkInBtn').addEventListener('click', openWalkIn);
+  el('wiSubmit').addEventListener('click', submitWalkIn);
+  el('wiClose').addEventListener('click', function () { closeModal('walkInModal'); });
+  el('spSubmit').addEventListener('click', doAssignSpare);
+  el('spClose').addEventListener('click', function () { closeModal('spareModal'); });
+  [['walkInModal'], ['spareModal']].forEach(function (pair) {
+    el(pair[0]).addEventListener('click', function (ev) {
+      if (ev.target === el(pair[0])) closeModal(pair[0]);
+    });
   });
 
   el('filterToggle').addEventListener('click', function () {
