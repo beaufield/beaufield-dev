@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.29.0';
+const VERSION = 'v2.30.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -1618,7 +1618,13 @@ function bulkRegisterProduct(params) {
 // ===================== 商品登録ドラフト（AI叩き台作成・フェーズ1） =====================
 
 // 未登録商品の抽出（calcDiffsのunregistered判定と同一基準。ドラフト用に項目を拡張）
-function getUnregisteredForDraft() {
+// opts.collectExcluded: true を渡すと、除外した商品コード→除外理由 のマップも返す。
+// （コード直接指定で「なぜ候補に出ないのか」を呼び出し側へ説明するために使う）
+function getUnregisteredForDraft(opts) {
+  const collectExcluded = Boolean(opts && opts.collectExcluded);
+  const excluded = {};
+  const drop_ = (k, reason) => { if (collectExcluded) excluded[k] = reason; };
+
   const csvData = loadCsvFromDrive();
   if (!csvData.ok) return csvData;
   const bcartSets = bcartGetAll('/product_sets');
@@ -1633,13 +1639,13 @@ function getUnregisteredForDraft() {
     const code = row['コード'];
     if (!code) return;
     const codeKey = String(parseInt(code, 10) || code);
-    if (bcartSetMap[codeKey]) return;
-    if (ignoreMap[codeKey]) return;
+    if (bcartSetMap[codeKey]) { drop_(codeKey, 'BCARTに登録済み'); return; }
+    if (ignoreMap[codeKey]) { drop_(codeKey, '対応不要マーク済み'); return; }
     const isDiscontinued = row['廃番'] === '1' || row['廃番'] === 'TRUE' || row['廃番'] === '廃番';
-    if (isDiscontinued) return;
-    if ((row['在庫有無'] || '') !== 'する') return;  // 差異一覧のデフォルトフィルターに合わせる（HANDOVER.md 差異検出除外ルール）
+    if (isDiscontinued) { drop_(codeKey, '廃番'); return; }
+    if ((row['在庫有無'] || '') !== 'する') { drop_(codeKey, '在庫有無が「する」以外（' + (row['在庫有無'] || '空欄') + '）'); return; }  // 差異一覧のデフォルトフィルターに合わせる（HANDOVER.md 差異検出除外ルール）
     const price = parseFloat(String(row['売上単価'] || '').replace(/,/g, '')) || 0;
-    if (!price) return;
+    if (!price) { drop_(codeKey, '売上単価が0円'); return; }
 
     rows.push({
       code: codeKey,
@@ -1658,7 +1664,7 @@ function getUnregisteredForDraft() {
     });
   });
 
-  return { ok: true, rows: rows };
+  return { ok: true, rows: rows, excluded: excluded };
 }
 
 // 最終売上日をYYYYMMDD文字列に正規化（比較・ソート用）。不明/実績なしはnull。
@@ -1698,11 +1704,12 @@ function getDraftSupplierSummary() {
   data.rows.forEach(r => {
     const key = r.supplierCd || '(不明)';
     if (!bySupplier[key]) {
-      bySupplier[key] = { supplierCd: r.supplierCd, supplierName: r.supplierName, countWithin1y: 0, countWithin2y: 0, countTotal: 0 };
+      bySupplier[key] = { supplierCd: r.supplierCd, supplierName: r.supplierName, countWithin1y: 0, countWithin2y: 0, countNoSale: 0, countTotal: 0 };
     }
     bySupplier[key].countTotal++;
     if (r.lastSaleKey && r.lastSaleKey >= cutoff1y) bySupplier[key].countWithin1y++;
     if (r.lastSaleKey && r.lastSaleKey >= cutoff2y) bySupplier[key].countWithin2y++;
+    if (!r.lastSaleKey) bySupplier[key].countNoSale++;  // 売上履歴なし＝新商品が埋もれていないかの目印
   });
 
   const suppliers = Object.keys(bySupplier).map(k => bySupplier[k])
@@ -1711,30 +1718,82 @@ function getDraftSupplierSummary() {
   return { ok: true, totalUnregistered: data.rows.length, suppliers: suppliers };
 }
 
-// getDraftCandidates — ドラフト対象候補の取得（仕入先・最終売上日で絞り込み、最終売上日降順）
+// getDraftCandidates — ドラフト対象候補の取得
+//
+// 絞り込みは3モード。codes（コード直接指定）> wipOnly（作業中のみ）> supplierCd＋最終売上日 の優先順で判定する。
+//
+// ⚠️ 2026-09-07 修正（v2.30.0）: 以前は「最終売上日が無い商品」を lastSaleWithinDays の指定に
+//    関係なく必ず除外していた（`if (!r.lastSaleKey || r.lastSaleKey < cutoff) return false;`）。
+//    そのため差異一覧には未登録として出るのにドラフト候補には出ない商品が約160件あり、
+//    まだ一度も売れていない新商品ほどこの穴に落ちていた（実例: 発売前の新商品3件が候補に出ず、
+//    手作業での確認が必要になった）。最終売上日は「並び替えの基準」であって「除外条件」ではない。
+//    売上履歴なしは既定で含め、limitに埋もれないよう先頭に並べる（excludeNoSale:true で従来動作）。
 function getDraftCandidates(params) {
-  const data = getUnregisteredForDraft();
+  const wantCodes = Array.isArray(params.codes) && params.codes.length > 0;
+  const data = getUnregisteredForDraft({ collectExcluded: wantCodes });
   if (!data.ok) return data;
 
-  const supplierCd = params.supplierCd != null ? String(params.supplierCd).trim() : '';
-  const withinDays = params.lastSaleWithinDays || 365;
-  const cutoff = dateKeyDaysAgo_(withinDays);
   const limit = params.limit || 50;
   const offset = params.offset || 0;
+  // 突合キーの正規化（先頭ゼロ差を吸収）。getUnregisteredForDraft の codeKey と同じ作法。
+  const normalizeCode_ = v => {
+    const s = String(v == null ? '' : v).trim();
+    if (!s) return '';
+    const n = parseInt(s, 10);
+    return String(isNaN(n) ? s : (n || s));
+  };
 
-  const filtered = data.rows.filter(r => {
-    if (supplierCd && r.supplierCd !== supplierCd) return false;
-    if (!r.lastSaleKey || r.lastSaleKey < cutoff) return false;
-    return true;
+  let mode, filtered;
+  const notFound = [];
+
+  if (wantCodes) {
+    mode = 'codes';
+    const want = {};
+    params.codes.forEach(c => { const k = normalizeCode_(c); if (k) want[k] = true; });
+    const hit = {};
+    filtered = data.rows.filter(r => {
+      if (!want[r.code]) return false;
+      hit[r.code] = true;
+      return true;
+    });
+    // 指定されたのに候補に無いコードは、理由を添えて返す（呼び出し側が原因を推測しなくて済むように）
+    Object.keys(want).forEach(k => {
+      if (!hit[k]) notFound.push({ code: k, reason: data.excluded[k] || 'CSVに該当コードが存在しない' });
+    });
+  } else if (params.wipOnly) {
+    mode = 'wipOnly';
+    const wipKeys = {};
+    Object.keys(getWipMap()).forEach(k => { const n = normalizeCode_(k); if (n) wipKeys[n] = true; });
+    filtered = data.rows.filter(r => wipKeys[r.code]);
+  } else {
+    mode = 'supplier';
+    const supplierCd = params.supplierCd != null ? String(params.supplierCd).trim() : '';
+    const cutoff = params.lastSaleWithinDays ? dateKeyDaysAgo_(params.lastSaleWithinDays) : null;
+    filtered = data.rows.filter(r => {
+      if (supplierCd && r.supplierCd !== supplierCd) return false;
+      if (!r.lastSaleKey) return !params.excludeNoSale;  // 売上履歴なしは既定で含める
+      if (cutoff && r.lastSaleKey < cutoff) return false;
+      return true;
+    });
+  }
+
+  // 売上履歴なしを先頭 → 以降は最終売上日の新しい順。
+  // （末尾に置くと limit の外に出て永久に届かないため。新商品は登録の必要度が高い）
+  filtered.sort((a, b) => {
+    if (!a.lastSaleKey && !b.lastSaleKey) return String(a.code).localeCompare(String(b.code));
+    if (!a.lastSaleKey) return -1;
+    if (!b.lastSaleKey) return 1;
+    return b.lastSaleKey.localeCompare(a.lastSaleKey);
   });
-
-  filtered.sort((a, b) => (b.lastSaleKey || '').localeCompare(a.lastSaleKey || ''));
 
   const page = filtered.slice(offset, offset + limit);
 
   return {
     ok: true,
+    mode: mode,
     total: filtered.length,
+    noSaleCount: filtered.filter(r => !r.lastSaleKey).length,
+    notFound: notFound,
     candidates: page.map(r => ({
       code: r.code, name: r.name, kana: r.kana, ryakusho: r.ryakusho,
       unit: r.unit, supplierCd: r.supplierCd, supplierName: r.supplierName,
