@@ -261,7 +261,7 @@
   // ============================================================
   const GAS_URL     = 'https://script.google.com/macros/s/AKfycbwqJC73zLlmofD0uflPEjnYqFjzw8XopAzfRp5SbsdV36ckiQAyziBTmNl5vg2f6x5m/exec';
   const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
-  const APP_VERSION = 'v1.0.1';
+  const APP_VERSION = 'v1.1.0';
   const SESSION_KEY = 'bf_session'; // ポータルと共通
 
   let session   = null;
@@ -353,6 +353,15 @@
       lines.push('⚠️ 旧ロール語彙が残っています（' + matrix.legacy_roles.length + '件）: ' +
         matrix.legacy_roles.map(r => r.user_id + '/' + r.app_name + '=' + r.role).join(', '));
     }
+    if (matrix.out_of_vocab && matrix.out_of_vocab.length) {
+      // 🔴 これを出さないと「なぜか admin が選べない／消えた」が原因不明のまま残る
+      lines.push('⚠️ apps シートで許可されていないロールが入っています（' +
+        matrix.out_of_vocab.length + '件）: ' +
+        matrix.out_of_vocab.map(r => r.user_id + '/' + r.app_name + '=' + r.role +
+          '（このアプリで選べるのは ' + ((r.allowed && r.allowed.length) ? r.allowed.join('/') : 'なし のみ') + '）'
+        ).join(', ') +
+        ' 。値は保持されクリックで元に戻せますが、選べるようにするには apps シートの roles 列を直してください。');
+    }
     if (matrix.duplicate_rows && matrix.duplicate_rows.length) {
       lines.push('⚠️ user_app_roles に重複行があります（保存は最初の行だけを更新します）: ' +
         matrix.duplicate_rows.map(r => r.user_id + '/' + r.app_name + '(' + r.count + '行)').join(', '));
@@ -434,9 +443,16 @@
     const current = dirty[key] ? dirty[key].next_role : savedRole;
 
     // 循環順: なし → roles[0] → roles[1] → … → なし
+    // 🔴 v1.1.0: いま入っている値が apps シートの語彙に無くても、循環から外さない。
+    //    以前は未知値を「なし」扱いにしていたため、1クリックで黙ってその値が消え、
+    //    二度と戻せなかった（例: beaufes の roles が 'user' だけなのに admin が入っている行）。
+    //    保存済みの値と編集中の値の両方を末尾に足して、必ず元に戻せるようにする。
     const cycle = [''].concat(app.roles);
+    [savedRole, current].forEach(v => {
+      if (v && cycle.indexOf(v) === -1) cycle.push(v);
+    });
     let idx = cycle.indexOf(current);
-    if (idx === -1) idx = 0; // 旧ロール等の未知値は「なし」扱いから開始
+    if (idx === -1) idx = 0;
     const next = cycle[(idx + 1) % cycle.length];
 
     if (next === savedRole) {
