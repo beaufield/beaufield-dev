@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <!-- 静的LPの通信先と実行スクリプトを限定します。申込は既存フォームへのリンクです。 -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'sha256-5gghOivM5TxB64K/prQduoj5Dk4XM/m0M4JUZ9uUyk0='; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'sha256-s1PHodpc4rQFRGlhqNxJpw/WIsGm/y3UlnsB0UCfCgk='; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <link rel="canonical" href="https://beaufield.github.io/beaufield-dev/beaufes/event.html">
 
@@ -135,7 +135,12 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
 @media(max-width:950px){.seminar-feature{grid-template-columns:1fr}.seminar-visual img{height:auto;min-height:0;max-height:none;aspect-ratio:3/2;object-position:center}.experience-grid{grid-template-columns:1fr 1fr}.seminar-copy{padding:32px}.program-guidance{align-items:flex-start;flex-direction:column;gap:16px}}
 @media(max-width:700px){.test-strip{padding:8px 16px;gap:3px;text-align:center;font-size:10px}.test-strip strong{display:block;width:100%}.program-jump{gap:7px;margin:25px 0 40px}.program-jump a{padding:10px 7px;font-size:11px;gap:4px;flex-direction:column;justify-content:center;text-align:center}.program-jump span{font-size:21px}.program-group{margin-top:49px;scroll-margin-top:90px}.group-heading{margin-bottom:21px}.group-heading h3{font-size:24px}.group-heading>p:last-child:not(.section-kicker){font-size:14px}.seminar-copy{padding:25px 20px}.seminar-copy h4{font-size:17px}.seminar-copy h4 span{font-size:24px}.seminar-hook{font-size:14px}.seminar-visual figcaption{left:9px;right:9px;bottom:9px;font-size:10px;padding:5px 9px}.seminar-meta{gap:17px;margin:20px 0}.seminar-meta span{font-size:26px}.seminar-meta p+p{padding-left:17px}.seminar-topics{font-size:13px}.maker-grid,.experience-grid{grid-template-columns:1fr;gap:25px}.card-copy,.experience-grid .card-copy{padding:24px 22px}.card-copy h4,.experience-grid h4{font-size:27px}.card-hook{font-size:19px}.card-visual figcaption{font-size:10px}.program-guidance{padding:20px}.program-guidance p{font-size:13px}.program-image-note{font-size:10px}}
 
-  </style>
+
+/* 画像を隠さず、名称のすぐそばに要予約と受付開始予定を表示する。 */
+.reservation-badge{display:inline-flex;align-items:center;vertical-align:middle;margin-left:9px;padding:5px 13px;border:1px solid #7a3e49;border-radius:999px;background:#873f4d;color:#fff;font:700 13px/1.4 'Yu Gothic',sans-serif;letter-spacing:.08em;white-space:nowrap;box-shadow:0 2px 5px #873f4d18}
+.booking-soon,.seminar-copy>p.booking-soon{margin:0 0 18px;padding:10px 12px;border-left:3px solid #a75461;background:#f8eef0;color:#733643;font-size:13px;font-weight:700;line-height:1.7;letter-spacing:.01em}
+.seminar-copy>p.booking-soon{margin-top:16px}
+</style>
 </head>
 <body>
 <div class="test-strip"><strong>確認用LP</strong><span>内容・デザインの確認用です。来場申込リンクは公開中のフォームへ移動します。</span></div>
@@ -178,12 +183,12 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
     <div class="group-heading"><p class="section-kicker">01 / SEMINAR</p><h3 id="seminars-title">お客様への提案を、学びから。</h3></div>
     <article class="seminar-feature" id="femcare">
       <figure class="seminar-visual"><img src="../event-assets/lp-femcare.webp" width="1536" height="1024" loading="lazy" alt="Me.guru+のパッケージを配した、明るい海辺の商品紹介イメージ"><figcaption>紹介商品：Me.guru+〈メグルプラス〉</figcaption></figure>
-      <div class="seminar-copy"><p class="card-category">セミナー 第1部</p><h4>オトナ女子の「巡り」に寄り添う<br><span>フェムケアセミナー</span></h4><p class="seminar-hook">ゆらぎ世代のお客様に、新しい提案を。</p>
+      <div class="seminar-copy"><p class="card-category">セミナー 第1部 <span class="reservation-badge">要予約</span></p><h4>オトナ女子の「巡り」に寄り添う<br><span>フェムケアセミナー</span></h4><p class="booking-soon">予約は近日中にオープンします</p><p class="seminar-hook">ゆらぎ世代のお客様に、新しい提案を。</p>
       <div class="seminar-meta"><p><strong>10月26日（月）</strong><br><span>11:30–12:30</span></p><p><strong>定員20名</strong><br>青島屋 2F</p></div>
       <p>年齢を重ねるなかで感じる、心や身体の変化。更年期の仕組みを知ることから、今日から取り入れられるフェムケアまでをご紹介します。</p>
       <ul class="seminar-topics"><li>更年期の仕組みを知る</li><li>今日からできるフェムケア</li><li>Me.guru+〈メグルプラス〉の商品紹介</li></ul>
       <p class="product-note">Me.guru+は、鉄の栄養機能食品。「ゆらぐ私に穏やかな巡りを」をコンセプトにした商品の特徴も学びながら、お客様への提案のヒントを見つけませんか。</p>
-      <p class="reservation-note">セミナーの予約方法は、あらためてご案内します。</p></div>
+      <p class="reservation-note">参加には事前予約が必要です。予約開始は公式LINEとこのページでお知らせします。</p></div>
     </article>
   </section>
   <section class="program-group" id="makers" aria-labelledby="makers-title"><div class="group-heading"><p class="section-kicker">02 / BRANDS & TOOLS</p><h3 id="makers-title">毎日使うものこそ、自分の手で。</h3><p>握り心地、使いやすさ、なじみ方。写真だけでは分からない違いを、会場で。</p></div><div class="maker-grid"><article class="discovery-card" id="yspark">
@@ -204,17 +209,17 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
         </article></div></section>
   <section class="program-group" id="experiences" aria-labelledby="experiences-title"><div class="group-heading"><p class="section-kicker">03 / EXPERIENCE</p><h3 id="experiences-title">「やってみたい」を、体験に。</h3><p>自分で確かめるから、お客様にも伝えやすくなる。サロンの新しいメニューや提案を考えるきっかけに。</p></div><div class="experience-grid"><article class="discovery-card" id="balance">
           <figure class="card-visual"><img src="../event-assets/scene-balance.webp" width="1536" height="1024" loading="lazy" alt="実商品写真をもとに、明るい海辺の背景と組み合わせた紹介イメージ"></figure>
-          <div class="card-copy"><p class="card-category">体験ブース</p><h4>バランス革命</h4><p class="card-hook">足裏を知る。提案が変わる。</p><p class="card-description">足圧測定器の上に立ち、左右の足裏に体重がどのようにかかっているかを計測。その情報をもとに、一人ひとりに合わせて作るインソール型の調整具です。足裏の状態と、装着したときの感覚を確かめてみませんか。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>足裏の計測</li><li>装着時の感覚</li><li>お客様への新しい提案</li></ul></div>
+          <div class="card-copy"><p class="card-category">体験ブース <span class="reservation-badge">要予約</span></p><h4>バランス革命</h4><p class="booking-soon">予約は近日中にオープンします</p><p class="card-hook">足裏を知る。提案が変わる。</p><p class="card-description">足圧測定器の上に立ち、左右の足裏に体重がどのようにかかっているかを計測。その情報をもとに、一人ひとりに合わせて作るインソール型の調整具です。足裏の状態と、装着したときの感覚を確かめてみませんか。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>足裏の計測</li><li>装着時の感覚</li><li>お客様への新しい提案</li></ul></div>
         </article>
 <article class="discovery-card" id="facemaker">
           <figure class="card-visual"><img src="../event-assets/scene-facemaker-woman.webp" width="1536" height="1024" loading="lazy" alt="穏やかな表情の女性と実商品写真をもとにしたフェイシャル機器の紹介イメージ。実際の施術結果を示すものではありません"></figure>
-          <div class="card-copy"><p class="card-category">体験ブース</p><h4>Face Maker</h4><p class="card-hook">肌だけでなく、表情筋にも着目。</p><p class="card-description">画面付きの本体につながる専用プローブを、顔に当てて動かすフェイシャル機器。集束電場を軸に、EMS・近赤外線・温熱などを組み合わせたケアを紹介します。専用マスクの使い方や、メニューへの取り入れ方も確認できます。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>体験時の感覚</li><li>施術の流れ</li><li>今のメニューとの組み合わせ</li></ul></div>
+          <div class="card-copy"><p class="card-category">体験ブース <span class="reservation-badge">要予約</span></p><h4>Face Maker</h4><p class="booking-soon">予約は近日中にオープンします</p><p class="card-hook">肌だけでなく、表情筋にも着目。</p><p class="card-description">画面付きの本体につながる専用プローブを、顔に当てて動かすフェイシャル機器。集束電場を軸に、EMS・近赤外線・温熱などを組み合わせたケアを紹介します。専用マスクの使い方や、メニューへの取り入れ方も確認できます。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>体験時の感覚</li><li>施術の流れ</li><li>今のメニューとの組み合わせ</li></ul></div>
         </article>
 <article class="discovery-card" id="eien">
           <figure class="card-visual"><img src="../event-assets/scene-eien.webp" width="1536" height="1024" loading="lazy" alt="実商品写真をもとに、明るい海辺の背景と組み合わせた紹介イメージ"></figure>
           <div class="card-copy"><p class="card-category">体験ブース</p><h4>EIEN PLUS</h4><p class="card-hook">毛穴ケアを、3つのアプローチで。</p><p class="card-description">スチーマー・オートバキューム・スクライバーを1台にまとめたフェイシャル機器。スチームでうるおいを与え、吸引や超音波で毛穴の角質汚れをケアします。それぞれのハンドピースを使う施術の流れを、会場で確かめてください。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>スチーマー</li><li>バキューム</li><li>スクラバー</li></ul></div>
         </article></div></section>
-  <div class="program-guidance"><p><strong>来場申込と、個別の予約について</strong><br>イベントへの来場は先にお申し込みいただけます。セミナー・体験ブースの受付方法や予約開始は、公式LINEとこのページであらためてお知らせします。来場申込だけで個別予約が完了するものではありません。</p><a href="#entry">来場申込の案内へ <span aria-hidden="true">→</span></a></div>
+  <div class="program-guidance"><p><strong>来場申込と、個別の予約について</strong><br>フェムケアセミナー・バランス革命・フェイスメーカーは事前予約が必要です。予約は近日中にオープンします。開始は公式LINEとこのページでお知らせします。イベントへの来場は先にお申し込みいただけますが、来場申込だけで個別予約が完了するものではありません。</p><a href="#entry">来場申込の案内へ <span aria-hidden="true">→</span></a></div>
   <p class="program-image-note">メーカー・体験ブースの画像は、実商品写真をもとに背景を組み合わせて制作した紹介イメージです。人物は着用・サロン体験のイメージで、実際の装着例や施術結果を示すものではありません。掲載モデルと当日の展示内容が異なる場合があります。展示・体験の詳細は順次ご案内します。</p>
 </div></section>
     <section class="section wrap" id="access">
@@ -226,7 +231,7 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
     <section class="section wrap faq-section"><p class="section-kicker">INFORMATION</p><h2>ご来場の前に</h2><div class="faq">
       <details><summary>誰でも参加できますか？</summary><p>美容従事者（理美容師・エステ等サロンの皆さま）を対象としたイベントです。一般のお客様向けのイベントではありません。</p></details>
       <details><summary>同じサロンから複数人で参加できますか？</summary><p>ぜひサロンの皆さまでご参加ください。来場のお申し込みは、ご来場予定の方お一人ずつお願いいたします。</p></details>
-      <details><summary>来場申込で、セミナーや体験会も予約できますか？</summary><p>現在は来場のお申し込みを受け付けています。このページでご紹介しているセミナーや体験会の予約方法は、準備が整い次第、公式LINEとこのページでお知らせします。来場申込だけで個別予約が完了するものではありません。</p></details>
+      <details><summary>来場申込で、セミナーや体験会も予約できますか？</summary><p>来場申込と個別予約は別のお手続きです。フェムケアセミナー・バランス革命・フェイスメーカーは事前予約が必要です。予約は近日中にオープンします。開始は公式LINEとこのページでお知らせします。</p></details>
       <details><summary>LINE以外からも申し込めますか？</summary><p>はい。「通常のWebフォームで申し込む」からお手続きいただけます。</p></details>
     </div></section>
     <section class="closing" id="entry"><p class="section-kicker">SEE YOU IN AOSHIMA</p><h2>次の「やってみたい」を、<br>ビューフェスで。</h2><p>2026年10月26日（月）10:00〜16:00<br>青島屋〈AOSHIMAYA〉2F / 入場無料</p><div class="buttons"><a class="button" href="https://liff.line.me/2010404613-cwHA5B0U">LINEから来場を申し込む<span class="arrow" aria-hidden="true">↗</span></a><a class="secondary-link" href="https://beaufield.github.io/beaufield-dev/beaufes/">通常のWebフォームで申し込む</a></div><p class="small">申込締切：10月20日（火）<br>ご来場予定の方、お一人ずつお申し込みください。</p></section>
@@ -235,7 +240,7 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
   <aside class="mobile-cta" aria-label="来場申し込み"><span><strong>入場無料</strong><br>10/20 申込締切</span><a class="button" href="https://liff.line.me/2010404613-cwHA5B0U">LINEから申込<span aria-hidden="true">↗</span></a></aside>
   <script>
     // LPの版数はこの定数だけで管理します。
-    const APP_VERSION = '0.4.3';
+    const APP_VERSION = '0.4.4';
     document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
   </script>
 </body>
