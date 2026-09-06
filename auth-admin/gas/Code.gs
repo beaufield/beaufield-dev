@@ -26,7 +26,7 @@
 // ============================================================
 
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION        = 'v1.2.0';
+const VERSION        = 'v1.3.0';
 const APP_NAME        = 'auth-admin';
 const AUTH_SHEET_ID  = _PROPS.getProperty('AUTH_SHEET_ID');
 
@@ -249,12 +249,20 @@ function _getMatrix() {
   }
   apps.sort((x, y) => x.sort_order - y.sort_order);
 
+  // 🆕 v1.3.0: アプリごとの許可ロール索引。
+  // 🔴 KNOWN_ROLES（グローバル）とは別物。'admin' は KNOWN_ROLES には入っているので
+  //    「apps シートでそのアプリに許可されていない admin」は legacy_roles では検出できなかった。
+  //    その値は画面の循環（[''].concat(app.roles)）にも無いため、1クリックで黙って消えていた。
+  const allowedByApp = {};
+  apps.forEach(a => { allowedByApp[a.app_name] = a.roles || []; });
+
   // ── roles + legacy_roles + duplicate_rows + orphan_* ──
   // 🔴 全アプリが「最初の一致で break」する挙動に合わせ、同一(user_id,app_name)の
   //    2行目以降は roles/legacy_roles に反映しない（重複は duplicate_rows で警告するだけ）。
   const roleRows = rolesSh.getDataRange().getValues();
   const roles = {};
   const legacyRoles = [];
+  const outOfVocab = [];   // 🆕 v1.3.0: 値そのものは正しいが、そのアプリでは許可されていないロール
   const seenPairs = {};
   const dupCount = {};
   const orphanAppSet = {};
@@ -277,6 +285,11 @@ function _getMatrix() {
         roles[uid][appName] = roleVal;
         if (KNOWN_ROLES.indexOf(roleVal) === -1) {
           legacyRoles.push({ user_id: uid, app_name: appName, role: roleVal });
+        } else if (allowedByApp[appName] && allowedByApp[appName].indexOf(roleVal) === -1) {
+          // 🔴 apps シートの roles 語彙に無い。画面では循環に含まれないので、
+          //    放置すると次のクリックで黙って別の値に落ちる
+          outOfVocab.push({ user_id: uid, app_name: appName, role: roleVal,
+                            allowed: allowedByApp[appName] });
         }
       }
     }
@@ -296,6 +309,7 @@ function _getMatrix() {
     apps: apps,
     roles: roles,
     legacy_roles: legacyRoles,
+    out_of_vocab: outOfVocab,
     duplicate_rows: duplicateRows,
     orphan_apps: Object.keys(orphanAppSet),
     orphan_users: Object.keys(orphanUserSet),
