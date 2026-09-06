@@ -203,15 +203,23 @@
   </div>
 
   <!-- 撤収 -->
+  <!-- 🆕 v0.2.0: 「データを消去」を廃止した（2026-09-06 Takashiさん決定）。
+       理由: メーカー様にとっても「どのお客様に何を売ったか」は必要な記録で、
+       昨年までは紙の控えがメーカー様の手元に残っていた。アプリだけ消す理由がない。
+       消せてしまうこと自体が、未送信データを失う最大のリスクだった。
+       端末のデータは会期後しばらく見られたままにし、こちら側でサーバーを止める時点で
+       役目を終える。 -->
   <div class="card">
     <details class="pack">
-      <summary>撤収のとき（社員の指示で操作してください）</summary>
+      <summary>うまく送れないとき（社員にお見せください）</summary>
       <div style="margin-top:12px">
-        <div class="btnRow">
+        <div class="hint" id="wipeHint"></div>
+        <div class="btnRow" style="margin-top:10px">
           <button id="btnExport" class="ghost">未送信データを書き出す</button>
-          <button id="btnWipe" class="danger" disabled>データを消去</button>
         </div>
-        <div class="hint" id="wipeHint">送信待ち・要確認が0件になるか、書き出しを済ませると消去できます。</div>
+        <div class="hint" style="margin-top:8px">
+          この画面の記録は消えません。会期のあとも、しばらくこのままご覧いただけます。
+        </div>
         <textarea id="exportBox" style="display:none; margin-top:10px" readonly></textarea>
       </div>
     </details>
@@ -238,7 +246,7 @@
 //   3. 氏名・サロン名は保存も送信もしない。QRの n= はその場の表示だけに使う
 // ============================================================
 
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.2.0';
 
 // 🔴 送信先はここ1箇所だけ（T-12: 基盤を差し替えるときはこの1行を変える）
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
@@ -272,6 +280,7 @@ let serverRecent = [];
 let sending = false;
 let lastToastKey = '';
 let scanStream = null, scanTimer = null;
+let pendingCount = 0;   // 🆕 v0.2.0 未送信件数。beforeunload は同期で判定するため控えておく
 
 function el(id) { return document.getElementById(id); }
 function esc(s) {
@@ -407,6 +416,12 @@ async function boot() {
   window.addEventListener('online',  function () { updateStatus(); pump(); });
   window.addEventListener('offline', updateStatus);
   document.addEventListener('visibilitychange', function () { if (!document.hidden) { updateStatus(); pump(); } });
+
+  // 🆕 v0.2.0: 🔴 送信ループはこの画面が開いているあいだしか動かない。
+  //    送信待ちを残したまま閉じられるのが、記録がサーバーへ届かない最大の経路なので引き止める。
+  window.addEventListener('beforeunload', function (ev) {
+    if (pendingCount > 0) { ev.preventDefault(); ev.returnValue = ''; return ''; }
+  });
 }
 
 function sortProducts(a, b) {
@@ -523,7 +538,6 @@ function wireUi() {
   el('btnSubmit').onclick = submitOrder;
   el('btnReloadRecent').onclick = function () { refreshRecent(true); };
   el('btnExport').onclick = exportQueue;
-  el('btnWipe').onclick = wipeAll;
   el('toastUndo').onclick = function () {
     if (lastToastKey) requestVoid(lastToastKey);
     hideToast();
@@ -558,7 +572,9 @@ function setSubject(s) {
   el('cardItems').style.display = 'block';
   if (s.kind === 'qr') {
     el('subjName').textContent = s.name ? (s.name + ' 様') : 'お名前は名札でご確認ください';
-    el('subjSub').textContent  = s.name ? '名札のQRから読み取りました' : '予備の名札です';
+    // 🆕 v0.2.0: サロン名を氏名の下に出す。どのサロン様への販売かをその場で確かめられる
+    el('subjSub').textContent  = s.salon ? s.salon
+                               : (s.name ? '名札のQRから読み取りました' : '予備の名札です');
   } else {
     el('subjName').textContent = s.entry_code;
     el('subjSub').textContent  = '入力された番号';
@@ -647,7 +663,10 @@ async function submitOrder() {
     validation_state: '',
     created_at: nowStr(),
     last_error: '',
-    label: subject.entry_code || '（QR）',
+    // 🆕 v0.2.0: 一覧で「どのお客様か」が分かるようにする。
+    //    QRから読めていれば サロン名／氏名、無ければ受付番号
+    label: [subject.salon, subject.name].filter(Boolean).join(' ／ ')
+           || subject.entry_code || '（QR）',
     items_label: items.map(function (i) {
       const p = products.filter(function (x) { return x.product_id === i.product_id; })[0];
       return (p ? p.product_name : i.product_id) + ' × ' + i.qty;
@@ -820,6 +839,7 @@ async function counts() {
 }
 async function updateStatus() {
   const c = await counts();
+  pendingCount = c.wait + c.warn;
   el('statWait').innerHTML = '送信待ち<b>' + c.wait + '</b>';
   el('statWarn').innerHTML = '要確認<b>' + c.warn + '</b>';
   el('statWait').classList.toggle('on', c.wait > 0);
@@ -828,14 +848,11 @@ async function updateStatus() {
   el('statNet').innerHTML = '通信<b>' + (on ? '○' : '×') + '</b>';
   el('statNet').classList.toggle('off', !on);
 
-  // 消去ガード（§6-5）: 0件になるか、書き出し済みでなければ押せない
-  const evacuated = await kvGet('evacuated_at');
-  const canWipe = (c.wait === 0 && c.warn === 0) || !!evacuated;
-  el('btnWipe').disabled = !canWipe;
-  el('wipeHint').textContent = canWipe
-    ? (evacuated ? '書き出し済みです。社員の確認のうえ消去してください。'
-                 : '送信待ち・要確認とも0件です。社員の確認のうえ消去してください。')
-    : '送信待ち・要確認が0件になるか、書き出しを済ませると消去できます。';
+  // 🆕 v0.2.0: 消去ガードは廃止。代わりに「まだ送れていないか」だけを伝える
+  el('wipeHint').textContent = (c.wait === 0 && c.warn === 0)
+    ? 'すべてサーバーへ送信できています。この画面を閉じて構いません。'
+    : '送信待ち ' + c.wait + '件 / 要確認 ' + c.warn + '件。' +
+      '電波が戻れば自動で送られます。しばらく待っても減らないときだけ、下から書き出して社員にお渡しください。';
 }
 
 async function refreshRecent(force) {
@@ -879,7 +896,7 @@ async function renderRecent() {
     });
   });
 
-  const view = rows.slice(0, 10);
+  const view = rows.slice(0, 50);   // 🆕 v0.2.0 会期後に見返せるよう多めに出す
   const box = el('recentList');
   if (!view.length) {
     box.innerHTML = '<li><span class="recMeta">まだ登録はありません。</span></li>';
@@ -978,7 +995,7 @@ async function startScan() {
     const parsed = parseBadgeQr(text);
     if (!parsed) { el('scanErr').textContent = 'この名札のQRではないようです。もう一度お試しください。'; return; }
     stopScan();
-    setSubject({ kind: 'qr', ticket_token: parsed.t, entry_code: '', name: parsed.n });
+    setSubject({ kind: 'qr', ticket_token: parsed.t, entry_code: '', name: parsed.n, salon: parsed.s });
   }, 250);
 }
 function stopScan() {
@@ -987,19 +1004,30 @@ function stopScan() {
   el('cam').srcObject = null;
   el('scanArea').style.display = 'none';
 }
-// 名札QRは pass.html?t=<ticket_token>&n=<氏名>（badges.html v0.1.3）。
-// 🔴 n= は表示専用。保存も送信もしない（§15-9）
+// 名札QRは pass.html?t=<ticket_token>&n=<氏名>&s=<サロン名>（badges.html v0.2.0）。
+// 🔴 氏名・サロン名は「QRに書いてある文字を読んでいるだけ」で、通信もダウンロードもしていない。
+//    端末には来場者名簿を一切持たない（boothInit が返すのは自分のブースの商品だけ）。
+// 🆕 v0.2.0: 端末には保存する（メーカー側にも「どのお客様に何を売ったか」の記録が要るため・
+//    2026-09-06 Takashiさん決定）。ただし**サーバーへは送らない**。
+//    サーバー側は app_id で紐づくので、氏名を送る必要がない。
 function parseBadgeQr(text) {
+  const pick = function (u, k) { return u.searchParams.get(k) || ''; };
   try {
     const u = new URL(String(text), location.href);
-    const t = u.searchParams.get('t') || '';
-    if (!t) return null;
-    return { t: t, n: u.searchParams.get('n') || '' };
-  } catch (e) {
-    const m = String(text).match(/[?&]t=([^&\s]+)/);
+    const t = pick(u, 't');
+    // 🔴 t が取れないときは null を返さずに下の文字列解析へ落とす。
+    //    URLとして解釈できても t が無いことがある（短いテキスト形式のQRなど）。
+    //    設計の逃げ道③「URL形式をやめて短いテキストにする」を将来使えるようにしておく
+    if (t) return { t: t, n: pick(u, 'n'), s: pick(u, 's') };
+  } catch (e) { /* URLとして読めない → 下の文字列解析へ */ }
+  {
+    const m = String(text).match(/[?&]t=([^&\s]+)/) || String(text).match(/^t=([^&\s]+)/);
     if (!m) return null;
-    const n = String(text).match(/[?&]n=([^&\s]+)/);
-    return { t: decodeURIComponent(m[1]), n: n ? decodeURIComponent(n[1]) : '' };
+    const grab = function (k) {
+      const x = String(text).match(new RegExp('[?&]' + k + '=([^&\\s]+)'));
+      return x ? decodeURIComponent(x[1]) : '';
+    };
+    return { t: decodeURIComponent(m[1]), n: grab('n'), s: grab('s') };
   }
 }
 
@@ -1019,7 +1047,9 @@ async function exportQueue() {
     })
   }, null, 2);
 
-  const csvLines = [['idempotency_key', 'type', 'state', 'label', 'items', 'created_at', 'last_error']
+  // label には v0.2.0 から「サロン名 ／ 氏名」が入る（人が読んで突き合わせるため）。
+  // 🔴 下の JSON（boothImportQueue へ投入する payload）は API 契約どおりのまま。氏名は入らない
+  const csvLines = [['idempotency_key', 'type', 'state', 'お客様', 'items', 'created_at', 'last_error']
     .map(csvCell).join(',')];
   pending.forEach(function (e) {
     csvLines.push([e.idempotency_key, e.type, e.state, e.label || '', e.items_label || '',
@@ -1047,18 +1077,6 @@ function download(name, text, mime) {
     a.href = url; a.download = name; document.body.appendChild(a); a.click();
     setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 1000);
   } catch (e) { /* 保存できない端末では画面のテキストを使う */ }
-}
-
-async function wipeAll() {
-  const c = await counts();
-  if (!confirm('この端末の記録をすべて消去します。\n' +
-               '送信待ち ' + c.wait + '件 / 要確認 ' + c.warn + '件\n\n' +
-               '社員の確認は済んでいますか？')) return;
-  await tx('queue', 'readwrite', function (s) { s.clear(); });
-  await tx('kv', 'readwrite', function (s) { s.clear(); });
-  await tx('products', 'readwrite', function (s) { s.clear(); });
-  alert('消去しました。ご協力ありがとうございました。');
-  location.reload();
 }
 
 boot();
