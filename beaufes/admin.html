@@ -492,7 +492,7 @@
 // 認証・GAS通信ルールは badges.html からそのまま移植している（自分で別方式にしないこと）
 // 版数の定義はこの APP_VERSION 1箇所だけ（AGENTS.md バージョン管理ルール）
 // ============================================================
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.3.1';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
@@ -622,8 +622,31 @@ const state = {
   filtered: [],
   selected: {},       // app_id -> true
   sortKey: 'app_id',
-  sortAsc: true
+  sortAsc: true,
+  serverVersion: ''   // 🆕 v0.3.1 本番GASの版。当日機能を出してよいかの判定に使う
 };
+
+// 🔴 当日機能（代理登録・予備名札の割当・パス再送）が動くのに必要な最低のGAS版。
+//    このHTMLはpushした瞬間に公開されるが、GASは版番号で固定されているため、
+//    先にHTMLだけ出ると社員に「押すと必ず失敗するボタン」が見えてしまう
+//    （2026-09-04 に同じ非対称でお客様の控え画面にエラーが出た）。
+//    サーバーが古いあいだは当日機能そのものを出さない。
+const DAY_FEATURES_MIN_GAS = '0.33.0';
+
+function versionAtLeast(actual, required) {
+  const a = String(actual || '').split('.').map(Number);
+  const r = String(required || '').split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const x = a[i] || 0, y = r[i] || 0;
+    if (x !== y) return x > y;
+  }
+  return true;
+}
+function dayFeaturesReady() {
+  if (isMock()) return true;                 // モックは常に出す（レイアウト検証のため）
+  if (!state.serverVersion) return false;    // 取得前・版が読めないうちは出さない
+  return versionAtLeast(state.serverVersion, DAY_FEATURES_MIN_GAS);
+}
 
 // ------------------------------------------------------------
 // 業態チェックボックス
@@ -758,7 +781,11 @@ function applyFetchResult(data) {
   state.apps = Array.isArray(data.applications) ? data.applications : [];
   state.tantouList = Array.isArray(data.tantou_list) ? data.tantou_list : [];
   state.businessTypes = Array.isArray(data.business_types) ? data.business_types : [];
+  state.serverVersion = String(data.server_version || '');
   state.selected = {};
+
+  // 🔴 サーバーが当日機能に対応していなければボタンごと隠す（押せる=動く、を崩さない）
+  el('walkInBtn').style.display = dayFeaturesReady() ? '' : 'none';
 
   buildBusinessTypeChoices(state.businessTypes);
   fillTantouFilter();
@@ -1511,6 +1538,16 @@ function renderTable() {
     const tdOps = document.createElement('td');
     tdOps.className = 'opsCell';
 
+    if (!dayFeaturesReady()) {
+      // サーバーが古い。ボタンを出さず、理由が分かる印だけ置く
+      tdOps.textContent = '—';
+      tdOps.title = 'この機能はGAS v' + DAY_FEATURES_MIN_GAS + ' 以降で使えます（いまのサーバー: v'
+                  + (state.serverVersion || '不明') + '）';
+      tr.appendChild(tdOps);
+      frag.appendChild(tr);
+      return;
+    }
+
     const bSpare = document.createElement('button');
     bSpare.type = 'button';
     bSpare.textContent = '予備名札';
@@ -2073,7 +2110,8 @@ function init() {
     if (ev.key === 'Escape' && !el('qrModal').hidden) closeQrModal();
   });
 
-  // 🆕 v0.3.0 当日機能
+  // 🆕 v0.3.0 当日機能。🔴 サーバーの版が分かるまでは出さない（applyFetchResult で出し直す）
+  el('walkInBtn').style.display = 'none';
   el('walkInBtn').addEventListener('click', openWalkIn);
   el('wiSubmit').addEventListener('click', submitWalkIn);
   el('wiClose').addEventListener('click', function () { closeModal('walkInModal'); });
