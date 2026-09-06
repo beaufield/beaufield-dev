@@ -264,6 +264,14 @@
   }
   .spareList label:last-child { border-bottom: none; }
   .spareList .taken { color: #999; cursor: default; }
+  .spareList .takenRow { display: flex; align-items: center; gap: 8px; padding: 9px 10px;
+    border-bottom: 1px solid #f1f5f9; font-size: 14px; color: #999; }
+  .spareList .takenRow:last-child { border-bottom: none; }
+  .spareList .takenRow span { flex: 1; }
+  .spareList .takenRow button {
+    flex: none; font-size: 11px; padding: 3px 8px; border-radius: 6px; cursor: pointer;
+    border: 1px solid #dc2626; background: #fff; color: #dc2626;
+  }
   .modalCard .ghostBtn { background: #fff; color: #10617c; border: 1px solid #10617c; }
 </style>
 </head>
@@ -492,7 +500,7 @@
 // 認証・GAS通信ルールは badges.html からそのまま移植している（自分で別方式にしないこと）
 // 版数の定義はこの APP_VERSION 1箇所だけ（AGENTS.md バージョン管理ルール）
 // ============================================================
-const APP_VERSION = '0.3.1';
+const APP_VERSION = '0.4.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
@@ -631,7 +639,7 @@ const state = {
 //    先にHTMLだけ出ると社員に「押すと必ず失敗するボタン」が見えてしまう
 //    （2026-09-04 に同じ非対称でお客様の控え画面にエラーが出た）。
 //    サーバーが古いあいだは当日機能そのものを出さない。
-const DAY_FEATURES_MIN_GAS = '0.33.0';
+const DAY_FEATURES_MIN_GAS = '0.34.0';   // v0.34.0 で予備名札の取り消し（releaseSpare）が入った
 
 function versionAtLeast(actual, required) {
   const a = String(actual || '').split('.').map(Number);
@@ -1947,17 +1955,27 @@ function renderSpareList() {
   box.textContent = '';
   const free = spareRows.filter(function (r) { return !r.assigned_app_id; });
   if (!free.length) {
-    box.textContent = '';
-    setMsg('spMsg', '未割当の予備名札がありません。名札印刷から追加で刷ってください。', 'err');
-    return;
+    // 🔴 ここで return しない。割当済みの行を出しておかないと「間違えた1枚」を取り消せなくなる
+    setMsg('spMsg', '未割当の予備名札がありません。' +
+           '渡す相手を間違えた分は下から取り消せます（まだ使われていない場合のみ）。', 'err');
   }
   spareRows.forEach(function (r) {
     const lab = document.createElement('label');
     if (r.assigned_app_id) {
-      // 🔴 割当済みは選べない。サーバーも拒否するが、押せてしまう時点で受付が迷う
-      lab.className = 'taken';
-      lab.textContent = r.spare_no + '（' + r.assigned_app_id + ' に割当済み）';
-      box.appendChild(lab);
+      // 🔴 割当済みは選べない。サーバーも拒否するが、押せてしまう時点で受付が迷う。
+      //    ただし「渡す相手を間違えた」直後だけは取り消せる（releaseSpare がサーバー側で判定する）
+      const row = document.createElement('div');
+      row.className = 'takenRow';
+      const txt = document.createElement('span');
+      txt.textContent = r.spare_no + '（' + r.assigned_app_id + ' に割当済み）';
+      row.appendChild(txt);
+      const undo = document.createElement('button');
+      undo.type = 'button';
+      undo.textContent = '取り消す';
+      undo.title = 'この予備名札を渡す相手を間違えたとき。まだ使われていなければ取り消せます';
+      undo.addEventListener('click', function () { doReleaseSpare(r, undo); });
+      row.appendChild(undo);
+      box.appendChild(row);
       return;
     }
     const radio = document.createElement('input');
@@ -2030,11 +2048,72 @@ async function doAssignSpare() {
   }
 }
 
+async function doReleaseSpare(row, btn) {
+  if (!confirm(row.spare_no + ' の割当（' + row.assigned_app_id + '）を取り消します。\n\n' +
+               'この名札でブースの購買や受付の記録が既にある場合は取り消せません。\nよろしいですか？')) return;
+
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '取消中…';
+  try {
+    if (isMock()) {
+      await sleep(200);
+      row.assigned_app_id = '';
+      setMsg('spMsg', row.spare_no + ' の割当を取り消しました。', 'ok');
+      renderSpareList();
+      return;
+    }
+
+    const session = getSession();
+    if (!session) { showGate(LOGIN_REQUIRED_HTML); return; }
+    const json = await postWithRetry({
+      action: 'releaseSpare',
+      data: JSON.stringify({ session_token: session.token || '', spare_no: row.spare_no })
+    });
+
+    if (!json || json.success !== true) {
+      const err = String((json && json.error) || 'UNKNOWN');
+      if (showAuthGate(err)) return;
+      if (err === 'SPARE_IN_USE') {
+        // 🔴 これは不具合ではなく設計どおりの拒否。理由を具体的に出す
+        const where = json.where === 'booth' ? 'ブースでの購買' : '受付での入場';
+        setMsg('spMsg', row.spare_no + ' は既に' + where + 'に使われているため取り消せません' +
+               (json.ref ? '（' + json.ref + '）' : '') + '。' +
+               'この名札はこの方のものとして扱ってください。', 'err');
+      } else {
+        setMsg('spMsg', SPARE_ERROR_TEXT[err] || err, 'err');
+      }
+      return;
+    }
+
+    const d = json.data;
+    if (!d.released) {
+      setMsg('spMsg', row.spare_no + ' は割り当てられていません。', 'err');
+    } else if (d.regenerated) {
+      // 🔴 元のQRが復元できていない。名札を刷り直さないとその方が入場できない
+      setMsg('spMsg', row.spare_no + ' の割当を取り消しました。' +
+             '🔴 ' + (d.staff_name || d.app_id) + ' 様は入場用のQRが新しくなったため、' +
+             '名札印刷から刷り直すか、パス再送でお知らせしてください。', 'err');
+    } else {
+      setMsg('spMsg', row.spare_no + ' の割当を取り消しました。' +
+             (d.staff_name || d.app_id) + ' 様は元のQRに戻っています。', 'ok');
+    }
+    row.assigned_app_id = '';
+    renderSpareList();
+  } catch (e) {
+    setMsg('spMsg', '通信できませんでした: ' + (e && e.message ? e.message : String(e)), 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
 const SPARE_ERROR_TEXT = {
   SPARE_NOT_FOUND: 'その予備番号は登録されていません。',
   SPARE_NO_TOKEN:  'その予備名札はまだ発行されていません（名札印刷で刷ってから使ってください）。',
   APP_NOT_FOUND:   'この申込が見つかりませんでした。一覧を取り直してください。',
-  LOCK_BUSY:       '混み合っています。もう一度押してください。'
+  LOCK_BUSY:       '混み合っています。もう一度押してください。',
+  SPARE_NOT_ASSIGNED: 'その予備名札は割り当てられていません。'
 };
 
 // ---- パスの再送 ----
