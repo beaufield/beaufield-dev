@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.32.1';
+const VERSION  = '0.33.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -443,6 +443,10 @@ function doPost(e) {
       case 'scanRoster':             return _jsonResponse(scanRoster(data));
       case 'scanCheckin':            return _jsonResponse(scanCheckin(data));
       case 'scanCheckedIn':          return _jsonResponse(scanCheckedIn(data));
+      // 🆕 v0.33.0 admin.html の当日機能（代理登録・予備名札の割当・パス再送）。🔒 認証必須
+      case 'adminCreateApplication': return _jsonResponse(adminCreateApplication(data));
+      case 'assignSpare':            return _jsonResponse(assignSpare(data));
+      case 'adminResendPass':        return _jsonResponse(adminResendPass(data));
       default:                  return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
@@ -4678,4 +4682,253 @@ function scanCheckedIn(data) {
   }
 
   return _ok({ as_of: _now(), total: entries.length, entries: entries });
+}
+
+// ============================================================
+// 🆕 v0.33.0（2026-09-06）admin.html の当日機能
+//   ・adminCreateApplication : 飛び込み客の代理登録
+//   ・assignSpare            : 予備名札の割当（🔴 再割当を拒否するガード付き）
+//   ・adminResendPass        : 一覧の行から入場パスを再送
+//
+// 🔒 3本とも認証必須（_requireSession）。
+// 🔴 公開フォームの経路（applyApplication / applyLiff / updateApplication）には一切触らない。
+//    §15-0 の公開フォーム専用ガードは applyApplication からしか呼ばない約束なので、
+//    代理登録はそれを通らない別経路として書く（受付は社員が本人を目視しているため、
+//    公開フォーム向けの機械的なガードは不要であり、かけると当日の受付が止まる）。
+// ============================================================
+
+const ADMIN_LOCK_WAIT_MS = 25000;
+
+// 代理登録で必須にする項目（2026-09-06 Takashiさん確定）。
+// 🔴 メール・電話は任意。受付で聞き出すと列が詰まるため。
+//    名札は予備名札（事前に刷ってある「予備 P-07」）を手渡すので、ここで集めた情報は名札に出ない。
+//    この3つは台帳（誰が来たか）とブース購買記録の突合のために取る。
+function _validateAdminApplication(data) {
+  const f = {
+    salonName:    String(data.salon_name || '').trim(),
+    staffName:    String(data.staff_name || '').trim(),
+    businessType: String(data.business_type || '').trim(),
+    email:        String(data.email || '').trim(),
+    phone:        String(data.phone || '').trim(),
+    note:         String(data.note || '').trim(),
+    hasTransaction: String(data.has_transaction || '').trim(),
+    address:      '',
+    referrer:     '',
+    agree:        ''   // 🔴 本人がチェックした値ではないので空のまま。TRUEを書かない
+  };
+  if (!f.staffName)    return { error: 'お名前を入力してください' };
+  if (!f.salonName)    return { error: 'サロン名を入力してください' };
+  if (!f.businessType) return { error: '業態を選択してください' };
+  if (BUSINESS_TYPE_OPTIONS.indexOf(f.businessType) < 0) return { error: '業態の値が不正です' };
+
+  // メールは任意だが、入れるなら形式は見る（打ち間違いをそのまま台帳に残さない）
+  if (f.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email)) {
+    return { error: 'メールアドレスの形式が正しくありません（空欄でも登録できます）' };
+  }
+  f.emailNorm = f.email ? f.email.toLowerCase() : '';
+  return { fields: f };
+}
+
+// 飛び込み客の代理登録（doPost: action=adminCreateApplication）。
+// data: { session_token, request_id, staff_name, salon_name, business_type, email?, phone?, note? }
+//
+// 🔴 request_id は端末が作る冪等キー。受付で二度押ししても、GASが応答を落としても
+//    行は増えない（配送障害の実測: 書けたのに返事が来ない・調査レポート §3-2）。
+// 🔴 控えメールは送らない（2026-09-06 確定）。目の前にいる人にパスURLを送っても使わず、
+//    メール枠100通/日を当日の他の用途のために残す。
+function adminCreateApplication(data) {
+  const auth = _requireSession(data);
+  if (!auth.ok) return _err(auth.error);
+  _checkProps();
+
+  const d = data || {};
+  const requestId = String(d.request_id || '').trim();
+  if (!requestId) return _err('INVALID_REQUEST');   // 冪等キーなしは受け付けない
+
+  const v = _validateAdminApplication(d);
+  if (v.error) return _err(v.error);
+  const f = v.fields;
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh = _ensureTantouColumn(_getSheet(ss, SHEET_APPLICATIONS));
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(ADMIN_LOCK_WAIT_MS)) return _err('LOCK_BUSY');
+
+  try {
+    const rows = sh.getDataRange().getValues();
+
+    // 冪等: 同じ request_id が既にあれば、その行をそのまま返す
+    for (let i = 1; i < rows.length; i++) {
+      if (String(rows[i][21] || '').trim() === requestId) {   // V列 = request_id
+        return _ok({
+          app_id: String(rows[i][0]), ticket_token: String(rows[i][16]),
+          staff_name: String(rows[i][5]), salon_name: String(rows[i][4]),
+          duplicate: true
+        });
+      }
+    }
+
+    // 🔴 行の組み立ては公開フォームと同じ _appendApplicationRow を使う。
+    //    列レイアウトを知っている場所を1つに保つため（別に書くと列がずれても気づけない）
+    const created = _appendApplicationRow(sh, rows, f, 'admin', '', '', requestId);
+
+    return _ok({
+      app_id: created.appId, ticket_token: created.ticketToken,
+      staff_name: f.staffName, salon_name: f.salonName,
+      duplicate: false
+    });
+  } catch (err) {
+    Logger.log('adminCreateApplication error: ' + err);
+    return _err('INTERNAL_ERROR');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 予備名札の割当（doPost: action=assignSpare）。
+// data: { session_token, spare_no, app_id }
+//
+// 🔴 割当済みの予備名札を別人に付け替えることは禁止（booth実装設計_確定版.md §2-7）。
+//    未解決注文の自己修復は「生トークン → applications.ticket_token を検索」で行うため、
+//    同じ spare_no を別人に割り当て直せると、先に記録された未解決注文が後の別人に紐づく。
+//    誤紐づけの唯一の経路なので入口で塞ぐ。
+function assignSpare(data) {
+  const auth = _requireSession(data);
+  if (!auth.ok) return _err(auth.error);
+  _checkProps();
+
+  const d      = data || {};
+  const spareNo = _boothPadCode(String(d.spare_no || '').trim().normalize('NFKC').toUpperCase());
+  const appId   = String(d.app_id || '').trim();
+  if (!spareNo || !appId) return _err('INVALID_REQUEST');
+
+  const ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const spSh  = _ensureSpareBadgesSheet(ss);
+  const appSh = _getSheet(ss, SHEET_APPLICATIONS);
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(ADMIN_LOCK_WAIT_MS)) return _err('LOCK_BUSY');
+
+  try {
+    const spRows = spSh.getDataRange().getValues();
+    let spRow = -1, spareToken = '', assignedTo = '';
+    for (let i = 1; i < spRows.length; i++) {
+      if (String(spRows[i][0] || '').trim() === spareNo) {
+        spRow = i + 1;
+        spareToken = String(spRows[i][1] || '').trim();
+        assignedTo = String(spRows[i][2] || '').trim();
+        break;
+      }
+    }
+    if (spRow < 0)   return _err('SPARE_NOT_FOUND');
+    if (!spareToken) return _err('SPARE_NO_TOKEN');   // 印刷前のデータ不整合。推測で発番しない
+
+    if (assignedTo) {
+      // 🔴 同じ人への再実行は成功として返す（受付の二度押し・再送で止まらないように）
+      if (assignedTo === appId) {
+        return _ok({ spare_no: spareNo, app_id: appId, ticket_token: spareToken, duplicate: true });
+      }
+      return { success: false, error: 'SPARE_ALREADY_ASSIGNED', assigned_app_id: assignedTo };
+    }
+
+    const appRows = appSh.getDataRange().getValues();
+    let appRow = -1, appName = '', appSalon = '', prevToken = '';
+    for (let i = 1; i < appRows.length; i++) {
+      if (String(appRows[i][0] || '').trim() === appId) {
+        appRow = i + 1;
+        appSalon = String(appRows[i][4] || '');
+        appName  = String(appRows[i][5] || '');
+        prevToken = String(appRows[i][16] || '').trim();
+        break;
+      }
+    }
+    if (appRow < 0) return _err('APP_NOT_FOUND');
+
+    // 🔴 書く順番が効く。spare_badges を先に、applications を後に書くこと。
+    //    途中で落ちた場合:
+    //      この順（spare先）  → 予備は「割当済み」なので他人へ付け替えられない。
+    //                          booth/scan は spare_badges 経由で正しく本人へ解決できる。安全側
+    //      逆順（app先）      → applications.ticket_token だけ書き換わり、予備は「未割当」のまま。
+    //                          同じ予備名札を別人にも割り当てられてしまい、2人が同じトークンを持つ
+    spSh.getRange(spRow, 3, 1, 2).setValues([[appId, _now()]]);   // assigned_app_id, assigned_at
+    appSh.getRange(appRow, 17).setValue(spareToken);              // Q列 ticket_token を上書き
+    appSh.getRange(appRow, 3).setValue(_now());                   // updated_at
+
+    return _ok({
+      spare_no: spareNo, app_id: appId, ticket_token: spareToken,
+      staff_name: appName, salon_name: appSalon,
+      previous_ticket_token: prevToken,   // 監査用。古いQRは以後どの申込にも当たらなくなる
+      duplicate: false
+    });
+  } catch (err) {
+    Logger.log('assignSpare error: ' + err);
+    return _err('INTERNAL_ERROR');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 一覧の行から入場パスを再送する（doPost: action=adminResendPass）。
+// data: { session_token, app_id }
+//
+// 公開の resendPass（メールアドレス指定・該当の有無を隠して常に同じ応答を返す）とは別物。
+// 社員用なので「送ったのか、抑止されたのか、メールが無いのか」を正直に返す。
+function adminResendPass(data) {
+  const auth = _requireSession(data);
+  if (!auth.ok) return _err(auth.error);
+  _checkProps();
+
+  const appId = String((data || {}).app_id || '').trim();
+  if (!appId) return _err('INVALID_REQUEST');
+
+  const ss   = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const rows = _getSheet(ss, SHEET_APPLICATIONS).getDataRange().getValues();
+
+  let target = null;
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0] || '').trim() === appId) {
+      target = {
+        email:     String(rows[i][6] || '').trim(),
+        salonName: String(rows[i][4] || ''),
+        staffName: String(rows[i][5] || ''),
+        token:     String(rows[i][16] || ''),
+        status:    String(rows[i][17] || '')
+      };
+      break;
+    }
+  }
+  if (!target)                     return _err('APP_NOT_FOUND');
+  if (target.status === 'cancelled') return _err('APP_CANCELLED');
+  if (!target.email)               return _err('NO_EMAIL');   // 代理登録でメール未取得の方
+  if (!target.token)               return _err('NO_TICKET_TOKEN');
+
+  // 🔴 直近10分に送っていれば重ねて送らない（v0.13.0 の再送抑止をそのまま使う）。
+  //    公開経路と違い、抑止されたことを画面に返す
+  if (_recentResendMailSent(target.email)) {
+    return _ok({ sent: false, reason: 'RECENTLY_SENT', to: _maskEmail(target.email) });
+  }
+
+  // 🔴 その行1件だけを送る。公開の resendPass は同じメールの全申込を並べて送るが、
+  //    社員が一覧の1行を選んで押している以上、送る相手はその1人が予測どおり
+  _sendPassResendMail(target.email, [{
+    salonName: target.salonName,
+    staffName: target.staffName,
+    passUrl:   SITE_BASE_URL + 'pass.html?t=' + target.token
+  }]);
+
+  return _ok({
+    sent: true, to: _maskEmail(target.email),
+    remaining_quota: MailApp.getRemainingDailyQuota()   // 🔴 当日は100通/日が効いてくる
+  });
+}
+
+// 画面に出す用のメール伏せ字（社員用画面だが、肩越しに見えるので全部は出さない）
+function _maskEmail(email) {
+  const s = String(email || '');
+  const at = s.indexOf('@');
+  if (at <= 0) return s;
+  const head = s.slice(0, at);
+  const shown = head.length <= 2 ? head.slice(0, 1) : head.slice(0, 2);
+  return shown + '***' + s.slice(at);
 }
