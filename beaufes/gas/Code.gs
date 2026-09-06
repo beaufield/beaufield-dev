@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.33.0';
+const VERSION  = '0.34.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -447,6 +447,7 @@ function doPost(e) {
       case 'adminCreateApplication': return _jsonResponse(adminCreateApplication(data));
       case 'assignSpare':            return _jsonResponse(assignSpare(data));
       case 'adminResendPass':        return _jsonResponse(adminResendPass(data));
+      case 'releaseSpare':           return _jsonResponse(releaseSpare(data));   // 🆕 v0.34.0
       default:                  return _jsonResponse(_err('不明なアクション: ' + action));
     }
   } catch (err) {
@@ -4804,7 +4805,8 @@ function assignSpare(data) {
   if (!spareNo || !appId) return _err('INVALID_REQUEST');
 
   const ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const spSh  = _ensureSpareBadgesSheet(ss);
+  // 🆕 v0.34.0: 取り消し（releaseSpare）で元のQRに戻せるよう、E列に割当前のトークンを控える
+  const spSh  = _ensureSpareBadgesPrevColumn(_ensureSpareBadgesSheet(ss));
   const appSh = _getSheet(ss, SHEET_APPLICATIONS);
 
   const lock = LockService.getScriptLock();
@@ -4833,7 +4835,7 @@ function assignSpare(data) {
     }
 
     const appRows = appSh.getDataRange().getValues();
-    let appRow = -1, appName = '', appSalon = '', prevToken = '';
+    let appRow = -1, appName = '', appSalon = '', prevToken = '';   // prevToken = 割当前のticket_token（E列に控える）
     for (let i = 1; i < appRows.length; i++) {
       if (String(appRows[i][0] || '').trim() === appId) {
         appRow = i + 1;
@@ -4851,7 +4853,9 @@ function assignSpare(data) {
     //                          booth/scan は spare_badges 経由で正しく本人へ解決できる。安全側
     //      逆順（app先）      → applications.ticket_token だけ書き換わり、予備は「未割当」のまま。
     //                          同じ予備名札を別人にも割り当てられてしまい、2人が同じトークンを持つ
-    spSh.getRange(spRow, 3, 1, 2).setValues([[appId, _now()]]);   // assigned_app_id, assigned_at
+    // 🔴 C/D/E を1回で書く。E（割当前のトークン）を別に書くと、途中で落ちたときに
+    //    「割当済みなのに元に戻せない」行ができる
+    spSh.getRange(spRow, SP.assigned_app_id, 1, 3).setValues([[appId, _now(), prevToken]]);
     appSh.getRange(appRow, 17).setValue(spareToken);              // Q列 ticket_token を上書き
     appSh.getRange(appRow, 3).setValue(_now());                   // updated_at
 
@@ -4931,4 +4935,147 @@ function _maskEmail(email) {
   const head = s.slice(0, at);
   const shown = head.length <= 2 ? head.slice(0, 1) : head.slice(0, 2);
   return shown + '***' + s.slice(at);
+}
+
+// ============================================================
+// 🆕 v0.34.0（2026-09-06）予備名札の割当の取り消し（releaseSpare）
+//
+// なぜ要るか: 受付が間違った人に予備名札を割り当てると、v0.33.0 の時点では
+// 画面から直す手段が無かった。当日その場で起きると取り返しがつかない。
+//
+// 🔴 ただし「割当済みの予備名札を自由に付け替えられる」ようにはしない。
+//    それは booth実装設計_確定版.md §2-7 が塞いだ誤紐づけの経路そのものだから。
+//    取り消せるのは **その名札でまだ何も記録されていないとき**（＝渡した直後の取り違え）だけ。
+//    一度でもブースの購買か受付のチェックインに使われていたら SPARE_IN_USE で拒否する。
+// ============================================================
+
+// spare_badges の列（1始まり）。🔴 E列は v0.34.0 で追加。既存の読み取りは A〜D しか見ないので影響しない
+const SP = { spare_no: 1, ticket_token: 2, assigned_app_id: 3, assigned_at: 4, prev_ticket_token: 5 };
+
+// E列（prev_ticket_token）のヘッダーを冪等に用意する。
+// 🔴 既存シートは A〜D の4列なので、割当のたびにここを通して育てる。
+function _ensureSpareBadgesPrevColumn(sh) {
+  if (sh.getMaxColumns() < SP.prev_ticket_token) {
+    sh.insertColumnsAfter(sh.getMaxColumns(), SP.prev_ticket_token - sh.getMaxColumns());
+  }
+  const head = String(sh.getRange(1, SP.prev_ticket_token).getValue() || '').trim();
+  if (!head) sh.getRange(1, SP.prev_ticket_token).setValue('prev_ticket_token');
+  return sh;
+}
+
+// その予備名札のトークンが、もう業務で使われてしまっているかを見る。
+// 🔴 使われていたら取り消してはいけない。取り消したうえで別人に割り当て直すと、
+//    先に記録された注文・入場がその別人のものとして解決されてしまう。
+function _spareTokenInUse(ss, token) {
+  const t = String(token || '').trim();
+  if (!t) return { used: false };
+
+  // booth の注文（生値・解決後の両方を見る）
+  const sheets = _ensureBoothSheets(ss);
+  const orLast = sheets.orders.getLastRow();
+  if (orLast >= 2) {
+    const rows = sheets.orders.getRange(2, 1, orLast - 1, BOOTH_ORDER_COLS).getValues();
+    for (let i = 0; i < rows.length; i++) {
+      if (String(rows[i][BO.ticket_token - 1] || '').trim() === t ||
+          String(rows[i][BO.ticket_token_raw - 1] || '').trim() === t) {
+        return { used: true, where: 'booth', ref: String(rows[i][BO.order_id - 1] || '') };
+      }
+    }
+  }
+
+  // 受付のチェックイン
+  const ck = _ensureCheckinsSheet(ss);
+  const ckLast = ck.getLastRow();
+  if (ckLast >= 2) {
+    const rows = ck.getRange(2, 1, ckLast - 1, CHECKIN_COLS).getValues();
+    for (let i = 0; i < rows.length; i++) {
+      if (String(rows[i][CK.ticket_token - 1] || '').trim() === t) {
+        return { used: true, where: 'scan', ref: String(rows[i][CK.checked_at - 1] || '') };
+      }
+    }
+  }
+
+  return { used: false };
+}
+
+// 予備名札の割当を取り消す（doPost: action=releaseSpare）。
+// data: { session_token, spare_no }
+function releaseSpare(data) {
+  const auth = _requireSession(data);
+  if (!auth.ok) return _err(auth.error);
+  _checkProps();
+
+  const spareNo = _boothPadCode(String((data || {}).spare_no || '').trim().normalize('NFKC').toUpperCase());
+  if (!spareNo) return _err('INVALID_REQUEST');
+
+  const ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const spSh  = _ensureSpareBadgesPrevColumn(_ensureSpareBadgesSheet(ss));
+  const appSh = _getSheet(ss, SHEET_APPLICATIONS);
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(ADMIN_LOCK_WAIT_MS)) return _err('LOCK_BUSY');
+
+  try {
+    const spRows = spSh.getDataRange().getValues();
+    let spRow = -1, spareToken = '', assignedTo = '', prevToken = '';
+    for (let i = 1; i < spRows.length; i++) {
+      if (String(spRows[i][SP.spare_no - 1] || '').trim() === spareNo) {
+        spRow      = i + 1;
+        spareToken = String(spRows[i][SP.ticket_token - 1] || '').trim();
+        assignedTo = String(spRows[i][SP.assigned_app_id - 1] || '').trim();
+        prevToken  = String(spRows[i][SP.prev_ticket_token - 1] || '').trim();
+        break;
+      }
+    }
+    if (spRow < 0)    return _err('SPARE_NOT_FOUND');
+    if (!assignedTo)  return _ok({ spare_no: spareNo, released: false, reason: 'NOT_ASSIGNED' });
+
+    // 🔴 使われていたら取り消さない。ここが誤紐づけを防ぐ最後の一線
+    const inUse = _spareTokenInUse(ss, spareToken);
+    if (inUse.used) {
+      return { success: false, error: 'SPARE_IN_USE', where: inUse.where, ref: inUse.ref,
+               assigned_app_id: assignedTo };
+    }
+
+    // 割当先の申込行を探す
+    const appRows = appSh.getDataRange().getValues();
+    let appRow = -1, appName = '', appSalon = '';
+    for (let i = 1; i < appRows.length; i++) {
+      if (String(appRows[i][0] || '').trim() === assignedTo) {
+        appRow   = i + 1;
+        appSalon = String(appRows[i][4] || '');
+        appName  = String(appRows[i][5] || '');
+        break;
+      }
+    }
+
+    // 元のトークンに戻す。控えが無ければ（v0.33.0 で割り当てた分）新しく発番する
+    let restored = prevToken, generated = false;
+    if (!restored) { restored = _genToken(); generated = true; }
+
+    // 🔴 書く順番は assignSpare と逆。applications を先に戻し、spare_badges を後で開放する。
+    //    途中で落ちた場合:
+    //      この順（app先）    → 本人のトークンは戻り、予備名札は「割当済み」のまま＝再割当は塞がれたまま。安全側
+    //      逆順（spare先）    → 予備名札が空くのに applications はまだ予備のトークンを持つ。
+    //                          その予備を別人に割り当てると2人が同じトークンを持つ
+    if (appRow > 0) {
+      appSh.getRange(appRow, 17).setValue(restored);   // Q列 ticket_token
+      appSh.getRange(appRow, 3).setValue(_now());      // updated_at
+    }
+    spSh.getRange(spRow, SP.assigned_app_id, 1, 3).setValues([['', '', '']]); // C/D/E をまとめて空に
+
+    return _ok({
+      spare_no: spareNo, released: true,
+      app_id: assignedTo, staff_name: appName, salon_name: appSalon,
+      restored_ticket_token: restored,
+      // 🔴 true のときは元のQRが復元できていない＝その方の名札を刷り直す必要がある
+      regenerated: generated,
+      app_missing: appRow < 0
+    });
+  } catch (err) {
+    Logger.log('releaseSpare error: ' + err);
+    return _err('INTERNAL_ERROR');
+  } finally {
+    lock.releaseLock();
+  }
 }
