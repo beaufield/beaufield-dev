@@ -10,7 +10,7 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.12.0';
+const VERSION       = 'v1.12.1';
 // ポータル画面（GitHub Pages）のURL。旧HTML向けの更新案内タイルのリンク先に使う。
 const PORTAL_URL    = 'https://beaufield.github.io/beaufield-dev/';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
@@ -339,7 +339,7 @@ function resetPin(data) {
     return { success: false, message: 'セッションが無効です。再ログインしてください' };
   }
 
-  // 管理者権限チェック
+  // 現在も有効な管理者か確認する（発行済みセッションだけでは許可しない）。
   if (!_isAdmin(ss, requestUserId)) {
     return { success: false, message: '管理者権限がありません' };
   }
@@ -390,6 +390,10 @@ function changePin(data) {
 
   for (let i = 1; i < rows.length; i++) {
     if (String(rows[i][0]) === userId) {
+      // セッション発行後に無効化されていたら、PIN照合・書込の前に拒否する。
+      if (!(rows[i][3] === true || rows[i][3] === 'TRUE')) {
+        return { success: false, message: 'セッションが無効です。再ログインしてください' };
+      }
       if (String(rows[i][2]).padStart(4, '0') !== currentPinStr) {
         return { success: false, message: '現在のPINが正しくありません' };
       }
@@ -562,13 +566,15 @@ function logout(data) {
 }
 
 // ============================================================
-// 管理者チェック（usersシートのF列 is_admin）
+// 有効な管理者チェック（usersシートのD列 active・F列 is_admin）
 // ============================================================
 function _isAdmin(ss, user_id) {
   const rows = ss.getSheetByName('users').getDataRange().getValues();
   for (let i = 1; i < rows.length; i++) {
     if (String(rows[i][0]) === user_id) {
-      return rows[i][5] === true || rows[i][5] === 'TRUE';
+      // 管理者フラグが残っていても、無効化済みユーザーには操作させない。
+      return (rows[i][3] === true || rows[i][3] === 'TRUE') &&
+        (rows[i][5] === true || rows[i][5] === 'TRUE');
     }
   }
   return false;
