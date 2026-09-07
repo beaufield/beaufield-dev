@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.34.0';
+const VERSION  = '0.34.1';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -557,6 +557,13 @@ function _validateApplicationFields(data, opts) {
   return { fields: f };
 }
 
+// シート保存の直前だけ文字列をエスケープし、入力を数式として実行させない。
+// 先頭の引用符も保護し、読み出し→再保存で元の引用符が消えることを防ぐ。
+// メール・通知・重複判定で使う入力値自体は変更しない。真偽値などの型も保つ。
+function _applicationCellValue(value) {
+  return typeof value === 'string' && /^[\s\uFEFF]*[=']/.test(value) ? "'" + value : value;
+}
+
 // 新規行を追加する。source: 'web' | 'liff'。lineFriendId/lineUserId はWeb版では常に''。
 // requestId は冪等キー（v0.13.0・§2-2）。applyLiffからは渡されない（LIFFはline_user_idで
 // 既に冪等なため不要）→ その場合は省略され''になる。
@@ -579,7 +586,7 @@ function _appendApplicationRow(sh, rows, f, source, lineFriendId, lineUserId, re
   // 🔴 電話番号列(I列=9列目)は書き込み前に必ずPlain Text指定する（migrateFixPhoneColumnと同じ理由）。
   // appendRowだと書式を挟めないため、行番号を自分で計算してsetValuesに置き換えている。
   sh.getRange(newRow, 9, 1, 1).setNumberFormat('@');
-  sh.getRange(newRow, 1, 1, values.length).setValues([values]);
+  sh.getRange(newRow, 1, 1, values.length).setValues([values.map(_applicationCellValue)]);
 
   return { appId: appId, ticketToken: ticketToken };
 }
@@ -593,9 +600,9 @@ function _updateApplicationRow(sh, row, f) {
   sh.getRange(row, 5, 1, 9).setValues([[
     // J列(area)はフォームから削除済み（2026-08-06）。列位置を保つため空文字を書き続ける
     f.salonName, f.staffName, f.email, f.emailNorm, f.phone, '', f.hasTransaction, f.address, f.referrer
-  ]]);
-  sh.getRange(row, 20, 1, 1).setValue(f.note);
-  sh.getRange(row, 21, 1, 1).setValue(f.businessType); // U列（§4-1-2）
+  ].map(_applicationCellValue)]);
+  sh.getRange(row, 20, 1, 1).setValue(_applicationCellValue(f.note));
+  sh.getRange(row, 21, 1, 1).setValue(_applicationCellValue(f.businessType)); // U列（§4-1-2）
 }
 
 // ============================================================
