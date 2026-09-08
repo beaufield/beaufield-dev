@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.30.0';
+const VERSION = 'v2.31.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -1937,7 +1937,11 @@ function saveDrafts(params) {
       d.featureId1 || '', d.featureId2 || '', d.featureId3 || '',
       d.description || '', d.confidence || '', d.reasoning || '',
       (d.refUrls || []).join('\n'), d.supplierCd || '', d.supplierName || '',
-      nowStr, '', ''
+      nowStr, '', '',
+      // 19-21列目: jodai_type / tax_type_id は空欄なら画面側の既定値で表示される。
+      // view_group_restricted は明示的に false を渡したときだけOFF（既定はON）。
+      d.jodaiType || '', d.taxTypeId || '',
+      d.viewGroupRestricted === false ? false : true
     ]);
 
     sets.forEach(s => {
@@ -1981,6 +1985,17 @@ function saveDrafts(params) {
 // 12 ref_urls / 13 supplier_cd / 14 supplier_name / 15 created_at / 16 reviewed_at / 17 registered_product_id /
 // 18 jodai_type / 19 tax_type_id / 20 view_group_restricted
 
+// 美容師限定表示フラグの読み出し。
+// ⚠️ Sheetsは setValue('TRUE'/'FALSE') を真偽値へ自動変換するため、セルには boolean と文字列が混在しうる。
+// 旧実装は `r[20] !== 'FALSE'` で判定しており、boolean false が true 扱いになって「OFFが保存できない」不具合になっていた。
+// 未設定(空セル)の既存ドラフトは従来どおり既定ONとする。
+function parseViewGroupRestricted(v) {
+  if (v === true || v === false) return v;
+  const s = String(v == null ? '' : v).trim().toUpperCase();
+  if (s === 'FALSE' || s === '0' || s === 'NO') return false;
+  return true;
+}
+
 function getDrafts(params) {
   const status = params.status !== undefined ? params.status : '下書き';
   const supplierCd = params.supplierCd != null ? String(params.supplierCd) : '';
@@ -2013,8 +2028,7 @@ function getDrafts(params) {
       supplierCd: r[13], supplierName: r[14],
       createdAt: r[15], reviewedAt: r[16] || '', registeredProductId: r[17] || null,
       jodaiType: r[18] || '', taxTypeId: r[19] || null,
-      // 未設定(空セル)の既存ドラフトは「美容師限定表示」をデフォルトON扱いにする（'FALSE'明示時のみOFF）
-      viewGroupRestricted: r[20] !== 'FALSE',
+      viewGroupRestricted: parseViewGroupRestricted(r[20]),
       sets: setsByDraft[r[0]] || []
     });
   }
@@ -2040,7 +2054,8 @@ function updateDraft(params) {
   if (params.description !== undefined) sheet.getRange(rowIdx, 10).setValue(params.description);
   if (params.jodaiType !== undefined) sheet.getRange(rowIdx, 19).setValue(params.jodaiType);
   if (params.taxTypeId !== undefined) sheet.getRange(rowIdx, 20).setValue(params.taxTypeId);
-  if (params.viewGroupRestricted !== undefined) sheet.getRange(rowIdx, 21).setValue(params.viewGroupRestricted ? 'TRUE' : 'FALSE');
+  // 文字列ではなく真偽値で書く（Sheetsの自動変換に依存しない）
+  if (params.viewGroupRestricted !== undefined) sheet.getRange(rowIdx, 21).setValue(params.viewGroupRestricted === true);
 
   if (params.sets) {
     const setSheet = getOrCreateSheet(SHEET_DRAFT_SETS);
@@ -2129,7 +2144,7 @@ function approveDraft(params) {
   const description = draft[9];
   const jodaiType = draft[18] || null;
   const taxTypeId = draft[19] || null;
-  const viewGroupFilter = draft[20] !== 'FALSE' ? BEAUTY_ONLY_VIEW_GROUP_FILTER : null;
+  const viewGroupFilter = parseViewGroupRestricted(draft[20]) ? BEAUTY_ONLY_VIEW_GROUP_FILTER : null;
 
   let productId, results;
   if (draftType === 'add_to_existing') {
