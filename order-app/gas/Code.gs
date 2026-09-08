@@ -20,7 +20,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.36.0';
+const VERSION         = 'v1.36.1';
 const APP_NAME        = 'order-app';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 const PROP_STUCK_NOTIFY_DAYS = 14; // 提案滞留の通知・「要対応」表示の閾値（日）。Phase M, v1.31.0〜
@@ -2395,6 +2395,12 @@ function saveProposalExclusion(p, user_id) {
   const name   = String(p.name   || '').trim();
   const reason = String(p.reason || '').trim();
   if (!code) return { success: false, error: '商品コードが未指定です' };
+
+  // 新規登録だけを軽量に検証する。マスター全件読込・追加通信は行わない。
+  // 過去に保存された不正コードも解除できるよう、deleteには形式制限を掛けない。
+  if (mode === 'add' && !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(code)) {
+    return { success: false, error: '商品コードの形式が不正です（英数字で始まる64文字以内の英数字・ハイフン・アンダースコア・ピリオド）' };
+  }
 
   const ss = getSS();
   let sh = ss.getSheetByName(SHEET_PROPOSAL_EXCL);
