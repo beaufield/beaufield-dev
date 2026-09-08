@@ -51,6 +51,8 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .draft-meta-field { display: flex; flex-direction: column; gap: 2px; }
 .draft-meta-field label { font-size: 11px; color: #6b7280; }
 .draft-meta-field select { font-size: 12px; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; min-width: 130px; }
+.draft-feature-search { font-size: 11px; padding: 3px 6px; border: 1px solid #e5e7eb; border-radius: 4px; background: #fff; min-width: 130px; }
+.draft-feature-search:disabled { background: #f3f4f6; }
 .draft-meta-note { font-size: 11px; color: #9ca3af; }
 .draft-meta-checkbox { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #374151; cursor: pointer; }
 .draft-meta-checkbox input { cursor: pointer; }
@@ -347,6 +349,8 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .feature-filter-btn.filter-flag-on.active  { border-color:#6ee7b7; background:#ecfdf5; color:#065f46; }
 .feature-filter-btn.filter-flag-off.active { border-color:#fca5a5; background:#fef2f2; color:#991b1b; }
 .feature-filter-divider { width:1px; height:16px; background:#e5e7eb; margin:0 4px; }
+.feature-name-search { padding:5px 10px; border:1px solid #d1d5db; border-radius:14px; font-size:12px; min-width:200px; }
+.feature-name-search-clear { padding:4px 9px; border:1px solid #e5e7eb; border-radius:14px; background:#fff; cursor:pointer; font-size:11px; color:#9ca3af; }
 .feature-search-input { width:100%; padding:5px 8px; border:1px solid #d1d5db; border-radius:4px; font-size:12px; margin-bottom:4px; box-sizing:border-box; }
 /* 説明文生成タブ */
 .desc-product-card { background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:16px; margin-bottom:12px; transition:opacity 0.3s; }
@@ -593,7 +597,10 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
             <button onclick="openNewFeatureModal()" style="padding:7px 14px;border:none;border-radius:6px;background:#1a56db;color:#fff;cursor:pointer;font-size:13px;">＋ 新規作成</button>
           </div>
         </div>
-        <div id="feature-filter-bar" style="display:none;margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+        <div id="feature-filter-bar" style="display:none;margin-bottom:12px;gap:6px;flex-wrap:wrap;align-items:center;">
+          <input type="text" id="feature-name-search-input" class="feature-name-search" placeholder="🔍 特集名で検索" oninput="filterFeatureByText(this.value)">
+          <button class="feature-name-search-clear" onclick="clearFeatureSearch()" title="検索をクリア">✕</button>
+          <span class="feature-filter-divider"></span>
           <span style="font-size:12px;color:#6b7280;margin-right:4px;">絞り込み:</span>
           <button class="feature-filter-btn feature-filter-type-btn filter-all active"       onclick="filterFeatureByType('',this)">すべて</button>
           <button class="feature-filter-btn feature-filter-type-btn filter-series"           onclick="filterFeatureByType('シリーズ',this)">シリーズ</button>
@@ -1361,7 +1368,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = 'v2.16.0';
+const APP_VERSION = 'v2.17.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
 const BCART_ADMIN_BASE = 'https://beaufieldec.i16.bcart.jp/admin/products';
 
@@ -5733,6 +5740,7 @@ var featureOrderChanged = false;
 var featureTypeChanged = false;
 var featureFilterType = '';
 var featureFilterFlag = '';
+var featureFilterText = '';
 var featureDragSrcIdx = -1;
 var featureEditId = null;
 
@@ -5757,13 +5765,28 @@ function filterFeatureByFlag(flag, el) {
   applyFeatureFilter();
 }
 
+function filterFeatureByText(text) {
+  featureFilterText = text;
+  applyFeatureFilter();
+}
+
+function clearFeatureSearch() {
+  var el = document.getElementById('feature-name-search-input');
+  if (el) el.value = '';
+  featureFilterText = '';
+  applyFeatureFilter();
+}
+
 function applyFeatureFilter() {
-  var isFiltered = featureFilterType !== '' || featureFilterFlag !== '';
+  // 絞り込み中は並び順が本来の順序と一致しないため、ドラッグ&ドロップと順序保存を無効化する
+  var isFiltered = featureFilterType !== '' || featureFilterFlag !== '' || featureFilterText.trim() !== '';
   document.getElementById('feature-order-save-btn').style.display = (isFiltered || !featureOrderChanged) ? 'none' : '';
   var list = featureList;
   if (featureFilterType === '__none__') list = list.filter(function(f) { return !f.type; });
   else if (featureFilterType !== '') list = list.filter(function(f) { return f.type === featureFilterType; });
   if (featureFilterFlag !== '') list = list.filter(function(f) { return Number(f.flag) === Number(featureFilterFlag); });
+  var q = featureFilterText.trim().toLowerCase();
+  if (q) list = list.filter(function(f) { return String(f.name || '').toLowerCase().indexOf(q) !== -1; });
   renderFeatureTable(list);
 }
 
@@ -5784,6 +5807,9 @@ function loadFeatureList() {
     featureList = res.features || [];
     featureFilterType = '';
     featureFilterFlag = '';
+    featureFilterText = '';
+    var searchEl = document.getElementById('feature-name-search-input');
+    if (searchEl) searchEl.value = '';
     document.querySelectorAll('.feature-filter-type-btn').forEach(function(b) {
       b.classList.toggle('active', b.classList.contains('filter-all'));
     });
@@ -5798,7 +5824,8 @@ function loadFeatureList() {
 function renderFeatureTable(list) {
   var container = document.getElementById('feature-list-container');
   if (!list.length) {
-    container.innerHTML = '<p style="color:#9ca3af;font-size:13px;text-align:center;padding:24px 0;">特集が登録されていません。</p>';
+    var emptyMsg = featureList.length ? '条件に一致する特集はありません。' : '特集が登録されていません。';
+    container.innerHTML = '<p style="color:#9ca3af;font-size:13px;text-align:center;padding:24px 0;">' + emptyMsg + '</p>';
     return;
   }
 
@@ -5811,7 +5838,7 @@ function renderFeatureTable(list) {
     + '<th style="width:120px;text-align:center;">操作</th>'
     + '</tr></thead><tbody id="feature-tbody">';
 
-  var isFiltered = featureFilterType !== '' || featureFilterFlag !== '';
+  var isFiltered = featureFilterType !== '' || featureFilterFlag !== '' || featureFilterText.trim() !== '';
   list.forEach(function(f, displayIdx) {
     var realIdx = featureList.indexOf(f);
     var typeLabel = f.type || '';
@@ -6127,14 +6154,43 @@ function draftCategoryOptions(selectedId) {
   return opts;
 }
 
-function draftFeatureOptions(typeNum, selectedId) {
+// queryが渡されたら特集名で部分一致絞り込みする。
+// 選択中の特集はqueryに一致しなくても必ず残す（optionが消えるとselectの値が'なし'に変わり、保存時に選択が失われるため）
+function draftFeatureOptions(typeNum, selectedId, query) {
   const typeMap = { 1: 'シリーズ', 2: 'メーカー', 3: 'キャンペーン' };
-  const filtered = regFeatures.filter(function(f) { return f.type === typeMap[typeNum]; });
+  const q = String(query || '').trim().toLowerCase();
+  const filtered = regFeatures.filter(function(f) {
+    if (f.type !== typeMap[typeNum]) return false;
+    if (selectedId && String(f.id) === String(selectedId)) return true;
+    return !q || String(f.name).toLowerCase().indexOf(q) !== -1;
+  });
   let opts = '<option value="">なし</option>';
   filtered.forEach(function(f) {
     opts += '<option value="' + f.id + '"' + (String(f.id) === String(selectedId) ? ' selected' : '') + '>' + esc(f.name) + '</option>';
   });
   return opts;
+}
+
+// 特集セレクトの上の検索ボックス入力で、選択状態を保ったままoptionを絞り込む
+function filterDraftFeatureSelect(typeNum, draftId) {
+  const sel = document.getElementById('draft-feature' + typeNum + '-' + draftId);
+  const qEl = document.getElementById('draft-feature' + typeNum + '-q-' + draftId);
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = draftFeatureOptions(typeNum, current, qEl ? qEl.value : '');
+  sel.value = current;
+}
+
+function draftFeatureField(typeNum, labelText, d, disabledAttr) {
+  const selectedId = d['featureId' + typeNum];
+  return '<div class="draft-meta-field">' +
+    '<label>' + labelText + '</label>' +
+    '<input type="text" class="draft-feature-search" id="draft-feature' + typeNum + '-q-' + d.draftId + '" ' +
+      'placeholder="🔍 特集名で絞り込み" oninput="filterDraftFeatureSelect(' + typeNum + ',\'' + d.draftId + '\')"' + disabledAttr + '>' +
+    '<select id="draft-feature' + typeNum + '-' + d.draftId + '"' + disabledAttr + '>' +
+      draftFeatureOptions(typeNum, selectedId) +
+    '</select>' +
+  '</div>';
 }
 
 // jodaiTypeが未設定(既存ドラフト)の場合の初期表示用デフォルト。実際の送信値はcollectDraftFormPayloadがselectの現在値を読む
@@ -6190,9 +6246,9 @@ function draftCardHtml(d) {
     '<div class="draft-meta-row">' +
       (isNewProduct ?
         '<div class="draft-meta-field"><label>カテゴリー *</label><select id="draft-category-' + d.draftId + '"' + disabledAttr + '>' + draftCategoryOptions(d.categoryId) + '</select></div>' +
-        '<div class="draft-meta-field"><label>特集1（シリーズ）</label><select id="draft-feature1-' + d.draftId + '"' + disabledAttr + '>' + draftFeatureOptions(1, d.featureId1) + '</select></div>' +
-        '<div class="draft-meta-field"><label>特集2（メーカー）</label><select id="draft-feature2-' + d.draftId + '"' + disabledAttr + '>' + draftFeatureOptions(2, d.featureId2) + '</select></div>' +
-        '<div class="draft-meta-field"><label>特集3（キャンペーン）</label><select id="draft-feature3-' + d.draftId + '"' + disabledAttr + '>' + draftFeatureOptions(3, d.featureId3) + '</select></div>'
+        draftFeatureField(1, '特集1（シリーズ）', d, disabledAttr) +
+        draftFeatureField(2, '特集2（メーカー）', d, disabledAttr) +
+        draftFeatureField(3, '特集3（キャンペーン）', d, disabledAttr)
         : '') +
       '<div class="draft-meta-field"><label>税区分</label><select id="draft-tax-' + d.draftId + '"' + disabledAttr + '>' + draftTaxOptions(d.taxTypeId || 1) + '</select></div>' +
       '<div class="draft-meta-field"><label>上代タイプ</label><select id="draft-jodai-' + d.draftId + '"' + disabledAttr + '>' + draftJodaiTypeOptions(draftDefaultJodaiType(d)) + '</select></div>' +
