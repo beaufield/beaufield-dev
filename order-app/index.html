@@ -1355,7 +1355,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.71.0'; // GAS同時実行セマフォの不整合から自動復旧できるようにした（fail-closedで永久に動かなくなる問題の解消）
+const APP_VERSION    = 'v1.71.1';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1421,6 +1421,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
   currentUser = { user_id: session.user_id, name: session.name, is_admin: session.is_admin === true };
+  bindOrderActions();
   _gasMarkAbandonedDiagnostics();
   updateOrderOutboxStatus();
   const nameEl = document.getElementById('settings-user-name');
@@ -3486,7 +3487,7 @@ function _setOrderSaveStatus(state, detail = '', outputType = '') {
     el.style.color = 'var(--danger)';
     el.innerHTML = '⚠️ 出力は完了していますが、発注履歴への登録が終わっていません。'
       + '<br>このままでは履歴画面に出てきません。'
-      + `<button class="btn btn-outline btn-sm" style="margin-top:6px" onclick="retryOrderSave('${escAttr(outputType)}')">🔄 履歴登録をやり直す</button>`;
+      + `<button class="btn btn-outline btn-sm" style="margin-top:6px" ${orderAction('retryOrderSave', outputType)}>🔄 履歴登録をやり直す</button>`;
   } else {
     el.style.display = 'none';
     el.innerHTML = '';
@@ -4356,7 +4357,7 @@ function renderHistoryList(container, orders) {
     return;
   }
   container.innerHTML = orders.slice(0, 20).map(o => `
-    <div class="history-item" onclick="toggleHistoryDetail(this,'${escAttr(o.orderNo)}')">
+    <div class="history-item" ${orderAction('toggleHistoryDetail', o.orderNo)}>
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
         <div>
           <div class="history-supplier">${escHtml(o.supplierName || '-')}</div>
@@ -4419,27 +4420,26 @@ function buildHistReOutputBtns(orderNo, supplierCode) {
   const methods = (sup && sup.outputMethods && sup.outputMethods.length > 0)
     ? sup.outputMethods
     : ['CSV', 'PDF', 'テキスト', 'メーカーPDF'];
-  const esc  = escAttr(orderNo);
   const btns = [];
   if (methods.includes('CSV'))
-    btns.push(`<button class="btn btn-outline btn-sm" onclick="reOutputCSV('${esc}');event.stopPropagation()">📥 CSV再出力</button>`);
+    btns.push(`<button class="btn btn-outline btn-sm" ${orderAction('reOutputCSV', orderNo)}>📥 CSV再出力</button>`);
   if (methods.includes('PDF'))
-    btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputPDF('${esc}');event.stopPropagation()">📄 PDF再出力</button>`);
+    btns.push(`<button class="btn btn-secondary btn-sm" ${orderAction('reOutputPDF', orderNo)}>📄 PDF再出力</button>`);
   if (methods.includes('テキスト'))
-    btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputText('${esc}');event.stopPropagation()">💬 テキスト再出力</button>`);
+    btns.push(`<button class="btn btn-secondary btn-sm" ${orderAction('reOutputText', orderNo)}>💬 テキスト再出力</button>`);
   if (methods.includes('メーカーPDF') && supplierCode === GRANDEX_SUPPLIER_CODE)
-    btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputGrandexPDF('${esc}');event.stopPropagation()">📋 グランデックス再出力</button>`);
+    btns.push(`<button class="btn btn-secondary btn-sm" ${orderAction('reOutputGrandexPDF', orderNo)}>📋 グランデックス再出力</button>`);
   if (methods.includes('メーカーPDF') && supplierCode === ALPENROSE_SUPPLIER_CODE)
-    btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputAlpenrosePDF('${esc}');event.stopPropagation()">📋 アルペンローゼ再出力</button>`);
+    btns.push(`<button class="btn btn-secondary btn-sm" ${orderAction('reOutputAlpenrosePDF', orderNo)}>📋 アルペンローゼ再出力</button>`);
   if (methods.includes('メーカーPDF') && supplierCode === MELOS_SUPPLIER_CODE)
-    btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputMelosPDF('${esc}');event.stopPropagation()">📋 メロス再出力</button>`);
+    btns.push(`<button class="btn btn-secondary btn-sm" ${orderAction('reOutputMelosPDF', orderNo)}>📋 メロス再出力</button>`);
   if (methods.includes('メーカーPDF') && supplierCode === ADERANS_SUPPLIER_CODE)
-    btns.push(`<button class="btn btn-secondary btn-sm" onclick="reOutputAderansPDF('${esc}');event.stopPropagation()">📋 アデランス再出力</button>`);
+    btns.push(`<button class="btn btn-secondary btn-sm" ${orderAction('reOutputAderansPDF', orderNo)}>📋 アデランス再出力</button>`);
   // 複製して発注（常に表示）
-  btns.push(`<button class="btn btn-primary btn-sm" onclick="copyOrderFromHistory('${esc}');event.stopPropagation()">📋 複製して発注</button>`);
+  btns.push(`<button class="btn btn-primary btn-sm" ${orderAction('copyOrderFromHistory', orderNo)}>📋 複製して発注</button>`);
   // 削除（管理者のみ表示）
   if (currentUser && currentUser.is_admin) {
-    btns.push(`<button class="btn btn-danger btn-sm" onclick="deleteOrderHistory('${esc}');event.stopPropagation()">🗑️ 削除</button>`);
+    btns.push(`<button class="btn btn-danger btn-sm" ${orderAction('deleteOrderHistory', orderNo)}>🗑️ 削除</button>`);
   }
   return `<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">${btns.join('')}</div>`;
 }
@@ -4860,13 +4860,13 @@ function renderSettingsSuppliers() {
     <div class="setting-row">
       <div style="flex:1;min-width:0">
         <div class="setting-row-info">${escHtml(s.name)}</div>
-        <div class="setting-row-sub">CD: ${s.code} | FAX: ${s.fax || '未登録'} | 発注方法: ${escHtml(methods)}</div>
+        <div class="setting-row-sub">CD: ${escHtml(s.code)} | FAX: ${escHtml(s.fax || '未登録')} | 発注方法: ${escHtml(methods)}</div>
         ${s.deadline ? `<div class="setting-row-sub" style="color:var(--danger);font-weight:bold">⏰ 発注限 ${escHtml(s.deadline)}</div>` : ''}
         ${s.note ? `<div class="setting-row-sub">備考: ${escHtml(s.note)}</div>` : ''}
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0">
-        <button class="btn btn-outline btn-sm" onclick="openEditSupplier('${escAttr(s.code)}')">修正</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteSupplier('${escAttr(s.code)}','${escAttr(s.name)}')">削除</button>
+        <button class="btn btn-outline btn-sm" ${orderAction('openEditSupplier', s.code)}>修正</button>
+        <button class="btn btn-danger btn-sm" ${orderAction('deleteSupplier', s.code, s.name)}>削除</button>
       </div>
     </div>`;
   }).join('');
@@ -5187,7 +5187,7 @@ function renderInventoryList() {
     }).join('');
     return `
     <div class="card prop-group${isOpen ? ' open' : ''}" id="inv-group-${escHtml(code)}">
-      <div class="prop-group-head" onclick="toggleInventoryGroup('${escAttr(code)}')">
+      <div class="prop-group-head" ${orderAction('toggleInventoryGroup', code)}>
         <span class="prop-group-chev">▶</span>
         <span class="prop-group-name">${escHtml(g.name)}</span>
         <span class="prop-group-count">${g.items.length}件${belowCount > 0 ? ` / <span style="color:var(--danger);font-weight:bold">⚠️${belowCount}件要発注</span>` : ''}</span>
@@ -5559,8 +5559,8 @@ function renderPropItem(p, code, delayedByCode, orderedByCode) {
         <div class="prop-item-code">${escHtml(p.code)}<span class="prop-badge ${badgeCls}">${escHtml(p.pattern)}</span>${abcBadge}${concBadge}${tierBadge}${refBadge}${stuckBadge}${orderedBadge}</div>
       </div>
       <div class="prop-item-actions">
-        <button class="prop-excl-btn" onclick="excludeProposal('${escAttr(p.code)}','${escAttr(p.name)}')">🚫 除外</button>
-        <button class="prop-eol-btn" onclick="markEol('${escAttr(p.code)}','${escAttr(p.name)}')">🔚 終売</button>
+        <button class="prop-excl-btn" ${orderAction('excludeProposal', p.code, p.name)}>🚫 除外</button>
+        <button class="prop-eol-btn" ${orderAction('markEol', p.code, p.name)}>🔚 終売</button>
       </div>
     </div>
     ${stockNeg ? `<div class="prop-pending-warn">⚠️ 在庫マイナス（${p.stock}）：欠品・バックオーダー中の可能性</div>` : ''}
@@ -5568,7 +5568,7 @@ function renderPropItem(p, code, delayedByCode, orderedByCode) {
       <span>在庫 <b style="${stockNeg ? 'color:var(--danger)' : ''}">${p.stock}</b> ${onOrder}→ 推奨 <b>${p.recommended}</b></span>
       <span>発注数 <input type="number" class="prop-qty" value="${qty}" min="0" step="${step}"></span>
       <span class="prop-qty-chips">${chips}</span>
-      <button type="button" class="prop-lot-btn" onclick="openLotModal('${escAttr(p.code)}','${escAttr(p.name)}')">最低発注数 ${p.lot} ✏️</button>
+      <button type="button" class="prop-lot-btn" ${orderAction('openLotModal', p.code, p.name)}>最低発注数 ${p.lot} ✏️</button>
       <span class="prop-item-amount">${formatItemAmount(unitCost, qty)}</span>
     </div>
     ${lastOrder ? `<div class="prop-item-stats" style="margin-top:2px;font-size:11px">${lastOrder}</div>` : ''}
@@ -5613,8 +5613,8 @@ function renderUrgentItemCard(p, delayedByCode) {
         <div class="prop-item-code">${escHtml(p.code)}<span class="prop-badge ${badgeCls}">${escHtml(p.pattern)}</span>${abcBadge}${renderConcBadge(p)}${outBadge}${stuckBadge}${refBadge}</div>
       </div>
       <div class="prop-item-actions">
-        <button class="prop-excl-btn" onclick="excludeProposal('${escAttr(p.code)}','${escAttr(p.name)}')">🚫 除外</button>
-        <button class="prop-eol-btn" onclick="markEol('${escAttr(p.code)}','${escAttr(p.name)}')">🔚 終売</button>
+        <button class="prop-excl-btn" ${orderAction('excludeProposal', p.code, p.name)}>🚫 除外</button>
+        <button class="prop-eol-btn" ${orderAction('markEol', p.code, p.name)}>🔚 終売</button>
       </div>
     </div>
     <div class="prop-item-stats">
@@ -5623,7 +5623,7 @@ function renderUrgentItemCard(p, delayedByCode) {
     </div>
     ${note ? `<div class="prop-note">${escHtml(note)}</div>` : ''}
     ${delayWarn}
-    <button type="button" class="btn btn-outline btn-sm prop-urgent-jump" onclick="jumpToSupplierGroup('${escAttr(p.supplierCode)}')">🛒 ${escHtml(supplierName)}のカードへ移動して発注</button>
+    <button type="button" class="btn btn-outline btn-sm prop-urgent-jump" ${orderAction('jumpToSupplierGroup', p.supplierCode)}>🛒 ${escHtml(supplierName)}のカードへ移動して発注</button>
   </div>`;
 }
 
@@ -5989,7 +5989,7 @@ function renderProposalList() {
         const startBtnLabel = isWeb ? '📝 チェックした商品を発注記録へ' : '🛒 チェックした商品で発注画面へ';
         return `
         <div class="card prop-group${isOpen ? ' open' : ''}" id="prop-group-${escHtml(code)}">
-          <div class="prop-group-head" onclick="toggleProposalGroup('${escAttr(code)}')">
+          <div class="prop-group-head" ${orderAction('toggleProposalGroup', code)}>
             <span class="prop-group-chev">▶</span>
             <span class="prop-group-name">${escHtml(g.name)}${webBadge}</span>
             <span class="prop-group-count">${countText}${stuckNote}</span>
@@ -5997,7 +5997,7 @@ function renderProposalList() {
           <div class="prop-group-body">
             ${items}
             <div class="prop-group-summary" id="prop-summary-${escHtml(code)}">選択中: ${checkedItems.length}件 / ${formatYen(checkedAmount)}</div>
-            <button class="btn btn-primary" style="margin-top:10px" onclick="startOrderFromProposals('${escAttr(code)}')">${startBtnLabel}</button>
+            <button class="btn btn-primary" style="margin-top:10px" ${orderAction('startOrderFromProposals', code)}>${startBtnLabel}</button>
           </div>
         </div>`;
       }).join('');
@@ -6253,7 +6253,7 @@ function renderMgBlock(groupId, supplierCode, renderItem) {
   const skipBox = `
     <label class="prop-mg-skip">
       <input type="checkbox" ${skipped ? 'checked' : ''}
-        onchange="mgToggleSkip('${escAttr(groupId)}', this.checked)">
+        ${orderChangeAction('mgToggleSkip', groupId)}>
       今回はこの系列を発注しない
     </label>`;
   // 見送り中は商品行を描画しない（畳んだ簡易表示にする）。行を残すとチェック操作から
@@ -6294,23 +6294,23 @@ function renderMgBlock(groupId, supplierCode, renderItem) {
   const pinsForGroup = propMgPins[groupId] || {};
   const pinnedCount = Object.keys(pinsForGroup).filter(code => items.some(p => p.code === code)).length;
   const pinNote = pinnedCount > 0
-    ? `<div class="prop-mg-pin-note">📌 手動指定 ${pinnedCount}件<button type="button" class="prop-mg-pin-clear" onclick="mgClearPins('${escAttr(groupId)}')">解除</button></div>`
+    ? `<div class="prop-mg-pin-note">📌 手動指定 ${pinnedCount}件<button type="button" class="prop-mg-pin-clear" ${orderAction('mgClearPins', groupId)}>解除</button></div>`
     : '';
 
   const acts = [];
   if (st.due) {
-    acts.push(`<button class="prop-mg-btn" onclick="mgRebuild('${escAttr(groupId)}',${st.lots || 1},false)">🔄 最初から組み直す（手動指定を破棄）</button>`);
+    acts.push(`<button class="prop-mg-btn" ${orderAction('mgRebuild', groupId, st.lots || 1, false)}>🔄 最初から組み直す（手動指定を破棄）</button>`);
   } else {
     const startLabel = pinnedCount > 0 ? `🛒 手動指定を含めて今すぐ${unit}本を組む` : `🛒 今すぐ${unit}本を組む`;
-    acts.push(`<button class="prop-mg-btn primary" onclick="mgRebuild('${escAttr(groupId)}',1)">${startLabel}</button>`);
+    acts.push(`<button class="prop-mg-btn primary" ${orderAction('mgRebuild', groupId, 1)}>${startLabel}</button>`);
   }
-  acts.push(`<button class="prop-mg-btn" onclick="mgRebuild('${escAttr(groupId)}',2)">${unit * 2}本（2ロット）にする</button>`);
+  acts.push(`<button class="prop-mg-btn" ${orderAction('mgRebuild', groupId, 2)}>${unit * 2}本（2ロット）にする</button>`);
   if ((st.lots || 1) > 1 || (propMgQty[groupId] && total > unit)) {
-    acts.push(`<button class="prop-mg-btn" onclick="mgRebuild('${escAttr(groupId)}',1)">${unit}本（1ロット）に戻す</button>`);
+    acts.push(`<button class="prop-mg-btn" ${orderAction('mgRebuild', groupId, 1)}>${unit}本（1ロット）に戻す</button>`);
   }
 
   const restBtn = rest.length > 0
-    ? `<button class="prop-mg-rest-btn" onclick="mgToggleRest('${escAttr(groupId)}')">${
+    ? `<button class="prop-mg-rest-btn" ${orderAction('mgToggleRest', groupId)}>${
         propMgOpenRest.has(groupId)
           ? '▲ 在庫が足りている商品を隠す'
           : `▼ 在庫が足りている商品も見る（${rest.length}件）`}</button>`
@@ -6327,7 +6327,7 @@ function renderMgBlock(groupId, supplierCode, renderItem) {
   // 系列単独で発注単位を満たせて、他商品と同じ発注書にしない運用の系列に出す
   const soloBtn = mgIsSolo(groupId)
     ? `<button class="btn btn-primary prop-mg-solo-btn"
-         onclick="startOrderFromMgGroup('${escAttr(groupId)}','${escAttr(supplierCode)}')">
+         ${orderAction('startOrderFromMgGroup', groupId, supplierCode)}>
          🛒 ${escHtml(st.groupName)}だけで発注画面へ</button>
        <div class="prop-mg-solo-note">この系列は単独で${unit}本の発注を組むため、他の商品とは別の発注書にします</div>`
     : '';
@@ -6558,7 +6558,7 @@ function renderPendingOrders() {
       </div>
       <div style="text-align:right">
         <div class="pending-item-amount">${x.qty}個 ${formatYen(x.amount)}</div>
-        <button class="pending-ack-btn" style="margin-top:4px" onclick="ackReceived('${escAttr(x.orderNo)}','${escAttr(x.code)}','${escAttr(x.name)}',${x.qty})">✓入荷済み</button>
+        <button class="pending-ack-btn" style="margin-top:4px" ${orderAction('ackReceived', x.orderNo, x.code, x.name, x.qty)}>✓入荷済み</button>
       </div>
     </div>`;
   }).join('');
@@ -6616,7 +6616,7 @@ function renderProposalExcess() {
         </div>
         <div style="text-align:right">
           <div class="excess-item-amount">${formatYen(x.excessAmount)}</div>
-          <button class="excess-ack-btn" style="margin-top:4px" onclick="ackExcess('${escAttr(x.code)}','${escAttr(x.name)}')">✓確認済み</button>
+          <button class="excess-ack-btn" style="margin-top:4px" ${orderAction('ackExcess', x.code, x.name)}>✓確認済み</button>
         </div>
       </div>`;
     }).join('');
@@ -6639,7 +6639,7 @@ function renderProposalExcess() {
           <div>${escHtml(x.name || x.code)}</div>
           <div style="font-size:11px;color:var(--text-light)">${escHtml(x.code)}${x.reason ? '・' + escHtml(x.reason) : ''}</div>
         </div>
-        <button class="btn btn-outline btn-sm" onclick="restoreExcessAck('${escAttr(x.code)}')">解除</button>
+        <button class="btn btn-outline btn-sm" ${orderAction('restoreExcessAck', x.code)}>解除</button>
       </div>`).join('');
     html += `
       <div class="card">
@@ -6780,7 +6780,7 @@ function renderDeadScreen() {
         </div>
         <div style="text-align:right">
           <div class="dead-item-amount">${formatYen(x.deadAmount)}</div>
-          <button class="dead-ack-btn" style="margin-top:4px" onclick="ackDead('${escAttr(x.code)}','${escAttr(x.name)}')">✓確認済み</button>
+          <button class="dead-ack-btn" style="margin-top:4px" ${orderAction('ackDead', x.code, x.name)}>✓確認済み</button>
         </div>
       </div>`;
     }).join('');
@@ -6800,7 +6800,7 @@ function renderDeadScreen() {
           <div>${escHtml(x.name || x.code)}</div>
           <div style="font-size:11px;color:var(--text-light)">${escHtml(x.code)}${x.reason ? '・' + escHtml(x.reason) : ''}</div>
         </div>
-        <button class="btn btn-outline btn-sm" onclick="restoreDeadAck('${escAttr(x.code)}')">解除</button>
+        <button class="btn btn-outline btn-sm" ${orderAction('restoreDeadAck', x.code)}>解除</button>
       </div>`).join('');
     html += `
       <div class="card">
@@ -6865,7 +6865,7 @@ function renderProposalExclusions() {
         <div>${escHtml(x.name || x.code)}</div>
         <div style="font-size:11px;color:var(--text-light)">${escHtml(x.code)}${x.reason ? '・' + escHtml(x.reason) : ''}</div>
       </div>
-      <button class="btn btn-outline btn-sm" onclick="restoreProposalExclusion('${escAttr(x.code)}')">解除</button>
+      <button class="btn btn-outline btn-sm" ${orderAction('restoreProposalExclusion', x.code)}>解除</button>
     </div>`).join('');
   wrap.innerHTML = `
     <div class="card">
@@ -6930,7 +6930,7 @@ function renderEolList() {
         <div>${escHtml(x.name || x.code)}</div>
         <div style="font-size:11px;color:var(--text-light)">${escHtml(x.code)}${x.reason ? '・' + escHtml(x.reason) : ''}</div>
       </div>
-      <button class="btn btn-outline btn-sm" onclick="restoreEol('${escAttr(x.code)}')">解除</button>
+      <button class="btn btn-outline btn-sm" ${orderAction('restoreEol', x.code)}>解除</button>
     </div>`).join('');
   wrap.innerHTML = `
     <div class="card">
@@ -7003,7 +7003,7 @@ function renderLotOverrides() {
         <div>${escHtml(x.name || x.code)}</div>
         <div style="font-size:11px;color:var(--text-light)">${escHtml(x.code)}・最低発注数${x.lot}</div>
       </div>
-      <button class="btn btn-outline btn-sm" onclick="restoreLotOverride('${escAttr(x.code)}')">解除</button>
+      <button class="btn btn-outline btn-sm" ${orderAction('restoreLotOverride', x.code)}>解除</button>
     </div>`).join('');
   wrap.innerHTML = `
     <div class="card">
@@ -7244,9 +7244,83 @@ function escHtml(str) {
                     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 function escAttr(str) {
-  if (!str) return '';
-  return String(str).replace(/'/g, "\\'");
+  // HTML属性専用。JavaScript文字列への埋め込みには使用しない。
+  return escHtml(str);
 }
+
+/* === SAFE ORDER ACTIONS (test:f03-actions) === */
+// 動的データはHTML属性内のJSONとして保持し、JavaScriptソースには連結しない。
+// 既存の一括HTML描画を維持するため、行ごとのDOM走査・リスナー登録は不要。
+function orderAction(action, ...args) {
+  return `data-order-action="${escAttr(action)}" data-order-args="${escAttr(JSON.stringify(args))}"`;
+}
+function orderChangeAction(action, ...args) {
+  return `data-order-change="${escAttr(action)}" data-order-args="${escAttr(JSON.stringify(args))}"`;
+}
+
+// 呼出先は固定の許可リスト。属性値からevalやwindow[name]で関数を実行しない。
+const ORDER_ACTION_HANDLERS = Object.freeze({
+  retryOrderSave: a => retryOrderSave(a[0]),
+  toggleHistoryDetail: (a, el) => toggleHistoryDetail(el, a[0]),
+  reOutputCSV: a => reOutputCSV(a[0]),
+  reOutputPDF: a => reOutputPDF(a[0]),
+  reOutputText: a => reOutputText(a[0]),
+  reOutputGrandexPDF: a => reOutputGrandexPDF(a[0]),
+  reOutputAlpenrosePDF: a => reOutputAlpenrosePDF(a[0]),
+  reOutputMelosPDF: a => reOutputMelosPDF(a[0]),
+  reOutputAderansPDF: a => reOutputAderansPDF(a[0]),
+  copyOrderFromHistory: a => copyOrderFromHistory(a[0]),
+  deleteOrderHistory: a => deleteOrderHistory(a[0]),
+  openEditSupplier: a => openEditSupplier(a[0]),
+  deleteSupplier: a => deleteSupplier(a[0], a[1]),
+  toggleInventoryGroup: a => toggleInventoryGroup(a[0]),
+  excludeProposal: a => excludeProposal(a[0], a[1]),
+  markEol: a => markEol(a[0], a[1]),
+  openLotModal: a => openLotModal(a[0], a[1]),
+  jumpToSupplierGroup: a => jumpToSupplierGroup(a[0]),
+  toggleProposalGroup: a => toggleProposalGroup(a[0]),
+  startOrderFromProposals: a => startOrderFromProposals(a[0]),
+  mgClearPins: a => mgClearPins(a[0]),
+  mgRebuild: a => mgRebuild(a[0], a[1], a[2]),
+  mgToggleRest: a => mgToggleRest(a[0]),
+  startOrderFromMgGroup: a => startOrderFromMgGroup(a[0], a[1]),
+  ackReceived: a => ackReceived(a[0], a[1], a[2], a[3]),
+  ackExcess: a => ackExcess(a[0], a[1]),
+  restoreExcessAck: a => restoreExcessAck(a[0]),
+  ackDead: a => ackDead(a[0], a[1]),
+  restoreDeadAck: a => restoreDeadAck(a[0]),
+  restoreProposalExclusion: a => restoreProposalExclusion(a[0]),
+  restoreEol: a => restoreEol(a[0]),
+  restoreLotOverride: a => restoreLotOverride(a[0])
+});
+let orderActionsBound = false;
+function bindOrderActions() {
+  if (orderActionsBound) return;
+  orderActionsBound = true;
+  // 再描画のたびに増えない、文書全体で各イベント1本の委譲処理。
+  document.addEventListener('click', handleOrderAction);
+  document.addEventListener('change', handleOrderAction);
+}
+function handleOrderAction(event) {
+  const selector = event.type === 'change' ? '[data-order-change]' : '[data-order-action]';
+  const target = event.target && (event.target.nodeType === 1 ? event.target : event.target.parentElement);
+  const el = target && target.closest(selector);
+  if (!el || el.disabled) return;
+  let args;
+  try {
+    args = JSON.parse(el.dataset.orderArgs || '[]');
+  } catch (_) { return; } // 不正な属性は実行せず終了する。
+  if (!Array.isArray(args)) return;
+  if (event.type === 'change') {
+    if (el.dataset.orderChange === 'mgToggleSkip') mgToggleSkip(args[0], el.checked);
+    return;
+  }
+  const action = el.dataset.orderAction;
+  if (!Object.prototype.hasOwnProperty.call(ORDER_ACTION_HANDLERS, action)) return;
+  // 最も近い要素1個だけを実行。履歴内の再出力ボタンで親の開閉を発火させない。
+  ORDER_ACTION_HANDLERS[action](args, el);
+}
+/* === /SAFE ORDER ACTIONS === */
 
 /* ===================================================
    ひらがな↔カタカナ・半角カナ 正規化
