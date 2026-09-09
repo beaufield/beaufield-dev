@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.34.1';
+const VERSION  = '0.35.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -420,6 +420,8 @@ function doPost(e) {
       // 🆕 v0.20.0 セミナー予約（認証なし・ticket_tokenが本人確認を兼ねる）
       case 'listSessions':      return _jsonResponse(listSessions(data));
       case 'reserveSessions':   return _jsonResponse(reserveSessions(data));
+      case 'staffGetReservations': return _jsonResponse(staffGetReservations(data));
+      case 'staffChangeReservation': return _jsonResponse(staffChangeReservation(data));
       case 'listReservations':  return _jsonResponse(listReservations(data));   // 🆕 v0.31.0 社員用 🔒
       // 🆕 診断用（diag.html）。読み取りのみ・データを一切変更しない
       case 'ping':              return _jsonResponse(pingLight(data));
@@ -793,7 +795,7 @@ function applyApplication(data, clientAttempt) {
 
   let appId, ticketToken;
   // 🆕 v0.20.0: セミナー予約。ここで例外を出さない・申込を止めないこと（設計書§4-2の絶対条件）
-  const wantSessions = _parseSessionIds(data.sessions);
+  const wantSessions = Array.isArray(data.sessions) ? data.sessions : [];
   let sessionsResult = null;
   let replayed          = false; // 🆕 request_id一致＝配送失敗による再試行と確定した場合
   let existingNotified  = false;
@@ -822,6 +824,10 @@ function applyApplication(data, clientAttempt) {
       }
     }
 
+    if (replayed && wantSessions.length) {
+      // 来場保存後に応答が失われても、同じ操作IDで予約結果まで復旧する。
+      sessionsResult = _writeReservations(ss, appId, wantSessions, { replace: false, data: data });
+    }
     if (!replayed) {
       // 同じメール＋同じ氏名（正規化）の既存申込を探す。見つかっても内容は一切書き換えない・
       // 一切返さない（他人のメールで氏名・サロン名が引ける経路を作らないため・§2-2）。
@@ -858,10 +864,10 @@ function applyApplication(data, clientAttempt) {
         if (wantSessions.length) {
           try {
             sessionsResult = _writeReservations(ss, appId, wantSessions,
-                               { replace: false, cancelledAppIds: _cancelledAppIdSet(rows) });
+                               { replace: false, data: data, cancelledAppIds: _cancelledAppIdSet(rows) });
           } catch (e) {
             Logger.log('セミナー予約の書き込みに失敗（申込自体は成立済み）: ' + e);
-            sessionsResult = { reserved: [], full: [], invalid: wantSessions.slice(), cancelled: [], error: String(e) };
+            sessionsResult = { reserved: [], full: [], invalid: (Array.isArray(wantSessions) ? wantSessions : []).slice(), cancelled: [], error: String(e) };
           }
         }
       }
@@ -872,7 +878,7 @@ function applyApplication(data, clientAttempt) {
 
   if (replayed) {
     // 配送失敗による再試行と確定済み。1回目の実行で確認メールは送信済みのため再送しない。
-    return _ok({ app_id: appId, pass_url: SITE_BASE_URL + 'pass.html?t=' + ticketToken, is_update: false, replayed: true });
+    return _ok({ app_id: appId, pass_url: SITE_BASE_URL + 'pass.html?t=' + ticketToken, is_update: false, replayed: true, sessions_result: sessionsResult });
   }
 
   if (existingNotified) {
@@ -965,7 +971,7 @@ function updateApplication(data) {
   // 🔴 キーが無い場合（旧HTMLキャッシュからの送信）は予約に一切触らない。
   // undefined を「全部取消」と解釈すると、古い画面から編集しただけで予約が黙って消える。
   const touchSessions = (data.sessions !== undefined && data.sessions !== null && data.sessions !== '');
-  const wantSessions  = touchSessions ? _parseSessionIds(data.sessions) : [];
+  const wantSessions  = touchSessions ? data.sessions : [];
   let sessionsResult  = null;
 
   const lock = LockService.getScriptLock();
@@ -987,10 +993,10 @@ function updateApplication(data) {
     if (touchSessions) {
       try {
         sessionsResult = _writeReservations(ss, appId, wantSessions,
-                           { replace: true, cancelledAppIds: _cancelledAppIdSet(rows) });
+                           { replace: true, data: data, cancelledAppIds: _cancelledAppIdSet(rows) });
       } catch (e) {
         Logger.log('セミナー予約の書き込みに失敗（申込内容の更新は成立済み）: ' + e);
-        sessionsResult = { reserved: [], full: [], invalid: wantSessions.slice(), cancelled: [], error: String(e) };
+        sessionsResult = { reserved: [], full: [], invalid: (Array.isArray(wantSessions) ? wantSessions : []).slice(), cancelled: [], error: String(e) };
       }
     }
   } finally {
@@ -1076,7 +1082,8 @@ function applyLiff(data) {
 
   let appId, ticketToken, isUpdate;
   // 🆕 v0.20.0: セミナー予約。LIFFは本人確定なので、再申込＝内容変更として予約も差し替える
-  const wantSessions = _parseSessionIds(data.sessions);
+  const touchSessions = Object.prototype.hasOwnProperty.call(data,'sessions');
+  const wantSessions = Array.isArray(data.sessions) ? data.sessions : null;
   let sessionsResult = null;
 
   const lock = LockService.getScriptLock();
@@ -1105,11 +1112,11 @@ function applyLiff(data) {
 
     // 🔴 申込を止めない（設計書§4-2）。satisfiedでなくても申込行は既に書けている。
     try {
-      sessionsResult = _writeReservations(ss, appId, wantSessions,
-                         { replace: true, cancelledAppIds: _cancelledAppIdSet(rows) });
+      if (touchSessions) sessionsResult = _writeReservations(ss, appId, wantSessions,
+                         { replace: isUpdate, data: data, cancelledAppIds: _cancelledAppIdSet(rows) });
     } catch (e) {
       Logger.log('セミナー予約の書き込みに失敗（申込自体は成立済み）: ' + e);
-      sessionsResult = { reserved: [], full: [], invalid: wantSessions.slice(), cancelled: [], error: String(e) };
+      sessionsResult = { reserved: [], full: [], invalid: (wantSessions || []).slice(), cancelled: [], error: String(e) };
     }
   } finally {
     lock.releaseLock();
@@ -1130,7 +1137,7 @@ function applyLiff(data) {
 
   // 🆕 v0.24.0: 予約が変わったときの控えメール（更新の場合も送る）。
   // 🔴 新規申込のときは申込完了メールに予約が載っているので、二重に送らない。
-  if (isUpdate && sessionsResult &&
+  if (isUpdate && sessionsResult && !sessionsResult.replayed &&
       ((sessionsResult.added && sessionsResult.added.length) ||
        (sessionsResult.cancelled && sessionsResult.cancelled.length))) {
     try {
@@ -2011,7 +2018,7 @@ const RES_STATUS_CANCELLED = 'cancelled';
 const SES_COL = {
   id: 0, slot: 1, title: 2, speaker: 3, room: 4,
   starts: 5, ends: 6, capacity: 7, active: 8,
-  bullets: 9, overview: 10
+  bullets: 9, overview: 10, bookingChannel: 11
 };
 // reservations シートの列（0始まり）
 const RES_COL = { id: 0, appId: 1, sessionId: 2, createdAt: 3, status: 4, attendedAt: 5 };
@@ -2068,6 +2075,7 @@ function _readSessions(ss) {
     const capRaw = rows[i][SES_COL.capacity];
     const capNum = (capRaw === '' || capRaw === null || capRaw === undefined) ? null : Number(capRaw);
     out.push({
+      booking_channel: String(rows[i][SES_COL.bookingChannel] || 'closed').trim(),
       session_id: id,
       slot:       String(rows[i][SES_COL.slot]  == null ? '' : rows[i][SES_COL.slot]).trim() || id,
       title:      String(rows[i][SES_COL.title] == null ? '' : rows[i][SES_COL.title]).trim(),
@@ -2149,10 +2157,10 @@ function _resIdIssuer(resRows) {
 }
 
 // 公開されている枠（is_active）だけを、残席つきで返す共通部品
-function _sessionCatalog(ss, resRows, cancelled) {
+function _sessionCatalog(ss, resRows, cancelled, actorKind, reserved) {
   const counts = _countReserved(resRows, cancelled);
   return _readSessions(ss)
-    .filter(function (s) { return s.is_active; })
+    .filter(function (s) { return _bookingAllowed(s,actorKind || 'customer') || (reserved || []).indexOf(s.session_id)>=0; })
     .map(function (s) {
       const used = counts[s.session_id] || 0;
       const remaining = (s.capacity === null) ? null : Math.max(0, s.capacity - used);
@@ -2164,6 +2172,9 @@ function _sessionCatalog(ss, resRows, cancelled) {
         room:       s.room,
         starts_at:  s.starts_at,
         ends_at:    s.ends_at,
+        can_book: _bookingAllowed(s,actorKind || 'customer'),
+        can_cancel: actorKind === 'staff' || _bookingChannel(s) === 'public',
+        booking_channel: _bookingChannel(s),
         capacity:   s.capacity,
         remaining:  remaining,
         is_full:    (remaining !== null && remaining <= 0),
@@ -2242,25 +2253,15 @@ function _reservedSessionLabels(appId) {
 // ============================================================
 function listSessions(data) {
   _checkProps();
-  const ss      = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const resRows = _readReservationRows(ss);
-  // 🔴 キャンセル済み申込の予約は席を占有しない（v0.31.0）。ここを外すと
-  //    キャンセルした人の分だけ定員が減ったままになる。
-  const appSh    = _getSheet(ss, SHEET_APPLICATIONS);
-  const appRows  = appSh.getDataRange().getValues();
-  const cancelled = _cancelledAppIdSet(appRows);
-  const catalog  = _sessionCatalog(ss, resRows, cancelled);
-
-  const token = String((data && data.ticket_token) || '').trim();
-  let reserved = [];
-  if (token) {
-    let appId = null;
-    for (let i = 1; i < appRows.length; i++) {
-      if (String(appRows[i][16]) === token) { appId = String(appRows[i][0]); break; }
-    }
-    if (appId) reserved = _reservedSessionIdsOf(resRows, appId);
+  const ss=SpreadsheetApp.openById(SPREADSHEET_ID);
+  const token=String((data && data.ticket_token)||'').trim();
+  if(token) {
+    const app=_applicantByTicketToken(ss,token);
+    if(!app)return _err('INVALID_TOKEN');
+    if(app.status==='cancelled')return _err('APPLICATION_CANCELLED');
+    return _ok(_bookingView(ss,app.appId,'customer'));
   }
-  return _ok({ sessions: catalog, reserved: reserved });
+  return _ok({sessions:_sessionCatalog(ss,_readReservationRows(ss),_readCancelledAppIds(ss)),reserved:[],booking_revision:'',booking_open:_bookingOpen()});
 }
 
 // ============================================================
@@ -2374,90 +2375,7 @@ function releaseCancelledReservations() {
 //    🔴 例外は投げない。呼び出し元（申込処理）を巻き込んで申込そのものを失敗させないため。
 // ============================================================
 function _writeReservations(ss, appId, wantIds, opts) {
-  const replace = !!(opts && opts.replace);
-  const result  = { reserved: [], added: [], full: [], invalid: [], conflict: [], cancelled: [] };
-  if (!appId) return result;
-
-  const sh = ss.getSheetByName(SHEET_RESERVATIONS);
-  if (!sh) {                     // セミナーを使わない運用（シート未作成）なら何もしない
-    result.invalid = (wantIds || []).slice();
-    return result;
-  }
-
-  const all   = _readSessions(ss);
-  const byId  = {};
-  all.forEach(function (s) { byId[s.session_id] = s; });
-
-  const cancelled = (opts && opts.cancelledAppIds) || _readCancelledAppIds(ss);
-  const rows     = sh.getDataRange().getValues();
-  const counts   = _countReserved(rows, cancelled);
-  const nextId   = _resIdIssuer(rows);
-  const mineRow  = {};           // session_id -> 自分の予約行（1始まり）
-  for (let i = 1; i < rows.length; i++) {
-    if (String(rows[i][RES_COL.status]) !== RES_STATUS_RESERVED) continue;
-    if (String(rows[i][RES_COL.appId]) !== String(appId)) continue;
-    mineRow[String(rows[i][RES_COL.sessionId]).trim()] = i + 1;
-  }
-
-  const want = [];
-  (wantIds || []).forEach(function (raw) {
-    const sid = String(raw == null ? '' : raw).trim();
-    if (sid && want.indexOf(sid) < 0) want.push(sid);
-  });
-
-  // --- 1) 取消（replace時のみ）。先に取り消してから追加する。
-  //     同じslot内で「Aをやめて Bにする」場合に、先に席を戻さないと自分の予約が
-  //     自分の席を塞いで満席扱いになるため、この順序は変えないこと。
-  if (replace) {
-    Object.keys(mineRow).forEach(function (sid) {
-      if (want.indexOf(sid) >= 0) return;
-      sh.getRange(mineRow[sid], RES_COL.status + 1).setValue(RES_STATUS_CANCELLED);
-      counts[sid] = Math.max(0, (counts[sid] || 1) - 1);
-      delete mineRow[sid];
-      result.cancelled.push(sid);
-    });
-  }
-
-  // --- 2) 追加
-  const slotTaken = {};          // slot -> session_id（同一slotの二重予約を防ぐ）
-  const kept      = [];          // いま保持している枠（時間の重複判定に使う）
-  Object.keys(mineRow).forEach(function (sid) {
-    const s = byId[sid];
-    if (!s) return;
-    slotTaken[s.slot] = sid;
-    kept.push(s);
-  });
-
-  const appends = [];
-  want.forEach(function (sid) {
-    const s = byId[sid];
-    if (!s || !s.is_active) { result.invalid.push(sid); return; }       // 存在しない/終了した枠
-    if (mineRow[sid]) { result.reserved.push(sid); return; }            // すでに予約済み＝冪等（再送で増えない）
-    if (slotTaken[s.slot]) { result.invalid.push(sid); return; }        // 同じ時間帯を二重に取ろうとした
-    // 🔴 slot をまたいで時間が重なる枠は取れない（2026-09-05・Takashiさん指定）。
-    // 満席の判定より前に見る（「重なっている」ほうが利用者に伝えるべき理由として的確なため）。
-    // 🔴 既に予約済みの枠（mineRow にあるもの）はこのチェックにかけない。
-    //    過去に入った重なりを、無関係な保存のたびに黙って消してしまうのを防ぐ。
-    if (kept.some(function (k) { return _sessionsOverlap(k, s); })) {
-      result.conflict.push(sid);
-      return;
-    }
-
-    const used = counts[sid] || 0;
-    if (s.capacity !== null && used >= s.capacity) { result.full.push(sid); return; }  // 満席
-
-    appends.push([nextId(), String(appId), sid, _now(), RES_STATUS_RESERVED, '']);
-    counts[sid]      = used + 1;
-    slotTaken[s.slot] = sid;
-    kept.push(s);
-    result.reserved.push(sid);
-    result.added.push(sid);
-  });
-
-  if (appends.length) {
-    sh.getRange(sh.getLastRow() + 1, 1, appends.length, 6).setValues(appends);
-  }
-  return result;
+  return _bookingWrite(ss,String(appId),wantIds,opts);
 }
 
 // data.sessions（JSON配列 or カンマ区切り）を配列にする。壊れていても例外にしない。
@@ -2490,7 +2408,8 @@ function reserveSessions(data) {
 
   const token = String(data.ticket_token || '').trim();
   if (!token) return _err('INVALID_TOKEN');
-  const want = _parseSessionIds(data.sessions);
+  if (!Array.isArray(data.sessions)) return _err('INVALID_REQUEST');
+  const want = data.sessions;
 
   let result, appId, applicant;
   const lock = LockService.getScriptLock();
@@ -2505,17 +2424,19 @@ function reserveSessions(data) {
     if (applicant.status === 'cancelled') return _err('APPLICATION_CANCELLED');
     appId  = applicant.appId;
     result = _writeReservations(ss, appId, want,
-               { replace: true, cancelledAppIds: _cancelledAppIdSet(appRows) });
+               { replace: true, data: data, cancelledAppIds: _cancelledAppIdSet(appRows) });
   } finally {
     lock.releaseLock();
   }
+
+  if (result.error) return _err(result.error);
 
   // 🆕 v0.24.0: 控えメール。
   // 🔴 ロックの外で送る（メール送信は数秒かかる。ロック内に入れると他の予約が待たされる）。
   // 🔴 実際に変わったときだけ送る。同じ内容を保存し直しただけで毎回届くと鬱陶しいため。
   // 🔴 メールが失敗しても予約の保存は成功として返す。メールは控えであって本体ではない。
   let mailSent = false;
-  const changed = !!((result.added && result.added.length) || (result.cancelled && result.cancelled.length));
+  const changed = !result.replayed && !!((result.added && result.added.length) || (result.cancelled && result.cancelled.length));
   if (changed && applicant.email) {
     try {
       const cfg   = _guardConfig();
@@ -2538,16 +2459,9 @@ function reserveSessions(data) {
   // 変更後の最新の残席をそのまま返す（画面側で再取得させない＝往復を1回減らす。
   // GASの結果配送は約7%失敗するので、往復回数そのものを減らすことに意味がある）
   const ss2      = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const resRows2 = _readReservationRows(ss2);
   // 🔴 v0.32.0: ここでも キャンセル済み申込を除外する。listSessions は除外しているのに
   //    ここだけ渡し忘れていたため、予約直後の画面だけ残席が少なく（＝満席に）見えていた。
-  return _ok({
-    app_id:    appId,
-    result:    result,
-    mail_sent: mailSent,   // 画面に「控えをメールでお送りしました」と出すため
-    sessions:  _sessionCatalog(ss2, resRows2, _readCancelledAppIds(ss2)),
-    reserved:  _reservedSessionIdsOf(resRows2, appId)
-  });
+  return _ok(Object.assign(_bookingView(ss2,appId,'customer'),{result:result,mail_sent:mailSent}));
 }
 
 // ============================================================
@@ -5086,3 +5000,204 @@ function releaseSpare(data) {
     lock.releaseLock();
   }
 }
+
+// 予約は本人・社員とも同じ台帳とロックを使う。未設定時は新規受付を閉じる。
+const BOOKING_LOG = 'reservation_operations';
+const BOOKING_LOG_HEADERS = ['request_id','app_id','actor','fingerprint','state','revision','plan','result','created_at','mail_state'];
+function _bookingOpen() { return _PROPS.getProperty('SEMINAR_BOOKING_ENABLED') === 'true'; }
+function _bookingChannel(s) { return s && /^(public|staff)$/.test(s.booking_channel) ? s.booking_channel : 'closed'; }
+function _bookingAllowed(s, actor) {
+  return !!(s && s.is_active && _bookingOpen() &&
+    (_bookingChannel(s) === 'public' || (_bookingChannel(s) === 'staff' && actor === 'staff')));
+}
+function _bookingHash(v) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, JSON.stringify(v))
+    .map(function (b) { return ('0' + ((b + 256) % 256).toString(16)).slice(-2); }).join('');
+}
+function _bookingLog(ss) {
+  const sh = ss.getSheetByName(BOOKING_LOG);
+  if (!sh) throw new Error('BOOKING_NOT_READY');
+  if (JSON.stringify(sh.getRange(1,1,1,10).getValues()[0]) !== JSON.stringify(BOOKING_LOG_HEADERS)) throw new Error('BOOKING_SCHEMA');
+  return sh;
+}
+function _bookingRevision(ss, appId) {
+  const sh = ss.getSheetByName(BOOKING_LOG);
+  let n = 0;
+  if (sh) sh.getDataRange().getValues().slice(1).forEach(function (r) {
+    if (String(r[1]) === appId && r[4] === 'committed') n = Math.max(n, Number(r[5]) || 0);
+  });
+  const mine = _readReservationRows(ss).slice(1).filter(function (r) { return String(r[1]) === appId; })
+    .map(function (r) { return [String(r[0]),String(r[2]),String(r[4])]; });
+  return n + ':' + _bookingHash(mine).slice(0,24);
+}
+function _bookingResult(error) {
+  return {reserved:[],added:[],full:[],invalid:[],conflict:[],cancelled:[],error:error || ''};
+}
+function _bookingStoredValues(row) {
+  // Sheetsが日時文字列をDateへ変換しても、同じ保存内容として照合する。
+  return row.slice(0,6).map(function(v,i){
+    return i===3 && Object.prototype.toString.call(v)==='[object Date]'
+      ? Utilities.formatDate(v,'Asia/Tokyo','yyyy-MM-dd HH:mm:ss') : String(v==null?'':v);
+  });
+}
+// prepared操作は、保存済みなら確定し、未保存なら同じ予約IDへ一度だけ反映する。
+// 判別不能なら予約更新だけを止める。後続操作を先に通して古い追加を復活させない。
+function _bookingRecover(ss) {
+  const log = _bookingLog(ss), reservations = ss.getSheetByName(SHEET_RESERVATIONS);
+  if (!reservations) throw new Error('BOOKING_NOT_READY');
+  const ops = log.getDataRange().getValues();
+  for (let i=1;i<ops.length;i++) {
+    if (ops[i][4] !== 'prepared') continue;
+    const plan = JSON.parse(ops[i][6]);
+    plan.forEach(function (p) {
+      const rows = reservations.getDataRange().getValues();
+      const found = [];
+      for (let j=1;j<rows.length;j++) if (String(rows[j][0]) === p.id) found.push(j+1);
+      if (found.length > 1) throw new Error('BOOKING_RECOVERY_REQUIRED');
+      if (p.type === 'add') {
+        if (!found.length) reservations.getRange(reservations.getLastRow()+1,1,1,6).setValues([p.values]);
+        else if (JSON.stringify(_bookingStoredValues(rows[found[0]-1])) !== JSON.stringify(_bookingStoredValues(p.values))) throw new Error('BOOKING_RECOVERY_REQUIRED');
+      } else {
+        if (found.length !== 1 || String(rows[found[0]-1][1]) !== String(ops[i][1]) || String(rows[found[0]-1][2]) !== p.session_id) throw new Error('BOOKING_RECOVERY_REQUIRED');
+        const state = String(rows[found[0]-1][4]);
+        if (state !== 'reserved' && state !== 'cancelled') throw new Error('BOOKING_RECOVERY_REQUIRED');
+        if (state === 'reserved') reservations.getRange(found[0],5).setValue('cancelled');
+      }
+    });
+    // シートへの反映を確認してから処理済みにする（通信応答の成否とは切り離す）。
+    const after = reservations.getDataRange().getValues();
+    plan.forEach(function(p) {
+      const matches = after.filter(function(r) { return String(r[0]) === p.id; });
+      if (matches.length !== 1 || matches[0][4] !== (p.type === 'add' ? 'reserved' : 'cancelled')) throw new Error('BOOKING_RECOVERY_REQUIRED');
+    });
+    log.getRange(i+1,5).setValue('committed');
+  }
+}
+// この関数を呼ぶ側がScriptLockを保持する。dataは本人確認後の対象へだけ適用する。
+function _bookingWrite(ss, appId, wantIds, opts) {
+  opts = opts || {};
+  const result = _bookingResult(), data = opts.data || {}, actorKind = opts.actorKind || 'customer';
+  const actor = actorKind + ':' + (opts.actorId || appId);
+  try {
+    _bookingRecover(ss);
+    const log = _bookingLog(ss), history = log.getDataRange().getValues();
+    const requestId = String(data.booking_request_id || '').trim();
+    if (!/^[A-Za-z0-9_-]{8,100}$/.test(requestId)) { result.error='BOOKING_REFRESH_REQUIRED'; return result; }
+    if (!Array.isArray(wantIds) || wantIds.length > 32 || wantIds.some(function(x){return typeof x !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(x);})) { result.error='INVALID_REQUEST'; return result; }
+    const want = wantIds.filter(function(x,i,a){return a.indexOf(x)===i;});
+    const fingerprint = _bookingHash([appId,actor,want]);
+    for (let i=1;i<history.length;i++) {
+      if (String(history[i][0]) !== requestId || String(history[i][2]) !== actor) continue;
+      if (history[i][3] !== fingerprint) { result.error='REQUEST_CONFLICT'; return result; }
+      const replay = JSON.parse(history[i][7]);
+      replay.replayed=true;
+      replay.reserved=_reservedSessionIdsOf(_readReservationRows(ss),appId);
+      return replay;
+    }
+    const rows = _readReservationRows(ss), mine = _reservedSessionIdsOf(rows,appId);
+    if (opts.replace && String(data.booking_revision || '') !== _bookingRevision(ss,appId)) { result.error='BOOKING_CONFLICT'; result.reserved=mine; return result; }
+    const appRows = ss.getSheetByName(SHEET_APPLICATIONS).getDataRange().getValues();
+    const applicant = appRows.slice(1).filter(function(r){return String(r[0])===appId;});
+    if (applicant.length !== 1 || applicant[0][17] === 'cancelled') {result.error='APPLICATION_CANCELLED'; return result;}
+    const all = _readSessions(ss), byId = {};
+    all.forEach(function(s){if(byId[s.session_id]) throw new Error('BOOKING_SCHEMA'); byId[s.session_id]=s;});
+    // 本人に非公開の予約を一覧から落としても、取消対象には含めない。
+    const removable = mine.filter(function(id){return byId[id] && (actorKind==='staff' || _bookingChannel(byId[id])==='public');});
+    const cancel = opts.replace ? removable.filter(function(id){return want.indexOf(id)<0;}) : [];
+    const keep = mine.filter(function(id){return cancel.indexOf(id)<0;});
+    const counts = _countReserved(rows,_cancelledAppIdSet(appRows));
+    const additions=[];
+    want.forEach(function(id){
+      if(mine.indexOf(id)>=0) return;
+      const s=byId[id];
+      if(!_bookingAllowed(s,actorKind)){result.invalid.push(id);return;}
+      const occupied=keep.concat(additions).map(function(k){return byId[k];}).filter(Boolean);
+      if(occupied.some(function(k){return k.slot===s.slot;})){result.invalid.push(id);return;}
+      if(occupied.some(function(k){return _sessionsOverlap(k,s);})){result.conflict.push(id);return;}
+      if(s.capacity!==null && (counts[id]||0)>=s.capacity){result.full.push(id);return;}
+      additions.push(id);
+    });
+    // 差替は全件検証してから取消する。新規申込は取れた枠だけ追加し来場を止めない。
+    if(opts.replace && (result.invalid.length || result.full.length || result.conflict.length)){result.reserved=mine;return result;}
+    const nextId=_resIdIssuer(rows), now=_now(), plan=[];
+    cancel.forEach(function(id){
+      const found=rows.filter(function(r){return String(r[1])===appId && String(r[2])===id && r[4]==='reserved';});
+      if(found.length!==1) throw new Error('BOOKING_SCHEMA');
+      plan.push({type:'cancel',id:String(found[0][0]),session_id:id});
+    });
+    additions.forEach(function(id){const rid=nextId();plan.push({type:'add',id:rid,values:[rid,appId,id,now,'reserved','']});});
+    result.reserved=keep.concat(additions);result.added=additions;result.cancelled=cancel;
+    const revision=Number(_bookingRevision(ss,appId).split(':')[0])+1;
+    log.getRange(log.getLastRow()+1,1,1,10).setValues([[requestId,appId,actor,fingerprint,'prepared',revision,JSON.stringify(plan),JSON.stringify(result),now,'not_requested']]);
+    _bookingRecover(ss);
+    return result;
+  } catch(e) { result.error='BOOKING_RECOVERY_REQUIRED'; return result; }
+}
+function _bookingApplicant(ss, appId) {
+  const rows=ss.getSheetByName(SHEET_APPLICATIONS).getDataRange().getValues();
+  const found=rows.slice(1).filter(function(r){return String(r[0])===String(appId);});
+  if(found.length!==1) return null;
+  const r=found[0];return {app_id:String(r[0]),salon_name:String(r[4]),staff_name:String(r[5]),status:String(r[17])};
+}
+function _bookingView(ss,appId,actorKind) {
+  // 表示内容と版数を同じ時点で読む。途中に他画面の保存を挟んで取りこぼさない。
+  const lock=LockService.getScriptLock();lock.waitLock(10000);
+  try {
+    if(ss.getSheetByName(BOOKING_LOG))_bookingRecover(ss);
+    const rows=_readReservationRows(ss),reserved=_reservedSessionIdsOf(rows,appId);
+    const sessions=_sessionCatalog(ss,rows,_readCancelledAppIds(ss),actorKind,reserved);
+    return {app_id:appId,sessions:sessions,reserved:reserved,booking_revision:_bookingRevision(ss,appId),booking_open:_bookingOpen()};
+  } finally {lock.releaseLock();}
+}
+function staffGetReservations(data) {
+  const auth=_requireSession(data);if(!auth.ok)return _err(auth.error);
+  const ss=SpreadsheetApp.openById(SPREADSHEET_ID), app=_bookingApplicant(ss,String(data.app_id||''));
+  if(!app)return _err('APP_NOT_FOUND');
+  return _ok(Object.assign(_bookingView(ss,app.app_id,'staff'),{applicant:app}));
+}
+function staffChangeReservation(data) {
+  const auth=_requireSession(data);if(!auth.ok)return _err(auth.error);
+  if(!Array.isArray(data.sessions))return _err('INVALID_REQUEST');
+  const lock=LockService.getScriptLock();if(!lock.tryLock(10000))return _err('LOCK_BUSY');
+  let result,ss,app;
+  try {
+    ss=SpreadsheetApp.openById(SPREADSHEET_ID);app=_bookingApplicant(ss,String(data.app_id||''));
+    if(!app)return _err('APP_NOT_FOUND');
+    if(app.status==='cancelled')return _err('APPLICATION_CANCELLED');
+    result=_bookingWrite(ss,app.app_id,data.sessions,{replace:true,data:data,actorKind:'staff',actorId:auth.session.user_id});
+  } finally {lock.releaseLock();}
+  if(result.error)return _err(result.error);
+  return _ok(Object.assign(_bookingView(ss,app.app_id,'staff'),{result:result,mail_sent:false}));
+}
+// 管理用の移行はGASエディタだけから実行し、公開doGet/doPostには接続しない。
+function prepareFemcareBooking() {
+  const lock=LockService.getScriptLock();lock.waitLock(30000);
+  try {
+    const ss=SpreadsheetApp.openById(SPREADSHEET_ID),sh=ss.getSheetByName(SHEET_SESSIONS);
+    const rows=sh.getDataRange().getValues(),ids=rows.slice(1).map(function(r){return String(r[0]);});
+    if(ids.length!==16 || new Set(ids).size!==16 || ids.indexOf('S1')<0)throw new Error('UNEXPECTED_SESSION_ROWS');
+    const expected=['S1','S2','B1','B2','B3','B4','B5','B6','B7','F1','F2','F3','F4','F5','F6','F7'];
+    if(ids.some(function(id){return expected.indexOf(id)<0;}))throw new Error('UNEXPECTED_SESSION_IDS');
+    const s=_readSessions(ss).filter(function(x){return x.session_id==='S1';})[0];
+    if(s.starts_at!=='11:30'||s.ends_at!=='12:30'||s.capacity!==20)throw new Error('UNEXPECTED_S1');
+    if(rows[0][11] && rows[0][11]!=='booking_channel')throw new Error('UNEXPECTED_COLUMN');
+    _PROPS.setProperty('SEMINAR_BOOKING_ENABLED','false');
+    sh.getRange(1,12).setValue('booking_channel');
+    sh.getRange(2,12,ids.length,1).setValues(ids.map(function(id){return [id==='S1'?'public':'closed'];}));
+    sh.getRange(2,9,ids.length,1).setValues(ids.map(function(id){return [id==='S1'];}));
+    let log=ss.getSheetByName(BOOKING_LOG);
+    if(!log){log=ss.insertSheet(BOOKING_LOG);log.getRange(1,1,1,10).setValues([BOOKING_LOG_HEADERS]);}
+    _bookingLog(ss);
+    Logger.log('READY: S1 only, booking disabled, '+ids.length+' session rows retained');
+  } finally {lock.releaseLock();}
+}
+function openFemcareBooking() {
+  const lock=LockService.getScriptLock();lock.waitLock(30000);
+  try {
+    const ss=SpreadsheetApp.openById(SPREADSHEET_ID),all=_readSessions(ss);
+    const open=all.filter(function(s){return s.is_active && _bookingChannel(s)!=='closed';});
+    if(open.length!==1 || open[0].session_id!=='S1' || open[0].booking_channel!=='public' || open[0].starts_at!=='11:30' || open[0].ends_at!=='12:30' || open[0].capacity!==20)throw new Error('UNEXPECTED_OPEN_SESSIONS');
+    _bookingRecover(ss);_PROPS.setProperty('SEMINAR_BOOKING_ENABLED','true');Logger.log('OPEN: S1');
+  } finally {lock.releaseLock();}
+}
+function pauseSeminarBooking() { _PROPS.setProperty('SEMINAR_BOOKING_ENABLED','false');Logger.log('PAUSED: existing reservations retained'); }

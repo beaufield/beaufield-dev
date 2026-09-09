@@ -245,7 +245,9 @@ const APP_VERSION = '0.15.0';
 const GAS_URL = 'TEST_ENV_NO_GAS';
 const LIFF_ID  = '2010404613-cwHA5B0U';
 
-const bookingForm = bookingApi.mount({root:'#bookingForm',mode:'form',url:GAS_URL});
+let bookingForm = null;
+try { bookingForm = bookingApi.mount({root:'#bookingForm',mode:'form',url:GAS_URL}); }
+catch(e) { console.warn('予約欄を読み込めませんでした。来場申込は継続できます。'); }
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
 // GASの結果配信は逐次でも約7%失敗する（実測）。リトライ前提で組む（§2-6）。
