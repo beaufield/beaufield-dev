@@ -142,31 +142,6 @@
      ------------------------------------------------------------ */
   /* 🔴 スマホで必ず横3列になるよう grid で列数を固定する
      （flex + min-width だと端末幅次第で2列に折り返されてしまう） */
-  /* 🆕 v0.3.0 セミナー・体験会の予約状況 */
-  .resGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
-  .resCard {
-    border: 1px solid #e0e6ea; border-left: 4px solid var(--acc, #5BC8E8);
-    border-radius: 10px; background: #fff; overflow: hidden;
-  }
-  .resCard.inactive { opacity: .6; }
-  .resCardHead {
-    background: var(--accBg, #eef8fc); padding: 8px 10px;
-    font-size: 12px; font-weight: bold; color: var(--acc, #2fa8cc);
-  }
-  .resCardBody { padding: 8px 10px 10px; }
-  .resTitle { font-size: 13px; font-weight: bold; line-height: 1.5; }
-  .resCount { font-size: 13px; margin-top: 6px; }
-  .resCount b { font-size: 18px; }
-  .resCount .full { color: #dc2626; font-weight: bold; }
-  .resCount .few  { color: #d97706; font-weight: bold; }
-  .resNames { margin-top: 8px; }
-  .resNames summary { cursor: pointer; font-size: 12px; color: #2fa8cc; }
-  .resNames ol { margin: 6px 0 0; padding-left: 1.4em; font-size: 12px; line-height: 1.8; }
-  .resNames li.cancelledRes { color: #999; text-decoration: line-through; }
-  .resNames .resTantou { color: #888; }
-  .resEmpty { font-size: 12px; color: #999; margin-top: 6px; }
-  .resNote { font-size: 12px; color: #888; margin-top: 10px; line-height: 1.7; }
-
   .summaryGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
   @media (min-width: 720px) {
     .summaryGrid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
@@ -271,7 +246,54 @@
   .bulkBar button { padding: 7px 14px; font-size: 13px; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; color: #fff; background: var(--main-dark); }
   .bulkBar button:disabled { opacity: .5; cursor: default; }
   .bulkBar button.secondary { background: #fff; color: var(--main-dark); border: 1px solid var(--main-dark); }
+
+  /* 🆕 v0.3.0 当日機能（代理登録・予備名札の割当・パス再送） */
+  .modalCard.formCard { max-width: 420px; text-align: left; }
+  .formRow { margin-bottom: 10px; }
+  .formRow label { display: block; font-size: 12px; color: #555; margin-bottom: 4px; }
+  .formRow .req { color: #dc2626; font-weight: bold; }
+  .formRow input[type="text"], .formRow select, .formRow textarea {
+    width: 100%; font-family: inherit; font-size: 15px; padding: 9px 10px;
+    border: 1px solid #d5dde3; border-radius: 8px; background: #fff;
+  }
+  .formRow textarea { height: 56px; resize: vertical; }
+  .formHint { font-size: 11px; color: #888; margin-top: 3px; }
+  .formMsg { font-size: 13px; margin: 10px 0 0; line-height: 1.5; }
+  .formMsg.err { color: #dc2626; }
+  .formMsg.ok  { color: #047857; }
+  .modalBtns { display: flex; gap: 8px; margin-top: 14px; }
+  .modalBtns button { flex: 1; }
+  .subjectLine {
+    background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px;
+    padding: 8px 10px; font-size: 13px; margin-bottom: 12px;
+  }
+  .opsCell { white-space: nowrap; }
+  .opsCell button {
+    font-size: 11px; padding: 4px 7px; margin-right: 4px; border-radius: 6px; cursor: pointer;
+    border: 1px solid #10617c; background: #fff; color: #10617c;
+  }
+  .opsCell button:disabled { opacity: .4; cursor: default; }
+  .spareList {
+    max-height: 210px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px;
+  }
+  .spareList label {
+    display: flex; gap: 8px; align-items: center; padding: 9px 10px;
+    border-bottom: 1px solid #f1f5f9; font-size: 14px; cursor: pointer;
+  }
+  .spareList label:last-child { border-bottom: none; }
+  .spareList .taken { color: #999; cursor: default; }
+  .spareList .takenRow { display: flex; align-items: center; gap: 8px; padding: 9px 10px;
+    border-bottom: 1px solid #f1f5f9; font-size: 14px; color: #999; }
+  .spareList .takenRow:last-child { border-bottom: none; }
+  .spareList .takenRow span { flex: 1; }
+  .spareList .takenRow button {
+    flex: none; font-size: 11px; padding: 3px 8px; border-radius: 6px; cursor: pointer;
+    border: 1px solid #dc2626; background: #fff; color: #dc2626;
+  }
+  .modalCard .ghostBtn { background: #fff; color: #10617c; border: 1px solid #10617c; }
 </style>
+<link rel="stylesheet" href="../lib/booking.css?v=1.0.0">
+<script src="../lib/booking.js?v=1.0.0"></script>
 </head>
 <body>
 <div id="testEnvBar">
@@ -289,6 +311,7 @@
   <div class="headActions">
     <a class="navLink" href="badges.html">🖨 名札印刷へ</a>
     <button type="button" class="navLink" id="qrBtn">📱 申込フォームQR</button>
+    <button type="button" class="navLink" id="walkInBtn">➕ 飛び込み登録</button>
   </div>
 </header>
 
@@ -300,6 +323,70 @@
     <div id="qrBox"></div>
     <div class="qrUrl" id="qrUrl"></div>
     <button type="button" id="qrCloseBtn">閉じる</button>
+  </div>
+</div>
+
+<!-- 🆕 v0.3.0 飛び込み客の代理登録。
+     🔴 名札は当日刷らない。予備名札（事前に刷ってある「予備 P-07」）を手渡し、
+        登録のあとに続けて割り当てる。ここで集める情報は名札には出ない（台帳と突合のため）。 -->
+<div class="modalOverlay" id="walkInModal" hidden>
+  <div class="modalCard formCard" role="dialog" aria-modal="true" aria-labelledby="walkInTitle">
+    <h2 id="walkInTitle">飛び込み登録</h2>
+    <div class="modalNote">受付でその場で登録します。控えメールは送りません。</div>
+
+    <div class="formRow">
+      <label for="wiName">お名前 <span class="req">必須</span></label>
+      <input type="text" id="wiName" autocomplete="off">
+    </div>
+    <div class="formRow">
+      <label for="wiSalon">サロン名 <span class="req">必須</span></label>
+      <input type="text" id="wiSalon" autocomplete="off">
+    </div>
+    <div class="formRow">
+      <label for="wiBiz">業態 <span class="req">必須</span></label>
+      <select id="wiBiz"></select>
+    </div>
+    <div class="formRow">
+      <label for="wiEmail">メール（任意）</label>
+      <input type="text" id="wiEmail" autocomplete="off" inputmode="email">
+      <div class="formHint">聞けたときだけで構いません。空欄でも登録できます。</div>
+    </div>
+    <div class="formRow">
+      <label for="wiPhone">電話（任意）</label>
+      <input type="text" id="wiPhone" autocomplete="off" inputmode="tel">
+    </div>
+    <div class="formRow">
+      <label for="wiNote">備考（任意）</label>
+      <textarea id="wiNote"></textarea>
+    </div>
+
+    <div class="formMsg" id="wiMsg"></div>
+    <div class="modalBtns">
+      <button type="button" id="wiSubmit">登録して名札へ</button>
+      <button type="button" id="wiClose" class="ghostBtn">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- 🆕 v0.3.0 予備名札の割当。
+     🔴 一度割り当てた予備名札は別人に付け替えられない（サーバーが SPARE_ALREADY_ASSIGNED で拒否）。
+        ブースの未解決注文の自己修復がこの一意性に依存しているため。 -->
+<div class="modalOverlay" id="spareModal" hidden>
+  <div class="modalCard formCard" role="dialog" aria-modal="true" aria-labelledby="spareTitle">
+    <h2 id="spareTitle">予備名札の割当</h2>
+    <div class="modalNote">お渡しする予備名札の番号を選んでください。</div>
+
+    <div class="subjectLine" id="spSubject"></div>
+    <div class="spareList" id="spList"></div>
+    <div class="formHint">
+      🔴 割り当てると、その方のQRは予備名札のものに切り替わります（前のQRは使えなくなります）。
+    </div>
+
+    <div class="formMsg" id="spMsg"></div>
+    <div class="modalBtns">
+      <button type="button" id="spSubmit">この番号を割り当てる</button>
+      <button type="button" id="spClose" class="ghostBtn">閉じる</button>
+    </div>
   </div>
 </div>
 
@@ -336,12 +423,6 @@
           <summary>数字で見る（10日ごとの対比表）</summary>
           <div class="tableWrap"><table class="paceTable" id="paceTable"></table></div>
         </details>
-      </div>
-
-      <div class="row" id="resPanelRow" style="display:none;">
-        <label class="rowLabel">セミナー・体験会の予約状況</label>
-        <div class="resGrid" id="resGrid"></div>
-        <div class="resNote" id="resNote"></div>
       </div>
 
       <div class="row">
@@ -448,7 +529,15 @@
 // 認証・GAS通信ルールは badges.html からそのまま移植している（自分で別方式にしないこと）
 // 版数の定義はこの APP_VERSION 1箇所だけ（AGENTS.md バージョン管理ルール）
 // ============================================================
-const APP_VERSION = '0.3.0';
+// 予約部品が読めない場合も、来場申込・入場パス・社員一覧は継続する。
+const bookingApi = window.BeaufesBooking || {
+  isMock:()=>false, hasIssue:r=>!!r, mount:opts=>{
+    const root=document.querySelector(opts.root);
+    if(root)root.textContent='予約画面を読み込めませんでした。再読み込みしてご確認ください。来場申込は続けられます。';
+    return null;
+  }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
+};
+const APP_VERSION = '0.5.0';
 const GAS_URL = 'TEST_ENV_NO_GAS';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
@@ -579,11 +668,30 @@ const state = {
   selected: {},       // app_id -> true
   sortKey: 'app_id',
   sortAsc: true,
-  // 🆕 v0.3.0 セミナー・体験会の予約
-  sessions: [],       // 枠の一覧（定員・予約数つき）
-  reservations: [],   // 予約1件ごと（予約者の氏名・サロン名つき）
-  resByApp: {}        // app_id -> 予約の表示名の配列
+  serverVersion: ''   // 🆕 v0.3.1 本番GASの版。当日機能を出してよいかの判定に使う
 };
+
+// 🔴 当日機能（代理登録・予備名札の割当・パス再送）が動くのに必要な最低のGAS版。
+//    このHTMLはpushした瞬間に公開されるが、GASは版番号で固定されているため、
+//    先にHTMLだけ出ると社員に「押すと必ず失敗するボタン」が見えてしまう
+//    （2026-09-04 に同じ非対称でお客様の控え画面にエラーが出た）。
+//    サーバーが古いあいだは当日機能そのものを出さない。
+const DAY_FEATURES_MIN_GAS = '0.34.0';   // v0.34.0 で予備名札の取り消し（releaseSpare）が入った
+
+function versionAtLeast(actual, required) {
+  const a = String(actual || '').split('.').map(Number);
+  const r = String(required || '').split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const x = a[i] || 0, y = r[i] || 0;
+    if (x !== y) return x > y;
+  }
+  return true;
+}
+function dayFeaturesReady() {
+  if (isMock()) return true;                 // モックは常に出す（レイアウト検証のため）
+  if (!state.serverVersion) return false;    // 取得前・版が読めないうちは出さない
+  return versionAtLeast(state.serverVersion, DAY_FEATURES_MIN_GAS);
+}
 
 // ------------------------------------------------------------
 // 業態チェックボックス
@@ -669,150 +777,6 @@ function makeRowSelect(app) {
 }
 
 // ------------------------------------------------------------
-// 🆕 v0.3.0 セミナー・体験会の予約
-// ------------------------------------------------------------
-// 予約ごとの色。index.html / pass.html と同じ並び（画面をまたいで同じ枠が同じ色になる）
-const RES_ACCENTS = [
-  { line: '#2f9fc4', bg: '#eef8fc' },
-  { line: '#3f9d6b', bg: '#edf9f2' },
-  { line: '#c2851d', bg: '#fdf5e8' },
-  { line: '#8b6fc4', bg: '#f3f0fb' }
-];
-
-function resTimeLabel(s) {
-  if (!s.starts_at) return '';
-  return s.starts_at + '〜' + (s.ends_at || '');
-}
-
-function applyReservations(data) {
-  state.sessions = (data && Array.isArray(data.sessions)) ? data.sessions : [];
-  state.reservations = (data && Array.isArray(data.reservations)) ? data.reservations : [];
-
-  // app_id -> その人の予約（申込一覧の「予約」列で使う）
-  state.resByApp = {};
-  const titleById = {};
-  state.sessions.forEach(function (s) {
-    const t = resTimeLabel(s);
-    // 🔴 タイトルが時刻そのものの枠（計測会）は slot 名を使う。サーバー側 _sessionDisplayName と同じ規則
-    const isDup = !!(s.starts_at && String(s.title).indexOf(s.starts_at) >= 0);
-    titleById[s.session_id] = (t ? t + ' ' : '') + ((isDup && s.slot) ? s.slot : s.title);
-  });
-  state.reservations.forEach(function (r) {
-    if (!state.resByApp[r.app_id]) state.resByApp[r.app_id] = [];
-    state.resByApp[r.app_id].push(titleById[r.session_id] || r.session_id);
-  });
-
-  renderReservations();
-  renderTable();   // 「予約」列を反映する
-}
-
-function renderReservations() {
-  const grid = el('resGrid');
-  grid.textContent = '';
-
-  if (!state.sessions.length) {
-    el('resPanelRow').style.display = 'block';
-    el('resNote').textContent = 'セミナー・体験会の枠がまだ登録されていません（sessions シート）。';
-    return;
-  }
-
-  // slot ごとに色を割り当てる（枠が増えても順番に回る）
-  const slotOrder = [];
-  state.sessions.forEach(function (s) {
-    if (slotOrder.indexOf(s.slot) < 0) slotOrder.push(s.slot);
-  });
-
-  state.sessions.forEach(function (s) {
-    const acc = RES_ACCENTS[slotOrder.indexOf(s.slot) % RES_ACCENTS.length];
-    const card = document.createElement('div');
-    card.className = 'resCard' + (s.is_active ? '' : ' inactive');
-    card.style.setProperty('--acc', acc.line);
-    card.style.setProperty('--accBg', acc.bg);
-
-    const head = document.createElement('div');
-    head.className = 'resCardHead';
-    head.textContent = s.slot + (s.is_active ? '' : '（非公開）');
-    card.appendChild(head);
-
-    const body = document.createElement('div');
-    body.className = 'resCardBody';
-
-    const title = document.createElement('div');
-    title.className = 'resTitle';
-    title.textContent = s.title;
-    body.appendChild(title);
-
-    const time = document.createElement('div');
-    time.className = 'statusLine';
-    time.textContent = resTimeLabel(s);
-    body.appendChild(time);
-
-    const cnt = document.createElement('div');
-    cnt.className = 'resCount';
-    const strong = document.createElement('b');
-    strong.textContent = String(s.reserved_count);
-    cnt.appendChild(strong);
-    const rest = document.createElement('span');
-    if (s.capacity === null || s.capacity === undefined) {
-      rest.textContent = ' 名（定員なし）';
-    } else {
-      rest.textContent = ' / ' + s.capacity + ' 名　';
-      const r = document.createElement('span');
-      if (s.remaining <= 0) { r.className = 'full'; r.textContent = '満席'; }
-      else { r.className = (s.remaining <= 3) ? 'few' : ''; r.textContent = '残り' + s.remaining; }
-      rest.appendChild(r);
-    }
-    cnt.appendChild(rest);
-    body.appendChild(cnt);
-
-    const list = state.reservations.filter(function (r) { return r.session_id === s.session_id; });
-    if (!list.length) {
-      const em = document.createElement('div');
-      em.className = 'resEmpty';
-      em.textContent = 'まだ予約はありません';
-      body.appendChild(em);
-    } else {
-      const det = document.createElement('details');
-      det.className = 'resNames';
-      const sum = document.createElement('summary');
-      sum.textContent = '予約した方（' + list.length + '名）';
-      det.appendChild(sum);
-      const ol = document.createElement('ol');
-      list.forEach(function (r) {
-        const li = document.createElement('li');
-        // 🔴 textContent で入れる（名前に < > が入っていてもHTMLとして解釈させない）
-        li.textContent = r.salon_name + '　' + r.staff_name +
-                         (r.phone ? '　' + r.phone : '');
-        if (r.tantou) {
-          const t = document.createElement('span');
-          t.className = 'resTantou';
-          t.textContent = '（担当: ' + r.tantou + '）';
-          li.appendChild(t);
-        }
-        // 🔴 キャンセル済み申込の予約は席を数えていないが、名簿には残して見えるようにする
-        if (r.app_status === 'cancelled') {
-          li.className = 'cancelledRes';
-          li.title = '申込がキャンセル済み（席は戻っています）';
-        }
-        ol.appendChild(li);
-      });
-      det.appendChild(ol);
-      body.appendChild(det);
-    }
-
-    card.appendChild(body);
-    grid.appendChild(card);
-  });
-
-  const cancelledCount = state.reservations.filter(function (r) { return r.app_status === 'cancelled'; }).length;
-  el('resNote').textContent =
-    '予約は' + state.reservations.length + '件。' +
-    (cancelledCount ? 'うち' + cancelledCount + '件は申込がキャンセル済みで、席は戻っています（名簿では取り消し線）。' : '') +
-    '枠・定員の変更は sessions シートで行えます。';
-  el('resPanelRow').style.display = 'block';
-}
-
-// ------------------------------------------------------------
 // 取得
 // ------------------------------------------------------------
 async function fetchApplications() {
@@ -849,24 +813,7 @@ async function fetchApplications() {
     }
 
     applyFetchResult(data);
-
-    // 🆕 v0.3.0: 予約状況。🔴 ここが失敗しても申込一覧は出したままにする
-    //    （予約はあとから足した機能で、一覧の表示を止める理由にならない）。
-    try {
-      let res;
-      if (isMock()) {
-        res = generateMockReservations();
-      } else {
-        const session = getSession();
-        const rj = await postWithRetry(
-          { action: 'listReservations', data: JSON.stringify({ session_token: (session && session.token) || '' }) });
-        res = (rj && rj.success === true) ? rj.data : null;
-      }
-      applyReservations(res);
-    } catch (e) {
-      el('resNote').textContent = '予約状況を取得できませんでした: ' + (e && e.message ? e.message : String(e));
-      el('resPanelRow').style.display = 'block';
-    }
+    loadBookingSummary();
   } catch (e) {
     el('fetchError').textContent = '取得に失敗しました: ' + (e && e.message ? e.message : String(e));
     el('fetchError').style.display = 'block';
@@ -880,7 +827,11 @@ function applyFetchResult(data) {
   state.apps = Array.isArray(data.applications) ? data.applications : [];
   state.tantouList = Array.isArray(data.tantou_list) ? data.tantou_list : [];
   state.businessTypes = Array.isArray(data.business_types) ? data.business_types : [];
+  state.serverVersion = String(data.server_version || '');
   state.selected = {};
+
+  // 🔴 サーバーが当日機能に対応していなければボタンごと隠す（押せる=動く、を崩さない）
+  el('walkInBtn').style.display = dayFeaturesReady() ? '' : 'none';
 
   buildBusinessTypeChoices(state.businessTypes);
   fillTantouFilter();
@@ -1513,12 +1464,12 @@ const COLUMNS = [
   { key: 'business_type', label: '業態',     sortable: true },
   { key: 'has_transaction', label: 'お取引', sortable: true },
   { key: 'tantou',        label: '担当',     sortable: true },
-  { key: 'reservations',  label: '予約',     sortable: false },   // 🆕 v0.3.0
   { key: 'phone',         label: '電話',     sortable: false },
   { key: 'email',         label: 'メール',   sortable: false },
   { key: 'referrer',      label: '紹介者',   sortable: false },
   { key: 'note',          label: '備考',     sortable: false },
-  { key: 'status',        label: '状態',     sortable: true }
+  { key: 'status',        label: '状態',     sortable: true },
+  { key: '__ops',         label: '操作',     sortable: false }   // 🆕 v0.3.0 当日機能
 ];
 
 function renderHead() {
@@ -1560,12 +1511,6 @@ function tdText(text, cls) {
   td.textContent = text == null ? '' : String(text);
   if (cls) td.className = cls;
   return td;
-}
-
-// その人の予約を1セルぶんの文字列にする
-function reservationLabelOf(appId) {
-  const list = (state.resByApp && state.resByApp[appId]) || [];
-  return list.join('\n');
 }
 
 function renderTable() {
@@ -1614,9 +1559,6 @@ function renderTable() {
     tdT.appendChild(mark);
     tr.appendChild(tdT);
 
-    // 🆕 v0.3.0 予約（複数ある場合は改行で並べる）
-    tr.appendChild(tdText(reservationLabelOf(a.app_id), 'wrapCell'));
-
     tr.appendChild(tdText(a.phone));
     tr.appendChild(tdText(a.email, 'wrapCell'));
     tr.appendChild(tdText(a.referrer));
@@ -1637,6 +1579,51 @@ function renderTable() {
       tdS.textContent = '—';
     }
     tr.appendChild(tdS);
+
+    // 🆕 v0.3.0 当日の操作（予備名札の割当・パスの再送）
+    const tdOps = document.createElement('td');
+    tdOps.className = 'opsCell';
+    const bBooking = document.createElement('button');
+    bBooking.type = 'button'; bBooking.className = 'booking-op';
+    bBooking.textContent = bookingReservedApps.has(a.app_id) ? '予約済み・変更' : 'セミナー予約';
+    bBooking.dataset.bookingApp = a.app_id;
+    bBooking.disabled = a.status === 'cancelled';
+    bBooking.addEventListener('click', function () {
+      bookingApi.staff({url:GAS_URL,app:a,sessionToken:()=>{const session=getSession();return session ? session.token : '';},changed:()=>loadBookingSummary()});
+    });
+    tdOps.appendChild(bBooking);
+
+
+    if (!dayFeaturesReady()) {
+      // サーバーが古い。ボタンを出さず、理由が分かる印だけ置く
+      tdOps.textContent = '—';
+      tdOps.title = 'この機能はGAS v' + DAY_FEATURES_MIN_GAS + ' 以降で使えます（いまのサーバー: v'
+                  + (state.serverVersion || '不明') + '）';
+      tr.appendChild(tdOps);
+      frag.appendChild(tr);
+      return;
+    }
+
+    const bSpare = document.createElement('button');
+    bSpare.type = 'button';
+    bSpare.textContent = '予備名札';
+    bSpare.title = '予備名札を割り当てる';
+    bSpare.addEventListener('click', function () { openSpareModal(a); });
+    tdOps.appendChild(bSpare);
+
+    const bMail = document.createElement('button');
+    bMail.type = 'button';
+    bMail.textContent = 'パス再送';
+    if (!a.email) {
+      bMail.disabled = true;
+      bMail.title = 'メールアドレスが未登録です';
+    } else {
+      bMail.title = a.email + ' へ入場パスを送り直す';
+      bMail.addEventListener('click', function () { doResendPass(a, bMail); });
+    }
+    tdOps.appendChild(bMail);
+
+    tr.appendChild(tdOps);
 
     frag.appendChild(tr);
   });
@@ -1762,8 +1749,7 @@ const CSV_HEADERS = [
   ['app_id', '受付番号'], ['created_at', '申込日時'], ['updated_at', '更新日時'],
   ['salon_name', 'サロン名'], ['staff_name', 'お名前'], ['email', 'メール'], ['phone', '電話'],
   ['business_type', '業態'], ['has_transaction', 'お取引'], ['address', '住所'], ['referrer', '紹介者'],
-  ['tantou', '担当'], ['reservations', '予約'],
-  ['status', '状態'], ['source', '経路'], ['checked_in_at', '入場時刻'], ['note', '備考']
+  ['tantou', '担当'], ['status', '状態'], ['source', '経路'], ['checked_in_at', '入場時刻'], ['note', '備考']
 ];
 
 function csvCell(v) {
@@ -1781,8 +1767,6 @@ function buildCsv() {
     rows.push(CSV_HEADERS.map(function (h) {
       let v = a[h[0]];
       if (h[0] === 'has_transaction') v = (v === 'yes') ? '既存' : (v === 'no' ? '新規' : '');
-      // 🆕 v0.3.0 予約はセル内改行だと表計算で扱いにくいので「/」でつなぐ
-      if (h[0] === 'reservations') v = ((state.resByApp && state.resByApp[a.app_id]) || []).join(' / ');
       return csvCell(v);
     }).join(','));
   });
@@ -1807,43 +1791,6 @@ function downloadCsv() {
 // ------------------------------------------------------------
 // モック（?mock=1・ログイン不要・GAS未接続で画面だけ確認する用）
 // ------------------------------------------------------------
-// ?mock=1 用の予約データ（本物の枠と同じ構成にしてある）
-function generateMockReservations() {
-  const sessions = [
-    { session_id: 'S1', slot: 'セミナー 第1部', title: 'オトナ女子の"巡り"に寄り添うフェムケアセミナー',
-      starts_at: '11:30', ends_at: '12:30', capacity: 20, is_active: true, reserved_count: 3, remaining: 17 },
-    { session_id: 'S2', slot: 'セミナー 第2部', title: '整形級！炭酸ガスパック体験会',
-      starts_at: '14:00', ends_at: '15:00', capacity: 20, is_active: true, reserved_count: 1, remaining: 19 },
-    { session_id: 'B1', slot: 'バランス革命 無料計測会', title: '10:00〜10:45の回',
-      starts_at: '10:00', ends_at: '10:45', capacity: 1, is_active: true, reserved_count: 1, remaining: 0 },
-    { session_id: 'B2', slot: 'バランス革命 無料計測会', title: '10:45〜11:30の回',
-      starts_at: '10:45', ends_at: '11:30', capacity: 1, is_active: true, reserved_count: 0, remaining: 1 },
-    { session_id: 'F1', slot: 'フェイスメーカー 体験会', title: '10:10〜11:00の回',
-      starts_at: '10:10', ends_at: '11:00', capacity: 1, is_active: true, reserved_count: 1, remaining: 0 }
-  ];
-  const reservations = [
-    { res_id: 'R0001', app_id: 'MOCK-001', session_id: 'S1', created_at: '2026-09-02 10:00:00',
-      salon_name: '【見本】サンプルサロン1', staff_name: 'テスト 太郎1', phone: '0000-00-0001',
-      tantou: '担当A', app_status: 'confirmed' },
-    { res_id: 'R0002', app_id: 'MOCK-002', session_id: 'S1', created_at: '2026-09-02 11:00:00',
-      salon_name: '【見本】サンプルサロン2', staff_name: 'テスト 太郎2', phone: '0000-00-0002',
-      tantou: '', app_status: 'confirmed' },
-    { res_id: 'R0003', app_id: 'MOCK-011', session_id: 'S1', created_at: '2026-09-03 09:00:00',
-      salon_name: '【見本】サンプルサロン11', staff_name: 'テスト 太郎11', phone: '0000-00-0011',
-      tantou: '担当B', app_status: 'cancelled' },
-    { res_id: 'R0004', app_id: 'MOCK-003', session_id: 'S2', created_at: '2026-09-03 12:00:00',
-      salon_name: '【見本】サンプルサロン3', staff_name: 'テスト 太郎3', phone: '0000-00-0003',
-      tantou: '担当C', app_status: 'confirmed' },
-    { res_id: 'R0005', app_id: 'MOCK-001', session_id: 'B1', created_at: '2026-09-02 10:01:00',
-      salon_name: '【見本】サンプルサロン1', staff_name: 'テスト 太郎1', phone: '0000-00-0001',
-      tantou: '担当A', app_status: 'confirmed' },
-    { res_id: 'R0006', app_id: 'MOCK-004', session_id: 'F1', created_at: '2026-09-04 15:00:00',
-      salon_name: '【見本】サンプルサロン4', staff_name: 'テスト 太郎4', phone: '0000-00-0004',
-      tantou: '', app_status: 'confirmed' }
-  ];
-  return { sessions: sessions, reservations: reservations, viewer: 'モック' };
-}
-
 function generateMockData() {
   const bts = ['美容室', '理容室', 'エステサロン', 'ネイルサロン', 'アイサロン', 'その他'];
   // 🔴 実在の社員名は書かない（GITHUB-RULES.md）。担当欄の見た目確認はこれで足りる
@@ -1891,6 +1838,387 @@ function generateMockData() {
 }
 
 // ------------------------------------------------------------
+// 🆕 v0.3.0 当日機能（代理登録・予備名札の割当・パス再送）
+//
+// 🔴 書き込みAPIは3本とも冪等。受付で二度押ししても、GASが応答を落としても二重にならない
+//    （GASの故障モードは「書けたのに返事が来ない」・GAS配送障害_調査レポート §3-2）。
+//      adminCreateApplication : request_id（画面が作る）
+//      assignSpare            : 同じ(予備番号, 受付番号)の再実行は成功として返る
+//      adminResendPass        : 直近10分の送信済みはサーバーが抑止する
+// ------------------------------------------------------------
+let walkInRequestId = '';   // フォームを開くたびに1つ作り、成功するまで使い回す
+let spareTarget = null;     // 予備名札を割り当てる相手（申込1件）
+let spareRows = [];
+
+function uuid() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return 'x' + Date.now().toString(16) + Math.random().toString(16).slice(2, 10);
+}
+
+function openModal(id) {
+  el(id).hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+function closeModal(id) {
+  el(id).hidden = true;
+  if (el('qrModal').hidden && el('walkInModal').hidden && el('spareModal').hidden) {
+    document.body.style.overflow = '';
+  }
+}
+
+// ---- 飛び込み登録 ----
+function openWalkIn() {
+  walkInRequestId = uuid();
+  ['wiName', 'wiSalon', 'wiEmail', 'wiPhone', 'wiNote'].forEach(function (id) { el(id).value = ''; });
+
+  const sel = el('wiBiz');
+  sel.textContent = '';
+  const types = state.businessTypes.length ? state.businessTypes
+    : ['美容室', '理容室', 'エステサロン', 'ネイルサロン', 'アイサロン', 'その他'];
+  const blank = document.createElement('option');
+  blank.value = ''; blank.textContent = '（選んでください）';
+  sel.appendChild(blank);
+  types.forEach(function (t) {
+    const o = document.createElement('option');
+    o.value = t; o.textContent = t;
+    sel.appendChild(o);
+  });
+
+  setMsg('wiMsg', '', '');
+  el('wiSubmit').disabled = false;
+  openModal('walkInModal');
+  el('wiName').focus();
+}
+
+function setMsg(id, text, cls) {
+  const box = el(id);
+  box.textContent = text;
+  box.className = 'formMsg' + (cls ? ' ' + cls : '');
+}
+
+async function submitWalkIn() {
+  const payload = {
+    request_id:    walkInRequestId,
+    staff_name:    el('wiName').value.trim(),
+    salon_name:    el('wiSalon').value.trim(),
+    business_type: el('wiBiz').value,
+    email:         el('wiEmail').value.trim(),
+    phone:         el('wiPhone').value.trim(),
+    note:          el('wiNote').value.trim()
+  };
+  if (!payload.staff_name)    { setMsg('wiMsg', 'お名前を入力してください', 'err'); el('wiName').focus(); return; }
+  if (!payload.salon_name)    { setMsg('wiMsg', 'サロン名を入力してください', 'err'); el('wiSalon').focus(); return; }
+  if (!payload.business_type) { setMsg('wiMsg', '業態を選んでください', 'err'); el('wiBiz').focus(); return; }
+
+  el('wiSubmit').disabled = true;
+  setMsg('wiMsg', '登録しています…', '');
+
+  try {
+    let data;
+    if (isMock()) {
+      await sleep(200);
+      data = { app_id: 'F2026-' + ('0000' + (9000 + state.apps.length + 1)).slice(-4),
+               staff_name: payload.staff_name, salon_name: payload.salon_name, duplicate: false };
+    } else {
+      const session = getSession();
+      if (!session) { showGate(LOGIN_REQUIRED_HTML); return; }
+      const json = await postWithRetry({
+        action: 'adminCreateApplication',
+        data: JSON.stringify(Object.assign({ session_token: session.token || '' }, payload))
+      }, function (n, max) { setMsg('wiMsg', '再試行中… (' + n + '/' + max + ')', ''); });
+
+      if (!json || json.success !== true) {
+        const err = String((json && json.error) || 'UNKNOWN');
+        if (showAuthGate(err)) return;
+        setMsg('wiMsg', err, 'err');
+        el('wiSubmit').disabled = false;
+        return;
+      }
+      data = json.data;
+    }
+
+    // 台帳に載せたので一覧を取り直す（新しい行が出る）
+    state.apps.push({
+      app_id: data.app_id, created_at: '', created_key: '', updated_at: '', source: 'admin',
+      salon_name: data.salon_name, staff_name: data.staff_name,
+      email: payload.email, phone: payload.phone, has_transaction: '', address: '', referrer: '',
+      has_line: false, status: 'confirmed', checked_in_at: '', note: payload.note,
+      business_type: payload.business_type, tantou: ''
+    });
+    applyFilters();
+
+    closeModal('walkInModal');
+    // 🔴 続けて予備名札の割当へ。ここで切れると「登録はしたが名札が紐づいていない人」が生まれる
+    openSpareModal(state.apps[state.apps.length - 1],
+                   data.duplicate ? '登録済みでした（' + data.app_id + '）。続けて名札を割り当ててください。'
+                                  : '登録しました（' + data.app_id + '）。続けて名札を割り当ててください。');
+  } catch (e) {
+    setMsg('wiMsg', '登録に失敗しました: ' + (e && e.message ? e.message : String(e)), 'err');
+    el('wiSubmit').disabled = false;
+  }
+}
+
+// ---- 予備名札の割当 ----
+async function openSpareModal(app, lead) {
+  spareTarget = app;
+  el('spSubject').textContent = app.staff_name + '（' + app.salon_name + '） ' + app.app_id;
+  el('spList').textContent = '読み込んでいます…';
+  setMsg('spMsg', lead || '', lead ? 'ok' : '');
+  el('spSubmit').disabled = true;
+  openModal('spareModal');
+
+  try {
+    if (isMock()) {
+      await sleep(150);
+      spareRows = [
+        { spare_no: 'P-01', assigned_app_id: '' },
+        { spare_no: 'P-02', assigned_app_id: 'F2026-0031' },
+        { spare_no: 'P-03', assigned_app_id: '' }
+      ];
+    } else {
+      const session = getSession();
+      if (!session) { showGate(LOGIN_REQUIRED_HTML); return; }
+      const json = await postWithRetry({
+        action: 'listSpareBadges',
+        data: JSON.stringify({ session_token: session.token || '' })
+      });
+      if (!json || json.success !== true) {
+        const err = String((json && json.error) || 'UNKNOWN');
+        if (showAuthGate(err)) return;
+        el('spList').textContent = '';
+        setMsg('spMsg', '予備名札の一覧を取れませんでした（' + err + '）', 'err');
+        return;
+      }
+      spareRows = json.data.spares || [];
+    }
+    renderSpareList();
+  } catch (e) {
+    el('spList').textContent = '';
+    setMsg('spMsg', '通信できませんでした: ' + (e && e.message ? e.message : String(e)), 'err');
+  }
+}
+
+function renderSpareList() {
+  const box = el('spList');
+  box.textContent = '';
+  const free = spareRows.filter(function (r) { return !r.assigned_app_id; });
+  if (!free.length) {
+    // 🔴 ここで return しない。割当済みの行を出しておかないと「間違えた1枚」を取り消せなくなる
+    setMsg('spMsg', '未割当の予備名札がありません。' +
+           '渡す相手を間違えた分は下から取り消せます（まだ使われていない場合のみ）。', 'err');
+  }
+  spareRows.forEach(function (r) {
+    const lab = document.createElement('label');
+    if (r.assigned_app_id) {
+      // 🔴 割当済みは選べない。サーバーも拒否するが、押せてしまう時点で受付が迷う。
+      //    ただし「渡す相手を間違えた」直後だけは取り消せる（releaseSpare がサーバー側で判定する）
+      const row = document.createElement('div');
+      row.className = 'takenRow';
+      const txt = document.createElement('span');
+      txt.textContent = r.spare_no + '（' + r.assigned_app_id + ' に割当済み）';
+      row.appendChild(txt);
+      const undo = document.createElement('button');
+      undo.type = 'button';
+      undo.textContent = '取り消す';
+      undo.title = 'この予備名札を渡す相手を間違えたとき。まだ使われていなければ取り消せます';
+      undo.addEventListener('click', function () { doReleaseSpare(r, undo); });
+      row.appendChild(undo);
+      box.appendChild(row);
+      return;
+    }
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'spareNo';
+    radio.value = r.spare_no;
+    radio.addEventListener('change', function () { el('spSubmit').disabled = false; });
+    lab.appendChild(radio);
+    const txt = document.createElement('span');
+    txt.textContent = r.spare_no;
+    lab.appendChild(txt);
+    box.appendChild(lab);
+  });
+}
+
+async function doAssignSpare() {
+  const picked = document.querySelector('input[name=spareNo]:checked');
+  if (!picked || !spareTarget) return;
+  const spareNo = picked.value;
+
+  el('spSubmit').disabled = true;
+  setMsg('spMsg', '割り当てています…', '');
+
+  try {
+    if (isMock()) {
+      await sleep(200);
+      spareRows.forEach(function (r) {
+        if (r.spare_no === spareNo) r.assigned_app_id = spareTarget.app_id;
+      });
+      setMsg('spMsg', spareNo + ' を ' + spareTarget.staff_name + ' 様に割り当てました。', 'ok');
+      renderSpareList();
+      return;
+    }
+
+    const session = getSession();
+    if (!session) { showGate(LOGIN_REQUIRED_HTML); return; }
+    const json = await postWithRetry({
+      action: 'assignSpare',
+      data: JSON.stringify({ session_token: session.token || '',
+                             spare_no: spareNo, app_id: spareTarget.app_id })
+    }, function (n, max) { setMsg('spMsg', '再試行中… (' + n + '/' + max + ')', ''); });
+
+    if (!json || json.success !== true) {
+      const err = String((json && json.error) || 'UNKNOWN');
+      if (showAuthGate(err)) return;
+      // 🔴 再割当の拒否はエラーではなく「そういう仕様」。誰に割当済みかまで出す
+      if (err === 'SPARE_ALREADY_ASSIGNED') {
+        setMsg('spMsg', spareNo + ' は既に ' + (json.assigned_app_id || '別の方') +
+               ' に割当済みです。別の番号を選んでください。', 'err');
+        spareRows.forEach(function (r) {
+          if (r.spare_no === spareNo) r.assigned_app_id = json.assigned_app_id || '(割当済み)';
+        });
+        renderSpareList();
+        return;
+      }
+      setMsg('spMsg', SPARE_ERROR_TEXT[err] || err, 'err');
+      el('spSubmit').disabled = false;
+      return;
+    }
+
+    setMsg('spMsg', spareNo + ' を ' + spareTarget.staff_name + ' 様に割り当てました。' +
+           '名札をお渡しください。', 'ok');
+    spareRows.forEach(function (r) {
+      if (r.spare_no === spareNo) r.assigned_app_id = spareTarget.app_id;
+    });
+    renderSpareList();
+  } catch (e) {
+    setMsg('spMsg', '通信できませんでした: ' + (e && e.message ? e.message : String(e)), 'err');
+    el('spSubmit').disabled = false;
+  }
+}
+
+async function doReleaseSpare(row, btn) {
+  if (!confirm(row.spare_no + ' の割当（' + row.assigned_app_id + '）を取り消します。\n\n' +
+               'この名札でブースの購買や受付の記録が既にある場合は取り消せません。\nよろしいですか？')) return;
+
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '取消中…';
+  try {
+    if (isMock()) {
+      await sleep(200);
+      row.assigned_app_id = '';
+      setMsg('spMsg', row.spare_no + ' の割当を取り消しました。', 'ok');
+      renderSpareList();
+      return;
+    }
+
+    const session = getSession();
+    if (!session) { showGate(LOGIN_REQUIRED_HTML); return; }
+    const json = await postWithRetry({
+      action: 'releaseSpare',
+      data: JSON.stringify({ session_token: session.token || '', spare_no: row.spare_no })
+    });
+
+    if (!json || json.success !== true) {
+      const err = String((json && json.error) || 'UNKNOWN');
+      if (showAuthGate(err)) return;
+      if (err === 'SPARE_IN_USE') {
+        // 🔴 これは不具合ではなく設計どおりの拒否。理由を具体的に出す
+        const where = json.where === 'booth' ? 'ブースでの購買' : '受付での入場';
+        setMsg('spMsg', row.spare_no + ' は既に' + where + 'に使われているため取り消せません' +
+               (json.ref ? '（' + json.ref + '）' : '') + '。' +
+               'この名札はこの方のものとして扱ってください。', 'err');
+      } else {
+        setMsg('spMsg', SPARE_ERROR_TEXT[err] || err, 'err');
+      }
+      return;
+    }
+
+    const d = json.data;
+    if (!d.released) {
+      setMsg('spMsg', row.spare_no + ' は割り当てられていません。', 'err');
+    } else if (d.regenerated) {
+      // 🔴 元のQRが復元できていない。名札を刷り直さないとその方が入場できない
+      setMsg('spMsg', row.spare_no + ' の割当を取り消しました。' +
+             '🔴 ' + (d.staff_name || d.app_id) + ' 様は入場用のQRが新しくなったため、' +
+             '名札印刷から刷り直すか、パス再送でお知らせしてください。', 'err');
+    } else {
+      setMsg('spMsg', row.spare_no + ' の割当を取り消しました。' +
+             (d.staff_name || d.app_id) + ' 様は元のQRに戻っています。', 'ok');
+    }
+    row.assigned_app_id = '';
+    renderSpareList();
+  } catch (e) {
+    setMsg('spMsg', '通信できませんでした: ' + (e && e.message ? e.message : String(e)), 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+const SPARE_ERROR_TEXT = {
+  SPARE_NOT_FOUND: 'その予備番号は登録されていません。',
+  SPARE_NO_TOKEN:  'その予備名札はまだ発行されていません（名札印刷で刷ってから使ってください）。',
+  APP_NOT_FOUND:   'この申込が見つかりませんでした。一覧を取り直してください。',
+  LOCK_BUSY:       '混み合っています。もう一度押してください。',
+  SPARE_NOT_ASSIGNED: 'その予備名札は割り当てられていません。'
+};
+
+// ---- パスの再送 ----
+async function doResendPass(app, btn) {
+  if (!confirm(app.staff_name + ' 様（' + app.email + '）へ入場パスを送り直します。よろしいですか？')) return;
+
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '送信中…';
+
+  try {
+    let data;
+    if (isMock()) {
+      await sleep(200);
+      data = { sent: true, to: 'te***@example.com', remaining_quota: 96 };
+    } else {
+      const session = getSession();
+      if (!session) { showGate(LOGIN_REQUIRED_HTML); return; }
+      const json = await postWithRetry({
+        action: 'adminResendPass',
+        data: JSON.stringify({ session_token: session.token || '', app_id: app.app_id })
+      });
+      if (!json || json.success !== true) {
+        const err = String((json && json.error) || 'UNKNOWN');
+        if (showAuthGate(err)) return;
+        alert(RESEND_ERROR_TEXT[err] || ('送信できませんでした: ' + err));
+        return;
+      }
+      data = json.data;
+    }
+
+    if (data.sent) {
+      // 🔴 メール枠は100通/日（2026-09-04 実測）。残りを毎回見せて、当日に枯らさないようにする
+      alert('送信しました（' + data.to + '）。\n本日の残りメール枠: ' +
+            (data.remaining_quota == null ? '不明' : data.remaining_quota + '通'));
+    } else if (data.reason === 'RECENTLY_SENT') {
+      alert('直近10分に同じ宛先へ送っているため、重ねて送りませんでした（' + data.to + '）。\n' +
+            '届いていない場合は迷惑メールフォルダをご確認ください。');
+    } else {
+      alert('送信されませんでした（' + (data.reason || '理由不明') + '）');
+    }
+  } catch (e) {
+    alert('通信できませんでした: ' + (e && e.message ? e.message : String(e)));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+const RESEND_ERROR_TEXT = {
+  NO_EMAIL:         'この方はメールアドレスが未登録です（飛び込み登録など）。',
+  APP_CANCELLED:    'キャンセル済みの申込には送れません。',
+  APP_NOT_FOUND:    'この申込が見つかりませんでした。一覧を取り直してください。',
+  NO_TICKET_TOKEN:  '入場トークンがありません（データ不整合・前島さんに連絡してください）。'
+};
+
+// ------------------------------------------------------------
 // 起動
 // ------------------------------------------------------------
 function init() {
@@ -1907,6 +2235,19 @@ function init() {
   });
   document.addEventListener('keydown', function (ev) {
     if (ev.key === 'Escape' && !el('qrModal').hidden) closeQrModal();
+  });
+
+  // 🆕 v0.3.0 当日機能。🔴 サーバーの版が分かるまでは出さない（applyFetchResult で出し直す）
+  el('walkInBtn').style.display = 'none';
+  el('walkInBtn').addEventListener('click', openWalkIn);
+  el('wiSubmit').addEventListener('click', submitWalkIn);
+  el('wiClose').addEventListener('click', function () { closeModal('walkInModal'); });
+  el('spSubmit').addEventListener('click', doAssignSpare);
+  el('spClose').addEventListener('click', function () { closeModal('spareModal'); });
+  [['walkInModal'], ['spareModal']].forEach(function (pair) {
+    el(pair[0]).addEventListener('click', function (ev) {
+      if (ev.target === el(pair[0])) closeModal(pair[0]);
+    });
   });
 
   el('filterToggle').addEventListener('click', function () {
@@ -1952,7 +2293,29 @@ function init() {
   fetchApplications(); // 開いた時点で自動取得する（見るだけの画面なので1手減らす）
 }
 
+const bookingReservedApps = new Set();
 init();
+
+// 枠別件数と各申込者の予約状況。予約APIの失敗で一覧本体を隠さない。
+async function loadBookingSummary() {
+  let box=document.getElementById('bookingSummary');
+  if(!box){box=document.createElement('p');box.id='bookingSummary';document.getElementById('listPanel').prepend(box);}
+  try {
+    const session=getSession();
+    const json=isMock()?{success:true,data:bookingApi.mockStaffSummary()}:
+      await postWithRetry({action:'listReservations',data:JSON.stringify({session_token:session ? session.token : ''})});
+    if(!json.success)throw new Error('予約集計');
+    const s=json.data.sessions.find(s=>s.session_id==='S1');
+    box.textContent=s?'フェムケアセミナー：予約 '+s.reserved_count+' / '+s.capacity+' 名':'フェムケアの予約枠は準備中です。';
+    bookingReservedApps.clear();
+    json.data.reservations.filter(r=>r.session_id==='S1' && r.app_status!=='cancelled').forEach(r=>bookingReservedApps.add(r.app_id));
+    document.querySelectorAll('[data-booking-app]').forEach(b=>{
+      const booked=json.data.reservations.some(r=>r.app_id===b.dataset.bookingApp && r.session_id==='S1' && r.app_status!=='cancelled');
+      b.textContent=booked?'予約済み・変更':'セミナー予約';
+    });
+  }catch(e){box.textContent='予約状況を取得できませんでした。各行の「セミナー予約」から確認できます。';}
+}
+
 </script>
 </body>
 </html>
