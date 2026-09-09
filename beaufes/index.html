@@ -108,6 +108,8 @@
     border-radius: 8px; padding: 14px; font-size: 14px; line-height: 1.8;
   }
 </style>
+<link rel="stylesheet" href="lib/booking.css?v=1.0.0">
+<script src="lib/booking.js?v=1.0.0"></script>
 </head>
 <body>
 
@@ -192,13 +194,14 @@
         </label>
       </div>
 
+      <div id="bookingForm"></div>
       <div class="errorMsg" id="errorMsg"></div>
 
       <button type="submit" id="submitBtn">この内容で申し込む</button>
     </form>
 
     <p style="font-size:12px;color:#888;text-align:center;">
-      ※セミナーのご予約は、内容が決まり次第、入場パス画面からお申し込みいただけます（現在準備中）
+      ※ご予約は、お申し込み後の入場パス画面からも追加・取り消しができます。
     </p>
     <div class="linkLine">
       <a href="#" id="toResend">入場パスのリンクを紛失した方はこちら</a>
@@ -208,6 +211,7 @@
   <!-- ============ 申込済み通知（同じメール＋同じお名前で再送信された場合） ============ -->
   <div class="card" id="existingNoticePanel" style="display:none;">
     <p class="panelTitle">すでにお申し込みをお預かりしています</p>
+    <p>セミナーのご予約は、入場パスのリンク先からお取りください。この画面での選択は保存されていません。</p>
     <div class="okMsg">
       ご登録のメールアドレスに、内容の確認・変更ができるリンクをお送りしました。<br>
       メールが届かない場合は、迷惑メールフォルダもご確認ください。
@@ -242,8 +246,21 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.12.0';
+const IS_MOCK = new URLSearchParams(location.search).get('mock') === '1';
+// 予約部品が読めない場合も、来場申込・入場パス・社員一覧は継続する。
+const bookingApi = window.BeaufesBooking || {
+  isMock:()=>false, hasIssue:r=>!!r, mount:opts=>{
+    const root=document.querySelector(opts.root);
+    if(root)root.textContent='予約画面を読み込めませんでした。再読み込みしてご確認ください。来場申込は続けられます。';
+    return null;
+  }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
+};
+const APP_VERSION = '0.23.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
+
+let bookingForm = null;
+try { bookingForm = bookingApi.mount({root:'#bookingForm',mode:'form',url:GAS_URL}); }
+catch(e) { console.warn('予約欄を読み込めませんでした。来場申込は継続できます。'); }
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
 // GASの結果配信は逐次でも約7%失敗する（実測）。リトライ前提で組む。
@@ -397,6 +414,7 @@ const TRANSPORT_ERROR_PATTERN = /^(不明なアクション|INVALID_REQUEST)/;
 // onProgress: 再試行に入ったことを画面に出すためのコールバック（省略可）。
 // 手数が増えた分、無言で待たせると固まったように見えるため。
 async function postWithRetry(params, onProgress) {
+  if (bookingApi.isMock()) return bookingApi.mockResponse(params);
   let lastErr = null;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) {
@@ -452,7 +470,7 @@ function buildPayload() {
 
 // 申込を送信する。
 async function sendApply() {
-  const payload = buildPayload();
+  const payload = Object.assign(buildPayload(), bookingForm ? bookingForm.payload() : {});
 
   overlay(true);
   el('submitBtn').disabled = true;
@@ -480,7 +498,7 @@ async function sendApply() {
 
     // 入場パス画面へ遷移（QR表示・完了メッセージはそちらで担う）
     const ticket = new URL(json.data.pass_url, location.href).searchParams.get('t');
-    location.href = 'pass.html?t=' + encodeURIComponent(ticket) + '&new=1';
+    location.href = 'pass.html?t=' + encodeURIComponent(ticket) + '&new=1' + (bookingApi.hasIssue(json.data.sessions_result) ? '&semissue=1' : '');
 
   } catch (e) {
     overlay(false);

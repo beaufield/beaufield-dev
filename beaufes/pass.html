@@ -111,6 +111,8 @@
     background: #fff; color: #888; border: 1px solid var(--border); font-weight: normal;
   }
 </style>
+<link rel="stylesheet" href="lib/booking.css?v=1.0.0">
+<script src="lib/booking.js?v=1.0.0"></script>
 </head>
 <body>
 
@@ -129,9 +131,7 @@
 
     <div class="event-info" id="eventInfo"></div>
 
-    <div class="event-info" id="seminarInfo">
-      <b>セミナー</b>：内容が決まり次第、この画面からご予約いただけます（現在準備中）
-    </div>
+    <div id="bookingPass"></div>
 
     <div class="warnBox" id="warnBox">
       <div id="warnText"></div>
@@ -217,7 +217,16 @@
 
 <script src="lib/qrcode.min.js"></script>
 <script>
-const APP_VERSION = '0.9.0';
+const IS_MOCK = new URLSearchParams(location.search).get('mock') === '1';
+// 予約部品が読めない場合も、来場申込・入場パス・社員一覧は継続する。
+const bookingApi = window.BeaufesBooking || {
+  isMock:()=>false, hasIssue:r=>!!r, mount:opts=>{
+    const root=document.querySelector(opts.root);
+    if(root)root.textContent='予約画面を読み込めませんでした。再読み込みしてご確認ください。来場申込は続けられます。';
+    return null;
+  }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
+};
+const APP_VERSION = '0.22.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
@@ -363,6 +372,7 @@ function loadCache(token) {
 // 「一時的な配信失敗」と「本当にパスが無い」を区別できるようにする。
 // ------------------------------------------------------------
 async function fetchPassOnce(token) {
+  if (bookingApi.isMock()) return bookingApi.mockResponse({action:'getPass'});
   const params = new URLSearchParams({
     action: 'getPass',
     data: JSON.stringify({ ticket_token: token })
@@ -435,6 +445,8 @@ function hideError(id) { el(id).style.display = 'none'; }
 // メイン
 // ------------------------------------------------------------
 async function init() {
+  try { if(qs('t')) bookingApi.mount({root:'#bookingPass',mode:'pass',url:GAS_URL,token:qs('t')}); }
+  catch(e) { console.warn('予約欄を読み込めませんでした。入場パスは継続表示します。'); }
   const token = qs('t');
   const isNew = qs('new') === '1';
 
@@ -524,6 +536,7 @@ const TRANSPORT_ERROR_PATTERN = /^(不明なアクション|INVALID_REQUEST)/;
 // onProgress: 再試行に入ったことを画面に出すためのコールバック（省略可）。
 // 手数が増えた分、無言で待たせると固まったように見えるため。
 async function postWithRetry(params, onProgress) {
+  if (bookingApi.isMock()) return bookingApi.mockResponse(params);
   let lastErr = null;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) {

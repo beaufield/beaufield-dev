@@ -274,6 +274,8 @@
   }
   .modalCard .ghostBtn { background: #fff; color: #10617c; border: 1px solid #10617c; }
 </style>
+<link rel="stylesheet" href="lib/booking.css?v=1.0.0">
+<script src="lib/booking.js?v=1.0.0"></script>
 </head>
 <body>
 
@@ -500,7 +502,15 @@
 // 認証・GAS通信ルールは badges.html からそのまま移植している（自分で別方式にしないこと）
 // 版数の定義はこの APP_VERSION 1箇所だけ（AGENTS.md バージョン管理ルール）
 // ============================================================
-const APP_VERSION = '0.4.0';
+// 予約部品が読めない場合も、来場申込・入場パス・社員一覧は継続する。
+const bookingApi = window.BeaufesBooking || {
+  isMock:()=>false, hasIssue:r=>!!r, mount:opts=>{
+    const root=document.querySelector(opts.root);
+    if(root)root.textContent='予約画面を読み込めませんでした。再読み込みしてご確認ください。来場申込は続けられます。';
+    return null;
+  }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
+};
+const APP_VERSION = '0.5.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
@@ -776,6 +786,7 @@ async function fetchApplications() {
     }
 
     applyFetchResult(data);
+    loadBookingSummary();
   } catch (e) {
     el('fetchError').textContent = '取得に失敗しました: ' + (e && e.message ? e.message : String(e));
     el('fetchError').style.display = 'block';
@@ -1545,6 +1556,16 @@ function renderTable() {
     // 🆕 v0.3.0 当日の操作（予備名札の割当・パスの再送）
     const tdOps = document.createElement('td');
     tdOps.className = 'opsCell';
+    const bBooking = document.createElement('button');
+    bBooking.type = 'button'; bBooking.className = 'booking-op';
+    bBooking.textContent = bookingReservedApps.has(a.app_id) ? '予約済み・変更' : 'セミナー予約';
+    bBooking.dataset.bookingApp = a.app_id;
+    bBooking.disabled = a.status === 'cancelled';
+    bBooking.addEventListener('click', function () {
+      bookingApi.staff({url:GAS_URL,app:a,sessionToken:()=>{const session=getSession();return session ? session.token : '';},changed:()=>loadBookingSummary()});
+    });
+    tdOps.appendChild(bBooking);
+
 
     if (!dayFeaturesReady()) {
       // サーバーが古い。ボタンを出さず、理由が分かる印だけ置く
@@ -2245,7 +2266,29 @@ function init() {
   fetchApplications(); // 開いた時点で自動取得する（見るだけの画面なので1手減らす）
 }
 
+const bookingReservedApps = new Set();
 init();
+
+// 枠別件数と各申込者の予約状況。予約APIの失敗で一覧本体を隠さない。
+async function loadBookingSummary() {
+  let box=document.getElementById('bookingSummary');
+  if(!box){box=document.createElement('p');box.id='bookingSummary';document.getElementById('listPanel').prepend(box);}
+  try {
+    const session=getSession();
+    const json=isMock()?{success:true,data:bookingApi.mockStaffSummary()}:
+      await postWithRetry({action:'listReservations',data:JSON.stringify({session_token:session ? session.token : ''})});
+    if(!json.success)throw new Error('予約集計');
+    const s=json.data.sessions.find(s=>s.session_id==='S1');
+    box.textContent=s?'フェムケアセミナー：予約 '+s.reserved_count+' / '+s.capacity+' 名':'フェムケアの予約枠は準備中です。';
+    bookingReservedApps.clear();
+    json.data.reservations.filter(r=>r.session_id==='S1' && r.app_status!=='cancelled').forEach(r=>bookingReservedApps.add(r.app_id));
+    document.querySelectorAll('[data-booking-app]').forEach(b=>{
+      const booked=json.data.reservations.some(r=>r.app_id===b.dataset.bookingApp && r.session_id==='S1' && r.app_status!=='cancelled');
+      b.textContent=booked?'予約済み・変更':'セミナー予約';
+    });
+  }catch(e){box.textContent='予約状況を取得できませんでした。各行の「セミナー予約」から確認できます。';}
+}
+
 </script>
 </body>
 </html>
