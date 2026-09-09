@@ -472,7 +472,8 @@ function hideError(id) { el(id).style.display = 'none'; }
 // メイン
 // ------------------------------------------------------------
 async function init() {
-  if(qs('t')) bookingApi.mount({root:'#bookingPass',mode:'pass',url:GAS_URL,token:qs('t')});
+  try { if(qs('t')) bookingApi.mount({root:'#bookingPass',mode:'pass',url:GAS_URL,token:qs('t')}); }
+  catch(e) { console.warn('予約欄を読み込めませんでした。入場パスは継続表示します。'); }
   const token = qs('t');
   const isNew = qs('new') === '1';
 
