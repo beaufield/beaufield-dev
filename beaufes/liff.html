@@ -100,6 +100,8 @@
   .linkLine { text-align: center; margin-top: 18px; font-size: 13px; }
   .linkLine a { color: var(--main-dark); }
 </style>
+<link rel="stylesheet" href="lib/booking.css?v=1.0.0">
+<script src="lib/booking.js?v=1.0.0"></script>
 </head>
 <body>
 
@@ -186,6 +188,7 @@
         </label>
       </div>
 
+      <div id="bookingForm"></div>
       <div class="errorMsg" id="errorMsg"></div>
 
       <button type="submit" id="submitBtn">この内容で申し込む</button>
@@ -202,9 +205,22 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
-const APP_VERSION = '0.5.0';
+const IS_MOCK = new URLSearchParams(location.search).get('mock') === '1';
+// 予約部品が読めない場合も、来場申込・入場パス・社員一覧は継続する。
+const bookingApi = window.BeaufesBooking || {
+  isMock:()=>false, hasIssue:r=>!!r, mount:opts=>{
+    const root=document.querySelector(opts.root);
+    if(root)root.textContent='予約画面を読み込めませんでした。再読み込みしてご確認ください。来場申込は続けられます。';
+    return null;
+  }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
+};
+const APP_VERSION = '0.15.0';
 const GAS_URL  = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const LIFF_ID  = '2010404613-cwHA5B0U';
+
+let bookingForm = null;
+try { bookingForm = bookingApi.mount({root:'#bookingForm',mode:'form',url:GAS_URL}); }
+catch(e) { console.warn('予約欄を読み込めませんでした。来場申込は継続できます。'); }
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
 // GASの結果配信は逐次でも約7%失敗する（実測）。リトライ前提で組む（§2-6）。
@@ -337,6 +353,7 @@ const TRANSPORT_ERROR_PATTERN = /^(不明なアクション|INVALID_REQUEST)/;
 // onProgress: 再試行に入ったことを画面に出すためのコールバック（省略可）。
 // 手数が増えた分、無言で待たせると固まったように見えるため。
 async function postWithRetry(params, onProgress) {
+  if (bookingApi.isMock()) return bookingApi.mockResponse(params);
   let lastErr = null;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) {
@@ -428,7 +445,7 @@ function buildPayload(idToken) {
 }
 
 async function sendApplyLiff(idToken) {
-  const payload = buildPayload(idToken);
+  const payload = Object.assign(buildPayload(idToken), bookingForm ? bookingForm.payload() : {});
 
   overlay(true);
   el('submitBtn').disabled = true;
@@ -447,7 +464,7 @@ async function sendApplyLiff(idToken) {
 
     // 入場パス画面へ遷移（QR表示・完了メッセージはそちらで担う）
     const ticket = new URL(json.data.pass_url, location.href).searchParams.get('t');
-    location.href = 'pass.html?t=' + encodeURIComponent(ticket) + '&new=1';
+    location.href = 'pass.html?t=' + encodeURIComponent(ticket) + '&new=1' + (bookingApi.hasIssue(json.data.sessions_result) ? '&semissue=1' : '');
 
   } catch (e) {
     overlay(false);
@@ -488,6 +505,7 @@ function loadLiffSdk() {
 }
 
 async function boot() {
+  if (bookingApi.isMock()) { currentIdToken='MOCK'; hideBoot(); el('formWrap').style.display='block'; el('eventInfo').style.display='block'; return; }
   // 1) LIFF SDKをCDNから読み込む（失敗時は通常フォームへ逃がす・§2-7）
   try {
     await loadLiffSdk();
@@ -536,6 +554,7 @@ async function boot() {
       applyHasTransaction(json.data.has_transaction);
       if (json.data.existing_application) {
         el('existingPassLink').href = 'pass.html?t=' + encodeURIComponent(json.data.existing_application.ticket_token);
+        if(bookingForm) await bookingForm.setToken(json.data.existing_application.ticket_token);
         el('existingBanner').style.display = 'block';
       }
     }
