@@ -12,11 +12,8 @@
 //
 // ============================================================
 
-const VERSION  = '1.13.0';
+const VERSION  = '1.13.1';
 const APP_NAME = 'yoyaku-kanri';
-
-// 通知本文に載せるアプリURL（公開URLのため直書き可）
-const APP_URL = 'https://beaufield.github.io/beaufield-dev/yoyaku-kanri/';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS         = PropertiesService.getScriptProperties();
@@ -410,6 +407,7 @@ function saveProduct(data) {
 /**
  * 商品追加時の通知本文を組み立てる
  * 表記は商品管理タブ（単価 3,300円・上限なし・期限なし）に揃える
+ * アプリのURLは載せない（2026-09-11 Takashi判断）
  * @param {{name:string, stockLimit:number, deadline:string, unitPrice:number}} p
  */
 function _buildNewProductText(p) {
@@ -423,9 +421,6 @@ function _buildNewProductText(p) {
   if (Number(p.unitPrice) > 0) lines.push('単価: ' + _formatNumber(p.unitPrice) + '円');
   lines.push('予約上限: ' + (Number(p.stockLimit) > 0 ? p.stockLimit + '個' : 'なし'));
   lines.push('受付期限: ' + (p.deadline ? String(p.deadline) : 'なし'));
-  lines.push('');
-  lines.push('▼予約はこちら');
-  lines.push(APP_URL);
   return lines.join('\n');
 }
 
