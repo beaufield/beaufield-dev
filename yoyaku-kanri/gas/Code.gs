@@ -4,13 +4,19 @@
 // [重要] コードにIDを直書きしない。以下の手順でスクリプトプロパティに設定すること。
 //
 // GASエディタ → 「プロジェクトの設定」→「スクリプトプロパティ」→「プロパティを追加」
-//   SPREADSHEET_ID  : 予約管理データのスプレッドシートID
-//   AUTH_SHEET_ID   : beaufield-auth スプレッドシートID（共通）
+//   SPREADSHEET_ID    : 予約管理データのスプレッドシートID
+//   AUTH_SHEET_ID     : beaufield-auth スプレッドシートID（共通）
+//   LINEWORKS_WEBHOOK : LINE WORKS Incoming Webhook URL（任意・商品追加の通知用）
+//                       貸出管理（kiki-kanri）と同じURLを設定し、同じ社内グループへ送る。
+//                       未設定なら通知しない。Webhookを再発行したら kiki-kanri 側も更新すること
 //
 // ============================================================
 
-const VERSION  = '1.12.0';
+const VERSION  = '1.13.0';
 const APP_NAME = 'yoyaku-kanri';
+
+// 通知本文に載せるアプリURL（公開URLのため直書き可）
+const APP_URL = 'https://beaufield.github.io/beaufield-dev/yoyaku-kanri/';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS         = PropertiesService.getScriptProperties();
@@ -383,8 +389,91 @@ function saveProduct(data) {
   } else {
     const newId = 'P' + new Date().getTime();
     ps.appendRow([newId, name, stockLimit, deadline, isActive, _now(), unitPrice]);
+
+    // 新規追加時のみ LINE WORKS グループへ「予約受付開始」を通知する。
+    // 受付停止で登録された場合・受付期限が既に過ぎている場合は予約が始まっていないので送らない。
+    // 通知が失敗しても登録は成功扱い（_sendLineWorks 内で例外を握りつぶす）
+    const todayStr = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+    if (isActive && (!deadline || String(deadline) >= todayStr)) {
+      _sendLineWorks(_buildNewProductText({
+        name: name, stockLimit: stockLimit, deadline: deadline, unitPrice: unitPrice
+      }));
+    }
     return _ok({ product_id: newId, message: '登録しました' });
   }
+}
+
+// ============================================================
+// LINE WORKS 通知（Incoming Webhook）
+// ============================================================
+
+/**
+ * 商品追加時の通知本文を組み立てる
+ * 表記は商品管理タブ（単価 3,300円・上限なし・期限なし）に揃える
+ * @param {{name:string, stockLimit:number, deadline:string, unitPrice:number}} p
+ */
+function _buildNewProductText(p) {
+  const lines = [
+    '【予約受付開始】予約管理アプリ',
+    '新しい商品の予約受付が始まりました。',
+    '',
+    '商品名: ' + p.name
+  ];
+  // 単価0（未設定）は行ごと省略
+  if (Number(p.unitPrice) > 0) lines.push('単価: ' + _formatNumber(p.unitPrice) + '円');
+  lines.push('予約上限: ' + (Number(p.stockLimit) > 0 ? p.stockLimit + '個' : 'なし'));
+  lines.push('受付期限: ' + (p.deadline ? String(p.deadline) : 'なし'));
+  lines.push('');
+  lines.push('▼予約はこちら');
+  lines.push(APP_URL);
+  return lines.join('\n');
+}
+
+/** 3桁区切り（GASの toLocaleString はロケールデータに依存するため自前で整形する） */
+function _formatNumber(n) {
+  const parts = String(n).split('.');
+  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return parts.join('.');
+}
+
+/**
+ * LINE WORKS Incoming Webhook へ送信する（失敗しても呼び出し元の処理は継続）
+ * ペイロードは {body:{text}} 形式が正（{content} 形式は表示されない）
+ * @return {{sent:boolean, hasWebhook:boolean, httpStatus:(number|null)}}
+ */
+function _sendLineWorks(text) {
+  const result = { sent: false, hasWebhook: false, httpStatus: null };
+  try {
+    const webhook = PropertiesService.getScriptProperties().getProperty('LINEWORKS_WEBHOOK');
+    if (!webhook) return result;  // 未設定なら通知しない
+    result.hasWebhook = true;
+    const res = UrlFetchApp.fetch(webhook.trim(), {
+      method:             'post',
+      contentType:        'application/json',
+      payload:            JSON.stringify({ body: { text: text } }),
+      muteHttpExceptions: true
+    });
+    result.httpStatus = res.getResponseCode();
+    result.sent = result.httpStatus >= 200 && result.httpStatus < 300;
+    if (!result.sent) Logger.log('LINE WORKS通知失敗: HTTP ' + result.httpStatus + ' ' + res.getContentText());
+  } catch (e) {
+    Logger.log('LINE WORKS通知エラー: ' + e);
+  }
+  return result;
+}
+
+/**
+ * 動作確認用: ダミー商品で通知文を組み立てて送る（シートには書き込まない）
+ * GASエディタから手動実行する。初回実行時に外部通信（UrlFetchApp）の承認ダイアログが出る。
+ * ⚠️ LINEWORKS_WEBHOOK が社内グループのURLのときは実行しないこと（全員にテスト通知が届く）
+ */
+function testProductNotify() {
+  const text = _buildNewProductText({
+    name: '【テスト】通知確認用の商品', stockLimit: 50, deadline: '2026-10-31', unitPrice: 3300
+  });
+  const result = _sendLineWorks(text);
+  Logger.log(text);
+  Logger.log(JSON.stringify(result));
 }
 
 /**
