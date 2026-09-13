@@ -274,3 +274,7 @@ beaufes/内容/
 
 # ノートPCへの引き継ぎメモ（ローカル作業用・GitHub不要）
 beaufes/_next_session_notebook.md
+
+project-dashboard/sync_transport.py
+project-dashboard/tests/
+project-dashboard/session_logs/

@@ -12,7 +12,7 @@
  *   SYNC_TOKEN    … 同期スクリプト用の共有シークレット（ランダム長文字列）
  */
 
-const VERSION = '1.11.0';
+const VERSION = '1.11.2';
 const APP_NAME = 'project-dashboard';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 
@@ -329,148 +329,150 @@ function doPost(e) {
 // ============================================================
 // 同期: 全プロジェクトを upsert（手動管理列は保持）
 // ============================================================
+// 旧クライアント互換の安全化。原本revisionの新旧証明は別段階で扱う。
 function syncProjects_(p) {
-  const projects = p.projects || [];
-  if (!projects.length) return { success: false, error: 'プロジェクトが空です' };
-
-  const lock = LockService.getScriptLock();
-  lock.waitLock(20000);
-  try {
-    const ss = SpreadsheetApp.openById(prop_('DB_SHEET_ID'));
-    const sh = ss.getSheetByName('projects');
-    const data = sh.getDataRange().getValues();
-    const header = data[0];
-    const colIdx = {};
-    header.forEach((h, i) => colIdx[h] = i);
-
-    // 既存行を id → {rowIndex, manualValues} でマップ
-    const existing = {};
-    for (let i = 1; i < data.length; i++) {
-      const id = String(data[i][colIdx['id']]);
-      const manual = {};
-      MANUAL_COLS.forEach(c => manual[c] = data[i][colIdx[c]]);
-      existing[id] = { row: i + 1, manual: manual };
-    }
-
-    const syncedAt = new Date();
-    const syncedIds = {};
-    const newRows = [];
-
-    projects.forEach(proj => {
-      syncedIds[proj.id] = true;
-      const rowValues = COLS.map(c => {
-        if (MANUAL_COLS.indexOf(c) >= 0) {
-          // 手動列: 既に値が入っていれば（Takashiの編集・過去の自動見立て問わず）必ず保持する。
-          // 空欄の場合のみ、同期側から届いた初期値（例: effortの自動見立て）で埋める。
-          const existingVal = existing[proj.id] ? existing[proj.id].manual[c] : '';
-          if (existingVal !== '' && existingVal != null) return existingVal;
-          return proj[c] != null ? proj[c] : '';
-        }
-        switch (c) {
-          case 'next_actions': return JSON.stringify(proj.next_actions || []);
-          case 'relations':    return JSON.stringify(proj.relations || []);
-          case 'parse_ok':     return proj.parse_ok !== false;
-          case 'synced_at':    return syncedAt;
-          case 'active':       return true;
-          default:             return proj[c] != null ? proj[c] : '';
-        }
-      });
-      if (existing[proj.id]) {
-        sh.getRange(existing[proj.id].row, 1, 1, COLS.length).setValues([rowValues]);
-      } else {
-        newRows.push(rowValues);
-      }
-    });
-
-    if (newRows.length) {
-      sh.getRange(sh.getLastRow() + 1, 1, newRows.length, COLS.length).setValues(newRows);
-    }
-
-    // 今回の同期に含まれなかった既存プロジェクトは active=FALSE（アーカイブ扱い・行は消さない）
-    Object.keys(existing).forEach(id => {
-      if (!syncedIds[id]) {
-        sh.getRange(existing[id].row, colIdx['active'] + 1).setValue(false);
-      }
-    });
-
-    // ログ
-    const log = ss.getSheetByName('sync_log');
-    log.appendRow([syncedAt, projects.length, p.device || '', p.generated_at || '']);
-
-    return { success: true, upserted: projects.length, new_count: newRows.length };
-  } finally {
-    lock.releaseLock();
-  }
+  return syncDataset_(p, 'projects', COLS, MANUAL_COLS, ['next_actions', 'relations']);
 }
 
-// ============================================================
-// 同期: 発火待ち資産を upsert（手動管理列は保持）— v1.6.0
-// syncProjects_() と同じ作法。assets シートが無ければ自動で作る（下記 assetsSheet_ 参照）
-// ============================================================
 function syncAssets_(p) {
-  const assets = p.assets || [];
-  if (!assets.length) return { success: false, error: '資産が空です' };
+  return syncDataset_(p, 'assets', ASSET_COLS, MANUAL_ASSET_COLS, []);
+}
 
+function syncJobs_(p) {
+  return syncDataset_(p, 'jobs', JOB_COLS, MANUAL_JOB_COLS, ['checks']);
+}
+
+function syncTimestamp_(value) {
+  // 既存送信者のオフセット無し時刻は従来の日本時間として明示的に解釈。
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})?$/.test(value)) return NaN;
+  const parts = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/).slice(1).map(Number);
+  const [year, month, day, hour, minute, second] = parts;
+  if (month < 1 || month > 12 || day < 1 || day > new Date(Date.UTC(year, month, 0)).getUTCDate() ||
+      hour > 23 || minute > 59 || second > 59) return NaN;
+  const normalized = /(Z|[+-]\d{2}:\d{2})$/.test(value) ? value : value + '+09:00';
+  return Date.parse(normalized);
+}
+
+// GAS setValues/setValueは先頭の=を数式として扱う。文字列を明示的にエスケープする。
+function literalCell_(value) {
+  if (typeof value === 'string') {
+    if (value.length > 40000) throw new Error('CELL_TOO_LONG');
+    return /^[\s\uFEFF]*[=+@'\-]/.test(value) ? "'" + value : value;
+  }
+  if (value == null) return '';
+  if (typeof value === 'boolean' || value instanceof Date || (typeof value === 'number' && Number.isFinite(value))) return value;
+  throw new Error('INVALID_CELL_TYPE');
+}
+
+function syncDataset_(p, dataset, columns, manualColumns, jsonColumns, testContext) {
+  const incoming = p[dataset];
+  if (!Array.isArray(incoming) || !incoming.length) return {success: false, error: 'EMPTY_DATASET'};
+  if (incoming.length > 1000) return {success: false, error: 'DATASET_TOO_LARGE'};
+  const ids = new Set();
+  for (const item of incoming) {
+    if (!item || typeof item.id !== 'string' || !item.id.trim() || ids.has(item.id)) {
+      return {success: false, error: 'INVALID_OR_DUPLICATE_ID'};
+    }
+    ids.add(item.id);
+    if (jsonColumns.some(column => item[column] != null && !Array.isArray(item[column]))) {
+      return {success: false, error: 'INVALID_ARRAY_FIELD'};
+    }
+  }
+  const timestamp = syncTimestamp_(p.generated_at);
+  if (!Number.isFinite(timestamp) || timestamp > Date.now() + 300000) {
+    return {success: false, error: 'INVALID_GENERATED_AT'};
+  }
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,
+    JSON.stringify(incoming), Utilities.Charset.UTF_8).map(b => ('0' + ((b + 256) % 256).toString(16)).slice(-2)).join('');
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
-    const sh = assetsSheet_();
+    // 検証時のみ別DBとメモリ内の順序状態を渡せる。HTTP入力からは渡さない。
+    const props = testContext ? testContext.properties : PropertiesService.getScriptProperties();
+    const key = 'SYNC_ORDER_' + dataset;
+    const raw = props.getProperty(key);
+    const previous = raw ? JSON.parse(raw) : null;
+    if (previous) {
+      if (!Number.isFinite(previous.timestamp) || typeof previous.digest !== 'string' ||
+          typeof previous.committed !== 'boolean') return {success: false, error: 'SYNC_STATE_INVALID'};
+      if (timestamp < previous.timestamp) return {success: false, error: 'STALE_SYNC'};
+      if (timestamp === previous.timestamp) {
+        if (digest !== previous.digest) return {success: false, error: 'SYNC_CONFLICT'};
+        if (previous.committed) return {success: true, duplicate: true, upserted: incoming.length};
+      }
+    }
+    const ss = testContext ? testContext.spreadsheet : SpreadsheetApp.openById(prop_('DB_SHEET_ID'));
+    let sh = ss.getSheetByName(dataset);
+    if (!sh && dataset !== 'projects') {
+      sh = ss.insertSheet(dataset);
+      sh.getRange(1, 1, 1, columns.length).setValues([columns]).setFontWeight('bold');
+      sh.setFrozenRows(1);
+    }
+    if (!sh) return {success: false, error: 'SHEET_MISSING'};
     const data = sh.getDataRange().getValues();
-    const header = data[0];
-    const colIdx = {};
-    header.forEach((h, i) => colIdx[h] = i);
-
-    // 既存行を id → {rowIndex, manualValues} でマップ
-    const existing = {};
+    if (JSON.stringify(data[0]) !== JSON.stringify(columns)) {
+      return {success: false, error: 'SHEET_SCHEMA_MISMATCH'};
+    }
+    const idColumn = columns.indexOf('id');
+    const existing = new Map();
     for (let i = 1; i < data.length; i++) {
-      const id = String(data[i][colIdx['id']]);
-      const manual = {};
-      MANUAL_ASSET_COLS.forEach(c => manual[c] = data[i][colIdx[c]]);
-      existing[id] = { row: i + 1, manual: manual };
+      const id = String(data[i][idColumn]);
+      if (!id || existing.has(id)) return {success: false, error: 'EXISTING_ID_INVALID'};
+      existing.set(id, i);
     }
-
-    const syncedAt = new Date();
-    const syncedIds = {};
+    const now = new Date();
+    let newCount = 0;
+    const updates = [];
     const newRows = [];
-
-    assets.forEach(a => {
-      syncedIds[a.id] = true;
-      const rowValues = ASSET_COLS.map(c => {
-        if (MANUAL_ASSET_COLS.indexOf(c) >= 0) {
-          // 手動列: Takashiの編集を同期で踏み潰さない（projects側と同じ規約）
-          const existingVal = existing[a.id] ? existing[a.id].manual[c] : '';
-          if (existingVal !== '' && existingVal != null) return existingVal;
-          return a[c] != null ? a[c] : '';
-        }
-        switch (c) {
-          case 'synced_at': return syncedAt;
-          case 'active':    return true;
-          default:          return a[c] != null ? a[c] : '';
-        }
+    incoming.forEach(item => {
+      const rowIndex = existing.get(item.id);
+      const old = rowIndex === undefined ? null : data[rowIndex];
+      const row = columns.map((column, index) => {
+        // 空に戻した手動値も保持。新規行だけ初期値を使用する。
+        if (manualColumns.indexOf(column) >= 0 && old) return old[index];
+        if (jsonColumns.indexOf(column) >= 0) return JSON.stringify(item[column] || []);
+        if (column === 'synced_at') return now;
+        if (column === 'active') return true;
+        if (column === 'parse_ok') return item.parse_ok !== false;
+        return item[column] == null ? '' : item[column];
       });
-      if (existing[a.id]) {
-        sh.getRange(existing[a.id].row, 1, 1, ASSET_COLS.length).setValues([rowValues]);
-      } else {
-        newRows.push(rowValues);
+      // セル検査は順序予約やデータ書込より前。手動列は既存行には書き戻さない。
+      const safe = row.map((value, index) => old && manualColumns.indexOf(columns[index]) >= 0 ? value : literalCell_(value));
+      if (rowIndex === undefined) { newRows.push(safe); newCount++; }
+      else updates.push({row: rowIndex + 1, values: safe});
+    });
+    // 欠測と廃止を分離。欠けた行・手動値・既存activeはそのまま保持する。
+    // 書込み前に順序を予約。失敗時は同一時刻・同一内容の再送を許可する。
+    const state = {timestamp: timestamp, digest: digest, committed: false};
+    props.setProperty(key, JSON.stringify(state));
+    updates.forEach(update => {
+      let start = 0;
+      while (start < columns.length) {
+        if (manualColumns.indexOf(columns[start]) >= 0) { start++; continue; }
+        let end = start + 1;
+        while (end < columns.length && manualColumns.indexOf(columns[end]) < 0) end++;
+        sh.getRange(update.row, start + 1, 1, end - start).setValues([update.values.slice(start, end)]);
+        start = end;
       }
     });
-
-    if (newRows.length) {
-      sh.getRange(sh.getLastRow() + 1, 1, newRows.length, ASSET_COLS.length).setValues(newRows);
+    if (newRows.length) sh.getRange(data.length + 1, 1, newRows.length, columns.length).setValues(newRows);
+    SpreadsheetApp.flush();
+    state.committed = true;
+    props.setProperty(key, JSON.stringify(state));
+    // 監査ログ失敗をデータ同期の失敗と混同しない。応答に明示する。
+    let logWarning = false;
+    if (dataset === 'projects') {
+      try { ss.getSheetByName('sync_log').appendRow([now, incoming.length, literalCell_(p.device || ''), p.generated_at]); }
+      catch (err) { logWarning = true; }
     }
-
-    // 消された資産は active=FALSE（行は消さない。memo/disposition を失わないため）
-    Object.keys(existing).forEach(id => {
-      if (!syncedIds[id]) {
-        sh.getRange(existing[id].row, colIdx['active'] + 1).setValue(false);
-      }
-    });
-
-    return { success: true, upserted: assets.length, new_count: newRows.length };
+    return {success: true, upserted: incoming.length, new_count: newCount,
+      retained_missing: Array.from(existing.keys()).filter(id => !ids.has(id)).length,
+      log_warning: logWarning};
   } finally {
     lock.releaseLock();
   }
 }
+
 
 // assets シートを取得する。無ければ見出し付きで作る。
 // ⚠️ ここで作りきることが重要。列追加（migrateAddXxxColumn 系）は「コード反映・デプロイの前に
@@ -491,71 +493,6 @@ function assetsSheet_() {
 // 同期: 自動ジョブ監視結果を upsert（手動管理列は保持）— v1.7.0
 // syncAssets_() と同じ作法。jobs シートが無ければ自動で作る（下記 jobsSheet_ 参照）
 // ============================================================
-function syncJobs_(p) {
-  const jobs = p.jobs || [];
-  if (!jobs.length) return { success: false, error: 'ジョブが空です' };
-
-  const lock = LockService.getScriptLock();
-  lock.waitLock(20000);
-  try {
-    const sh = jobsSheet_();
-    const data = sh.getDataRange().getValues();
-    const header = data[0];
-    const colIdx = {};
-    header.forEach((h, i) => colIdx[h] = i);
-
-    const existing = {};
-    for (let i = 1; i < data.length; i++) {
-      const id = String(data[i][colIdx['id']]);
-      const manual = {};
-      MANUAL_JOB_COLS.forEach(c => manual[c] = data[i][colIdx[c]]);
-      existing[id] = { row: i + 1, manual: manual };
-    }
-
-    const syncedAt = new Date();
-    const syncedIds = {};
-    const newRows = [];
-
-    jobs.forEach(j => {
-      syncedIds[j.id] = true;
-      const rowValues = JOB_COLS.map(c => {
-        if (MANUAL_JOB_COLS.indexOf(c) >= 0) {
-          // 手動列: Takashiの編集を同期で踏み潰さない（projects/assets側と同じ規約）
-          const existingVal = existing[j.id] ? existing[j.id].manual[c] : '';
-          if (existingVal !== '' && existingVal != null) return existingVal;
-          return j[c] != null ? j[c] : '';
-        }
-        switch (c) {
-          case 'checks':    return JSON.stringify(j.checks || []);
-          case 'synced_at': return syncedAt;
-          case 'active':    return true;
-          default:          return j[c] != null ? j[c] : '';
-        }
-      });
-      if (existing[j.id]) {
-        sh.getRange(existing[j.id].row, 1, 1, JOB_COLS.length).setValues([rowValues]);
-      } else {
-        newRows.push(rowValues);
-      }
-    });
-
-    if (newRows.length) {
-      sh.getRange(sh.getLastRow() + 1, 1, newRows.length, JOB_COLS.length).setValues(newRows);
-    }
-
-    // 今回の同期に含まれなかった既存ジョブは active=FALSE（監視対象から外れた・行は消さない）
-    Object.keys(existing).forEach(id => {
-      if (!syncedIds[id]) {
-        sh.getRange(existing[id].row, colIdx['active'] + 1).setValue(false);
-      }
-    });
-
-    return { success: true, upserted: jobs.length, new_count: newRows.length };
-  } finally {
-    lock.releaseLock();
-  }
-}
-
 // jobs シートを取得する。無ければ見出し付きで作る（assetsSheet_ と同じパターン）。
 function jobsSheet_() {
   const ss = SpreadsheetApp.openById(prop_('DB_SHEET_ID'));
@@ -573,6 +510,16 @@ function jobsSheet_() {
 // projects は priority / manual_ball / memo / effort、assets は memo / disposition
 // ============================================================
 function updateMeta_(p) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    return updateMetaLocked_(p);
+  } finally {
+    try { SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
+  }
+}
+
+function updateMetaLocked_(p) {
   const id = String(p.id || '');
   if (!id) return { success: false, error: 'idが必要です' };
 
@@ -591,7 +538,7 @@ function updateMeta_(p) {
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][colIdx['id']]) === id) {
       MANUAL_COLS.forEach(c => {
-        if (p[c] !== undefined) sh.getRange(i + 1, colIdx[c] + 1).setValue(p[c]);
+        if (p[c] !== undefined) sh.getRange(i + 1, colIdx[c] + 1).setValue(literalCell_(p[c]));
       });
       return { success: true };
     }
@@ -609,7 +556,7 @@ function updateAssetMeta_(p, id) {
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][colIdx['id']]) === id) {
       MANUAL_ASSET_COLS.forEach(c => {
-        if (p[c] !== undefined) sh.getRange(i + 1, colIdx[c] + 1).setValue(p[c]);
+        if (p[c] !== undefined) sh.getRange(i + 1, colIdx[c] + 1).setValue(literalCell_(p[c]));
       });
       return { success: true };
     }
@@ -627,7 +574,7 @@ function updateJobMeta_(p, id) {
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][colIdx['id']]) === id) {
       MANUAL_JOB_COLS.forEach(c => {
-        if (p[c] !== undefined) sh.getRange(i + 1, colIdx[c] + 1).setValue(p[c]);
+        if (p[c] !== undefined) sh.getRange(i + 1, colIdx[c] + 1).setValue(literalCell_(p[c]));
       });
       return { success: true };
     }
@@ -659,12 +606,12 @@ function reorderPriorities_(p) {
     let updated = 0;
     updates.forEach(u => {
       const row = idToRow[String(u.id)];
-      if (row) { sh.getRange(row, priCol + 1).setValue(u.priority); updated++; }
+      if (row) { sh.getRange(row, priCol + 1).setValue(literalCell_(u.priority)); updated++; }
     });
 
     return { success: true, updated: updated };
   } finally {
-    lock.releaseLock();
+    try { SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
   }
 }
 
