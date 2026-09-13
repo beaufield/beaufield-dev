@@ -12,7 +12,7 @@
  *   SYNC_TOKEN    … 同期スクリプト用の共有シークレット（ランダム長文字列）
  */
 
-const VERSION = '1.11.2';
+const VERSION = '1.11.3';
 const APP_NAME = 'project-dashboard';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 
@@ -419,6 +419,17 @@ function syncDataset_(p, dataset, columns, manualColumns, jsonColumns, testConte
       const id = String(data[i][idColumn]);
       if (!id || existing.has(id)) return {success: false, error: 'EXISTING_ID_INVALID'};
       existing.set(id, i);
+    }
+    // 初回適用時にも既存データより古い送信を通さない。
+    // 旧版には順序状態がないため、最後のサーバー受信時刻を保守的な下限にする。
+    if (!previous) {
+      const syncColumn = columns.indexOf('synced_at');
+      const latestReceived = data.slice(1).reduce((latest, row) => {
+        const value = row[syncColumn];
+        const time = value instanceof Date ? value.getTime() : Date.parse(value);
+        return Number.isFinite(time) ? Math.max(latest, time) : latest;
+      }, 0);
+      if (timestamp < latestReceived) return {success: false, error: 'STALE_SYNC_INITIAL'};
     }
     const now = new Date();
     let newCount = 0;
