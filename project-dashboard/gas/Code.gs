@@ -12,7 +12,7 @@
  *   SYNC_TOKEN    … 同期スクリプト用の共有シークレット（ランダム長文字列）
  */
 
-const VERSION = '1.11.3';
+const VERSION = '1.11.4';
 const APP_NAME = 'project-dashboard';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 
@@ -356,7 +356,9 @@ function syncTimestamp_(value) {
 // GAS setValues/setValueは先頭の=を数式として扱う。文字列を明示的にエスケープする。
 function literalCell_(value) {
   if (typeof value === 'string') {
-    if (value.length > 40000) throw new Error('CELL_TOO_LONG');
+    // エスケープ用の先頭文字を含め、保存する文字列を5万文字以内にする。
+    const storedLength = value.length + (/^[\s\uFEFF]*[=+@'\-]/.test(value) ? 1 : 0);
+    if (storedLength > 50000) throw new Error('CELL_TOO_LONG');
     return /^[\s\uFEFF]*[=+@'\-]/.test(value) ? "'" + value : value;
   }
   if (value == null) return '';
