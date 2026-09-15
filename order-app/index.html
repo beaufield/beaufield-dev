@@ -828,8 +828,9 @@
           <div class="master-badge-title">商品マスター未読込</div>
           <div class="master-badge-sub">読込ボタンを押してください</div>
         </div>
-        <button class="master-load-btn" onclick="document.getElementById('csv-file').click()">📂 読込</button>
+        <button id="master-reload-btn" class="master-load-btn" onclick="loadProductMasterFromGAS()">再取得</button>
       </div>
+      <button class="master-load-btn" style="margin-top:8px" onclick="document.getElementById('csv-file').click()">📂 CSV読込</button>
       <input type="file" id="csv-file" accept=".csv" style="display:none">
       <div id="csv-filename" style="font-size:12px;color:var(--text-light);padding-left:2px;"></div>
     </div>
@@ -839,6 +840,8 @@
       <div class="form-group">
         <label>発注先</label>
         <select id="sel-supplier"><option value="">-- 選択してください --</option></select>
+        <div id="supplier-read-status" role="status" style="font-size:13px;margin-top:8px"></div>
+        <button id="supplier-reload-btn" class="master-load-btn" style="margin-top:8px" onclick="loadMasters()">発注先を再取得</button>
       </div>
       <div class="form-group">
         <label>発注日</label>
@@ -1373,7 +1376,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.72.1';
+const APP_VERSION    = 'v1.72.4';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1399,6 +1402,7 @@ let cartItems     = [];
 let allHistoryOrders  = []; // 履歴全件（フィルタ前）
 let historyDetailCache = {}; // 履歴明細キャッシュ { orderNo: items[] }
 let productHistory    = {}; // 直近20件発注から構築した商品別最終注文情報 { code/jan: { date, qty, unit } }
+let productHistoryLoaded = false;
 
 let currentOrder = {
   supplierCode: '', supplierName: '', fax: '',
@@ -1441,6 +1445,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   currentUser = { user_id: session.user_id, name: session.name, is_admin: session.is_admin === true };
   bindOrderActions();
   _gasMarkAbandonedDiagnostics();
+  _startupReadBegin();
   updateOrderOutboxStatus();
   const nameEl = document.getElementById('settings-user-name');
   if (nameEl) nameEl.textContent = 'ログイン中: ' + session.name;
@@ -1466,7 +1471,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateCartNavBadge();
   renderCartResumeBanner();
 
+  const cacheStartedAt = Date.now();
   loadProductMasterFromCache();
+  _startupReadPhase('cacheReadMs', Date.now() - cacheStartedAt);
+  _startupRead.cache = productMaster.length ? (_masterStorageGet(LS_MASTER_DATE) === getTodayStr() ? 'sameDay' : 'previousDay') : 'none';
   updateMasterBadge();
   updateInventoryBadge();
   updateMemoDatalist();
@@ -1474,7 +1482,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 直近注文履歴をlocalStorageから即座に復元
   try {
     const ph = localStorage.getItem(LS_PROD_HIST);
-    if (ph) productHistory = JSON.parse(ph);
+    if (ph) {
+      const parsed = JSON.parse(ph);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        productHistory = parsed;
+        productHistoryLoaded = true;
+      }
+    }
   } catch(e) {}
 
   document.getElementById('csv-file').addEventListener('change', onCSVSelected);
@@ -1487,15 +1501,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
+  _startupReadPhase('shellMs', Date.now() - _startupRead.startedAt);
   await loadMasters();
 
-  // 商品マスター・発注履歴のバックグラウンド更新はここから開始する（await しない）。
-  // loadMasters() の完了後にずらすことで、起動直後に複数本が同時に飛ぶのを避ける
-  // （GAS Webアプリは同時アクセスで結果配信の失敗率が悪化するため。詳細: 通信エラー対策_設計プラン.md）
-  if (localStorage.getItem(LS_MASTER_DATE) !== getTodayStr()) {
+  // 起動に必要な商品だけを取得。履歴は履歴画面を開いた時に取得する。
+  // 通信枠と期限は変えず、商品取得と背景の履歴取得の競合を減らす。
+  if (!productMaster.length || _masterStorageGet(LS_MASTER_DATE) !== getTodayStr()) {
+    _startupRead.productRequest = true;
     loadProductMasterFromGAS();
+  } else {
+    _startupReadFinish();
   }
-  loadHistory(false);
   // 起動処理と競合しないよう少し遅らせ、同じ利用者の未確定発注を1件ずつ確認する。
   setTimeout(() => recoverPendingOrders(false), 1500);
 });
@@ -1678,6 +1694,42 @@ function _gasReadDiagnostics() {
   } catch(e) { return []; }
 }
 
+// 起動の診断は業務データを含めず、通信成功と画面の利用可能を区別する。
+let _startupRead = null;
+function _masterStorageGet(key) {
+  try { return localStorage.getItem(key); } catch(e) { return null; }
+}
+function _startupReadBegin() {
+  _startupRead = { runId: _gasGenerateId(), startedAt: Date.now(), cache: 'none', productRequest: false,
+    backgrounded: document.visibilityState !== 'visible', phases: {}, ended: false };
+}
+function _startupReadPhase(key, ms) {
+  if (_startupRead && ['cacheReadMs','shellMs','cacheWriteMs','renderMs'].includes(key)) {
+    _startupRead.phases[key] = Math.max(0, ms);
+  }
+}
+function _startupReadFinish() {
+  if (!_startupRead || _startupRead.ended) return;
+  if (_supplierRead.phase === 'loading' || _supplierRead.phase === 'idle' || _productRead.phase === 'loading') return;
+  _startupRead.ended = true;
+  try {
+    const endedAt = Date.now();
+    const usable = masters.suppliers.length > 0 && productMaster.length > 0;
+    const rows = _gasReadDiagnostics();
+    rows.push({ schemaVersion: 2, action: 'startup', kind: 'ui', version: APP_VERSION,
+      opId: _startupRead.runId, runId: _startupRead.runId, startedAt: _startupRead.startedAt,
+      endedAt, elapsedMs: endedAt - _startupRead.startedAt, state: 'END',
+      outcome: !usable ? 'unavailable' : (_productRead.phase === 'stale' || _supplierRead.phase === 'stale' ? 'stale_available' : 'usable'), cache: _startupRead.cache,
+      suppliers: _supplierRead.phase, products: _productRead.phase,
+      productRequest: _startupRead.productRequest, backgrounded: _startupRead.backgrounded,
+      phases: _startupRead.phases });
+    _gasWriteDiagnostics(rows);
+  } catch(e) { /* 診断の失敗は利用可否へ影響させない。 */ }
+}
+document.addEventListener('visibilitychange', () => {
+  if (_startupRead && !_startupRead.ended && document.visibilityState !== 'visible') _startupRead.backgrounded = true;
+});
+
 function _gasWriteDiagnostics(rows) {
   try { localStorage.setItem(LS_GAS_DIAG, JSON.stringify(rows.slice(-GAS_DIAG_LIMIT))); } catch(e) {}
 }
@@ -1700,6 +1752,7 @@ function _gasDiagStart(op) {
   const rows = _gasReadDiagnostics();
   rows.push({
     opId: op.id, action: op.action, kind: op.kind, version: APP_VERSION,
+    runId: _startupRead ? _startupRead.runId : null,
     startedAt: op.startedAt, deadlineAt: op.deadlineAt, state: 'START', attempts: 0
   });
   _gasWriteDiagnostics(rows);
@@ -1808,6 +1861,7 @@ function _gasNotifyRetry(attemptNumber) {
 // 「ネットワークを確認してください」という誤誘導を避ける。
 // TypeError（fetch自体が失敗＝オフライン等の真の通信断）のときだけ従来の文言にする
 function _gasErrorMessage(e) {
+  if (e && e.name === 'ResourceReadError') return e.message;
   if (e && e.name === 'GasOutcomeUnknownError') return '処理結果を確認できませんでした。同じ操作をすぐ繰り返さず、画面の状態を確認してください。';
   if (e && e.name === 'GasDeadlineError') return '処理時間の上限に達しました。画面を戻しました。';
   if (e && e.name === 'GasQueueTimeoutError') return '通信が混み合っているため開始できませんでした。少し待ってからお試しください。';
@@ -1816,7 +1870,7 @@ function _gasErrorMessage(e) {
   // 以後すべての通信が即座に失敗する（fail-closed）状態なので、再試行ではなく再読み込みへ誘導する
   if (e && e.name === 'GasSemaphoreError') return 'アプリの内部状態に問題が発生しました。ページを再読み込みしてください。';
   if (e && e.name === 'TypeError') return '通信エラー。ネットワークを確認してください。';
-  return 'Google側が一時的に混み合っています。もう一度お試しください。';
+  return '通信先から正常な応答を受け取れませんでした。もう一度お試しください。';
 }
 
 async function _gasFetchOnce(url, init, operation) {
@@ -1838,10 +1892,14 @@ async function _gasFetchOnce(url, init, operation) {
       dispatchedAt = Date.now();
       const res  = await fetch(url, { ...init, signal: attemptAc.signal });
       attempt.httpStatus = res.status;
+      const bodyStartedAt = Date.now();
       const text = await res.text(); // res.json()ではなくtext()。404のHTMLをここで検出するため
+      attempt.bodyReadMs = Date.now() - bodyStartedAt;
       if (!res.ok) throw new GasTransientError('HTTP ' + res.status);
       try {
+        const decodeStartedAt = Date.now();
         const data = JSON.parse(text);
+        attempt.decodeMs = Date.now() - decodeStartedAt;
         attempt.responseCode = data && data.success ? 'SUCCESS' :
           (data && ['USE_POST', 'AUTH_UNAVAILABLE', 'SESSION_INVALID'].includes(data.error) ? data.error : 'RESPONSE_ERROR');
         return data;
@@ -2020,12 +2078,71 @@ async function fetchTemplateAsArrayBuffer(makerKey) {
 /* ===================================================
    マスターデータ
 =================================================== */
-async function loadMasters() {
-  showLoading('マスターデータを読み込み中...');
-  try {
-    const res = await gasGet({ action: 'getMasters' });
-    if (res.success) {
-      masters.suppliers = res.suppliers || [];
+// 読取だけの状態管理。再送・期限は既存のgasGetに任せ、保存処理には使用しない。
+const _supplierRead = { phase: 'idle', generation: 0, promise: null, message: '' };
+const _productRead = { phase: 'idle', generation: 0, promise: null, message: '', updatedDate: '', gasDate: '', cacheWarning: false };
+class ResourceReadError extends Error {
+  constructor(message) { super(message); this.name = 'ResourceReadError'; }
+}
+function _validMasterRows(rows) {
+  return Array.isArray(rows) && rows.every(p => p && typeof p === 'object' &&
+    typeof p.name === 'string' && (typeof p.code === 'string' || typeof p.code === 'number'));
+}
+function requestResource(state, action, field, hasData, apply, render) {
+  if (state.promise) return state.promise;
+  const generation = ++state.generation;
+  const session = getAuthSession();
+  const token = session && session.token;
+  const isCurrent = () => {
+    const current = getAuthSession();
+    return generation === state.generation && token === (current && current.token);
+  };
+  state.phase = 'loading';
+  state.message = '';
+  render();
+  state.promise = Promise.resolve().then(async () => {
+    try {
+      const res = await gasGet({ action });
+      if (!isCurrent()) return { status: 'discarded' };
+      if (!res || !res.success) throw new ResourceReadError('取得できませんでした。再取得してください。');
+      if (!_validMasterRows(res[field])) throw new ResourceReadError('データ形式を確認できません。再取得してください。');
+      state.phase = res[field].length ? 'ready' : 'empty';
+      apply(res);
+      return { status: state.phase };
+    } catch(e) {
+      if (!isCurrent()) return { status: 'discarded' };
+      state.phase = hasData() ? 'stale' : 'error';
+      state.message = _gasErrorMessage(e);
+      return { status: state.phase };
+    } finally {
+      if (generation === state.generation) {
+        state.promise = null;
+        if (!isCurrent()) {
+          state.phase = 'error';
+          state.message = 'ログイン状態が変わりました。ポータルから開き直してください。';
+        }
+        render();
+      }
+    }
+  });
+  return state.promise;
+}
+function renderSupplierReadStatus() {
+  const el = document.getElementById('supplier-read-status');
+  const button = document.getElementById('supplier-reload-btn');
+  if (button) button.disabled = _supplierRead.phase === 'loading';
+  if (!el) return;
+  const phase = _supplierRead.phase;
+  el.textContent = phase === 'loading' ? '発注先を読み込み中…' :
+    phase === 'empty' ? '登録された発注先がありません。' :
+    phase === 'stale' ? '発注先の更新に失敗しました。前回の内容を表示中です。再取得してください。' :
+    phase === 'error' ? '発注先を読み込めません。' + _supplierRead.message : '';
+}
+function loadMasters(forceRefresh = false) {
+  // 保存直後の再取得は、保存前に開始した読取へ合流させない。
+  if (forceRefresh && _supplierRead.promise) return _supplierRead.promise.then(() => loadMasters());
+  return requestResource(_supplierRead, 'getMasters', 'suppliers', () => masters.suppliers.length > 0, res => {
+      masters.suppliers = res.suppliers;
       renderSupplierDropdown();
       renderSettingsPage();
       updateHistoryFilterOptions(); // マスター読込後にフィルター選択肢を更新
@@ -2036,18 +2153,12 @@ async function loadMasters() {
         renderInventorySupplierFilter();
         renderInventoryList();
       }
-    } else {
-      showToast('マスター取得エラー: ' + (res.error || '不明'), 'error');
-    }
-  } catch(e) {
-    showToast(_gasErrorMessage(e), 'error');
-  } finally {
-    hideLoading();
-  }
+  }, renderSupplierReadStatus);
 }
 
 function renderSupplierDropdown() {
   const sel = document.getElementById('sel-supplier');
+  const selected = sel.value;
   sel.innerHTML = '<option value="">-- 選択してください --</option>';
   // 発注方法が「Web」の仕入先も選択肢に出す（Phase H）。出力ボタンは無く、
   // 「📝 発注記録として保存」のみ表示され、送信はしない（applyOutputButtons参照）
@@ -2061,6 +2172,8 @@ function renderSupplierDropdown() {
     opt.dataset.outputMethods = JSON.stringify(s.outputMethods || []);
     sel.appendChild(opt);
   });
+  if (masters.suppliers.some(s => String(s.code) === selected)) sel.value = selected;
+  else if (selected) showToast('選択していた発注先が見つかりません。選び直してください。', 'error');
 }
 
 /* ===================================================
@@ -2150,11 +2263,18 @@ function parseProductCSV(text, fileName) {
       }
     });
 
-    localStorage.setItem(LS_MASTER,      JSON.stringify(products));
-    localStorage.setItem(LS_MASTER_DATE, getTodayStr());
+    // CSVを明示的に選んだ後に古いサーバー応答が到着しても上書きしない。
+    ++_productRead.generation;
+    _productRead.promise = null;
+    _productRead.phase = products.length ? 'ready' : 'empty';
+    _productRead.message = '';
+    _productRead.updatedDate = getTodayStr();
+    _productRead.gasDate = '';
+    productMasterLoading = false;
     productMaster = products;
     updateMasterBadge();
     updateInventoryBadge();
+    persistProductMaster();
     showToast(`✅ ${products.length}件の商品を読み込みました\n設定画面で仕入先CDの確認をお勧めします`, 'success');
   } catch(e) {
     showToast('CSV読み込みエラー: ' + e.message, 'error');
@@ -2183,46 +2303,69 @@ function splitCSVLine(line) {
 function loadProductMasterFromCache() {
   try {
     const cached = localStorage.getItem(LS_MASTER);
-    if (cached) { productMaster = JSON.parse(cached); return true; }
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (_validMasterRows(parsed) && parsed.length) {
+        productMaster = parsed;
+        _productRead.phase = _masterStorageGet(LS_MASTER_DATE) === getTodayStr() ? 'ready' : 'stale';
+        return true;
+      }
+    }
   } catch(e) {}
   return false;
 }
 
-async function loadProductMasterFromGAS() {
-  productMasterLoading = true;
-  updateMasterBadge();
+function persistProductMaster() {
+  const startedAt = Date.now();
   try {
-    const res = await gasGet({ action: 'getProductMaster' });
-    if (res.success && res.products && res.products.length > 0) {
-      productMaster = res.products;
-      localStorage.setItem(LS_MASTER,          JSON.stringify(res.products));
-      localStorage.setItem(LS_MASTER_DATE,     getTodayStr());
-      if (res.updatedAt) localStorage.setItem(LS_MASTER_GAS_DATE, res.updatedAt);
-    }
+    // 日付を最後に確定する。途中失敗したキャッシュを翌起動で最新扱いしない。
+    localStorage.removeItem(LS_MASTER_DATE);
+    localStorage.setItem(LS_MASTER, JSON.stringify(productMaster));
+    localStorage.setItem(LS_MASTER_GAS_DATE, _productRead.gasDate);
+    localStorage.setItem(LS_MASTER_DATE, _productRead.updatedDate);
+    _productRead.cacheWarning = false;
   } catch(e) {
-    console.error('[loadProductMasterFromGAS] 失敗:', e);
+    _productRead.cacheWarning = true;
   } finally {
-    productMasterLoading = false;
+    _startupReadPhase('cacheWriteMs', Date.now() - startedAt);
     updateMasterBadge();
+  }
+}
+function renderProductReadState() {
+  productMasterLoading = _productRead.phase === 'loading';
+  updateMasterBadge();
+}
+function loadProductMasterFromGAS() {
+  const promise = requestResource(_productRead, 'getProductMaster', 'products', () => productMaster.length > 0, res => {
+    productMaster = res.products;
+    _productRead.updatedDate = getTodayStr();
+    _productRead.gasDate = res.updatedAt || '';
+    const renderStartedAt = Date.now();
+    renderProductReadState();
     updateInventoryBadge();
     if (currentScreen === 'inventory') renderInventoryList();
-  }
+    _startupReadPhase('renderMs', Date.now() - renderStartedAt);
+    persistProductMaster();
+  }, renderProductReadState);
+  promise.then(() => _startupReadFinish());
+  return promise;
 }
 function updateMasterBadge() {
   const badge      = document.getElementById('master-badge');
-  const pmDate     = localStorage.getItem(LS_MASTER_DATE);
-  const gasDate    = localStorage.getItem(LS_MASTER_GAS_DATE);
+  if (!badge) return;
+  const pmDate     = _productRead.updatedDate || _masterStorageGet(LS_MASTER_DATE);
+  const gasDate    = _productRead.updatedDate ? _productRead.gasDate : _masterStorageGet(LS_MASTER_GAS_DATE);
   const today      = getTodayStr();
   const count      = productMaster.length;
   const subSuffix  = gasDate ? `（GAS更新: ${gasDate}）` : '';
   if (productMasterLoading) {
     badge.className = 'master-badge orange';
     badge.querySelector('.master-badge-title').textContent = '⏳ 商品マスター読み込み中...';
-    badge.querySelector('.master-badge-sub').textContent   = 'しばらくお待ちください';
+    badge.querySelector('.master-badge-sub').textContent   = count ? `${count.toLocaleString()}件の前回データを保持しています` : '取得後にスキャン・検索が使えます';
   } else if (count === 0) {
     badge.className = 'master-badge red';
     badge.querySelector('.master-badge-title').textContent = '❌ 商品マスター未読込';
-    badge.querySelector('.master-badge-sub').textContent   = '読込ボタンを押してください';
+    badge.querySelector('.master-badge-sub').textContent   = '再取得、またはCSV読込を押してください';
   } else if (pmDate === today) {
     badge.className = 'master-badge green';
     badge.querySelector('.master-badge-title').textContent = `✅ ${count.toLocaleString()}件（本日更新済）`;
@@ -2236,6 +2379,17 @@ function updateMasterBadge() {
     badge.querySelector('.master-badge-title').textContent = `⚠️ ${count.toLocaleString()}件（更新が必要）`;
     badge.querySelector('.master-badge-sub').textContent   = `前回更新: ${pmDate}${subSuffix}`;
   }
+  if (_productRead.phase === 'error' || _productRead.phase === 'stale' && _productRead.message) {
+    badge.className = 'master-badge ' + (count ? 'orange' : 'red');
+    badge.querySelector('.master-badge-title').textContent = count ? '⚠️ 更新失敗・前回データを保持' : '❌ 商品を読み込めません';
+    badge.querySelector('.master-badge-sub').textContent = _productRead.message + (count ? `（前回: ${pmDate || '不明'}）` : '');
+  } else if (_productRead.phase === 'empty') {
+    badge.querySelector('.master-badge-title').textContent = '登録商品が0件でした';
+    badge.querySelector('.master-badge-sub').textContent = '登録内容を確認するか、CSVを読み込んでください';
+  }
+  if (_productRead.cacheWarning) badge.querySelector('.master-badge-sub').textContent += ' ／ この画面では使えますが、端末への保存に失敗しました。次回は再取得が必要です。';
+  const button = document.getElementById('master-reload-btn');
+  if (button) { button.disabled = productMasterLoading; button.textContent = productMasterLoading ? '取得中' : '再取得'; }
 }
 
 function updateInventoryBadge() {
@@ -2312,14 +2466,14 @@ async function startOrder() {
     )) return;
   }
 
-  const pmDate = localStorage.getItem(LS_MASTER_DATE);
+  const pmDate = _productRead.updatedDate || _masterStorageGet(LS_MASTER_DATE);
   const today  = getTodayStr();
-  if (productMasterLoading) {
+  if (productMasterLoading && !productMaster.length) {
     showToast('商品マスター読み込み中です。しばらくお待ちください', 'error'); return;
   } else if (productMaster.length === 0) {
     if (!confirm('商品マスターが未読込です。\nスキャン・検索機能は使えませんが、このまま続けますか？')) return;
-  } else if (pmDate && pmDate !== today) {
-    if (!confirm(`商品マスターの更新が必要です（前回: ${pmDate}）。\nこのまま続けますか？`)) return;
+  } else if (productMasterLoading || _productRead.phase === 'stale' || pmDate && pmDate !== today) {
+    if (!confirm(`商品マスターの最新情報を確認できていません（前回: ${pmDate || '不明'}）。\n前回のデータで続けますか？`)) return;
   }
 
   const opt = supSel.options[supSel.selectedIndex];
@@ -2679,7 +2833,11 @@ function openQtyModal(product, isHandwritten) {
       lastOrderEl.classList.add('show');
       hasLastOrder = true;
     } else {
-      lastOrderEl.classList.remove('show');
+      if (!productHistoryLoaded) {
+        lastOrderEl.textContent = '🕐 履歴未取得（履歴画面で取得）';
+        lastOrderEl.classList.add('show');
+        hasLastOrder = true;
+      } else lastOrderEl.classList.remove('show');
     }
   } else {
     lastOrderEl.classList.remove('show');
@@ -4331,19 +4489,39 @@ function formatHistoryDate(str) {
 // 呼び出しごとに通し番号を振り、最新の呼び出し以外は結果を捨てる
 let _historyLoadSeq = 0;
 let _historyRefreshing = false; // 更新ボタンの処理中フラグ（保存完了時の自動再取得と重複させない）
-async function loadHistory(forceRefresh, filterSupplierCode) {
+let _historyReadPromise = null;
+let _historyReadKey = '';
+let _historyDisplayedKey = null;
+function loadHistory(forceRefresh, filterSupplierCode) {
+  const key = filterSupplierCode || '';
+  // 保存直後・更新ボタンのforceRefreshは必ず新しい読取にする。
+  if (!forceRefresh && _historyReadPromise && _historyReadKey === key) return _historyReadPromise;
+  _historyReadKey = key;
+  const promise = _loadHistoryRead(forceRefresh, filterSupplierCode);
+  _historyReadPromise = promise;
+  const release = () => { if (_historyReadPromise === promise) _historyReadPromise = null; };
+  promise.then(release, release);
+  return promise;
+}
+async function _loadHistoryRead(forceRefresh, filterSupplierCode) {
   const container = document.getElementById('history-list');
   const seq = ++_historyLoadSeq;
+  const session = getAuthSession();
+  const token = session && session.token;
+  const isCurrent = () => { const current = getAuthSession(); return seq === _historyLoadSeq && token === (current && current.token); };
 
   // フィルターなし + forceRefreshなし → セッションキャッシュ優先
   if (!filterSupplierCode && !forceRefresh) {
-    const cached = sessionStorage.getItem(SS_HIST_CACHE);
+    let cached = null;
+    try { cached = sessionStorage.getItem(SS_HIST_CACHE); } catch(e) {}
     if (cached) {
       try {
         const parsed = JSON.parse(cached);
-        allHistoryOrders = parsed.orders || [];
+        if (!Array.isArray(parsed.orders)) throw new Error('invalid history cache');
+        allHistoryOrders = parsed.orders;
         productHistory   = parsed.productHistory || {};
-        localStorage.setItem(LS_PROD_HIST, JSON.stringify(productHistory));
+        productHistoryLoaded = true;
+        _historyDisplayedKey = '';
         updateHistoryFilterOptions();
         renderHistoryList(container, allHistoryOrders);
         return;
@@ -4356,29 +4534,38 @@ async function loadHistory(forceRefresh, filterSupplierCode) {
     const params = { action: 'getOrders' };
     if (filterSupplierCode) params.supplierCode = filterSupplierCode; // メーカー絞り込み
     const res = await gasGet(params);
-    if (seq !== _historyLoadSeq) return; // より新しい読み込みが始まっているので古い結果は捨てる
-    if (res.success) {
-      allHistoryOrders = res.orders || [];
+    if (!isCurrent()) return; // 古い要求・別ログインの結果を反映しない
+    if (res && res.success && Array.isArray(res.orders)) {
+      allHistoryOrders = res.orders;
       productHistory   = res.productHistory || {};
-      // フィルターなしの結果のみキャッシュ保存（フィルター結果はキャッシュしない）
-      if (!filterSupplierCode) {
-        sessionStorage.setItem(SS_HIST_CACHE, JSON.stringify({
-          orders: allHistoryOrders,
-          productHistory
-        }));
-      }
-      localStorage.setItem(LS_PROD_HIST, JSON.stringify(productHistory));
+      productHistoryLoaded = !filterSupplierCode;
+      _historyDisplayedKey = filterSupplierCode || '';
       updateHistoryFilterOptions();
       renderHistoryList(container, allHistoryOrders);
+      // フィルターなしの結果のみキャッシュ保存（フィルター結果はキャッシュしない）
+      try {
+        if (!filterSupplierCode) {
+          sessionStorage.setItem(SS_HIST_CACHE, JSON.stringify({ orders: allHistoryOrders, productHistory }));
+        }
+        localStorage.setItem(LS_PROD_HIST, JSON.stringify(productHistory));
+      } catch(e) {
+        container.insertAdjacentHTML('afterbegin', '<div role="status">履歴は表示できますが、端末への保存に失敗しました。</div>');
+      }
     } else {
-      allHistoryOrders = [];
-      productHistory   = {};
-      container.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><div>履歴がありません</div></div>`;
+      throw new ResourceReadError('履歴を取得できませんでした。再取得してください。');
     }
   } catch(e) {
-    if (seq !== _historyLoadSeq) return;
-    container.innerHTML = `<div class="empty-state"><div>${escHtml(_gasErrorMessage(e))}</div></div>`;
+    if (!isCurrent()) return;
+    const retained = _historyDisplayedKey === (filterSupplierCode || '') && allHistoryOrders.length > 0;
+    if (retained) renderHistoryList(container, allHistoryOrders);
+    else container.innerHTML = '';
+    container.insertAdjacentHTML('afterbegin', `<div class="empty-state" role="status"><div>${escHtml(_gasErrorMessage(e))}</div>${retained ? '<div>前回取得した履歴を表示しています。</div>' : ''}<button class="master-load-btn" onclick="retryHistoryRead()">履歴を再取得</button></div>`);
   }
+}
+// 読取失敗からの復旧ボタンは保存・未確定発注の再送を行わない。
+function retryHistoryRead() {
+  const sel = document.getElementById('hist-filter-supplier');
+  return loadHistory(true, sel && sel.value || undefined);
 }
 
 // 🔄 更新ボタン
@@ -4419,18 +4606,8 @@ function applyHistoryFilter() {
     // メーカー指定時：GASからそのメーカーの直近20件を取得
     loadHistory(true, supplierCode);
   } else {
-    // 全件表示：セッションキャッシュ優先
-    const cached = sessionStorage.getItem(SS_HIST_CACHE);
-    if (cached) {
-      try {
-        const parsed = JSON.parse(cached);
-        allHistoryOrders = parsed.orders || [];
-        productHistory   = parsed.productHistory || {};
-        renderHistoryList(document.getElementById('history-list'), allHistoryOrders);
-        return;
-      } catch(e) {}
-    }
-    loadHistory(true);
+    // 世代チェックを通し、前のフィルターの遅着応答で上書きされないようにする。
+    loadHistory(false);
   }
 }
 
@@ -5023,7 +5200,7 @@ async function saveSupplierModal() {
                                 minOrderAmount, minOrderExcludes, outputMethods, mode });
     if (res.success) {
       closeModal('modal-add-supplier');
-      await loadMasters();
+      await loadMasters(true);
       showToast(mode === 'add' ? '発注先を追加しました' : '発注先を更新しました', 'success');
     } else { showToast('エラー: ' + (res.error || '不明'), 'error'); }
   } catch(e) { showToast(_gasErrorMessage(e), 'error'); } finally { hideLoading(); }
@@ -5033,7 +5210,7 @@ async function deleteSupplier(code, name) {
   showLoading('削除中...');
   try {
     const res = await gasPost({ action: 'saveSupplier', code, name, fax: '', mode: 'delete' });
-    if (res.success) { await loadMasters(); showToast('削除しました', 'success'); }
+    if (res.success) { await loadMasters(true); showToast('削除しました', 'success'); }
     else { showToast('エラー: ' + (res.error || '不明'), 'error'); }
   } catch(e) { showToast(_gasErrorMessage(e), 'error'); } finally { hideLoading(); }
 }
@@ -5071,9 +5248,14 @@ function checkSupplierCodes() {
 }
 
 function clearMasterCache() {
-  if (!confirm('商品マスターのキャッシュを削除しますか？\n次回CSVの再読込が必要になります。')) return;
-  localStorage.removeItem(LS_MASTER); localStorage.removeItem(LS_MASTER_DATE); localStorage.removeItem(LS_MASTER_GAS_DATE);
-  productMaster = []; updateMasterBadge();
+  if (!confirm('商品マスターのキャッシュを削除しますか？\n次回はサーバーから再取得、またはCSV読込が必要です。')) return;
+  try {
+    localStorage.removeItem(LS_MASTER_DATE); localStorage.removeItem(LS_MASTER); localStorage.removeItem(LS_MASTER_GAS_DATE);
+  } catch(e) { showToast('端末のキャッシュを削除できませんでした。', 'error'); return; }
+  ++_productRead.generation;
+  Object.assign(_productRead, { promise: null, phase: 'idle', message: '', updatedDate: '', gasDate: '', cacheWarning: false });
+  productMasterLoading = false;
+  productMaster = []; updateMasterBadge(); updateInventoryBadge();
   document.getElementById('csv-filename').textContent = '';
   showToast('キャッシュを削除しました', 'success');
 }
@@ -5251,7 +5433,7 @@ function renderInventoryList() {
       const hist        = productHistory[p.code] || productHistory[p.jan] || null;
       const lastOrder   = hist && hist.date
         ? `<div style="font-size:11px;color:var(--primary);margin-top:1px">🛒 ${fmtDate(hist.date)} × ${hist.qty}${hist.unit||''}</div>`
-        : '';
+        : (!productHistoryLoaded ? '<div style="font-size:11px;color:var(--text-light)">履歴未取得（履歴画面で取得）</div>' : '');
       const cartQty = cartItems.reduce((sum, i) => {
         if (i.isHandwritten) return sum;
         if ((i.janCode && p.jan  && i.janCode === p.jan) ||
@@ -5597,7 +5779,7 @@ function renderPropItem(p, code, delayedByCode, orderedByCode) {
   const hist = productHistory[p.code] || null;
   const lastOrder = hist && hist.date
     ? `<span style="color:var(--danger);font-weight:bold">🛒 直近発注 ${fmtOrderDate(hist.date)}×${hist.qty}${hist.unit||''}</span>`
-    : '';
+    : (!productHistoryLoaded ? '<span>履歴未取得（履歴画面で取得）</span>' : '');
   const delayed = (delayedByCode || {})[p.code];
   const delayWarn = delayed
     ? `<div class="prop-pending-warn">⚠️ ${delayed.orderDate.slice(5)}に${delayed.qty}個発注済み（仕入計上の見込み日を${delayed.overdueDays}日超過・未入荷の可能性）</div>`
