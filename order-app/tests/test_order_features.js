@@ -535,6 +535,235 @@ function testHistoryItemsToCart() {
   assert.strictEqual(api.historyItemsToCart([], '99').length, 0);
 }
 
+
+/* ===================================================
+   機能7（v1.72.0）: ケース単位のまとめ発注グループ
+   （1ケースの入数が商品ごとに違うグループを、合計ケース数で組めること）
+=================================================== */
+function makeMgContext() {
+  const context = vm.createContext({
+    console, Math, Object, String, Number, Array,
+    propMgSkipped: new Set(), propMgPins: {}, propMgQty: {}, propMgLots: {},
+    proposalsData: { proposals: [], groupStatus: [], orderGroups: [] },
+    masters: { suppliers: [] },
+    // 抽出範囲の外にある定数（実装と同じ値。analyze_demand.py の DAYS_PER_MONTH と揃っている）
+    MG_DAYS_PER_MONTH: 30.4,
+    formatYen: n => '\u00a5' + Math.round(n || 0).toLocaleString('ja-JP'),
+    showToast: () => {}
+  });
+  const caseBlock = section(html,
+    '/* === MG CASE UNIT (test:mg-case) ===',
+    '/* === /MG CASE UNIT === */');
+  const minBlock = section(html,
+    '/* === MIN ORDER AMOUNT (test:min-order) ===',
+    '/* === /MIN ORDER AMOUNT === */');
+  const skipBlock = section(html,
+    '/* === MG SKIP GUARDS (test:mg-skip) === */',
+    '/* === /MG SKIP GUARDS === */');
+  vm.runInContext(caseBlock + '\n' + minBlock + '\n' + skipBlock + '\n globalThis.testApi = {\n' +
+    '    mgNormName, mgUnitFor, mgGroupBlocks, mgScale, mgLabel, mgIsCaseUnit,\n' +
+    '    mgGroupIdForProduct, mgAllocate, minOrderCountsFor, minOrderNote\n' +
+    '  };', context);
+  return context;
+}
+
+// 実運用の設定と同じ形（GASの「発注グループ設定」シートが返す形）
+const CFG_CREAMS = {
+  groupId: 'CREAMS', groupName: 'クリームズクリーム(300g/1kg)', supplierCode: '47',
+  groupUnit: 6, itemUnit: 0, nameIncludes: ['クリームズクリーム'], nameExcludes: [], excludeCodes: [],
+  triggerPct: 50, mustDays: 7, capDays: 60, minMean: 0.5,
+  unitKind: 'ケース', itemUnits: ['1kg:10', '300g:30']
+};
+const CFG_MILFY = {
+  groupId: 'MILFY', groupName: 'ミルフィシリーズ', supplierCode: '48',
+  groupUnit: 120, itemUnit: 6, nameIncludes: ['ミルフィ', '120g'], nameExcludes: ['オキシ', 'OX'],
+  excludeCodes: [], triggerPct: 50, mustDays: 7, capDays: 60, minMean: 0.5,
+  unitKind: '本', itemUnits: []
+};
+
+function testMgCaseUnit() {
+  const context = makeMgContext();
+  const api = context.testApi;
+  context.proposalsData.orderGroups = [CFG_CREAMS, CFG_MILFY];
+
+  // 商品名は半角カナ・大文字Kのゆらぎがあるので正規化してから入数を引く
+  assert.strictEqual(api.mgUnitFor(CFG_CREAMS, 'ｸﾘｰﾑｽﾞｸﾘｰﾑ(ﾃｽﾄｱ)300g'), 30);
+  assert.strictEqual(api.mgUnitFor(CFG_CREAMS, 'ｸﾘｰﾑｽﾞｸﾘｰﾑ(ﾃｽﾄｲ)1Kg'), 10, '1Kg（大文字K）も1kgとして扱う');
+  assert.strictEqual(api.mgUnitFor(CFG_CREAMS, 'クリームズクリーム(テストウ)1kg'), 10, '全角カナでも同じ判定');
+  // 本単位の従来グループは全商品が itemUnit
+  assert.strictEqual(api.mgUnitFor(CFG_MILFY, 'ミルフィ 120g テスト1'), 6);
+
+  // 発注単位が何ブロックか: ミルフィ120本÷6本＝20 / クリームズ6ケース＝6
+  assert.strictEqual(api.mgGroupBlocks({ groupUnit: 120 }, CFG_MILFY), 20);
+  assert.strictEqual(api.mgGroupBlocks({ groupUnit: 6 }, CFG_CREAMS), 6);
+  // 表示倍率: 本単位はブロック→本数、ケース単位はケース数のまま
+  assert.strictEqual(api.mgScale(CFG_MILFY), 6);
+  assert.strictEqual(api.mgScale(CFG_CREAMS), 1);
+  assert.strictEqual(api.mgLabel({ unitLabel: 'ケース' }, CFG_CREAMS), 'ケース');
+  assert.strictEqual(api.mgLabel({}, CFG_MILFY), '本');
+
+  // 所属判定（カート側で使う名前ベースの判定）。100gは商品別発注単位に無いのでグループ外
+  assert.strictEqual(api.mgGroupIdForProduct('47', 'ｸﾘｰﾑｽﾞｸﾘｰﾑ(ﾃｽﾄｱ)100g', 'T001'), '');
+  assert.strictEqual(api.mgGroupIdForProduct('47', 'ｸﾘｰﾑｽﾞｸﾘｰﾑ(ﾃｽﾄｱ）300g', 'T002'), 'CREAMS');
+}
+
+function testMgAllocateCaseUnit() {
+  const context = makeMgContext();
+  const api = context.testApi;
+  context.proposalsData.orderGroups = [CFG_CREAMS, CFG_MILFY];
+
+  // 300g 3品・1kg 3品。在庫日数の少ない順に1ケースずつ積んで合計6ケースになること
+  // 在庫・需要は架空の値（配分の順序を確かめるためのもの）。商品名は半角カナと
+  // 300g/1kg の表記だけが判定に効くので、味の名前はテスト用の架空名にしている
+  const items = [
+    { code: 'A', name: 'ｸﾘｰﾑｽﾞｸﾘｰﾑ(ﾃｽﾄｱ)300g', stock: 16, onOrder: 0, meanMonthly: 27.5 },
+    { code: 'B', name: 'ｸﾘｰﾑｽﾞｸﾘｰﾑ(ﾃｽﾄｲ）300g', stock: 13, onOrder: 0, meanMonthly: 21.9 },
+    { code: 'C', name: 'ｸﾘｰﾑｽﾞｸﾘｰﾑ(ﾃｽﾄｳ)300g', stock: 39, onOrder: 0, meanMonthly: 16.1 },
+    { code: 'D', name: 'ｸﾘｰﾑｽﾞｸﾘｰﾑ(ﾃｽﾄｱ)1kg',  stock:  2, onOrder: 0, meanMonthly: 15.7 },
+    { code: 'E', name: 'ｸﾘｰﾑｽﾞｸﾘｰﾑ(ﾃｽﾄｲ)1kg',  stock:  5, onOrder: 0, meanMonthly: 14.8 },
+    { code: 'F', name: 'ｸﾘｰﾑｽﾞｸﾘｰﾑ(ﾃｽﾄｳ)1kg',  stock:  3, onOrder: 0, meanMonthly:  7.9 }
+  ];
+  const out = api.mgAllocate(items, 6, CFG_CREAMS, {});
+  const blocks = items.reduce((s, p) => s + (out[p.code] || 0) / api.mgUnitFor(CFG_CREAMS, p.name), 0);
+  assert.strictEqual(blocks, 6, '合計はぴったり6ケースになること');
+  // 各商品の数量は必ずその商品の1ケース入数の倍数（30個 or 10個）
+  items.forEach(p => {
+    const unit = api.mgUnitFor(CFG_CREAMS, p.name);
+    assert.strictEqual((out[p.code] || 0) % unit, 0, p.code + ' must be a multiple of ' + unit);
+  });
+  // 在庫日数が最も短いDが最優先で入る（2個 / 月15.7個 ＝ 約4日分なので必須枠②）
+  assert.ok((out.D || 0) >= 10, 'D（在庫4日分）は必ず配分される');
+  // 在庫が潤沢なC（39個 / 月16.1個＝約74日分）は上限日数60日を超えるので積まない
+  assert.strictEqual(out.C || 0, 0, 'C（在庫74日分）は積み上げ上限で対象外');
+
+  // 2ロット（12ケース）も倍数を保ったまま組める
+  const out2 = api.mgAllocate(items, 12, CFG_CREAMS, {});
+  const blocks2 = items.reduce((s, p) => s + (out2[p.code] || 0) / api.mgUnitFor(CFG_CREAMS, p.name), 0);
+  assert.strictEqual(blocks2, 12, '2ロットは12ケース');
+
+  // 手動固定（ピン）はその数量を確定し、残りを自動配分する
+  const out3 = api.mgAllocate(items, 6, CFG_CREAMS, { C: 30 });
+  assert.strictEqual(out3.C, 30, 'ピンは上限日数を無視して確定する');
+  const blocks3 = items.reduce((s, p) => s + (out3[p.code] || 0) / api.mgUnitFor(CFG_CREAMS, p.name), 0);
+  assert.strictEqual(blocks3, 6, 'ピンを含めても合計6ケース');
+}
+
+function testMgAllocateUnitModeUnchanged() {
+  // 回帰: 本単位の従来グループは、ブロック数で数えるようにしても結果が変わらないこと
+  const api = makeMgContext().testApi;
+  const items = [
+    { code: 'P1', name: 'ミルフィ 120g テスト1', stock: -6, onOrder: 0, meanMonthly: 20.0 },
+    { code: 'P2', name: 'ミルフィ 120g テスト2', stock:  4, onOrder: 0, meanMonthly: 12.0 },
+    { code: 'P3', name: 'ミルフィ 120g テスト3', stock: 20, onOrder: 0, meanMonthly: 10.0 },
+    { code: 'P4', name: 'ミルフィ 120g テスト4', stock:  8, onOrder: 0, meanMonthly:  8.0 },
+    { code: 'P5', name: 'ミルフィ 120g テスト5', stock:  9, onOrder: 0, meanMonthly:  6.0 }
+  ];
+  const out = api.mgAllocate(items, 20, CFG_MILFY, {});   // 20ブロック＝120本
+  const total = Object.values(out).reduce((s, v) => s + v, 0);
+  assert.strictEqual(total, 120, '本単位のグループは従来どおり120本ぴったり');
+  Object.values(out).forEach(v => assert.strictEqual(v % 6, 0, '1商品6本単位を保つ'));
+  // 在庫マイナス（欠品中）のP1は必須枠①で必ず確保される
+  assert.ok(out.P1 >= 6, '欠品中の商品は最優先で確保される');
+}
+
+/* ===================================================
+   機能8（v1.72.0）: 仕入先の最低発注金額チェック（表示のみ）
+=================================================== */
+function testMinOrderAmount() {
+  const context = makeMgContext();
+  const api = context.testApi;
+  context.proposalsData.orderGroups = [CFG_CREAMS];
+  context.masters.suppliers = [
+    { code: '47', name: 'テスト仕入先A', minOrderAmount: 25000, minOrderExcludes: ['メイト'] },
+    { code: '48', name: 'テスト仕入先B', minOrderAmount: 0, minOrderExcludes: [] }
+  ];
+
+  // 通常商品は集計対象
+  assert.strictEqual(api.minOrderCountsFor('47', 'T010', 'テスト用ヘアミルク 150ml', ''), true);
+  // まとめ発注グループの商品は別ルールで発注するので対象外（提案行はサーバーのgroupIdで判定）
+  assert.strictEqual(api.minOrderCountsFor('47', 'T002', 'ｸﾘｰﾑｽﾞｸﾘｰﾑ(ﾃｽﾄｱ)300g', 'CREAMS'), false);
+  // groupIdが渡らないカート側でも、名前から同じ判定ができる
+  assert.strictEqual(api.minOrderCountsFor('47', 'T002', 'ｸﾘｰﾑｽﾞｸﾘｰﾑ(ﾃｽﾄｱ)300g', ''), false);
+  // 同じシリーズでも100gはグループ外なので集計に入る
+  assert.strictEqual(api.minOrderCountsFor('47', 'T001', 'ｸﾘｰﾑｽﾞｸﾘｰﾑ(ﾃｽﾄｱ)100g', ''), true);
+  // メイトは委託扱いで対象外。半角カナ表記(ﾒｲﾄ)でも同じく外れること
+  assert.strictEqual(api.minOrderCountsFor('47', 'T020', 'テスト用サプリ 200g(ﾒｲﾄ)', ''), false);
+  assert.strictEqual(api.minOrderCountsFor('47', 'T021', 'テスト用雑穀米(メイト)', ''), false);
+  // 最低発注金額が未設定の仕入先はチェックしない
+  assert.strictEqual(api.minOrderCountsFor('48', 'X', 'なにか', ''), false);
+  assert.strictEqual(api.minOrderNote('48', 0), '');
+
+  // 文言: 不足しているときは不足額、満たしていれば達成を出す
+  const ng = api.minOrderNote('47', 20320);
+  assert.ok(ng.indexOf('min-order ng') >= 0 && ng.indexOf('4,680') >= 0, ng);
+  const ok = api.minOrderNote('47', 27720);
+  assert.ok(ok.indexOf('min-order ok') >= 0, ok);
+}
+
+
+/* ===================================================
+   機能9（v1.72.0）: まとめ発注グループの「合計 N / M」表示
+   （行ごとに1ケースの入数が違っても、合計をケース数で数えられること）
+=================================================== */
+function makeMgEl(unitLabel, groupUnit, rows) {
+  // updatePropMgTotal が触る範囲だけの最小DOMスタブ
+  const totalEl = { className: '', textContent: '', style: {} };
+  const items = rows.map(r => ({
+    dataset: { mgUnit: String(r.unit), unitCost: '0' },
+    querySelector: sel => sel === '.prop-check' ? { checked: r.checked !== false }
+                        : sel === '.prop-qty'   ? { value: String(r.qty) } : null
+  }));
+  return {
+    el: {
+      dataset: { unitLabel, groupUnit: String(groupUnit) },
+      querySelector: sel => (sel === '.prop-mg-total' ? totalEl : null),
+      querySelectorAll: sel => (sel === '.prop-item' ? items : [])
+    },
+    totalEl
+  };
+}
+
+function testMgTotalLine() {
+  const context = makeMgContext();
+  const block = section(html,
+    '// チェック中の行の合計が発注単位の倍数になっているかを表示する',
+    '// 金額表示（¥12,400 形式）');
+  vm.runInContext(block + '\n globalThis.totalApi = { updatePropMgTotal };', context);
+  const api = context.totalApi;
+
+  // ケース単位: 300g 30個(1ケース) + 1kg 20個(2ケース) + 1kg 30個(3ケース) = 6ケース ちょうど
+  let m = makeMgEl('ケース', 6, [
+    { unit: 30, qty: 30 }, { unit: 10, qty: 20 }, { unit: 10, qty: 30 }
+  ]);
+  api.updatePropMgTotal(m.el);
+  assert.strictEqual(m.totalEl.className, 'prop-mg-total ok', m.totalEl.textContent);
+  assert.ok(m.totalEl.textContent.indexOf('6ケース（80個）') >= 0, m.totalEl.textContent);
+  assert.ok(m.totalEl.textContent.indexOf('1ロット') >= 0, m.totalEl.textContent);
+
+  // ケース単位・1ケース足りない → あと1ケース
+  m = makeMgEl('ケース', 6, [{ unit: 30, qty: 30 }, { unit: 10, qty: 40 }]);
+  api.updatePropMgTotal(m.el);
+  assert.strictEqual(m.totalEl.className, 'prop-mg-total ng', m.totalEl.textContent);
+  assert.ok(m.totalEl.textContent.indexOf('あと1ケース') >= 0, m.totalEl.textContent);
+
+  // 本単位（従来グループ）は表示が変わっていないこと
+  m = makeMgEl('本', 120, [{ unit: 6, qty: 60 }, { unit: 6, qty: 60 }]);
+  api.updatePropMgTotal(m.el);
+  assert.strictEqual(m.totalEl.className, 'prop-mg-total ok', m.totalEl.textContent);
+  assert.ok(m.totalEl.textContent.indexOf('合計 120 / 120本') >= 0, m.totalEl.textContent);
+
+  m = makeMgEl('本', 120, [{ unit: 6, qty: 60 }, { unit: 6, qty: 54 }]);
+  api.updatePropMgTotal(m.el);
+  assert.strictEqual(m.totalEl.className, 'prop-mg-total ng', m.totalEl.textContent);
+  assert.ok(m.totalEl.textContent.indexOf('あと6本') >= 0, m.totalEl.textContent);
+
+  // チェックが1つも無いときは警告ではなく案内
+  m = makeMgEl('ケース', 6, [{ unit: 30, qty: 30, checked: false }]);
+  api.updatePropMgTotal(m.el);
+  assert.strictEqual(m.totalEl.className, 'prop-mg-total');
+  assert.ok(m.totalEl.textContent.indexOf('チェックなし') >= 0, m.totalEl.textContent);
+}
+
 (async () => {
   testOrderDateHelpers();
   testOrderedCacheAndBuildOrderedByCode();
@@ -542,6 +771,11 @@ function testHistoryItemsToCart() {
   testMgSkipGuards();
   testCartResume();
   testHistoryItemsToCart();
+  testMgCaseUnit();
+  testMgAllocateCaseUnit();
+  testMgAllocateUnitModeUnchanged();
+  testMinOrderAmount();
+  testMgTotalLine();
   console.log('All order-feature tests passed.');
 })().catch(err => {
   console.error(err);
