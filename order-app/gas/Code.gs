@@ -12,6 +12,10 @@
 // 発注先マスターの拡張列（シートに直接入力・空欄なら既定値7日）:
 //   F列 = リードタイム(日)   発注してから入荷するまでの日数
 //   G列 = 発注サイクル(日)   そのメーカーへ発注する間隔（週1なら7）
+//   J列 = 最低発注金額(税抜) これ未満だと発注できないメーカーの下限額。空欄=チェックしない
+//   K列 = 最低金額の対象外   商品名にこのキーワードを含む商品は J列の集計に入れない（カンマ区切り）
+//   ※ J・K は表示専用のチェック（v1.37.0）。下回っていても発注操作は止めない。
+//     まとめ発注グループ所属商品は別の発注単位ルールで動くため自動的に対象外になる
 //
 // ============================================================
 
@@ -20,7 +24,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.36.1';
+const VERSION         = 'v1.37.0';
 const APP_NAME        = 'order-app';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 const PROP_STUCK_NOTIFY_DAYS = 14; // 提案滞留の通知・「要対応」表示の閾値（日）。Phase M, v1.31.0〜
@@ -413,7 +417,12 @@ function getMasters() {
       // 発注限時刻: 'HH:mm'形式。全発注先で必須に近い項目のため備考と別枠で管理
       // スプレッドシートが'11:00'等の文字列を時刻として自動認識しDateオブジェクト化することがあるため
       // cellToStrで両方のケースに対応する（生文字列ならそのまま、Dateなら'HH:mm'に整形）
-      deadline:      cellToStr(r[8], 'HH:mm').trim()
+      deadline:      cellToStr(r[8], 'HH:mm').trim(),
+      // 最低発注金額チェック（J/K列・シート直接入力。v1.37.0）
+      // 0/空欄ならチェックしない。除外キーワードは商品名に含むものを集計から外す
+      minOrderAmount:   parseFloat(String(r[9] || '').replace(/[,，¥\s]/g, '')) || 0,
+      minOrderExcludes: String(r[10] || '').trim()
+                          .split(',').map(s => s.trim()).filter(Boolean)
     }));
 
   return { success: true, suppliers };
@@ -1092,7 +1101,10 @@ function saveSupplier(p, user_id) {
   const fax           = String(p.fax           || '').trim();
   const outputMethods = String(p.outputMethods || '').trim(); // カンマ区切り文字列で受け取る
   const deadline      = String(p.deadline      || '').trim(); // 発注限時刻('HH:mm')
-  const note          = String(p.note          || '').trim(); // 最低発注金額等
+  const note          = String(p.note          || '').trim(); // 送料無料条件等のフリーメモ
+  // 最低発注金額チェック（v1.37.0・表示専用）。空欄・0はチェックしない
+  const minOrderAmount   = parseFloat(String(p.minOrderAmount || '').replace(/[,，¥\s]/g, '')) || 0;
+  const minOrderExcludes = String(p.minOrderExcludes || '').trim();
 
   if (!code) return { success: false, error: 'コードが未入力です' };
 
@@ -1100,7 +1112,8 @@ function saveSupplier(p, user_id) {
   const data = sh.getDataRange().getValues();
   const now  = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
 
-  // 列: A=コード B=発注先名 C=FAX D=登録日時 E=発注方法 F=リードタイム(日) G=発注サイクル(日) H=備考 I=発注限時刻
+  // 列: A=コード B=発注先名 C=FAX D=登録日時 E=発注方法 F=リードタイム(日) G=発注サイクル(日)
+  //     H=備考 I=発注限時刻 J=最低発注金額(税抜) K=最低金額の対象外キーワード
   // F・G はシート直接入力のみ（このフォームからは触らない）
   // I列(発注限時刻)は'11:00'等の文字列を書き込むと、スプレッドシートが時刻として自動認識し
   // Dateシリアル値に変換してしまう（読み戻すと'Sat Dec 30 1899...'のような値になる不具合の原因）。
@@ -1108,9 +1121,10 @@ function saveSupplier(p, user_id) {
   if (mode === 'add') {
     const exists = data.slice(1).some(r => String(r[0]).trim() === code);
     if (exists) return { success: false, error: 'コード「' + code + '」はすでに登録されています' };
-    sh.appendRow([code, name, fax, now, outputMethods, '', '', note, '']);
+    sh.appendRow([code, name, fax, now, outputMethods, '', '', note, '', minOrderAmount, minOrderExcludes]);
     const newRow = sh.getLastRow();
     sh.getRange(newRow, 9, 1, 1).setNumberFormat('@').setValue(deadline);
+    sh.getRange(newRow, 11, 1, 1).setNumberFormat('@').setValue(minOrderExcludes);
     return { success: true };
   } else if (mode === 'update') {
     for (let i = 1; i < data.length; i++) {
@@ -1118,6 +1132,8 @@ function saveSupplier(p, user_id) {
         sh.getRange(i + 1, 1, 1, 5).setValues([[code, name, fax, now, outputMethods]]);
         sh.getRange(i + 1, 8, 1, 1).setValue(note);
         sh.getRange(i + 1, 9, 1, 1).setNumberFormat('@').setValue(deadline);
+        sh.getRange(i + 1, 10, 1, 1).setValue(minOrderAmount);
+        sh.getRange(i + 1, 11, 1, 1).setNumberFormat('@').setValue(minOrderExcludes);
         return { success: true };
       }
     }
@@ -1219,30 +1235,48 @@ const DEFAULT_POSTING_LAG_DAYS = 6;
 // （下の ORDER_GROUP_DEFAULTS は初回アクセス時の投入値。以後はシートが正）。
 // 仕様と実データの検証内容は まとめ発注グループ_設計プラン.md 参照
 // ============================================================
+// N列「系列単位の種類」・O列「商品別発注単位」は v1.37.0 で追加（ケース単位のグループ対応）。
+//   系列単位の種類 = 空欄/'本' … 従来どおり。発注単位（系列）は本数、全商品が同じ本数単位
+//   系列単位の種類 = 'ケース'  … 発注単位（系列）は「何ケース」。1ケースの入数は商品ごとに違うので
+//                                商品別発注単位（例 `1kg:10,300g:30`）で指定する。
+//                                この種類では、商品別発注単位のどれかに名前が一致することが
+//                                グループ所属の条件にもなる（同じシリーズの別サイズを自然に外せる）
 const ORDER_GROUP_HEADERS = ['グループID','グループ名','仕入先コード','発注単位（系列）','発注単位（商品）',
                              '名前に含む','名前に含まない','個別除外コード',
-                             'トリガー割合(%)','必須枠日数','積み上げ上限日数','最低月需要','有効'];
+                             'トリガー割合(%)','必須枠日数','積み上げ上限日数','最低月需要','有効',
+                             '系列単位の種類','商品別発注単位'];
 
-// 初回アクセス時に投入する既定グループ（2026-07-30 時点の運用設定）
+// 初回アクセス時に投入する既定グループ（2026-07-30 時点の運用設定・CREAMS は 2026-09-15 追加）
 // ⚠️ 「名前に含む」のグラム表記は analyze_demand.py 側で全角ｇを半角gに正規化してから判定する。
-//   商品名に全角ｇを使っているものが実際にあり、半角だけで判定すると取りこぼす
+//   商品名に全角ｇを使っているものが実際にあり、半角だけで判定すると取りこぼす。
+//   カタカナも半角→全角に正規化されるので、商品名が半角カナ（ｸﾘｰﾑｽﾞｸﾘｰﾑ）でも全角で書いてよい
 const ORDER_GROUP_DEFAULTS = [
-  ['MILFY',       'ミルフィシリーズ',        '48', 120, 6, 'ミルフィ,120g',    'オキシ,OX', '', 50, 7, 60, 0.5, true],
-  ['WAKAN18',     '和漢彩染 十八番',        '54',  72, 6, '十八番,120g',      'LUC',       '', 50, 7, 60, 0.5, true],
-  ['WAKAN18_LUC', '和漢彩染 十八番 LUC',    '54',  72, 6, '十八番,120g,LUC',  '',          '', 50, 7, 60, 0.5, true]
+  ['MILFY',       'ミルフィシリーズ',        '48', 120, 6, 'ミルフィ,120g',    'オキシ,OX', '', 50, 7, 60, 0.5, true, '本', ''],
+  ['WAKAN18',     '和漢彩染 十八番',        '54',  72, 6, '十八番,120g',      'LUC',       '', 50, 7, 60, 0.5, true, '本', ''],
+  ['WAKAN18_LUC', '和漢彩染 十八番 LUC',    '54',  72, 6, '十八番,120g,LUC',  '',          '', 50, 7, 60, 0.5, true, '本', ''],
+  // ODP クリームズクリーム: 300g・1kgを合わせて6ケース単位（300g=1ケース30個 / 1kg=1ケース10個）。
+  // 100gは別枠（仕入先の最低発注金額ルール側で扱う）なので商品別発注単位に書かず自動的に外す
+  ['CREAMS',      'クリームズクリーム(300g/1kg)', '47', 6, 0, 'クリームズクリーム', '',      '', 50, 7, 60, 0.5, true, 'ケース', '1kg:10,300g:30']
 ];
 
 // 発注グループ状況シートの列定義（updateOrderProposals / getOrderProposals で共有）
 // analyze_demand.py が毎回全面書き換えする。1グループ1行
+// 単位名・提案個数は v1.37.0 で追加（ケース単位のグループ対応）。
+// 不足合計・トリガー閾値・提案本数は「単位名」の単位で入る（本単位なら本数・ケース単位ならケース数）。
+// 提案個数だけは常に実数量（発注書に載る個数）
 const GROUP_STATUS_HEADERS = ['グループID','グループ名','仕入先コード','仕入先名','発注単位（系列）','発注単位（商品）',
                               '商品数','月需要','系列在庫','系列発注済','系列適正在庫','不足合計','トリガー閾値',
-                              '発注時期','提案本数','ロット数','系列在庫日数','発注時期までの目安日数','分析日時'];
+                              '発注時期','提案本数','ロット数','系列在庫日数','発注時期までの目安日数','分析日時',
+                              '単位名','提案個数'];
 
 // 発注グループ設定シートを取得（無ければ既定グループ入りで作成する）
+// 既にあるシートには、後から増えた列と既定グループだけを追記する（v1.37.0）。
+// ⚠️ 既存行の内容は絶対に書き換えない。このシートは運用で手編集する原本なので、
+//   既定値で上書きすると調整済みのトリガー割合などが黙って消える
 function ensureOrderGroupSheet_() {
   const ss = getSS();
   let sh = ss.getSheetByName(SHEET_ORDER_GROUPS);
-  if (sh) return sh;
+  if (sh) return migrateOrderGroupSheet_(sh);
   sh = ss.insertSheet(SHEET_ORDER_GROUPS);
   sh.getRange(1, 1, 1, ORDER_GROUP_HEADERS.length).setValues([ORDER_GROUP_HEADERS]);
   sh.getRange(2, 1, ORDER_GROUP_DEFAULTS.length, ORDER_GROUP_HEADERS.length)
@@ -1253,6 +1287,36 @@ function ensureOrderGroupSheet_() {
   sh.getRange(2, 6, ORDER_GROUP_DEFAULTS.length, 3).setNumberFormat('@');
   sh.setFrozenRows(1);
   Logger.log('✅ 発注グループ設定シートを既定値で作成しました');
+  return sh;
+}
+
+// 既存の発注グループ設定シートに、後から増えた列と既定グループだけを足す（v1.37.0）
+// 既存行の値は一切触らない。追記だけなので何度実行しても同じ結果になる
+function migrateOrderGroupSheet_(sh) {
+  const lastCol = Math.max(1, sh.getLastColumn());
+  const header  = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(v => String(v || '').trim());
+  if (header.length < ORDER_GROUP_HEADERS.length) {
+    const add = ORDER_GROUP_HEADERS.slice(header.length);
+    sh.getRange(1, header.length + 1, 1, add.length).setValues([add]);
+    // 既存行の新列は空欄のまま＝「本」扱い（readOrderGroups_ の既定値）なので挙動は変わらない
+    if (sh.getLastRow() > 1) {
+      sh.getRange(2, header.length + 1, sh.getLastRow() - 1, add.length).setNumberFormat('@');
+    }
+    Logger.log('✅ 発注グループ設定シートに列を追加しました: ' + add.join(' / '));
+  }
+  if (sh.getLastRow() < 2) return sh;
+  const existing = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues()
+    .map(r => String(r[0] || '').trim());
+  const missing = ORDER_GROUP_DEFAULTS.filter(d => existing.indexOf(String(d[0])) === -1);
+  if (missing.length > 0) {
+    const start = sh.getLastRow() + 1;
+    sh.getRange(start, 1, missing.length, ORDER_GROUP_HEADERS.length).setValues(missing);
+    sh.getRange(start, 3, missing.length, 1).setNumberFormat('@');
+    sh.getRange(start, 6, missing.length, 3).setNumberFormat('@');
+    sh.getRange(start, 14, missing.length, 2).setNumberFormat('@');
+    Logger.log('✅ 発注グループ設定シートに既定グループを追加しました: '
+               + missing.map(d => d[0]).join(' / '));
+  }
   return sh;
 }
 
@@ -1269,17 +1333,21 @@ function readOrderGroups_() {
       groupId:      String(r[0]).trim(),
       groupName:    String(r[1] || '').trim(),
       supplierCode: String(r[2] || '').trim(),
-      groupUnit:    num(r[3], 0),          // 系列の発注単位（120本 / 72本）
-      itemUnit:     num(r[4], 6),          // 1商品の発注単位（6本）
+      groupUnit:    num(r[3], 0),          // 系列の発注単位（120本 / 72本 / 6ケース）
+      itemUnit:     num(r[4], 6),          // 1商品の発注単位（6本。ケース単位のグループでは未使用）
       nameIncludes: csv(r[5]),
       nameExcludes: csv(r[6]),
       excludeCodes: csv(r[7]),
       triggerPct:   num(r[8], 50),
       mustDays:     num(r[9], 7),
       capDays:      num(r[10], 60),
-      minMean:      parseFloat(r[11]) >= 0 ? parseFloat(r[11]) : 0.5
+      minMean:      parseFloat(r[11]) >= 0 ? parseFloat(r[11]) : 0.5,
+      // 列が無い旧シートは空欄＝'本'（従来どおりの挙動）
+      unitKind:     String(r[13] || '').trim() || '本',
+      itemUnits:    csv(r[14])             // ['1kg:10','300g:30']
     }))
-    .filter(g => g.groupUnit > 0 && g.itemUnit > 0 && g.nameIncludes.length > 0);
+    .filter(g => g.groupUnit > 0 && g.nameIncludes.length > 0)
+    .filter(g => (g.unitKind === 'ケース' ? g.itemUnits.length > 0 : g.itemUnit > 0));
 }
 
 // POST(APIキー): 分析に必要な設定を返す
@@ -1754,7 +1822,9 @@ function updateOrderProposals(p) {
       parseFloat(x.lots)        || 0,
       parseFloat(x.coverDays)   || 0,
       x.daysUntilDue === null || x.daysUntilDue === undefined ? '' : parseFloat(x.daysUntilDue),
-      analyzedAt
+      analyzedAt,
+      String(x.unitLabel || '本'),
+      parseFloat(x.proposedPieces) || 0
     ]);
     gsSh.getRange(2, 1, gsRows.length, GROUP_STATUS_HEADERS.length).setValues(gsRows);
   }
@@ -1840,9 +1910,14 @@ function updateOrderProposals(p) {
     // まだ時期でないグループは参考表示扱いなので通知しない（件数・金額にも入らない）
     const dueGroups = groupStatus.filter(x => x.due);
     const groupLine = dueGroups.length > 0
-      ? ('\n📦 まとめ発注: ' + dueGroups.map(x =>
-          x.groupName + ' ' + (parseFloat(x.proposedQty) || 0) + '本（' +
-          (parseFloat(x.groupUnit) || 0) + '本単位）').join(' / '))
+      ? ('\n📦 まとめ発注: ' + dueGroups.map(x => {
+          const label = String(x.unitLabel || '本');
+          const qty   = parseFloat(x.proposedQty) || 0;
+          const pcs   = parseFloat(x.proposedPieces) || 0;
+          const pcsNote = (label !== '本' && pcs > 0) ? pcs + '個・' : '';
+          return x.groupName + ' ' + qty + label
+            + '（' + pcsNote + (parseFloat(x.groupUnit) || 0) + label + '単位）';
+        }).join(' / '))
       : '';
     // 提案滞留（Phase M, v1.31.0）: 何度も分析が回っているのに手つかずの提案を知らせる。
     // 同じ提案が出続けていても件数だけ見ると「今日もN件」としか分からないため、
@@ -2256,7 +2331,10 @@ function getOrderProposals() {
         proposedQty:  parseFloat(r[14]) || 0,
         lots:         parseFloat(r[15]) || 0,
         coverDays:    parseFloat(r[16]) || 0,
-        daysUntilDue: r[17] === '' ? null : (parseFloat(r[17]) || 0)
+        daysUntilDue: r[17] === '' ? null : (parseFloat(r[17]) || 0),
+        // 列が無い旧データ（v1.37.0より前の分析結果）は本単位として扱う
+        unitLabel:      String(r[19] || '').trim() || '本',
+        proposedPieces: parseFloat(r[20]) || 0
       }));
   }
 
