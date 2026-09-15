@@ -2,8 +2,9 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8">
+  <meta name="robots" content="noindex,nofollow">
   <!-- 静的LPの通信先と実行スクリプトを限定します。申込は既存フォームへのリンクです。 -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'sha256-K0w08n1NhCT4PHcnOHvwB20mA3uzJBpJF3VPPgNM0ZY='; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'sha256-vl0VgfLZrP5N6rD1Vh9oTOfJgrAxex+zueng016ZFPc='; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <link rel="canonical" href="https://beaufield.github.io/beaufield-dev/beaufes/event.html">
 
@@ -152,7 +153,7 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
 .seminar-copy>p.booking-soon{margin-top:16px}
 </style>
 </head>
-<body><div style="background:#b91c1c;color:white;padding:12px;text-align:center">テスト環境：予約画面の確認用です。本番の申込は行いません。</div>
+<body><div style="background:#b91c1c;color:white;padding:12px;text-align:center">確認用LP：シザー試し切りブースの修正版です。本番には未反映です。</div>
   <a class="skip" href="#main">本文へ移動</a>
   <header class="header"><div class="wrap header-inner">
     <a class="brand" href="#main" aria-label="BEAU Fes 2026 ページの先頭へ">BEAU Fes<span>2026</span></a>
@@ -209,9 +210,9 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
           <figure class="card-visual"><img src="../event-assets/scene-mizutani.webp" width="1536" height="1024" loading="lazy" alt="実商品写真をもとに、明るい海辺の背景と組み合わせた紹介イメージ"></figure>
           <div class="card-copy"><p class="card-category">メーカー・展示</p><h4>ミズタニシザー</h4><p class="card-hook">相棒は、手で選ぶ。</p><p class="card-description">指が収まるハンドルの形や、刃のつくりへのこだわり。会場では実際に手に取り、重さ・開閉の感覚・切ったときの手応えを確かめてください。毎日の仕事に寄り添う一本との出会いを。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>重さとバランス</li><li>指を入れたときのなじみ</li><li>試し切りしたときの感覚</li></ul></div>
         </article>
-<article class="discovery-card" id="hikari">
-          <figure class="card-visual"><img src="../event-assets/scene-hikari.webp" width="1536" height="1024" loading="lazy" alt="実商品写真をもとに、明るい海辺の背景と組み合わせた紹介イメージ"></figure>
-          <div class="card-copy"><p class="card-category">メーカー・展示</p><h4>光シザー</h4><p class="card-hook">切れ味の違いを、その手で。</p><p class="card-description">素材の研究と、新潟の自社工場でのものづくりに支えられたシザー。刃先からハンドルまでのつくりと、握ったときの感覚にご注目ください。いつものカットを思い浮かべながら、試し切りしてみませんか。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>握りやすさ</li><li>開閉の感覚</li><li>切ったときの手応え</li></ul></div>
+<article class="discovery-card" id="scissors-trial">
+          <figure class="card-visual"><img src="../event-assets/scene-scissors-trial.webp" width="1536" height="1024" loading="lazy" alt="3本のシザーを明るい海辺の背景と組み合わせた、シザー試し切りブースの紹介イメージ"></figure>
+          <div class="card-copy"><p class="card-category">シザー試し切りブース</p><h4>ヒカリ・モルク・ウツミ</h4><p class="card-hook">3ブランドを、その手で。</p><p class="card-description">ヒカリシザー・モルクシザー・ウツミシザーの3ブランドを展示します。毎日使う道具だからこそ、実際に手に取り、握りやすさ・開閉の感覚・試し切りしたときの手応えを比べながら、ご自身のサロンワークに合う一本を探してみませんか。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>3ブランドそれぞれの使い心地</li><li>握りやすさと開閉の感覚</li><li>試し切りしたときの手応え</li></ul></div>
         </article>
 <article class="discovery-card" id="atfit">
           <figure class="card-visual"><img src="../event-assets/scene-atfit-woman.webp" width="1536" height="1024" loading="lazy" alt="女性の着用イメージと実商品写真をもとにした部分ウィッグを組み合わせた紹介画像"></figure>
@@ -250,7 +251,7 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
   <aside class="mobile-cta" aria-label="来場申し込み"><span><strong>入場無料</strong><br>10/20 申込締切</span><a class="button" href="liff.html">LINEから申込<span aria-hidden="true">↗</span></a></aside>
   <script>
     // LPの版数はこの定数だけで管理します。
-    const APP_VERSION = '0.5.0';
+    const APP_VERSION = '0.5.1';
     document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
   </script>
 </body>
