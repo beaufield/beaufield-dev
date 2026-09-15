@@ -1036,6 +1036,7 @@
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="recoverPendingOrders(true)">🔄 未確定を再確認</button>
       <button class="btn btn-outline" onclick="copyGasDiagnostics()">📋 診断結果をコピー</button>
+      <button class="btn btn-outline" onclick="showGasDiagnostics()">通信診断を表示</button>
     </div>
   </div>
   <div class="card">
@@ -1372,7 +1373,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.72.0';
+const APP_VERSION    = 'v1.72.1';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1718,6 +1719,18 @@ function _gasDiagEnd(op, outcome) {
   _gasWriteDiagnostics(rows);
 }
 
+// 送信内容・URL・トークンは保存せず、待ち時間と決められたエラー分類だけを残す。
+function _gasDiagAttempt(op, attempt) {
+  try {
+    const rows = _gasReadDiagnostics();
+    const row = rows.find(x => x.opId === op.id);
+    if (!row) return;
+    row.attempts = op.attempts;
+    row.attemptDetails = (Array.isArray(row.attemptDetails) ? row.attemptDetails : []).concat(attempt).slice(-GAS_MAX_ATTEMPTS);
+    _gasWriteDiagnostics(rows);
+  } catch(e) { /* 診断記録の失敗で通信結果を変えない。 */ }
+}
+
 function _gasMarkAbandonedDiagnostics() {
   const rows = _gasReadDiagnostics();
   let changed = false;
@@ -1807,20 +1820,32 @@ function _gasErrorMessage(e) {
 }
 
 async function _gasFetchOnce(url, init, operation) {
+  const startedAt = Date.now();
+  const attempt = { attempt: operation.attempts, startedAt, queueMs: 0, requestMs: 0 };
+  let dispatchedAt = null;
+  let lease = null;
   const queueWaitMs = Math.min(GAS_QUEUE_TIMEOUT_MS, operation.remaining());
-  const lease = await _gasAcquire(queueWaitMs, operation.signal);
   const attemptAc = new AbortController();
   let timeoutTimer = null;
   let onOperationAbort = null;
   try {
+    lease = await _gasAcquire(queueWaitMs, operation.signal);
+    attempt.queueMs = Date.now() - startedAt;
     const budget = Math.min(operation.attemptMs, operation.remaining());
     if (budget <= 0 || operation.signal.aborted) throw operation.cancelReason || new GasDeadlineError();
 
     const doFetch = (async () => {
+      dispatchedAt = Date.now();
       const res  = await fetch(url, { ...init, signal: attemptAc.signal });
+      attempt.httpStatus = res.status;
       const text = await res.text(); // res.json()ではなくtext()。404のHTMLをここで検出するため
       if (!res.ok) throw new GasTransientError('HTTP ' + res.status);
-      try { return JSON.parse(text); }
+      try {
+        const data = JSON.parse(text);
+        attempt.responseCode = data && data.success ? 'SUCCESS' :
+          (data && ['USE_POST', 'AUTH_UNAVAILABLE', 'SESSION_INVALID'].includes(data.error) ? data.error : 'RESPONSE_ERROR');
+        return data;
+      }
       catch (e) { throw new GasTransientError('non-JSON response'); }
     })();
 
@@ -1839,10 +1864,17 @@ async function _gasFetchOnce(url, init, operation) {
       operation.signal.addEventListener('abort', onOperationAbort, { once: true });
     });
     return await Promise.race([doFetch, attemptTimeout, operationCancelled]);
+  } catch(e) {
+    attempt.errorType = e && ['GasTransientError', 'GasQueueTimeoutError', 'GasDeadlineError', 'GasSemaphoreError', 'AbortError', 'TypeError'].includes(e.name) ? e.name : 'OTHER';
+    throw e;
   } finally {
     clearTimeout(timeoutTimer);
     if (onOperationAbort) operation.signal.removeEventListener('abort', onOperationAbort);
-    lease.release();
+    if (lease) lease.release();
+    attempt.elapsedMs = Date.now() - startedAt;
+    if (dispatchedAt === null) attempt.queueMs = attempt.elapsedMs;
+    else attempt.requestMs = Date.now() - dispatchedAt;
+    _gasDiagAttempt(operation, attempt);
   }
 }
 
@@ -1858,7 +1890,13 @@ async function _gasCall(url, init, operation, policy) {
     }
     operation.attempts++;
     try {
-      return await _gasFetchOnce(url, init, operation);
+      const data = await _gasFetchOnce(url, init, operation);
+      // POSTした読み取りにGET専用の応答が戻った場合も、既存の上限・待機時間で再試行する。
+      // 保存・削除などの書き込みは、処理済みの可能性があるため対象に広げない。
+      if (policy === 'READ_RETRYABLE' && data && data.error === 'USE_POST') {
+        throw new GasTransientError('USE_POST');
+      }
+      return data;
     } catch (e) {
       lastErr = e;
       const canRetry = policy === 'READ_RETRYABLE' && _gasIsTransient(e) && operation.attempts < operation.maxAttempts;
@@ -3440,15 +3478,31 @@ async function recoverPendingOrders(manual = false) {
   }
 }
 
-async function copyGasDiagnostics() {
+function _gasDiagnosticsText() {
   const outbox = _readOrderOutbox().map(x => ({
     status: x.status, createdAt: x.createdAt, updatedAt: x.updatedAt,
     ageMs: Date.now() - x.createdAt, userMatches: !!currentUser && String(x.userId || '') === String(currentUser.user_id || '')
   }));
-  const text = JSON.stringify({
+  return JSON.stringify({
     appVersion: APP_VERSION, generatedAt: new Date().toISOString(),
     semaphore: _gasDebugSnapshot(), outbox, operations: _gasReadDiagnostics()
   }, null, 2);
+}
+
+function showGasDiagnostics() {
+  // コピーできない端末でも、既存の診断情報を画面から確認できるようにする。
+  let view = document.getElementById('gas-diagnostics-view');
+  if (!view) {
+    view = document.createElement('pre');
+    view.id = 'gas-diagnostics-view';
+    view.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;font-size:11px';
+    document.querySelector('[onclick="showGasDiagnostics()"]').parentElement.appendChild(view);
+  }
+  view.textContent = _gasDiagnosticsText();
+}
+
+async function copyGasDiagnostics() {
+  const text = _gasDiagnosticsText();
   const copied = await copyToClipboard(text);
   showToast(copied ? '通信診断をコピーしました' : '通信診断をコピーできませんでした', copied ? 'success' : 'error');
 }
