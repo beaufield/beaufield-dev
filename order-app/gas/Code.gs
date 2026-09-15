@@ -24,7 +24,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.37.0';
+const VERSION         = 'v1.37.1';
 const APP_NAME        = 'order-app';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 const PROP_STUCK_NOTIFY_DAYS = 14; // 提案滞留の通知・「要対応」表示の閾値（日）。Phase M, v1.31.0〜
@@ -499,12 +499,21 @@ function getProductMaster() {
       const rdata = rsh.getDataRange().getValues();
       // ヘッダー: [0]=商品コード [1]=適正在庫（需要分析ベース） [2]=更新日時
       const reorderMap = {};
+      // 更新日時は全商品で同じことが多い。今回の取得内だけ変換結果を再利用する。
+      // Date以外の値は従来どおり扱い、次回取得には持ち越さない。
+      const reorderDateCache = new Map();
+      const reorderDateString = value => {
+        if (!(value instanceof Date)) return cellToStr(value, 'yyyy/MM/dd');
+        const key = value.getTime();
+        if (!reorderDateCache.has(key)) reorderDateCache.set(key, cellToStr(value, 'yyyy/MM/dd'));
+        return reorderDateCache.get(key);
+      };
       for (let i = 1; i < rdata.length; i++) {
         const code = String(rdata[i][0] || '').trim();
         if (code) {
           reorderMap[code] = {
             reorderPoint:     parseFloat(rdata[i][1]) || 0,
-            reorderUpdatedAt: cellToStr(rdata[i][2], 'yyyy/MM/dd')
+            reorderUpdatedAt: reorderDateString(rdata[i][2])
           };
         }
       }
