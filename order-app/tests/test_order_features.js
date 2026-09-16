@@ -764,6 +764,98 @@ function testMgTotalLine() {
   assert.ok(m.totalEl.textContent.indexOf('チェックなし') >= 0, m.totalEl.textContent);
 }
 
+/* ===================================================
+   機能10（gas v1.38.0）: ODP HSD. の3グループ（サイズごとに7ケース）
+   ORDER_GROUP_DEFAULTS の実物を読み、実際の商品名で所属・入数・配分を確かめる。
+   設計原本: まとめ発注グループ_設計プラン.md Phase P
+=================================================== */
+function readGroupDefaults() {
+  // Code.gs の ORDER_GROUP_DEFAULTS をそのまま評価し、readOrderGroups_ と同じ形に整える
+  const block = section(gas, 'const ORDER_GROUP_DEFAULTS = [', '\n];') + '\n];';
+  const ctx = vm.createContext({});
+  vm.runInContext(block + '\n globalThis.rows = ORDER_GROUP_DEFAULTS;', ctx);
+  const csv = s => String(s == null ? '' : s).split(',').map(x => x.trim()).filter(Boolean);
+  return ctx.rows.map(r => ({
+    groupId: r[0], groupName: r[1], supplierCode: r[2],
+    groupUnit: r[3], itemUnit: r[4] || 6,
+    nameIncludes: csv(r[5]), nameExcludes: csv(r[6]), excludeCodes: csv(r[7]),
+    triggerPct: r[8], mustDays: r[9], capDays: r[10], minMean: r[11],
+    unitKind: String(r[13] || '').trim() || '本', itemUnits: csv(r[14])
+  }));
+}
+
+function testHsdGroupDefaults() {
+  const context = makeMgContext();
+  const api = context.testApi;
+  const defaults = readGroupDefaults();
+  context.proposalsData.orderGroups = defaults;
+
+  const byId = {};
+  defaults.forEach(g => { byId[g.groupId] = g; });
+  ['MILFY', 'WAKAN18', 'WAKAN18_LUC', 'CREAMS', 'HSD150', 'HSD150R', 'HSD1L']
+    .forEach(id => assert.ok(byId[id], '既定グループ ' + id + ' が無い'));
+
+  // サイズごとに別グループ・どれも7ケース単位
+  [['HSD150', 30], ['HSD150R', 30], ['HSD1L', 10]].forEach(([id, unit]) => {
+    assert.strictEqual(byId[id].groupUnit, 7, id + ' は7ケース単位');
+    assert.strictEqual(byId[id].unitKind, 'ケース', id + ' はケース単位');
+    assert.strictEqual(byId[id].itemUnits.length, 1, id + ' の商品別発注単位は1パターン');
+    assert.strictEqual(parseInt(byId[id].itemUnits[0].split(':')[1], 10), unit);
+  });
+
+  // 実際の商品名（商品マスターの表記そのまま）で所属とケース入数を確かめる
+  const cases = [
+    ['HSD.ヘアミスト ボトル150ml', 'HSD150',  30],
+    ['HSD.ヘアミルク ボトル150ml', 'HSD150',  30],
+    ['HSD.ヘアミスト 詰替150ml',   'HSD150R', 30],
+    ['HSD.ヘアミルク 詰替150ml',   'HSD150R', 30],
+    ['HSD.ヘアミスト 業務用1L',    'HSD1L',   10],
+    ['HSD.ヘアミルク 業務用1L',    'HSD1L',   10]
+  ];
+  cases.forEach(([name, gid, unit], i) => {
+    assert.strictEqual(api.mgGroupIdForProduct('47', name, 'H' + i), gid, name);
+    assert.strictEqual(api.mgUnitFor(byId[gid], name), unit, name);
+  });
+
+  // 同じODPでもHSD.以外・サイズ違いは巻き込まない
+  assert.strictEqual(
+    api.mgGroupIdForProduct('47', 'ﾍｱｰｽﾀｲﾘｽﾄﾃﾞｻﾞｲﾝ HSD 01 400ml(ｶｰﾘﾝｸﾞ1液)', 'H90'), '',
+    'HSD.（ドット無し）の別シリーズはグループ外');
+  assert.strictEqual(api.mgGroupIdForProduct('47', 'ｸﾘｰﾑｽﾞｸﾘｰﾑ(ﾃｽﾄｱ)300g', 'H91'), 'CREAMS',
+    'クリームズクリームの判定は変わらない');
+  // 仕入先が違えば名前が一致してもグループ外
+  assert.strictEqual(api.mgGroupIdForProduct('3', 'HSD.ヘアミルク ボトル150ml', 'H92'), '');
+
+  // 最低発注金額の集計からは外れる（別の発注単位ルールで発注するため）
+  context.masters.suppliers = [
+    { code: '47', name: 'テスト仕入先A', minOrderAmount: 25000, minOrderExcludes: ['メイト'] }
+  ];
+  assert.strictEqual(api.minOrderCountsFor('47', 'H0', 'HSD.ヘアミルク ボトル150ml', ''), false);
+
+  // 2商品でも合計7ケースぴったりに組めること（150ml＝1ケース30本）
+  const items = [
+    { code: 'M', name: 'HSD.ヘアミルク ボトル150ml', stock: 16, onOrder: 0, meanMonthly: 30 },
+    { code: 'S', name: 'HSD.ヘアミスト ボトル150ml', stock: 45, onOrder: 0, meanMonthly: 30 }
+  ];
+  const out = api.mgAllocate(items, 7, byId.HSD150, {});
+  const blocks = items.reduce((s, p) => s + (out[p.code] || 0) / api.mgUnitFor(byId.HSD150, p.name), 0);
+  assert.strictEqual(blocks, 7, '合計はぴったり7ケース');
+  items.forEach(p => assert.strictEqual((out[p.code] || 0) % 30, 0, p.code + ' は30本単位'));
+  // 在庫日数の短いミルクの方が多く積まれる
+  assert.ok((out.M || 0) > (out.S || 0), '在庫の少ないミルクが優先される');
+
+  // 業務用1Lは1ケース10本単位で7ケース＝70本
+  const items1L = [
+    { code: 'M', name: 'HSD.ヘアミルク 業務用1L', stock: 21, onOrder: 0, meanMonthly: 10 },
+    { code: 'S', name: 'HSD.ヘアミスト 業務用1L', stock: 34, onOrder: 0, meanMonthly: 10 }
+  ];
+  const out1L = api.mgAllocate(items1L, 7, byId.HSD1L, {});
+  const total1L = Object.values(out1L).reduce((s, v) => s + v, 0);
+  assert.strictEqual(total1L, 70, '7ケース＝70本');
+  Object.values(out1L).forEach(v => assert.strictEqual(v % 10, 0, '1商品10本単位'));
+}
+
+
 (async () => {
   testOrderDateHelpers();
   testOrderedCacheAndBuildOrderedByCode();
@@ -776,6 +868,7 @@ function testMgTotalLine() {
   testMgAllocateUnitModeUnchanged();
   testMinOrderAmount();
   testMgTotalLine();
+  testHsdGroupDefaults();
   console.log('All order-feature tests passed.');
 })().catch(err => {
   console.error(err);
