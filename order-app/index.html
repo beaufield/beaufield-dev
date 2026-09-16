@@ -1376,7 +1376,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.73.1';
+const APP_VERSION    = 'v1.74.0';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1472,7 +1472,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderCartResumeBanner();
 
   const cacheStartedAt = Date.now();
-  loadProductMasterFromCache();
+  await loadProductMasterFromCache();
   _startupReadPhase('cacheReadMs', Date.now() - cacheStartedAt);
   _startupRead.cache = productMaster.length ? (_masterStorageGet(LS_MASTER_DATE) === getTodayStr() ? 'sameDay' : 'previousDay') : 'none';
   updateMasterBadge();
@@ -1754,6 +1754,9 @@ function _gasStorageTag() {
       totalChars: total,
       totalMbUtf16: Math.round(total * 2 / 1048576 * 100) / 100,
       masterChars: master,
+      // v1.74.0: 商品マスターはIndexedDBが正規の保存先になった。localStorage側の`masterChars`は
+      // 移行中の残骸か、IndexedDBが使えない端末のフォールバックでしか増えない（想定どおり0が正常）
+      idbMaster: _idbMasterPresent,
       masterSaveFailed: typeof _productRead !== 'undefined' && !!(_productRead && _productRead.cacheWarning),
       keys: sizes.slice(0, 15).map(x => ({ k: x[0], chars: x[1] }))
     };
@@ -2388,7 +2391,100 @@ function splitCSVLine(line) {
   result.push(cur);
   return result;
 }
-function loadProductMasterFromCache() {
+/* ===================================================
+   商品マスター本体の保存先（v1.74.0）
+   localStorageはオリジン単位で全アプリ共有・iOSでは実測約5MBしかなく、
+   3,047,404文字（UTF-16で5.81MB）の商品マスターは、他アプリのキャッシュを
+   全部片付けても単体で入らないことを実機で確認済み
+   （実測: order-app/現状実測と基盤刷新_調査報告.md §9）。
+   IndexedDBは枠が桁違いに大きく、他アプリの増減にも影響されない。
+   ⚠️ ここは保存先を変えるだけで、データ形式・通信・保存の順序は一切変更しない。
+=================================================== */
+const IDB_NAME    = 'bf_order_app';
+const IDB_VERSION = 1;
+const IDB_STORE   = 'master';
+const IDB_KEY     = 'productMaster';
+// showGasDiagnostics用のキャッシュ済みフラグ。都度DBへ問い合わせない（同期関数のため）
+let _idbMasterPresent = false;
+
+function _idbOpen() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) { reject(new Error('indexedDB unavailable')); return; }
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error('indexedDB open failed'));
+  });
+}
+
+async function _masterStoreGet() {
+  try {
+    const db = await _idbOpen();
+    return await new Promise((resolve, reject) => {
+      const tx  = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror   = () => reject(req.error || new Error('indexedDB get failed'));
+    });
+  } catch(e) { return null; }
+}
+
+async function _masterStoreSet(products) {
+  try {
+    const db = await _idbOpen();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(products, IDB_KEY);
+      tx.oncomplete = () => resolve();
+      tx.onerror    = () => reject(tx.error || new Error('indexedDB put failed'));
+      tx.onabort    = () => reject(tx.error || new Error('indexedDB put aborted'));
+    });
+    _idbMasterPresent = true;
+    return true;
+  } catch(e) {
+    // IndexedDB自体が使えない端末（非常に稀）だけ、従来どおりlocalStorageへの書き込みを試みる。
+    // 通常は保存対象が大きすぎてここも失敗するが、失敗時の扱いは従来と同じ（呼び出し元でcacheWarningを立てる）
+    try {
+      localStorage.setItem(LS_MASTER, JSON.stringify(products));
+      return true;
+    } catch(e2) {
+      return false;
+    }
+  }
+}
+
+async function _masterStoreDelete() {
+  try {
+    const db = await _idbOpen();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).delete(IDB_KEY);
+      tx.oncomplete = () => resolve();
+      tx.onerror    = () => reject(tx.error || new Error('indexedDB delete failed'));
+    });
+    _idbMasterPresent = false;
+    return true;
+  } catch(e) { return false; }
+}
+
+async function loadProductMasterFromCache() {
+  // ① まずIndexedDB（v1.74.0〜の正規の保存先）を試す
+  try {
+    const idbData = await _masterStoreGet();
+    if (_validMasterRows(idbData) && idbData.length) {
+      productMaster = idbData;
+      _idbMasterPresent = true;
+      _productRead.phase = _masterStorageGet(LS_MASTER_DATE) === getTodayStr() ? 'ready' : 'stale';
+      return true;
+    }
+  } catch(e) {}
+
+  // ② IndexedDBに無ければ、localStorageの旧キャッシュを読む（v1.73.x以前からの移行パス）。
+  //    読めたらIndexedDBへ書き写し、**保存に成功したときだけ**localStorage側を削除する
+  //    （他アプリのために枠を空ける。失敗時はデータを失わないよう残す）
   try {
     const cached = localStorage.getItem(LS_MASTER);
     if (cached) {
@@ -2396,6 +2492,10 @@ function loadProductMasterFromCache() {
       if (_validMasterRows(parsed) && parsed.length) {
         productMaster = parsed;
         _productRead.phase = _masterStorageGet(LS_MASTER_DATE) === getTodayStr() ? 'ready' : 'stale';
+        const migrated = await _masterStoreSet(parsed);
+        if (migrated) {
+          try { localStorage.removeItem(LS_MASTER); } catch(e) {}
+        }
         return true;
       }
     }
@@ -2403,12 +2503,13 @@ function loadProductMasterFromCache() {
   return false;
 }
 
-function persistProductMaster() {
+async function persistProductMaster() {
   const startedAt = Date.now();
   try {
-    // 日付を最後に確定する。途中失敗したキャッシュを翌起動で最新扱いしない。
+    // 日付を最後に確定する。途中失敗したキャッシュを翌起動で最新扱いしない（既存の設計を維持）。
     localStorage.removeItem(LS_MASTER_DATE);
-    localStorage.setItem(LS_MASTER, JSON.stringify(productMaster));
+    const ok = await _masterStoreSet(productMaster);
+    if (!ok) throw new Error('product master store failed');
     localStorage.setItem(LS_MASTER_GAS_DATE, _productRead.gasDate);
     localStorage.setItem(LS_MASTER_DATE, _productRead.updatedDate);
     _productRead.cacheWarning = false;
