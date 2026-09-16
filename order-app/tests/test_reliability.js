@@ -78,7 +78,7 @@ async function testSemaphoreCancellation() {
   first.release();
   second.release();
   assert.deepStrictEqual(JSON.parse(JSON.stringify(api.snapshot())), {
-    active: 0, broken: false, waiting: 0, cancelled: 0, granted: 0
+    active: 0, broken: false, epoch: 0, breaks: 0, waiting: 0, cancelled: 0, granted: 0
   });
   const lease1 = await api.acquire(1000);
   const lease2 = await api.acquire(1000);
