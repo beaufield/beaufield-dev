@@ -536,7 +536,7 @@
 
 <script>
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzNVW7AaPUTuwneE-M40DTN1clO5VT2yLCHq7cjYvaHqfMfXgVi38UAOsDZQbmmN3wOzw/exec';
-  const APP_VERSION  = 'v1.4.1';
+  const APP_VERSION  = 'v1.5.0';
   const SESSION_KEY  = 'bf_session';
   const SESSION_HOURS = 24 * 7;
 
@@ -577,6 +577,66 @@
       });
     });
   });
+
+  // ── 端末ストレージの掃除（v1.5.0） ─────────────────────────────
+  // localStorageの上限はオリジン単位で、ポータル配下の全アプリが共有する。
+  // 運用終了したアプリのキャッシュが残り続けると、他アプリ（発注アプリの商品マスター等）が
+  // 保存できなくなる。掃除は「全員が必ず通る場所」＝このポータルに置く。
+  // 経緯・実測: order-app/現状実測と基盤刷新_調査報告.md §9・§10
+  //
+  // ⚠️ 消すのは下記2種類だけ。セッション・未確定発注の控え・商品マスターには絶対に触らない。
+  const CLEANUP_RECORD_KEY = 'bf_portal_cleanup_v1';
+
+  function cleanupSharedStorage() {
+    let removed = 0, freedChars = 0;
+    try {
+      // 削除しながらlocalStorage.key(i)を回すとindexがずれるので、先に全キーを集める
+      const all = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k) all.push(k);
+      }
+
+      const doomed = [];
+
+      // ① ルート訪問チェッカー（運用終了・ポータル非表示）のキャッシュを全削除
+      all.forEach(k => { if (k.indexOf('bfc_') === 0) doomed.push(k); });
+
+      // ② 予約管理は版ごとに新しいキーを使い、古いキーを消していない。
+      //    最新版（末尾の数字が最大のもの）だけ残し、それ以外を削除する。
+      //    ※「現行版の名前」をここに書き写さないこと。予約管理が版を上げるたびに
+      //      ここが陳腐化して、逆に現行キャッシュを消してしまうため
+      const yoyaku = all.filter(k => /^bf_yoyaku_v\d+$/.test(k));
+      if (yoyaku.length > 1) {
+        const newest = yoyaku.slice().sort((a, b) =>
+          parseInt(a.replace(/\D/g, ''), 10) - parseInt(b.replace(/\D/g, ''), 10)
+        ).pop();
+        yoyaku.forEach(k => { if (k !== newest) doomed.push(k); });
+      }
+
+      doomed.forEach(k => {
+        try {
+          freedChars += k.length + (localStorage.getItem(k) || '').length;
+          localStorage.removeItem(k);
+          removed++;
+        } catch (e) { /* 1件失敗しても残りは続ける */ }
+      });
+
+      if (removed > 0) {
+        console.info('[portal] cleaned ' + removed + ' stale keys (' + freedChars + ' chars)');
+        // 効いたことを後から確認できるよう、小さな記録だけ残す（200文字未満）
+        try {
+          localStorage.setItem(CLEANUP_RECORD_KEY, JSON.stringify({
+            at: new Date().toISOString(), removed: removed, freedChars: freedChars, v: APP_VERSION
+          }));
+        } catch (e) {}
+      }
+    } catch (e) {
+      // 掃除の失敗でログインを妨げない
+      console.warn('[portal] cleanup skipped:', e);
+    }
+    return { removed: removed, freedChars: freedChars };
+  }
 
   // ── セッション管理 ─────────────────────────────────────────────
   function getSession() {
@@ -655,6 +715,7 @@
 
   // ── ホーム画面表示 ─────────────────────────────────────────────
   async function showHome(userId, name, isAdmin) {
+    try { cleanupSharedStorage(); } catch (e) {}   // ← v1.5.0で追加
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('homeScreen').style.display  = 'block';
     document.getElementById('welcomeText').textContent   = 'ようこそ、' + name + 'さん';
