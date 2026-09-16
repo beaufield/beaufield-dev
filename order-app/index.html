@@ -1376,7 +1376,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.73.0';
+const APP_VERSION    = 'v1.73.1';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1738,16 +1738,24 @@ function _gasSafeErrorText(e) {
 function _gasStorageTag() {
   try {
     let total = 0;
+    const sizes = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      total += k.length + (localStorage.getItem(k) || '').length;
+      const n = k.length + (localStorage.getItem(k) || '').length;
+      total += n;
+      sizes.push([k, n]);
     }
+    // v1.73.1: 容量を食っている中身を特定する。キー名と文字数だけで、値は残さない。
+    // ⚠️ localStorageの上限はオリジン単位＝ポータル配下の全アプリで共有なので、
+    //    他アプリのキーもここに出る（発注アプリだけを見ても原因が分からない）
+    sizes.sort((a, b) => b[1] - a[1]);
     const master = (localStorage.getItem(LS_MASTER) || '').length;
     return {
       totalChars: total,
       totalMbUtf16: Math.round(total * 2 / 1048576 * 100) / 100,
       masterChars: master,
-      masterSaveFailed: typeof _productRead !== 'undefined' && !!(_productRead && _productRead.cacheWarning)
+      masterSaveFailed: typeof _productRead !== 'undefined' && !!(_productRead && _productRead.cacheWarning),
+      keys: sizes.slice(0, 15).map(x => ({ k: x[0], chars: x[1] }))
     };
   } catch(e) { return { error: 'unavailable' }; }
 }
