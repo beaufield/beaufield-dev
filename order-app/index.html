@@ -1376,7 +1376,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.72.4';
+const APP_VERSION    = 'v1.73.0';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1694,6 +1694,64 @@ function _gasReadDiagnostics() {
   } catch(e) { return []; }
 }
 
+/* ===================================================
+   通信環境の記録（v1.73.0）
+   スマホで「通信を1度も試みずに数ミリ秒でTypeError」「20秒待って期限切れ」が
+   多発しているが、従来の診断はエラーの種類しか残しておらず原因を切り分けられなかった。
+   ここで足すのは記録だけで、タイムアウト・再試行回数・同時実行数は一切変えない。
+   ⚠️ 業務データ・URL・トークンは絶対に残さない（_gasSafeErrorText で落とす）
+=================================================== */
+// 画面が隠れた回数。iOS Safariは画面が消えると通信とタイマーを止めるため、
+// 「その通信の最中に画面が消えたか」を失敗と突き合わせられるようにする
+let _gasHiddenCount = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') _gasHiddenCount++;
+});
+
+// 「オンラインか｜画面が見えているか｜回線種別」を1つの短い文字列にする。
+// 文字列にするのは、診断1件あたりの保存量を増やしすぎないため
+function _gasEnvTag() {
+  let online = true, vis = 'visible', net = '';
+  try { online = navigator.onLine !== false; } catch(e) {}
+  try { vis = document.visibilityState || 'visible'; } catch(e) {}
+  try {
+    const c = navigator.connection;
+    if (c && c.effectiveType) net = '|' + c.effectiveType; // iOS Safariは未対応なので空になる
+  } catch(e) {}
+  return (online ? 'on' : 'OFFLINE') + '|' + vis + net;
+}
+
+// エラー本文は原因特定に要る（iOSの「Load failed」等）が、そのまま残すと
+// URLやトークンが混ざりうる。定型の置換で落としてから120文字で切る
+function _gasSafeErrorText(e) {
+  if (!e) return '';
+  try {
+    return String(e.message || e.name || '')
+      .replace(/https?:\/\/\S+/g, '(url)')
+      .replace(/[A-Za-z0-9_-]{24,}/g, '(id)')
+      .slice(0, 120);
+  } catch(_) { return ''; }
+}
+
+// 端末キャッシュの状況。商品マスターがiPhoneで保存できず毎起動取り直しになっている件を
+// 診断だけで確認できるようにする（画面の警告表示とは別に、コピーした診断にも残す）
+function _gasStorageTag() {
+  try {
+    let total = 0;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      total += k.length + (localStorage.getItem(k) || '').length;
+    }
+    const master = (localStorage.getItem(LS_MASTER) || '').length;
+    return {
+      totalChars: total,
+      totalMbUtf16: Math.round(total * 2 / 1048576 * 100) / 100,
+      masterChars: master,
+      masterSaveFailed: typeof _productRead !== 'undefined' && !!(_productRead && _productRead.cacheWarning)
+    };
+  } catch(e) { return { error: 'unavailable' }; }
+}
+
 // 起動の診断は業務データを含めず、通信成功と画面の利用可能を区別する。
 let _startupRead = null;
 function _masterStorageGet(key) {
@@ -1753,7 +1811,9 @@ function _gasDiagStart(op) {
   rows.push({
     opId: op.id, action: op.action, kind: op.kind, version: APP_VERSION,
     runId: _startupRead ? _startupRead.runId : null,
-    startedAt: op.startedAt, deadlineAt: op.deadlineAt, state: 'START', attempts: 0
+    startedAt: op.startedAt, deadlineAt: op.deadlineAt, state: 'START', attempts: 0,
+    // v1.73.0: どの画面の操作か・開始時の通信環境。業務データは入れない
+    screen: (typeof currentScreen !== 'undefined' ? currentScreen : ''), env: _gasEnvTag()
   });
   _gasWriteDiagnostics(rows);
 }
@@ -1768,6 +1828,7 @@ function _gasDiagEnd(op, outcome) {
     row.elapsedMs = Date.now() - op.startedAt;
     row.endedAt = Date.now();
     row.semaphore = _gasDebugSnapshot();
+    row.envEnd = _gasEnvTag(); // v1.73.0: 終了時の通信環境（開始時のenvと比べる）
   }
   _gasWriteDiagnostics(rows);
 }
@@ -1876,6 +1937,9 @@ function _gasErrorMessage(e) {
 async function _gasFetchOnce(url, init, operation) {
   const startedAt = Date.now();
   const attempt = { attempt: operation.attempts, startedAt, queueMs: 0, requestMs: 0 };
+  // v1.73.0: この試行の間に画面が消えたか（iOS Safariの通信停止と失敗の相関を見るため）
+  const hiddenAtStart = _gasHiddenCount;
+  attempt.env = _gasEnvTag();
   let dispatchedAt = null;
   let lease = null;
   const queueWaitMs = Math.min(GAS_QUEUE_TIMEOUT_MS, operation.remaining());
@@ -1895,7 +1959,12 @@ async function _gasFetchOnce(url, init, operation) {
       const bodyStartedAt = Date.now();
       const text = await res.text(); // res.json()ではなくtext()。404のHTMLをここで検出するため
       attempt.bodyReadMs = Date.now() - bodyStartedAt;
-      if (!res.ok) throw new GasTransientError('HTTP ' + res.status);
+      attempt.bodyLen = text.length; // v1.73.0: 応答が途中で切れていないかの手掛かり
+      if (!res.ok) {
+        // v1.73.0: 404の中身がGoogleのHTMLページなのか空応答なのかを残す
+        try { attempt.ct = (res.headers.get('content-type') || '').split(';')[0]; } catch(_) {}
+        throw new GasTransientError('HTTP ' + res.status);
+      }
       try {
         const decodeStartedAt = Date.now();
         const data = JSON.parse(text);
@@ -1904,7 +1973,11 @@ async function _gasFetchOnce(url, init, operation) {
           (data && ['USE_POST', 'AUTH_UNAVAILABLE', 'SESSION_INVALID'].includes(data.error) ? data.error : 'RESPONSE_ERROR');
         return data;
       }
-      catch (e) { throw new GasTransientError('non-JSON response'); }
+      catch (e) {
+        // v1.73.0: HTMLが返ったのか、壊れたJSONなのかを区別する（本文そのものは残さない）
+        attempt.bodyKind = String(text).trim().charAt(0) === '<' ? 'html' : 'other';
+        throw new GasTransientError('non-JSON response');
+      }
     })();
 
     // Safariでabort後もfetchが決着しない場合に備え、abortと同時にrace側もrejectする。
@@ -1924,6 +1997,11 @@ async function _gasFetchOnce(url, init, operation) {
     return await Promise.race([doFetch, attemptTimeout, operationCancelled]);
   } catch(e) {
     attempt.errorType = e && ['GasTransientError', 'GasQueueTimeoutError', 'GasDeadlineError', 'GasSemaphoreError', 'AbortError', 'TypeError'].includes(e.name) ? e.name : 'OTHER';
+    // v1.73.0: 失敗の本文と、失敗した瞬間の通信環境。
+    // 「2〜7ミリ秒でTypeError（通信を試みる前に失敗）」の正体を特定するために要る
+    attempt.errorText = _gasSafeErrorText(e);
+    attempt.envEnd = _gasEnvTag();
+    if (attempt.errorType === 'OTHER' && e && e.name) attempt.errorName = String(e.name).slice(0, 40);
     throw e;
   } finally {
     clearTimeout(timeoutTimer);
@@ -1932,6 +2010,8 @@ async function _gasFetchOnce(url, init, operation) {
     attempt.elapsedMs = Date.now() - startedAt;
     if (dispatchedAt === null) attempt.queueMs = attempt.elapsedMs;
     else attempt.requestMs = Date.now() - dispatchedAt;
+    // v1.73.0: この試行の最中に画面が消えた（＝iOSが通信を止めた可能性）
+    if (_gasHiddenCount > hiddenAtStart) attempt.hid = 1;
     _gasDiagAttempt(operation, attempt);
   }
 }
@@ -3643,6 +3723,11 @@ function _gasDiagnosticsText() {
   }));
   return JSON.stringify({
     appVersion: APP_VERSION, generatedAt: new Date().toISOString(),
+    // v1.73.0: 端末・回線・キャッシュの状況。原因の切り分けに要る最小限だけを載せる
+    env: _gasEnvTag(),
+    ua: (() => { try { return String(navigator.userAgent).slice(0, 160); } catch(e) { return ''; } })(),
+    storage: _gasStorageTag(),
+    hiddenCount: _gasHiddenCount,
     semaphore: _gasDebugSnapshot(), outbox, operations: _gasReadDiagnostics()
   }, null, 2);
 }
