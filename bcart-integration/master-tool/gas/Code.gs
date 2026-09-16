@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.31.0';
+const VERSION = 'v2.31.1';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -42,12 +42,23 @@ const SHEET_STOCK_LOG_DETAIL = '在庫同期ログ_明細';
 
 // 在庫夜間自動同期の設定
 const STOCK_SYNC_CSV_MAX_AGE_HOURS = 24; // これより古いCSVでは同期を中止
+let _requestMetric = null;
+
+function safeMetricField_(value, maxLength) {
+  const text = String(value || '');
+  return text.length <= (maxLength || 80) && /^[A-Za-z0-9_-]*$/.test(text) ? text : '';
+}
 
 // ===================== エントリポイント =====================
 function doPost(e) {
+  _requestMetric = { app: 'bcart-master', action: '', startedAt: Date.now(), operationId: '', attemptId: '' };
   try {
     const params = JSON.parse(e.postData.contents);
     const action = params.action;
+    _requestMetric = {
+      app: 'bcart-master', action: safeMetricField_(action, 60), startedAt: Date.now(),
+      operationId: safeMetricField_(params.operation_id, 80), attemptId: safeMetricField_(params.attempt_id, 80)
+    };
 
     const noAuthActions = ['getVersion'];
     // AI用キーはプレビューとドラフト作成だけに限定する。
@@ -79,7 +90,7 @@ function doPost(e) {
       userName = 'Claude(API-APPLY)';
     } else if (!noAuthActions.includes(action)) {
       const authResult = validateSession(params.session);
-      if (!authResult.ok) return jsonResponse({ ok: false, error: 'UNAUTHORIZED' });
+      if (!authResult.ok) return jsonResponse({ ok: false, error: authResult.error || 'UNAUTHORIZED' });
       const role = String((authResult.user && authResult.user.role) || '').toLowerCase();
       const canMutate = Boolean(authResult.user && authResult.user.is_admin) || ['admin', 'editor'].includes(role);
       if (!sessionReadOnlyActions.includes(action) && !canMutate) {
@@ -202,7 +213,8 @@ function doPost(e) {
     }
   } catch (err) {
     Logger.log('doPost error: ' + err.message);
-    return jsonResponse({ ok: false, error: 'INTERNAL_ERROR' });
+    const known = ['DATA_NOT_CONFIGURED', 'DATA_UNAVAILABLE', 'DATA_SCHEMA_ERROR'];
+    return jsonResponse({ ok: false, error: known.includes(err.message) ? err.message : 'INTERNAL_ERROR' });
   }
 }
 
@@ -211,13 +223,26 @@ function doGet(e) {
 }
 
 function jsonResponse(data) {
+  if (_requestMetric) {
+    const metric = _requestMetric;
+    _requestMetric = null;
+    try {
+      console.log(JSON.stringify({
+        message: 'gas_action', app: metric.app, version: VERSION, action: metric.action,
+        operationId: metric.operationId, attemptId: metric.attemptId, phase: 'complete',
+        elapsedMs: Date.now() - metric.startedAt,
+        outcome: data && (data.ok === true || data.success === true) ? 'success' : 'failure',
+        error: data && data.error ? safeMetricField_(data.error, 80) : ''
+      }));
+    } catch (_) {}
+  }
   return ContentService.createTextOutput(JSON.stringify(data))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
 // ===================== セッション検証 =====================
 function validateSession(session) {
-  if (!session || !session.token) return { ok: false };
+  if (!session || !session.token) return { ok: false, error: 'UNAUTHORIZED' };
   try {
     const res = UrlFetchApp.fetch(AUTH_GAS_URL, {
       method: 'post',
@@ -229,8 +254,15 @@ function validateSession(session) {
       }),
       muteHttpExceptions: true
     });
+    if (res.getResponseCode() !== 200) return { ok: false, error: 'AUTH_UNAVAILABLE' };
     const data = JSON.parse(res.getContentText());
-    if (!data.ok) return { ok: false };
+    if (!data || Array.isArray(data) || typeof data.ok !== 'boolean') {
+      return { ok: false, error: 'AUTH_UNAVAILABLE' };
+    }
+    if (!data.ok) return { ok: false, error: 'UNAUTHORIZED' };
+    if (!data.user_id || !String(data.role || '').trim() || typeof data.is_admin !== 'boolean') {
+      return { ok: false, error: 'AUTH_UNAVAILABLE' };
+    }
     return {
       ok: true,
       user: {
@@ -241,7 +273,7 @@ function validateSession(session) {
       }
     };
   } catch (e) {
-    return { ok: false };
+    return { ok: false, error: 'AUTH_UNAVAILABLE' };
   }
 }
 
@@ -1280,12 +1312,14 @@ function getSpecials() {
           }
         }
       }
-    } catch(e) {}
+    } catch(e) {
+      if (['DATA_NOT_CONFIGURED', 'DATA_UNAVAILABLE', 'DATA_SCHEMA_ERROR'].includes(e && e.message)) throw e;
+    }
   }
 
   try {
     const products = bcartGetAll('/products');
-    if (!products.ok) return { ok: true, specials: [] };
+    if (!products.ok) return products;
     const featureIds = new Set();
     products.data.forEach(p => {
       if (p.feature_id1) featureIds.add(p.feature_id1);
@@ -1301,7 +1335,8 @@ function getSpecials() {
     });
     return { ok: true, specials: featureList };
   } catch(e) {
-    return { ok: true, specials: [] };
+    if (['DATA_NOT_CONFIGURED', 'DATA_UNAVAILABLE', 'DATA_SCHEMA_ERROR'].includes(e && e.message)) throw e;
+    return { ok: false, error: 'BCART_API_ERROR' };
   }
 }
 
@@ -4020,17 +4055,78 @@ function getHistory() {
 }
 
 // ===================== シート管理 =====================
+function getDataSpreadsheet_() {
+  const ssId = PropertiesService.getScriptProperties().getProperty('MASTER_TOOL_SS_ID');
+  if (!ssId) throw new Error('DATA_NOT_CONFIGURED');
+  try {
+    return SpreadsheetApp.openById(ssId);
+  } catch (e) {
+    throw new Error('DATA_UNAVAILABLE');
+  }
+}
+
+function requiredSheetHeaders_(sheetName) {
+  const map = {};
+  map[SHEET_IGNORE] = ['商品コード', '商品名', '理由', '登録日時', '仕入先名'];
+  map[SHEET_WIP] = ['商品コード', '商品名', '登録日時'];
+  map[SHEET_DESC_SKIP] = ['商品ID', '商品名', '登録日時'];
+  map[SHEET_HISTORY] = ['日時', '操作者', '商品コード', '商品名', '操作種別', '変更前', '変更後', '結果'];
+  map[SHEET_SP_GROUPS] = ['group_id', 'group_name', 'member_ids', 'created_at', 'note', 'use_view_filter', 'customer_codes'];
+  map[SHEET_SP_INDIVIDUAL] = ['detail_id', 'customer_code', 'member_id', 'customer_name', 'product_set_id', 'product_no', 'product_set_name', 'unit_price', 'updated_at', 'applied_at', 'note'];
+  map[SHEET_VF_DETAILS] = ['detail_id', 'group_id', 'product_set_id', 'product_no', 'product_set_name', 'applied_at'];
+  map[SHEET_SP_DETAILS] = ['detail_id', 'group_id', 'product_set_id', 'product_no', 'product_set_name', 'unit_price', 'updated_at', 'applied_at'];
+  map[SHEET_FEATURES] = ['feature_id', 'type', 'updated_at'];
+  map[SHEET_DRAFT] = ['draft_id', 'status', 'draft_type', 'target_product_id', 'product_name', 'category_id', 'feature_id1', 'feature_id2', 'feature_id3', 'description', 'confidence', 'reasoning', 'ref_urls', 'supplier_cd', 'supplier_name', 'created_at', 'reviewed_at', 'registered_product_id', 'jodai_type', 'tax_type_id', 'view_group_restricted'];
+  map[SHEET_DRAFT_SETS] = ['draft_id', 'code', 'set_name', 'jan', 'unit_price', 'jodai', 'shiire', 'unit', 'last_sale_date'];
+  map[SHEET_STOCK_LOG] = ['日時', 'モード', '対象数', '更新数', '0維持スキップ', 'CSV無しスキップ', '差分無しスキップ', '要確認件数', 'エラー'];
+  map[SHEET_STOCK_LOG_DETAIL] = ['日時', 'モード', '種別', '品番', '商品名', '変更前', '変更後'];
+  map[SHEET_SP_AUDIT_EXCLUDE] = ['exclude_id', 'customer_code', 'member_id', 'label', 'reason', 'created_at'];
+  return map[sheetName] || null;
+}
+
+// 互換名を維持するが、通常処理では作成も移行も行わない。
 function getOrCreateSheet(sheetName) {
-  const props = PropertiesService.getScriptProperties();
-  let ssId = props.getProperty('MASTER_TOOL_SS_ID');
-  let ss;
-  if (ssId) {
-    try { ss = SpreadsheetApp.openById(ssId); } catch (e) { ssId = null; }
-  }
-  if (!ssId) {
-    ss = SpreadsheetApp.create('BCARTマスター管理ツール_データ');
+  const ss = getDataSpreadsheet_();
+  const sheet = ss.getSheetByName(sheetName);
+  const expected = requiredSheetHeaders_(sheetName);
+  if (!sheet || !expected) throw new Error('DATA_SCHEMA_ERROR');
+  const actual = sheet.getRange(1, 1, 1, expected.length).getValues()[0].map(v => String(v || '').trim());
+  if (expected.some((name, i) => actual[i] !== name)) throw new Error('DATA_SCHEMA_ERROR');
+  return sheet;
+}
+
+// GASエディタから明示的に実行する初期設定。通常APIからは呼ばない。
+function setupDataSpreadsheet() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const props = PropertiesService.getScriptProperties();
+    if (props.getProperty('MASTER_TOOL_SS_ID')) throw new Error('DATA_ALREADY_CONFIGURED');
+    const ss = SpreadsheetApp.create('BCARTマスター管理ツール_データ');
     props.setProperty('MASTER_TOOL_SS_ID', ss.getId());
+    migrateDataSpreadsheetUnlocked_();
+  } finally {
+    lock.releaseLock();
   }
+}
+
+// 既存環境のシート作成・列追加・書式移行はこの明示関数に限定する。
+function migrateDataSpreadsheet() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try { migrateDataSpreadsheetUnlocked_(); }
+  finally { lock.releaseLock(); }
+}
+
+function migrateDataSpreadsheetUnlocked_() {
+  [SHEET_IGNORE, SHEET_WIP, SHEET_DESC_SKIP, SHEET_HISTORY, SHEET_SP_GROUPS,
+   SHEET_SP_INDIVIDUAL, SHEET_VF_DETAILS, SHEET_SP_DETAILS, SHEET_FEATURES,
+   SHEET_DRAFT, SHEET_DRAFT_SETS, SHEET_STOCK_LOG, SHEET_STOCK_LOG_DETAIL,
+   SHEET_SP_AUDIT_EXCLUDE].forEach(setupOrMigrateSheet_);
+}
+
+function setupOrMigrateSheet_(sheetName) {
+  const ss = getDataSpreadsheet_();
 
   let sheet = ss.getSheetByName(sheetName);
   if (!sheet) {
@@ -4130,6 +4226,16 @@ function getOrCreateSheet(sheetName) {
       sheet.getRange('D2:D').setNumberFormat('@');
     }
   }
+  const expected = requiredSheetHeaders_(sheetName);
+  if (!expected) throw new Error('DATA_SCHEMA_ERROR');
+  const actual = sheet.getRange(1, 1, 1, expected.length).getValues()[0].map(v => String(v || '').trim());
+  expected.forEach((name, i) => {
+    if (!actual[i]) {
+      sheet.getRange(1, i + 1).setValue(name).setFontWeight('bold').setBackground('#f3f4f6');
+    } else if (actual[i] !== name) {
+      throw new Error('DATA_SCHEMA_ERROR');
+    }
+  });
   return sheet;
 }
 

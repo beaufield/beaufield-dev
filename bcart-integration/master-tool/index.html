@@ -1368,7 +1368,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = 'v2.17.0';
+const APP_VERSION = 'v2.17.1';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
 const BCART_ADMIN_BASE = 'https://beaufieldec.i16.bcart.jp/admin/products';
 
@@ -1497,8 +1497,11 @@ function switchTab(tab, el) {
 // ===================== データ読み込み =====================
 function loadData() {
   const loadSteps = ['データを読み込み中...', 'CSVを読み込み中...', 'BCART商品データを取得中...', '差異を計算中...', 'もうすぐ完了...'];
-  document.getElementById('diffList').innerHTML = '<div class="loading"><div class="spinner"></div><div id="loadingMsg">' + loadSteps[0] + '</div></div>';
-  ['cnt-price','cnt-disc','cnt-unreg','cnt-ignore'].forEach(id => document.getElementById(id).textContent = '-');
+  const hadPreviousData = Array.isArray(allDiffs) && allDiffs.length > 0;
+  if (!hadPreviousData) {
+    document.getElementById('diffList').innerHTML = '<div class="loading"><div class="spinner"></div><div id="loadingMsg">' + loadSteps[0] + '</div></div>';
+    ['cnt-price','cnt-disc','cnt-unreg','cnt-ignore'].forEach(id => document.getElementById(id).textContent = '-');
+  }
 
   const stepTimers = [5000, 18000, 35000, 55000].map(function(delay, i) {
     return setTimeout(function() {
@@ -1509,7 +1512,11 @@ function loadData() {
 
   gasPost({ action: 'loadData' }, function(res) {
     stepTimers.forEach(clearTimeout);
-    if (!res.ok) { showToast('データ読み込みエラー: ' + res.error, true); return; }
+    if (!res.ok) {
+      if (hadPreviousData) { updateSummary(); renderDiffs(); }
+      showToast('データ読み込みエラー: ' + res.error + (hadPreviousData ? '（前回取得分を表示中）' : ''), true);
+      return;
+    }
 
     const csvMsg = 'CSV: ' + (res.totalCsv || 0) + '件 / BCART: ' + (res.totalBcart || 0) + '件';
     if (res.totalCsv === 0 || res.totalBcart === 0) {
@@ -2561,15 +2568,77 @@ function netBusyEnd() {
   if (txt) txt.textContent = '通信中…';
 }
 
+const RETRYABLE_READ_ACTIONS = new Set([
+  'loadData', 'getIgnoreList', 'searchProducts', 'getSpecials', 'getHistory',
+  'getCategories', 'getFeatures', 'getSpecialPriceData', 'getProductSetsForFeature',
+  'searchProductSets', 'getSpecialPriceCurrent', 'getViewFilterCurrent', 'getMembers',
+  'getGroupViewInfo', 'auditSpecialPrices', 'getAuditExclusions', 'auditSalesVsBcart',
+  'getProductsForDescription', 'getSimilarProducts', 'getFeatureList', 'getDrafts'
+]);
+const RESPONSE_ARRAY_KEYS = {
+  loadData: 'diffs', getHistory: 'list', getCategories: 'categories',
+  getFeatures: 'specials', getSpecials: 'specials', getFeatureList: 'features', getDrafts: 'drafts'
+};
+function validateBusinessResponse(action, res) {
+  if (!res || typeof res !== 'object' || Array.isArray(res) || typeof res.ok !== 'boolean') {
+    return { ok: false, error: 'BAD_RESPONSE', message: '応答の形式が想定と違います。' };
+  }
+  if (!res.ok) return res;
+  const key = RESPONSE_ARRAY_KEYS[action];
+  if (key && !Array.isArray(res[key])) {
+    return { ok: false, error: 'BAD_RESPONSE', message: '必要な一覧データが応答にありません。' };
+  }
+  if (action === 'loadData' && (
+      !res.supplierMap || typeof res.supplierMap !== 'object' || Array.isArray(res.supplierMap) ||
+      typeof res.totalCsv !== 'number' || typeof res.totalBcart !== 'number' || typeof res.isOld !== 'boolean')) {
+    return { ok: false, error: 'BAD_RESPONSE', message: '一覧の付随情報が応答にありません。' };
+  }
+  return res;
+}
+
+function makeDiagnosticId() {
+  try {
+    if (crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  } catch (_) {}
+  return 'op_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 12);
+}
+
+const BCART_DIAG_KEY = 'bf_bcart_diag_v1';
+function recordClientDiagnostic(entry) {
+  try {
+    const rows = JSON.parse(localStorage.getItem(BCART_DIAG_KEY) || '[]');
+    const safeRows = Array.isArray(rows) ? rows : [];
+    safeRows.push({
+      at: Date.now(), version: APP_VERSION,
+      action: String(entry.action || '').slice(0, 60),
+      operationId: String(entry.operationId || '').slice(0, 80),
+      attemptId: String(entry.attemptId || '').slice(0, 80),
+      phase: entry.phase, elapsedMs: entry.elapsedMs || 0, outcome: entry.outcome || ''
+    });
+    localStorage.setItem(BCART_DIAG_KEY, JSON.stringify(safeRows.slice(-200)));
+  } catch (_) {}
+}
+
 function gasPost(params, callback, retryCount) {
   retryCount = retryCount || 0;
+  if (!params.operation_id) params.operation_id = makeDiagnosticId();
+  params.attempt_id = params.operation_id + '_' + (retryCount + 1);
   params.session = session;
+  const diagnosticStartedAt = Date.now();
+  recordClientDiagnostic({ action: params.action, operationId: params.operation_id, attemptId: params.attempt_id, phase: 'start' });
   // クリック直後（500ms以内）に始まった通信だけ、そのボタンの操作とみなす
   const btn = (retryCount === 0 && _lastClickedBtn && (Date.now() - _lastClickedAt) < 500)
     ? markBtnBusy(_lastClickedBtn) : null;
   netBusyStart(retryCount > 0 ? '再試行中…' : '通信中…');
   let done = false;
-  const finish = () => { if (done) return; done = true; netBusyEnd(); releaseBtnBusy(btn); };
+  const finish = (outcome) => {
+    if (done) return;
+    done = true;
+    netBusyEnd();
+    releaseBtnBusy(btn);
+    recordClientDiagnostic({ action: params.action, operationId: params.operation_id, attemptId: params.attempt_id,
+      phase: 'complete', elapsedMs: Date.now() - diagnosticStartedAt, outcome: outcome });
+  };
 
   fetch(GAS_URL, {
     method: 'POST',
@@ -2577,28 +2646,60 @@ function gasPost(params, callback, retryCount) {
     body: JSON.stringify(params)
   })
   .then(r => r.json())
-  .then(res => { finish(); callback(res); })
+  .then(res => {
+    const checked = validateBusinessResponse(params.action, res);
+    finish(checked.ok ? 'success' : 'response_error');
+    try { callback(checked); }
+    catch (uiError) {
+      console.error('画面更新エラー:', uiError);
+      showToast('通信は完了しましたが、画面の更新に失敗しました。再送せず一覧を再取得してください。', true);
+    }
+  })
   .catch(err => {
-    finish();
-    if (retryCount < 1) {
+    finish('network_error');
+    if (retryCount < 1 && RETRYABLE_READ_ACTIONS.has(params.action)) {
       showToast('通信エラー、再試行中...');
       setTimeout(() => gasPost(params, callback, retryCount + 1), 3000);
     } else {
-      showToast('通信エラー: ' + err.message + '（ページを再読み込みしてください）', true);
+      const uncertain = !RETRYABLE_READ_ACTIONS.has(params.action);
+      showToast(uncertain
+        ? '処理結果を確認できませんでした。再送せず、一覧やBCART管理画面で確認してください。'
+        : '通信エラー: ' + err.message + '（再取得してください）', true);
+      try { callback({ ok: false, error: uncertain ? 'RESULT_UNKNOWN' : 'NETWORK', uncertain: uncertain }); }
+      catch (uiError) { console.error('通信失敗後の画面更新エラー:', uiError); }
     }
   });
 }
-
 function gasPostAsync(params) {
+  if (!params.operation_id) params.operation_id = makeDiagnosticId();
+  params.attempt_id = params.operation_id + '_1';
   params.session = session;
+  const diagnosticStartedAt = Date.now();
+  recordClientDiagnostic({ action: params.action, operationId: params.operation_id, attemptId: params.attempt_id, phase: 'start' });
   netBusyStart('通信中…');
   return fetch(GAS_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify(params)
   }).then(r => r.json())
-    .then(res => { netBusyEnd(); return res; })
-    .catch(err => { netBusyEnd(); throw err; });
+    .then(res => {
+      netBusyEnd();
+      const checked = validateBusinessResponse(params.action, res);
+      recordClientDiagnostic({ action: params.action, operationId: params.operation_id, attemptId: params.attempt_id,
+        phase: 'complete', elapsedMs: Date.now() - diagnosticStartedAt, outcome: checked.ok ? 'success' : 'response_error' });
+      return checked;
+    })
+    .catch(err => {
+      netBusyEnd();
+      recordClientDiagnostic({ action: params.action, operationId: params.operation_id, attemptId: params.attempt_id,
+        phase: 'complete', elapsedMs: Date.now() - diagnosticStartedAt, outcome: 'network_error' });
+      const wrapped = new Error(RETRYABLE_READ_ACTIONS.has(params.action)
+        ? '通信に失敗しました。再取得してください。'
+        : '処理結果を確認できませんでした。再送せず、一覧やBCART管理画面で確認してください。');
+      wrapped.code = RETRYABLE_READ_ACTIONS.has(params.action) ? 'NETWORK' : 'RESULT_UNKNOWN';
+      wrapped.uncertain = !RETRYABLE_READ_ACTIONS.has(params.action);
+      throw wrapped;
+    });
 }
 
 // ===================== ユーティリティ =====================
@@ -5796,7 +5897,7 @@ function initFeatureTab() {
 
 function loadFeatureList() {
   var container = document.getElementById('feature-list-container');
-  container.innerHTML = '<p style="color:#9ca3af;font-size:13px;text-align:center;padding:24px 0;">読み込み中...</p>';
+  if (featureList.length === 0) container.innerHTML = '<p style="color:#9ca3af;font-size:13px;text-align:center;padding:24px 0;">読み込み中...</p>';
   featureOrderChanged = false;
   featureTypeChanged = false;
   document.getElementById('feature-order-save-btn').style.display = 'none';
@@ -6078,24 +6179,47 @@ function submitFeatureModal() {
 // ===================== タブ9: 登録ドラフト =====================
 let draftList = [];
 let draftRejectTargetId = null;
-
+let draftLoadGeneration = 0;
+let draftCategoriesLoaded = false;
+let draftFeaturesLoaded = false;
+let draftDisplayedKey = '';
 function loadDrafts(onDone) {
+  const generation = ++draftLoadGeneration;
   const status = document.getElementById('draftStatusFilter').value;
   const supplierCd = document.getElementById('draftSupplierFilter').value;
-  document.getElementById('draftList').innerHTML = '<div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>';
-  document.getElementById('draftCount').textContent = '';
+  const requestKey = status + '|' + supplierCd;
+  const retainingSameCondition = draftList.length > 0 && draftDisplayedKey === requestKey;
+  function showLoadFailure(message) {
+    if (!retainingSameCondition) {
+      document.getElementById('draftList').innerHTML = '<div class="loading">' + esc(message) + '<br><button class="btn btn-gray btn-sm" onclick="loadDrafts()">再取得</button></div>';
+      document.getElementById('draftCount').textContent = '';
+    }
+    showToast(message + (retainingSameCondition ? '（前回取得分を表示中）' : ''), true);
+  }
+  if (!retainingSameCondition) {
+    document.getElementById('draftList').innerHTML = '<div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>';
+    document.getElementById('draftCount').textContent = '';
+  }
 
-  ensureDraftMasters(function() {
+  ensureDraftMasters(function(masterResult) {
+    if (generation !== draftLoadGeneration) return;
+    if (!masterResult.ok) {
+      showLoadFailure('カテゴリー・特集を取得できないため、ドラフトを編集できません。再取得してください。');
+      if (onDone) onDone();
+      return;
+    }
     gasPostAsync({ action: 'getDrafts', status: status, supplierCd: supplierCd }).then(function(res) {
-      if (!res.ok) { showToast('ドラフト取得エラー: ' + res.error, true); return; }
-      draftList = res.drafts || [];
+      if (generation !== draftLoadGeneration) return;
+      if (!res.ok) { showLoadFailure('ドラフト取得エラー: ' + res.error); return; }
+      draftList = res.drafts;
+      draftDisplayedKey = requestKey;
       document.getElementById('draftCount').textContent = draftList.length + '件';
       rebuildDraftSupplierFilter(draftList, supplierCd);
       renderDraftList(draftList);
     }).catch(function(e) {
-      showToast('通信エラー: ' + e.message, true);
+      if (generation === draftLoadGeneration) showLoadFailure('通信エラー: ' + e.message);
     }).finally(function() {
-      if (onDone) onDone();
+      if (generation === draftLoadGeneration && onDone) onDone();
     });
   });
 }
@@ -6103,22 +6227,23 @@ function loadDrafts(onDone) {
 // カテゴリー・特集マスタ（機能Aの一括登録モーダルと共用: regCategories/regFeatures）を未取得なら読み込む
 function ensureDraftMasters(cb) {
   let pending = 0;
-  function done() { pending--; if (pending <= 0) cb(); }
-  if (regCategories.length === 0) {
+  let failed = false;
+  function done(ok) { if (!ok) failed = true; pending--; if (pending <= 0) cb({ ok: !failed }); }
+  if (!draftCategoriesLoaded) {
     pending++;
     gasPost({ action: 'getCategories' }, function(res) {
-      if (res.ok && res.categories) regCategories = res.categories;
-      done();
+      if (res.ok) { regCategories = res.categories; draftCategoriesLoaded = true; }
+      done(res.ok);
     });
   }
-  if (regFeatures.length === 0) {
+  if (!draftFeaturesLoaded) {
     pending++;
     gasPost({ action: 'getFeatures' }, function(res) {
-      if (res.ok && res.specials) regFeatures = res.specials;
-      done();
+      if (res.ok) { regFeatures = res.specials; draftFeaturesLoaded = true; }
+      done(res.ok);
     });
   }
-  if (pending === 0) cb();
+  if (pending === 0) cb({ ok: true });
 }
 
 function rebuildDraftSupplierFilter(drafts, currentValue) {
@@ -6364,12 +6489,13 @@ function approveDraftOne(draftId, btn) {
   showBusyOverlay('登録中...');
   // 承認前にカード上の編集内容（カテゴリ・特集・税区分・上代タイプ含む）を保存してから登録を実行する
   gasPostAsync(Object.assign({ action: 'updateDraft', draftId: draftId }, payload))
-    .then(function() {
+    .then(function(updateRes) {
+      if (!updateRes.ok) throw Object.assign(new Error('ドラフト保存失敗: ' + updateRes.error), { code: updateRes.error });
       return gasPostAsync({ action: 'approveDraft', draftId: draftId });
     })
     .then(function(res) {
       if (!res.ok) { hideBusyOverlay(); showToast('登録失敗: ' + res.error, true); btn.disabled = false; btn.textContent = '✅ 承認して登録（非表示）'; return; }
-      if (res.partial) { showToast('⚠️ ' + res.message, true); btn.disabled = false; btn.textContent = '✅ 承認して登録（非表示）'; loadDrafts(hideBusyOverlay); return; }
+      if (res.partial) { hideBusyOverlay(); showToast('⚠️ ' + res.message + ' 再登録せず、BCART管理画面で確認してください。', true); btn.textContent = '結果を確認してください'; return; }
       let msg = '登録しました（非表示）✓ 商品ID: ' + res.productId;
       if (res.notes && res.notes.length) msg += '（' + res.notes.join('；') + '）';
       if (res.descriptionApplied === false) msg += ' ⚠️説明文の反映に失敗しました';
@@ -6378,8 +6504,11 @@ function approveDraftOne(draftId, btn) {
     })
     .catch(function(e) {
       hideBusyOverlay();
-      showToast('通信エラー: ' + e.message, true);
-      btn.disabled = false; btn.textContent = '✅ 承認して登録（非表示）';
+      showToast(e.code === 'RESULT_UNKNOWN'
+        ? e.message
+        : '登録を中止しました: ' + e.message, true);
+      if (e.code === 'RESULT_UNKNOWN') btn.textContent = '結果を確認してください';
+      else { btn.disabled = false; btn.textContent = '✅ 承認して登録（非表示）'; }
     });
 }
 

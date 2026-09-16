@@ -380,7 +380,7 @@
   // ============================================================
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzkuWEqpJLhERoYlosHIeazlVjl3ipIq8u3x0rp4tCU7BaqPuYt4kP78Ha5Vu4ayNWDCg/exec';
   const PORTAL_URL   = 'https://beaufield.github.io/beaufield-dev/';
-  const APP_VERSION  = '1.14.0';
+  const APP_VERSION  = '1.14.1';
   const USE_MOCK     = false; // ← 開発中は true にして data/dashboard_data.json を見る
 
   document.getElementById('header-version').textContent = 'v' + APP_VERSION;
@@ -429,9 +429,50 @@
     loadData(false);
   };
 
+  function makeDiagnosticId() {
+    try {
+      if (crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    } catch (_) {}
+    return 'op_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 12);
+  }
+
+  const DASHBOARD_DIAG_KEY = 'bf_project_dashboard_diag_v1';
+  function recordClientDiagnostic(entry) {
+    try {
+      const rows = JSON.parse(localStorage.getItem(DASHBOARD_DIAG_KEY) || '[]');
+      const safeRows = Array.isArray(rows) ? rows : [];
+      safeRows.push({ at: Date.now(), version: APP_VERSION,
+        action: String(entry.action || '').slice(0, 60), operationId: String(entry.operationId || '').slice(0, 80),
+        attemptId: String(entry.attemptId || '').slice(0, 80), phase: entry.phase,
+        elapsedMs: entry.elapsedMs || 0, outcome: entry.outcome || '' });
+      localStorage.setItem(DASHBOARD_DIAG_KEY, JSON.stringify(safeRows.slice(-200)));
+    } catch (_) {}
+  }
+
+  function dashboardGasPost(payload) {
+    const operationId = payload.operation_id || makeDiagnosticId();
+    const attemptId = payload.attempt_id || operationId + '_1';
+    const startedAt = Date.now();
+    payload.operation_id = operationId;
+    payload.attempt_id = attemptId;
+    recordClientDiagnostic({ action: payload.action, operationId, attemptId, phase: 'start' });
+    return fetch(GAS_URL, {
+      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload)
+    }).then(r => r.json()).then(data => {
+      recordClientDiagnostic({ action: payload.action, operationId, attemptId, phase: 'complete',
+        elapsedMs: Date.now() - startedAt, outcome: data && data.success ? 'success' : 'response_error' });
+      return data;
+    }).catch(err => {
+      recordClientDiagnostic({ action: payload.action, operationId, attemptId, phase: 'complete',
+        elapsedMs: Date.now() - startedAt, outcome: 'network_error' });
+      throw err;
+    });
+  }
+
   function loadData(manual) {
     showStatus('読み込み中...', false);
     if (manual) showToast('更新中...');
+    const operationId = makeDiagnosticId();
 
     const dataPromise = USE_MOCK
       ? fetch('data/dashboard_data.json').then(r => r.json()).then(mock => ({
@@ -441,12 +482,8 @@
           assets: mock.assets,
           jobs: mock.jobs
         }))
-      : fetch(GAS_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ action: 'data', session_token: session.token })
-        })
-          .then(r => r.json());
+      : dashboardGasPost({ action: 'data', session_token: session.token,
+          operation_id: operationId, attempt_id: operationId + '_1' });
 
     dataPromise
       .then(data => {
@@ -457,9 +494,12 @@
           }
           throw new Error(data.message || data.error || '取得失敗');
         }
-        allProjects = data.projects || [];
-        allAssets   = data.assets || [];   // GAS未デプロイ時は空配列（既存タブには影響しない）
-        allJobs     = data.jobs || [];     // 同上
+        if (!Array.isArray(data.projects) || !Array.isArray(data.assets) || !Array.isArray(data.jobs)) {
+          throw new Error('応答の形式が想定と違います。再取得してください。');
+        }
+        allProjects = data.projects;
+        allAssets   = data.assets;
+        allJobs     = data.jobs;
         document.getElementById('synced-at').textContent =
           data.synced_at ? ('最終同期: ' + fmtDateTime(data.synced_at)) : '';
         render();
@@ -1098,12 +1138,9 @@
 
     if (USE_MOCK) { showToast('並び替えました（モック）'); return; }
 
-    fetch(GAS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'reorderPriorities', session_token: session.token, updates: updates })
-    })
-    .then(r => r.json())
+    const operationId = makeDiagnosticId();
+    dashboardGasPost({ action: 'reorderPriorities', session_token: session.token, updates: updates,
+      operation_id: operationId, attempt_id: operationId + '_1' })
     .then(res => {
       if (!res.success) throw new Error(res.message || res.error || '保存失敗');
       showToast('並び替えを保存しました');
@@ -1173,20 +1210,18 @@
       return;
     }
 
-    fetch(GAS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({
+    const operationId = makeDiagnosticId();
+    dashboardGasPost({
         action: 'updateMeta',
         session_token: session.token,
         id: id,
         priority: priorityRaw === '' ? '' : Number(priorityRaw),
         manual_ball: manualBall,
         effort: effortVal,
-        memo: memo
+        memo: memo,
+        operation_id: operationId,
+        attempt_id: operationId + '_1'
       })
-    })
-    .then(r => r.json())
     .then(res => {
       if (!res.success) throw new Error(res.message || res.error || '保存失敗');
       const p = allProjects.find(x => x.id === id);
@@ -1224,19 +1259,17 @@
       return;
     }
 
-    fetch(GAS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({
+    const operationId = makeDiagnosticId();
+    dashboardGasPost({
         action: 'updateMeta',
         target: 'asset',        // これが無いと projects シート側を探しに行く
         session_token: session.token,
         id: id,
         disposition: disposition,
-        memo: memo
+        memo: memo,
+        operation_id: operationId,
+        attempt_id: operationId + '_1'
       })
-    })
-    .then(r => r.json())
     .then(res => {
       if (!res.success) throw new Error(res.message || res.error || '保存失敗');
       applyLocal();
@@ -1275,19 +1308,17 @@
       return;
     }
 
-    fetch(GAS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({
+    const operationId = makeDiagnosticId();
+    dashboardGasPost({
         action: 'updateMeta',
         target: 'job',        // これが無いと projects シート側を探しに行く
         session_token: session.token,
         id: id,
         disposition: disposition,
-        memo: memo
+        memo: memo,
+        operation_id: operationId,
+        attempt_id: operationId + '_1'
       })
-    })
-    .then(r => r.json())
     .then(res => {
       if (!res.success) throw new Error(res.message || res.error || '保存失敗');
       applyLocal();

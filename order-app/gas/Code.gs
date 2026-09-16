@@ -24,9 +24,15 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.38.0';
+const VERSION         = 'v1.38.1';
 const APP_NAME        = 'order-app';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
+let _requestMetric = null;
+
+function safeMetricField_(value, maxLength) {
+  const text = String(value || '');
+  return text.length <= (maxLength || 80) && /^[A-Za-z0-9_-]*$/.test(text) ? text : '';
+}
 const PROP_STUCK_NOTIFY_DAYS = 14; // 提案滞留の通知・「要対応」表示の閾値（日）。Phase M, v1.31.0〜
 
 // Google Drive上の商品マスターCSVファイル名
@@ -204,6 +210,10 @@ function doPost(e) {
     p = e.parameter;
     action = p.action || '';
   }
+  _requestMetric = {
+    app: 'order-app', action: safeMetricField_(action, 60), startedAt: Date.now(),
+    operationId: safeMetricField_(p.operation_id, 80), attemptId: safeMetricField_(p.attempt_id, 80)
+  };
 
   // updateProductMaster: シークレットキー認証（Power Automate用・セッション不要）
   if (action === 'updateProductMaster') {
@@ -302,6 +312,19 @@ function doPost(e) {
 // ヘルパー: JSONレスポンス生成
 // ============================================================
 function jsonResponse(data) {
+  if (_requestMetric) {
+    const metric = _requestMetric;
+    _requestMetric = null;
+    try {
+      console.log(JSON.stringify({
+        message: 'gas_action', app: metric.app, version: VERSION, action: metric.action,
+        operationId: metric.operationId, attemptId: metric.attemptId, phase: 'complete',
+        elapsedMs: Date.now() - metric.startedAt,
+        outcome: data && data.success === true ? 'success' : 'failure',
+        error: data && data.error ? safeMetricField_(data.error, 80) : ''
+      }));
+    } catch (_) {}
+  }
   return ContentService
     .createTextOutput(JSON.stringify(data))
     .setMimeType(ContentService.MimeType.JSON);
@@ -359,6 +382,44 @@ function readRowsForKey_(sheet, key, numCols) {
   const startRow = findTailStartRow_(sheet, key);
   const rows = sheet.getRange(startRow, 1, lastRow - startRow + 1, numCols).getValues();
   return { startRow, rows };
+}
+
+// A列が指定した値と完全一致する行だけを、シート上の順序を保って読む。
+// 発注日順・発注No順の物理配置を前提にしない。連続行はまとめて取得して往復を抑える。
+function readRowsForValues_(sheet, values, numCols) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const wanted = values instanceof Set
+    ? new Set(Array.from(values, v => String(v || '').trim()))
+    : new Set((values || []).map(v => String(v || '').trim()));
+  wanted.delete('');
+  if (wanted.size === 0) return [];
+
+  const keys = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  const rowNumbers = [];
+  keys.forEach((r, i) => {
+    if (wanted.has(String(r[0] || '').trim())) rowNumbers.push(i + 2);
+  });
+  if (rowNumbers.length === 0) return [];
+
+  const groups = [];
+  let start = rowNumbers[0], previous = rowNumbers[0];
+  for (let i = 1; i < rowNumbers.length; i++) {
+    if (rowNumbers[i] === previous + 1) {
+      previous = rowNumbers[i];
+      continue;
+    }
+    groups.push([start, previous]);
+    start = previous = rowNumbers[i];
+  }
+  groups.push([start, previous]);
+
+  const rows = [];
+  groups.forEach(g => {
+    const block = sheet.getRange(g[0], 1, g[1] - g[0] + 1, numCols).getValues();
+    block.forEach(r => rows.push(r));
+  });
+  return rows;
 }
 
 // 末尾から段階的に広げて読み込み、isEnough(rows) が true になった時点（＝もう遡らなくて
@@ -744,12 +805,8 @@ function getOrders(filterSupplierCode) {
   const orderNos     = new Set(orders.map(o => o.orderNo));
   const orderDateMap = {};
   orders.forEach(o => { orderDateMap[o.orderNo] = o.date; });
-  // 発注明細は発注No順（＝時系列順）に追記される前提。20件の中で最も古い発注Noより
-  // 前まで読み終えたら、それより古い行にこの20件の明細は存在しないので打ち切る（対策1）
-  const minOrderNo = orders.reduce((min, o) => (o.orderNo < min ? o.orderNo : min), orders[0].orderNo);
-
   const itemsSh   = getSheet(SHEET_ITEMS);
-  const itemsData = readRowsForKey_(itemsSh, minOrderNo, 6).rows; // jan/code/qty/unit までの6列で足りる
+  const itemsData = readRowsForValues_(itemsSh, orderNos, 6); // jan/code/qty/unit までの6列で足りる
   const productHistory = {}; // キー: 商品コードまたはJANコード → { date, qty, unit }
 
   itemsData.forEach(r => {
@@ -779,24 +836,43 @@ function getOrders(filterSupplierCode) {
 // ============================================================
 function getOrderDetail(orderNo) {
   if (!orderNo) return { success: false, error: 'orderNoが未指定です' };
-  const sh     = getSheet(SHEET_ITEMS);
   const target = String(orderNo).trim();
-  // 発注明細は発注No順に追記される前提で、対象の発注Noより前まで読み終えたら打ち切る（対策1）
-  const data = readRowsForKey_(sh, target, 8).rows;
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    return { success: false, error: 'ORDER_BUSY', message: '発注データを更新中です。少し待って再取得してください。' };
+  }
+  try {
+    const histSh = getSheet(SHEET_HISTORY);
+    const parentRows = findExactRows_(histSh, 1, target);
+    if (parentRows.length !== 1) {
+      return { success: false, error: parentRows.length ? 'ORDER_HISTORY_CONFLICT' : 'ORDER_NOT_FOUND' };
+    }
+    const parent = histSh.getRange(parentRows[0], 1, 1, 14).getValues()[0];
+    const state = String(parent[13] || '').trim();
+    if (state !== '' && state !== 'COMPLETE') {
+      return { success: false, error: 'ORDER_NOT_COMPLETE', message: '発注の保存が完了していません。' };
+    }
 
-  const items = data
-    .filter(r => String(r[0]).trim() === target)
-    .map(r => ({
-      jan:           String(r[1] || ''),
-      code:          String(r[2] || ''),
-      name:          String(r[3] || ''),
-      qty:           r[4] || 0,
-      unit:          String(r[5] || ''),
-      memo:          String(r[6] || ''),
-      isHandwritten: r[7] === 'TRUE'
-    }));
+    const itemsSh = getSheet(SHEET_ITEMS);
+    const data = readRowsForValues_(itemsSh, new Set([target]), 8);
+    const expectedCount = Number(parent[6]) || 0;
+    if (data.length !== expectedCount) {
+      return { success: false, error: 'ORDER_ITEM_COUNT_MISMATCH', expectedCount, actualCount: data.length };
+    }
 
-  return { success: true, items };
+    const items = data.map(r => ({
+        jan:           String(r[1] || ''),
+        code:          String(r[2] || ''),
+        name:          String(r[3] || ''),
+        qty:           r[4] || 0,
+        unit:          String(r[5] || ''),
+        memo:          String(r[6] || ''),
+        isHandwritten: r[7] === 'TRUE'
+      }));
+    return { success: true, items };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // ============================================================
@@ -921,8 +997,8 @@ function saveOrder(p, user_id) {
   if (!date || !supplierCode || !supplierName || !staff) {
     return { success: false, error: 'REQUIRED_FIELDS_MISSING', message: '必須項目が不足しています' };
   }
-  // 発注日の妥当性チェック（v1.34.0）。アプリ側で発注日を自由に変更できるようになったため、
-  // generateOrderNo() の前提（発注Noが日付昇順に並ぶ）を壊す不正値・極端な日付をここで弾く
+  // 発注日の妥当性チェック（v1.34.0）。採番はA列全件を確認するが、
+  // 誤入力や極端な日付の発注Noを作らないため、業務上の許容範囲は引き続き制限する。
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return { success: false, error: 'DATE_INVALID', message: '発注日の形式が不正です' };
   }
@@ -1080,14 +1156,9 @@ function generateOrderNo(dateStr) {
   const sh = getSheet(SHEET_HISTORY);
   const lastRow = sh.getLastRow();
   if (lastRow < 2) return dateKey + '-001';
-  const todayKey = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyyMMdd');
-  // 当日ぶんは必ず末尾に固まっているので従来どおり末尾走査でよい（対策1・対策2）。
-  // 過去日付（後日入力・v1.34.0で許可）はシート末尾に追記されて発注Noの日付昇順が崩れるため、
-  // 末尾走査だと採番済みの発注Noを見落として重複しうる。A列1列だけの全件読みに切り替える
-  const rows = (dateKey === todayKey)
-    ? readTailRowsUntil_(sh, 1, chunkRows =>
-        chunkRows.length > 0 && String(chunkRows[0][0] || '').trim() < dateKey)
-    : sh.getRange(2, 1, lastRow - 1, 1).getValues();
+  // 過去日付の追記で物理順が崩れるため、当日を含めA列全件から最大連番を求める。
+  // 呼出元saveOrderのScriptLock内で実行されるので、採番と保存の原子性は維持される。
+  const rows = sh.getRange(2, 1, lastRow - 1, 1).getValues();
   let maxSeq = 0;
   rows.forEach(r => {
     const no = String(r[0] || '');
@@ -1577,18 +1648,24 @@ function buildPendingOrders() {
   cutoffDate.setDate(cutoffDate.getDate() - scanWindowDays);
   const cutoffKey = Utilities.formatDate(cutoffDate, 'Asia/Tokyo', 'yyyyMMdd');
 
+  // 発注Noの物理順に依存せず、A列全件から対象期間の番号を先に特定する。
+  const itemLastRow = itemsSh.getLastRow();
+  const candidateOrderNos = new Set();
+  if (itemLastRow > 1) {
+    itemsSh.getRange(2, 1, itemLastRow - 1, 1).getValues().forEach(r => {
+      const orderNo = String(r[0] || '').trim();
+      const dateKey = orderNo.split('-')[0];
+      if (/^\d{8}$/.test(dateKey) && dateKey >= cutoffKey) candidateOrderNos.add(orderNo);
+    });
+  }
   // 発注No/JAN/コード/商品名/数量の5列で足りる
-  const itemsData = readTailRowsUntil_(itemsSh, 5, rows =>
-    rows.length > 0 && String(rows[0][0] || '').trim() < cutoffKey
-  );
+  const itemsData = readRowsForValues_(itemsSh, candidateOrderNos, 5);
 
   // 発注No → 仕入先情報（発注履歴シートから。PENDINGは入荷待ち集計へ含めない）
   const histSh = ss.getSheetByName(SHEET_HISTORY);
   const supplierByOrderNo = {};
   if (histSh && histSh.getLastRow() > 1) {
-    readTailRowsUntil_(histSh, 14, rows =>
-      rows.length > 0 && String(rows[0][0] || '').trim() < cutoffKey
-    ).forEach(r => {
+    readRowsForValues_(histSh, candidateOrderNos, 14).forEach(r => {
       const orderNo = String(r[0] || '').trim();
       const state = String(r[13] || '').trim();
       if (orderNo && (state === '' || state === 'COMPLETE')) {
