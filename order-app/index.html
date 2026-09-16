@@ -1376,13 +1376,13 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.74.0';
+const APP_VERSION    = 'v1.74.1';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
 const LS_MASTER_DATE     = 'bf_pm_date_v2';
 const LS_MASTER_GAS_DATE = 'bf_pm_gas_date_v2';
-const LS_PROD_HIST   = 'bf_prod_hist'; // 商品別直近注文（localStorage永続）
+const LS_PROD_HIST   = 'bf_prod_hist_v2'; // R1: 旧版の欠落し得る明細由来キャッシュを引き継がない
 const SS_CART        = 'bf_cart';
 const SS_ORDER       = 'bf_order'; // 作成中の発注情報（発注先・発注日）。カートと対で復元しないと再読み込み後に戻れなくなる（v1.63.0）
 const LS_MEMO_HIST   = 'bf_memo_h';
@@ -1965,7 +1965,12 @@ async function _gasFetchOnce(url, init, operation) {
 
     const doFetch = (async () => {
       dispatchedAt = Date.now();
-      const res  = await fetch(url, { ...init, signal: attemptAc.signal });
+      const traceSuffix = 'operation_id=' + encodeURIComponent(operation.id) +
+        '&attempt_id=' + encodeURIComponent(operation.id + '_' + operation.attempts);
+      const tracedInit = { ...init, signal: attemptAc.signal };
+      // 業務POST本文は再試行でもバイト単位で維持し、診断IDだけを安全なqueryへ分離する。
+      const tracedUrl = url + (url.indexOf('?') >= 0 ? '&' : '?') + traceSuffix;
+      const res  = await fetch(tracedUrl, tracedInit);
       attempt.httpStatus = res.status;
       const bodyStartedAt = Date.now();
       const text = await res.text(); // res.json()ではなくtext()。404のHTMLをここで検出するため
@@ -4642,7 +4647,7 @@ function renderPDFPage(container, items, orderNo, pageNum, totalPages) {
 /* ===================================================
    発注履歴
 =================================================== */
-const SS_HIST_CACHE = 'bf_hist_sess2'; // v1.9.0: キャッシュ形式変更のためキー更新
+const SS_HIST_CACHE = 'bf_hist_sess3'; // R1: 順不同明細対応前の履歴キャッシュを引き継がない
 
 // GMT対応：スプレッドシートの日付型がDateオブジェクト化した文字列も正しくパース
 function formatHistoryDate(str) {

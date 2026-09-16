@@ -12,9 +12,15 @@
  *   SYNC_TOKEN    … 同期スクリプト用の共有シークレット（ランダム長文字列）
  */
 
-const VERSION = '1.11.4';
+const VERSION = '1.11.5';
 const APP_NAME = 'project-dashboard';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
+let _requestMetric = null;
+
+function safeMetricField_(value, maxLength) {
+  const text = String(value || '');
+  return text.length <= (maxLength || 80) && /^[A-Za-z0-9_-]*$/.test(text) ? text : '';
+}
 
 // プロパティ取得（未設定なら明示的にエラー）
 function prop_(key) {
@@ -163,13 +169,14 @@ function migrateAddNextActionFullColumn() {
 }
 
 // ============================================================
-// セッション検証（beaufield-auth sessions シート照合・15分キャッシュ）
+// セッション検証（beaufield-auth sessions シート照合・60秒成功キャッシュ）
 // ============================================================
 function validateSession(token) {
   if (!token) return { valid: false };
 
   const cache = CacheService.getScriptCache();
-  const cacheKey = 'sess_project_v2_' + token.slice(-32);
+  // v3: 旧版が一時障害をvalid:falseとして保存した負キャッシュを引き継がない。
+  const cacheKey = 'sess_project_v3_' + token.slice(-32);
   const cached = cache.get(cacheKey);
   if (cached !== null) {
     try { return JSON.parse(cached); } catch (e) {}
@@ -178,7 +185,7 @@ function validateSession(token) {
   try {
     const ss = SpreadsheetApp.openById(prop_('AUTH_SHEET_ID'));
     const sh = ss.getSheetByName('sessions');
-    if (!sh) return { valid: false };
+    if (!sh) return { valid: false, transient: true };
 
     const data = sh.getDataRange().getValues();
     const now = Date.now();
@@ -222,6 +229,8 @@ function validateSession(token) {
     }
   } catch (e) {
     Logger.log('セッション検証エラー: ' + e);
+    // 一時障害は負キャッシュへ入れない。次の要求で必ず再検証する。
+    return { valid: false, transient: true };
   }
   const r = { valid: false };
   cache.put(cacheKey, JSON.stringify(r), 60);
@@ -241,6 +250,9 @@ function isAdmin_(authSs, userId) {
 function authGuard_(token) {
   const auth = validateSession(token);
   if (!auth.valid) {
+    if (auth.transient) {
+      return jsonResponse({ success: false, error: 'AUTH_UNAVAILABLE', message: '認証サービスへ接続できませんでした。少し待って再取得してください。' });
+    }
     return jsonResponse({ success: false, error: 'SESSION_INVALID', message: '認証が必要です。ポータルからログインし直してください。' });
   }
   if (!auth.is_admin) {
@@ -274,12 +286,17 @@ function doGet(e) {
 // エントリーポイント（POST）: 同期・メタ更新
 // ============================================================
 function doPost(e) {
+  _requestMetric = { app: 'project-dashboard', action: '', startedAt: Date.now(), operationId: '', attemptId: '' };
   let p = {};
   try {
     if (e && e.postData && e.postData.contents) p = JSON.parse(e.postData.contents);
   } catch (err) {
     return jsonResponse({ success: false, error: 'BAD_JSON' });
   }
+  _requestMetric = {
+    app: 'project-dashboard', action: safeMetricField_(p.action, 60), startedAt: Date.now(),
+    operationId: safeMetricField_(p.operation_id, 80), attemptId: safeMetricField_(p.attempt_id, 80)
+  };
 
   try {
     switch (p.action || '') {
@@ -714,6 +731,19 @@ function getJobs_(ss) {
 // 共通: JSONレスポンス
 // ============================================================
 function jsonResponse(obj) {
+  if (_requestMetric) {
+    const metric = _requestMetric;
+    _requestMetric = null;
+    try {
+      console.log(JSON.stringify({
+        message: 'gas_action', app: metric.app, version: VERSION, action: metric.action,
+        operationId: metric.operationId, attemptId: metric.attemptId, phase: 'complete',
+        elapsedMs: Date.now() - metric.startedAt,
+        outcome: obj && obj.success === true ? 'success' : 'failure',
+        error: obj && obj.error ? safeMetricField_(obj.error, 80) : ''
+      }));
+    } catch (_) {}
+  }
   return ContentService.createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
 }
