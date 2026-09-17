@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.35.0';
+const VERSION  = '0.37.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -2018,7 +2018,7 @@ const RES_STATUS_CANCELLED = 'cancelled';
 const SES_COL = {
   id: 0, slot: 1, title: 2, speaker: 3, room: 4,
   starts: 5, ends: 6, capacity: 7, active: 8,
-  bullets: 9, overview: 10, bookingChannel: 11
+  bullets: 9, overview: 10, bookingChannel: 11, resourceGroup: 12
 };
 // reservations シートの列（0始まり）
 const RES_COL = { id: 0, appId: 1, sessionId: 2, createdAt: 3, status: 4, attendedAt: 5 };
@@ -2076,6 +2076,7 @@ function _readSessions(ss) {
     const capNum = (capRaw === '' || capRaw === null || capRaw === undefined) ? null : Number(capRaw);
     out.push({
       booking_channel: String(rows[i][SES_COL.bookingChannel] || 'closed').trim(),
+      resource_group: String(rows[i][SES_COL.resourceGroup] == null ? '' : rows[i][SES_COL.resourceGroup]).trim(),
       session_id: id,
       slot:       String(rows[i][SES_COL.slot]  == null ? '' : rows[i][SES_COL.slot]).trim() || id,
       title:      String(rows[i][SES_COL.title] == null ? '' : rows[i][SES_COL.title]).trim(),
@@ -2134,6 +2135,21 @@ function _countReserved(resRows, cancelled) {
   return counts;
 }
 
+// 同じ施術者・設備を共有する枠は resource_group を同じ値にする。
+// 空欄の従来枠は session_id 単独で定員を数える。
+function _capacityPoolKey(s) {
+  return s && s.resource_group ? 'resource:' + s.resource_group : 'session:' + (s ? s.session_id : '');
+}
+
+// session_id別の予約数から、対象枠が共有する定員プールの使用数を返す。
+function _capacityUsed(s, sessionCounts, sessions) {
+  if (!s) return 0;
+  if (!s.resource_group) return sessionCounts[s.session_id] || 0;
+  return sessions.reduce(function (sum, candidate) {
+    return sum + (candidate.resource_group === s.resource_group ? (sessionCounts[candidate.session_id] || 0) : 0);
+  }, 0);
+}
+
 // その人（app_id）が現在予約している session_id の配列
 function _reservedSessionIdsOf(resRows, appId) {
   const out = [];
@@ -2156,13 +2172,16 @@ function _resIdIssuer(resRows) {
   return function () { max++; return 'R' + _boothPad(max, 4); };
 }
 
-// 公開されている枠（is_active）だけを、残席つきで返す共通部品
+// 予約画面へ表示する枠を、残席つきで返す共通部品。
+// staff枠はお客様にも空き状況だけ見せるが、予約・取消は社員だけが行う。
 function _sessionCatalog(ss, resRows, cancelled, actorKind, reserved) {
+  const actor = actorKind || 'customer';
   const counts = _countReserved(resRows, cancelled);
-  return _readSessions(ss)
-    .filter(function (s) { return _bookingAllowed(s,actorKind || 'customer') || (reserved || []).indexOf(s.session_id)>=0; })
+  const all = _readSessions(ss);
+  return all
+    .filter(function (s) { return _bookingVisible(s,actor) || (reserved || []).indexOf(s.session_id)>=0; })
     .map(function (s) {
-      const used = counts[s.session_id] || 0;
+      const used = _capacityUsed(s, counts, all);
       const remaining = (s.capacity === null) ? null : Math.max(0, s.capacity - used);
       return {
         session_id: s.session_id,
@@ -2172,9 +2191,10 @@ function _sessionCatalog(ss, resRows, cancelled, actorKind, reserved) {
         room:       s.room,
         starts_at:  s.starts_at,
         ends_at:    s.ends_at,
-        can_book: _bookingAllowed(s,actorKind || 'customer'),
-        can_cancel: actorKind === 'staff' || _bookingChannel(s) === 'public',
+        can_book: _bookingAllowed(s,actor),
+        can_cancel: actor === 'staff' || _bookingChannel(s) === 'public',
         booking_channel: _bookingChannel(s),
+        resource_group: s.resource_group,
         capacity:   s.capacity,
         remaining:  remaining,
         is_full:    (remaining !== null && remaining <= 0),
@@ -2315,8 +2335,9 @@ function listReservations(data) {
 
   // 枠の一覧（非公開の枠も社員には見せる。当日の名簿づくりで必要になるため）
   const counts = _countReserved(resRows, cancelled);
-  const sessions = _readSessions(ss).map(function (s) {
-    const used = counts[s.session_id] || 0;
+  const allSessions = _readSessions(ss);
+  const sessions = allSessions.map(function (s) {
+    const used = _capacityUsed(s, counts, allSessions);
     return {
       session_id: s.session_id,
       slot:       s.slot,
@@ -2325,6 +2346,8 @@ function listReservations(data) {
       ends_at:    s.ends_at,
       capacity:   s.capacity,
       is_active:  s.is_active,
+      booking_channel: _bookingChannel(s),
+      resource_group: s.resource_group,
       reserved_count: used,
       remaining:  (s.capacity === null) ? null : Math.max(0, s.capacity - used)
     };
@@ -2485,6 +2508,21 @@ function migrateAddSessionDetailColumns() {
   Logger.log('sessionsシートに bullets(J) / overview(K) を追加しました。');
 }
 
+// sessions に予約経路（L列）と共有定員グループ（M列）を追加する。既存値は上書きしない。
+function migrateAddSessionBookingColumns() {
+  _checkProps();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh = ss.getSheetByName(SHEET_SESSIONS);
+  if (!sh) { Logger.log('sessionsシートがありません。先に setupSheets() を実行してください。'); return; }
+  const l = String(sh.getRange(1, 12).getValue() || '').trim();
+  const m = String(sh.getRange(1, 13).getValue() || '').trim();
+  if ((l && l !== 'booking_channel') || (m && m !== 'resource_group')) {
+    throw new Error('sessionsのL1/M1に想定外の値があります（"' + l + '" / "' + m + '"）。手動で確認してください。');
+  }
+  sh.getRange(1, 12, 1, 2).setValues([['booking_channel', 'resource_group']]);
+  Logger.log('sessionsシートの booking_channel(L) / resource_group(M) を確認しました。');
+}
+
 // ============================================================
 // 🆕 予約枠の投入（手動実行・冪等）
 //    2026年のラインナップを sessions シートに入れる。既にある session_id は飛ばすので
@@ -2503,6 +2541,7 @@ function seedSeminarSessions() {
   let sh = ss.getSheetByName(SHEET_SESSIONS);
   if (!sh) { setupSheets(); sh = _getSheet(ss, SHEET_SESSIONS); }
   migrateAddSessionDetailColumns();
+  migrateAddSessionBookingColumns();
 
   const femcareBullets = [
     '更年期は"予防"できる！',
@@ -2520,13 +2559,11 @@ function seedSeminarSessions() {
     '本セミナーでは、更年期の仕組みとその解決するための秘密を詳しくご紹介。' +
     '変化の時期を、美しく心地よく迎えるためのヒントをお届けします。';
 
-  // 🔵 炭酸ガスパック体験会の説明文は仮置き（2026-09-05時点で本文未定）。決まり次第シートを直接編集する。
-  const co2Bullets = [
-    '炭酸ガスパックの特徴をご紹介',
-    'サロンでの取り入れ方',
-    '実際にご体験いただけます'
-  ].join('\n');
-  const co2Overview = '※この説明文は仮のものです。内容が決まり次第、差し替えます。';
+  const co2Bullets = '';
+  const co2Overview =
+    '「整形級！」とも言われ有名芸能人の愛用者も多い炭酸ガスパック。\n' +
+    '毛穴、キメ、ツヤ、お肌の悩みに応えるグローパックが、なぜこんなに愛用されるのか、' +
+    'どのような使い方をすればいいのか、実際に体験しながら徹底ガイドいたします！';
 
   const balanceBullets = [
     'コンピューター精密計測で、足裏の圧力バランスと骨盤のゆがみをデータで見える化',
@@ -2578,14 +2615,14 @@ function seedSeminarSessions() {
     ['B5', 'バランス革命 無料計測会', '13:30〜14:15の回', '', '', '13:30', '14:15', 1, true, balanceBullets, balanceOverview],
     ['B6', 'バランス革命 無料計測会', '14:15〜15:00の回', '', '', '14:15', '15:00', 1, true, balanceBullets, balanceOverview],
     ['B7', 'バランス革命 無料計測会', '15:00〜15:45の回', '', '', '15:00', '15:45', 1, true, balanceBullets, balanceOverview],
-    ['F1', 'フェイスメーカー 体験会', '10:10〜11:00の回', '', '', '10:10', '11:00', 1, true, faceBullets, faceOverview],
-    ['F2', 'フェイスメーカー 体験会', '11:00〜11:50の回', '', '', '11:00', '11:50', 1, true, faceBullets, faceOverview],
-    ['F3', 'フェイスメーカー 体験会', '11:50〜12:40の回', '', '', '11:50', '12:40', 1, true, faceBullets, faceOverview],
-    ['F4', 'フェイスメーカー 体験会', '12:40〜13:30の回', '', '', '12:40', '13:30', 1, true, faceBullets, faceOverview],
-    ['F5', 'フェイスメーカー 体験会', '13:30〜14:20の回', '', '', '13:30', '14:20', 1, true, faceBullets, faceOverview],
-    ['F6', 'フェイスメーカー 体験会', '14:20〜15:10の回', '', '', '14:20', '15:10', 1, true, faceBullets, faceOverview],
-    ['F7', 'フェイスメーカー 体験会', '15:10〜16:00の回', '', '', '15:10', '16:00', 1, true, faceBullets, faceOverview]
-  ];
+    ['F1', 'Face Maker体験会', '10:10〜11:00の回', '', '', '10:10', '11:00', 1, true, faceBullets, faceOverview],
+    ['F2', 'Face Maker体験会', '11:00〜11:50の回', '', '', '11:00', '11:50', 1, true, faceBullets, faceOverview],
+    ['F3', 'Face Maker体験会', '11:50〜12:40の回', '', '', '11:50', '12:40', 1, true, faceBullets, faceOverview],
+    ['F4', 'Face Maker体験会', '12:40〜13:30の回', '', '', '12:40', '13:30', 1, true, faceBullets, faceOverview],
+    ['F5', 'Face Maker体験会', '13:30〜14:20の回', '', '', '13:30', '14:20', 1, true, faceBullets, faceOverview],
+    ['F6', 'Face Maker体験会', '14:20〜15:10の回', '', '', '14:20', '15:10', 1, true, faceBullets, faceOverview],
+    ['F7', 'Face Maker体験会', '15:10〜16:00の回', '', '', '15:10', '16:00', 1, true, faceBullets, faceOverview]
+  ].concat(_shinbishinExperienceRows('closed'));
 
   const existing = {};
   const cur = sh.getDataRange().getValues();
@@ -2597,7 +2634,10 @@ function seedSeminarSessions() {
   const toAdd = rows.filter(function (r) { return !existing[r[0]]; });
   if (!toAdd.length) { Logger.log('追加する枠はありませんでした（すべて既にあります）。'); return; }
 
-  sh.getRange(sh.getLastRow() + 1, 1, toAdd.length, 11).setValues(toAdd);
+  // 旧11列行は末尾を空欄で補い、新規3機種はresource_groupまで含む13列で保存する。
+  const width = 13;
+  const normalized = toAdd.map(function (r) { return r.concat(Array(Math.max(0, width - r.length)).fill('')); });
+  sh.getRange(sh.getLastRow() + 1, 1, normalized.length, width).setValues(normalized);
   Logger.log('予約枠を' + toAdd.length + '件投入しました: ' +
              toAdd.map(function (r) { return r[0]; }).join(', ') +
              '\n定員・時間・説明文の変更は、以後スプレッドシートを直接編集してください。');
@@ -2637,10 +2677,11 @@ function setupSheets() {
   let sesSh = ss.getSheetByName(SHEET_SESSIONS);
   if (!sesSh) {
     sesSh = ss.insertSheet(SHEET_SESSIONS);
-    sesSh.getRange(1, 1, 1, 11).setValues([[
+    sesSh.getRange(1, 1, 1, 13).setValues([[
       'session_id', 'slot', 'title', 'speaker', 'room',
       'starts_at', 'ends_at', 'capacity', 'is_active',
-      'bullets', 'overview'   // 🆕 v0.20.0（画面でタップして開く詳細。bulletsは1行1項目）
+      'bullets', 'overview',  // 🆕 v0.20.0（画面でタップして開く詳細。bulletsは1行1項目）
+      'booking_channel', 'resource_group'
     ]]);
     sesSh.setFrozenRows(1);
     Logger.log('sessionsシート作成完了');
@@ -5010,6 +5051,11 @@ function _bookingAllowed(s, actor) {
   return !!(s && s.is_active && _bookingOpen() &&
     (_bookingChannel(s) === 'public' || (_bookingChannel(s) === 'staff' && actor === 'staff')));
 }
+function _bookingVisible(s, actor) {
+  if (!s || !s.is_active || !_bookingOpen()) return false;
+  const channel = _bookingChannel(s);
+  return channel === 'public' || channel === 'staff';
+}
 function _bookingHash(v) {
   return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, JSON.stringify(v))
     .map(function (b) { return ('0' + ((b + 256) % 256).toString(16)).slice(-2); }).join('');
@@ -5106,6 +5152,8 @@ function _bookingWrite(ss, appId, wantIds, opts) {
     const cancel = opts.replace ? removable.filter(function(id){return want.indexOf(id)<0;}) : [];
     const keep = mine.filter(function(id){return cancel.indexOf(id)<0;});
     const counts = _countReserved(rows,_cancelledAppIdSet(appRows));
+    // 差替で取り消す自分の予約は、同じ共有枠内の別機種へ変更できるよう先に使用数から外す。
+    cancel.forEach(function(id){if((counts[id]||0)>0)counts[id]--;});
     const additions=[];
     want.forEach(function(id){
       if(mine.indexOf(id)>=0) return;
@@ -5113,9 +5161,11 @@ function _bookingWrite(ss, appId, wantIds, opts) {
       if(!_bookingAllowed(s,actorKind)){result.invalid.push(id);return;}
       const occupied=keep.concat(additions).map(function(k){return byId[k];}).filter(Boolean);
       if(occupied.some(function(k){return k.slot===s.slot;})){result.invalid.push(id);return;}
+      if(s.resource_group && occupied.some(function(k){return _capacityPoolKey(k)===_capacityPoolKey(s);})){result.invalid.push(id);return;}
       if(occupied.some(function(k){return _sessionsOverlap(k,s);})){result.conflict.push(id);return;}
-      if(s.capacity!==null && (counts[id]||0)>=s.capacity){result.full.push(id);return;}
+      if(s.capacity!==null && _capacityUsed(s,counts,all)>=s.capacity){result.full.push(id);return;}
       additions.push(id);
+      counts[id]=(counts[id]||0)+1;
     });
     // 差替は全件検証してから取消する。新規申込は取れた枠だけ追加し来場を止めない。
     if(opts.replace && (result.invalid.length || result.full.length || result.conflict.length)){result.reserved=mine;return result;}
@@ -5201,3 +5251,197 @@ function openFemcareBooking() {
   } finally {lock.releaseLock();}
 }
 function pauseSeminarBooking() { _PROPS.setProperty('SEMINAR_BOOKING_ENABLED','false');Logger.log('PAUSED: existing reservations retained'); }
+
+const EXPANDED_BOOKING_S2_OVERVIEW =
+  '「整形級！」とも言われ有名芸能人の愛用者も多い炭酸ガスパック。\n' +
+  '毛穴、キメ、ツヤ、お肌の悩みに応えるグローパックが、なぜこんなに愛用されるのか、' +
+  'どのような使い方をすればいいのか、実際に体験しながら徹底ガイドいたします！';
+
+const MICO_STELLA_BULLETS = [
+  '針を使わないエアインジェクションで、美容液を微粒子化して角質層へ届けるケアを体験',
+  '肌に触れにくい高圧ジェットで、摩擦による負担に配慮',
+  '浄化酸素を使ったケアで、うるおい・ハリ・ツヤのある肌印象をサポート'
+].join('\n');
+const MICO_STELLA_OVERVIEW =
+  '「擦らないエステ」をコンセプトにした、針を使わないエアインジェクション機器です。\n' +
+  '高速ジェットで美容液を細かな粒子にし、肌に触れにくい方法で角質層へ届けます。' +
+  '乾燥、キメ、ハリ、ツヤなど、幅広い肌悩みに合わせたケアをご体験ください。';
+
+const HIFACE_BULLETS = [
+  '6.78MHzのモノポーラRFで、顔を「点」ではなく「面」でじんわり温めるフェイスケア',
+  '冷却機能と振動を組み合わせ、刺激に配慮しながら施術',
+  'フェイスラインの引き締めや、ハリ・ツヤのある肌印象をサポート'
+].join('\n');
+const HIFACE_OVERVIEW =
+  'HIFace（ハイフェイス）は、6.78MHzのモノポーラRFに冷却と振動を組み合わせたフェイシャル機器です。\n' +
+  '肌表面を冷やしながら、顔や首を面でじんわり温めるケアを行います。' +
+  'フェイスラインやハリ感が気になる方に、心地よさに配慮した体験をご用意します。';
+
+const NOVELUXE_BULLETS = [
+  '肌診断から洗浄・導入・温冷ケアまで、9つの機能を搭載',
+  'スクラバー、ハイドロスキン、プラズマ、エレクトロポレーションなどを肌状態に合わせて組み合わせ',
+  '毛穴・くすみ・ハリなど、悩みに合わせたトータルフェイシャルを体験'
+].join('\n');
+const NOVELUXE_OVERVIEW =
+  'NOVELUXE（ノーヴェリュクス）は、一人ひとり異なる肌状態に合わせて9つの機能を組み合わせる複合フェイシャル機器です。\n' +
+  '肌状態を確認し、洗浄、整肌、美容液導入、温冷ケアなどから必要な工程を選びます。' +
+  '複数の肌悩みに合わせた、オーダーメイド感のあるケアをご体験ください。';
+
+function _shinbishinExperienceRows(channel) {
+  const times = [
+    ['10:15','10:45','SHINBISHIN_1015'], ['11:00','11:30','SHINBISHIN_1100'],
+    ['11:45','12:15','SHINBISHIN_1145'], ['13:00','13:30','SHINBISHIN_1300'],
+    ['13:45','14:15','SHINBISHIN_1345'], ['14:30','15:00','SHINBISHIN_1430']
+  ];
+  const products = [
+    ['M','ミコステラ（Mico Stella）体験会',MICO_STELLA_BULLETS,MICO_STELLA_OVERVIEW],
+    ['H','ハイフェイス（HIFace）体験会',HIFACE_BULLETS,HIFACE_OVERVIEW],
+    ['N','ノーヴェリュクス（NOVELUXE）体験会',NOVELUXE_BULLETS,NOVELUXE_OVERVIEW]
+  ];
+  const rows = [];
+  products.forEach(function (product) {
+    times.forEach(function (time, index) {
+      rows.push([
+        product[0] + (index + 1), product[1], time[0] + '〜' + time[1] + 'の回', '', '',
+        time[0], time[1], 1, true, product[2], product[3], channel || 'closed', time[2]
+      ]);
+    });
+  });
+  return rows;
+}
+
+function _shinbishinExperienceRules() {
+  const rules = {};
+  _shinbishinExperienceRows('public').forEach(function (row) {
+    rules[row[0]] = {
+      starts_at: row[5], ends_at: row[6], capacity: row[7], booking_channel: row[11],
+      slot: row[1], resource_group: row[12], bullets: row[9], overview: row[10]
+    };
+  });
+  return rules;
+}
+
+function _expandedBookingRules() {
+  return {
+    S1:['11:30','12:30',20,'public','セミナー 第1部'],
+    S2:['14:00','15:00',20,'public','セミナー 第2部'],
+    B1:['10:00','10:45',1,'public','バランス革命 無料計測会'], B2:['10:45','11:30',1,'public','バランス革命 無料計測会'],
+    B3:['11:30','12:15',1,'public','バランス革命 無料計測会'], B4:['12:45','13:30',1,'public','バランス革命 無料計測会'],
+    B5:['13:30','14:15',1,'public','バランス革命 無料計測会'], B6:['14:15','15:00',1,'public','バランス革命 無料計測会'],
+    B7:['15:00','15:45',1,'public','バランス革命 無料計測会'],
+    F1:['10:10','11:00',1,'staff','Face Maker体験会'], F2:['11:00','11:50',1,'staff','Face Maker体験会'],
+    F3:['11:50','12:40',1,'staff','Face Maker体験会'], F4:['12:40','13:30',1,'staff','Face Maker体験会'],
+    F5:['13:30','14:20',1,'staff','Face Maker体験会'], F6:['14:20','15:10',1,'staff','Face Maker体験会'],
+    F7:['15:10','16:00',1,'staff','Face Maker体験会']
+  };
+}
+
+// 本番反映時だけGASエディタから実行する。まず全予約受付を止め、16枠を照合してから設定する。
+function prepareExpandedSeminarBooking() {
+  const lock=LockService.getScriptLock();lock.waitLock(30000);
+  try {
+    const ss=SpreadsheetApp.openById(SPREADSHEET_ID),sh=ss.getSheetByName(SHEET_SESSIONS);
+    if(!sh)throw new Error('BOOKING_NOT_READY');
+    const rows=sh.getDataRange().getValues(),rules=_expandedBookingRules();
+    const ids=rows.slice(1).map(function(r){return String(r[0]);});
+    if(ids.length!==16 || new Set(ids).size!==16 || ids.some(function(id){return !rules[id];}))throw new Error('UNEXPECTED_SESSION_ROWS');
+    const all=_readSessions(ss),byId={};all.forEach(function(s){byId[s.session_id]=s;});
+    Object.keys(rules).forEach(function(id){
+      const s=byId[id],r=rules[id];
+      if(!s || s.starts_at!==r[0] || s.ends_at!==r[1] || s.capacity!==r[2])throw new Error('UNEXPECTED_SESSION_'+id);
+    });
+    if(rows[0][11] && rows[0][11]!=='booking_channel')throw new Error('UNEXPECTED_COLUMN');
+    _PROPS.setProperty('SEMINAR_BOOKING_ENABLED','false');
+    sh.getRange(1,12).setValue('booking_channel');
+    sh.getRange(2,12,ids.length,1).setValues(ids.map(function(id){return [rules[id][3]];}));
+    sh.getRange(2,9,ids.length,1).setValues(ids.map(function(){return [true];}));
+    sh.getRange(2,2,ids.length,1).setValues(ids.map(function(id){return [rules[id][4]];}));
+    const s2Row=ids.indexOf('S2')+2;
+    sh.getRange(s2Row,10,1,2).setValues([['',EXPANDED_BOOKING_S2_OVERVIEW]]);
+    let log=ss.getSheetByName(BOOKING_LOG);
+    if(!log){log=ss.insertSheet(BOOKING_LOG);log.getRange(1,1,1,10).setValues([BOOKING_LOG_HEADERS]);}
+    _bookingLog(ss);
+    Logger.log('READY: S1/S2/B1-B7 public, F1-F7 staff, booking disabled');
+  } finally {lock.releaseLock();}
+}
+
+// prepareExpandedSeminarBooking後の設定を再照合し、問題が無いときだけ受付を再開する。
+function openExpandedSeminarBooking() {
+  const lock=LockService.getScriptLock();lock.waitLock(30000);
+  try {
+    const ss=SpreadsheetApp.openById(SPREADSHEET_ID),rules=_expandedBookingRules();
+    const all=_readSessions(ss),byId={};all.forEach(function(s){byId[s.session_id]=s;});
+    if(all.length!==16)throw new Error('UNEXPECTED_SESSION_ROWS');
+    Object.keys(rules).forEach(function(id){
+      const s=byId[id],r=rules[id];
+      if(!s || !s.is_active || _bookingChannel(s)!==r[3] || s.starts_at!==r[0] || s.ends_at!==r[1] || s.capacity!==r[2] || s.slot!==r[4])throw new Error('UNEXPECTED_OPEN_'+id);
+    });
+    if(byId.S2.overview!==EXPANDED_BOOKING_S2_OVERVIEW)throw new Error('UNEXPECTED_S2_CONTENT');
+    _bookingRecover(ss);_PROPS.setProperty('SEMINAR_BOOKING_ENABLED','true');
+    Logger.log('OPEN: S1/S2/B1-B7 public, F1-F7 staff');
+  } finally {lock.releaseLock();}
+}
+
+// S1/S2/B/Fの16枠に、施術者を共有するシンビシン3機種18枠を追加する。
+// 本番反映時だけGASエディタから実行する。処理中は予約受付を停止し、再実行しても同じ状態になる。
+function prepareShinbishinExperienceBooking() {
+  const lock=LockService.getScriptLock();lock.waitLock(30000);
+  try {
+    const ss=SpreadsheetApp.openById(SPREADSHEET_ID),sh=ss.getSheetByName(SHEET_SESSIONS);
+    if(!sh)throw new Error('BOOKING_NOT_READY');
+    migrateAddSessionBookingColumns();
+    const baseRules=_expandedBookingRules(),newRules=_shinbishinExperienceRules();
+    const allowed=Object.assign({},baseRules,newRules);
+    let rows=sh.getDataRange().getValues(),ids=rows.slice(1).map(function(r){return String(r[0]).trim();}).filter(Boolean);
+    if(new Set(ids).size!==ids.length || ids.some(function(id){return !allowed[id];}))throw new Error('UNEXPECTED_SESSION_ROWS');
+    Object.keys(baseRules).forEach(function(id){if(ids.indexOf(id)<0)throw new Error('MISSING_SESSION_'+id);});
+    _PROPS.setProperty('SEMINAR_BOOKING_ENABLED','false');
+
+    const missingRows=_shinbishinExperienceRows('closed').filter(function(row){return ids.indexOf(row[0])<0;});
+    if(missingRows.length)sh.getRange(sh.getLastRow()+1,1,missingRows.length,13).setValues(missingRows);
+
+    rows=sh.getDataRange().getValues();ids=rows.slice(1).map(function(r){return String(r[0]).trim();}).filter(Boolean);
+    if(ids.length!==34 || new Set(ids).size!==34 || ids.some(function(id){return !allowed[id];}))throw new Error('UNEXPECTED_SESSION_ROWS_AFTER_ADD');
+    const rowById={};
+    rows.slice(1).forEach(function(row,index){rowById[String(row[0]).trim()]=index+2;});
+
+    Object.keys(baseRules).forEach(function(id){
+      const r=baseRules[id],row=rowById[id];
+      sh.getRange(row,2).setValue(r[4]);
+      sh.getRange(row,9).setValue(true);
+      sh.getRange(row,12,1,2).setValues([[r[3],'']]);
+    });
+    const s2Row=rowById.S2;
+    sh.getRange(s2Row,10,1,2).setValues([['',EXPANDED_BOOKING_S2_OVERVIEW]]);
+
+    const configuredRows=_shinbishinExperienceRows('public');
+    configuredRows.forEach(function(row){sh.getRange(rowById[row[0]],1,1,13).setValues([row]);});
+    let log=ss.getSheetByName(BOOKING_LOG);
+    if(!log){log=ss.insertSheet(BOOKING_LOG);log.getRange(1,1,1,10).setValues([BOOKING_LOG_HEADERS]);}
+    _bookingLog(ss);
+    Logger.log('READY: 34枠（シンビシン3機種は同時刻の共有定員1名）、booking disabled');
+  } finally {lock.releaseLock();}
+}
+
+// prepareShinbishinExperienceBooking後の全34枠と共有定員設定を照合して受付を再開する。
+function openShinbishinExperienceBooking() {
+  const lock=LockService.getScriptLock();lock.waitLock(30000);
+  try {
+    const ss=SpreadsheetApp.openById(SPREADSHEET_ID),baseRules=_expandedBookingRules(),newRules=_shinbishinExperienceRules();
+    const all=_readSessions(ss),byId={};all.forEach(function(s){if(byId[s.session_id])throw new Error('BOOKING_SCHEMA');byId[s.session_id]=s;});
+    if(all.length!==34)throw new Error('UNEXPECTED_SESSION_ROWS');
+    Object.keys(baseRules).forEach(function(id){
+      const s=byId[id],r=baseRules[id];
+      if(!s||!s.is_active||_bookingChannel(s)!==r[3]||s.starts_at!==r[0]||s.ends_at!==r[1]||s.capacity!==r[2]||s.slot!==r[4]||s.resource_group)throw new Error('UNEXPECTED_OPEN_'+id);
+    });
+    Object.keys(newRules).forEach(function(id){
+      const s=byId[id],r=newRules[id];
+      if(!s||!s.is_active||_bookingChannel(s)!==r.booking_channel||s.starts_at!==r.starts_at||s.ends_at!==r.ends_at||s.capacity!==r.capacity||s.slot!==r.slot||s.resource_group!==r.resource_group||s.bullets.join('\n')!==r.bullets||s.overview!==r.overview)throw new Error('UNEXPECTED_OPEN_'+id);
+    });
+    const pools={};Object.keys(newRules).forEach(function(id){const key=newRules[id].resource_group;pools[key]=(pools[key]||0)+1;});
+    if(Object.keys(pools).length!==6||Object.keys(pools).some(function(key){return pools[key]!==3;}))throw new Error('UNEXPECTED_RESOURCE_GROUPS');
+    if(byId.S2.overview!==EXPANDED_BOOKING_S2_OVERVIEW)throw new Error('UNEXPECTED_S2_CONTENT');
+    _bookingRecover(ss);_PROPS.setProperty('SEMINAR_BOOKING_ENABLED','true');
+    Logger.log('OPEN: 34枠、シンビシン3機種は公開予約・同時刻共有');
+  } finally {lock.releaseLock();}
+}
