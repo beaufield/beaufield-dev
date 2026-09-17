@@ -734,6 +734,10 @@
     .prop-badge.tier-欠品 { background: #ffebee; color: #c62828; }
     .prop-badge.tier-切迫 { background: #fff3e0; color: #e65100; }
     .prop-badge.tier-単位調整 { background: #e8eaf6; color: #3949ab; }
+    .prop-badge.tier-サイズ調整 { background: #e0f2f1; color: #00695c; }
+    /* サイズ別の偶数単位（v1.75.0 ナプラ リラベール）: 見出しのルール表示と合計行の内訳 */
+    .prop-mg-rule      { font-size: 12px; color: var(--text-light); margin-top: 4px; line-height: 1.5; }
+    .prop-mg-sub-line  { display: block; font-size: 12px; font-weight: 400; margin-top: 2px; }
     .prop-badge.tier-手動 { background: #fff9c4; color: #8d6e00; }
     .prop-mg-pin-note  { font-size: 12px; margin-top: 6px; color: #8d6e00; }
     .prop-mg-pin-clear { padding: 2px 8px; font-size: 11px; border: 1px solid #ffe082; border-radius: 10px; background: #fff9c4; color: #8d6e00; cursor: pointer; margin-left: 6px; }
@@ -1376,7 +1380,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.74.1';
+const APP_VERSION    = 'v1.75.0';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -5996,6 +6000,7 @@ function renderPropItem(p, code, delayedByCode, orderedByCode) {
   // まとめ発注グループの行は数量の刻みを商品単位（6本 / 1ケース分の入数）にし、配分理由のバッジを出す
   const mgCfg  = p.groupId ? mgConfigById(p.groupId) : null;
   const step   = mgCfg ? mgUnitFor(mgCfg, p.name) : 1;
+  const mgSub  = mgCfg ? mgSubFor(mgCfg, p.name) : { key: '', step: 1 };   // サイズ別の偶数単位（v1.75.0）
   const qty    = p.groupId ? mgQtyOf(p.groupId, p) : (p.proposedQty || 0);
   // 手動固定（ピン, Phase L）。配分枠バッジ・不足バッジより優先して「これは人が決めた」ことを示す
   const pinned = p.groupId && mgIsPinned(p.groupId, p);
@@ -6024,7 +6029,7 @@ function renderPropItem(p, code, delayedByCode, orderedByCode) {
     ? `<div class="prop-pending-info">✅ ${fmtOrderDate(ordered.orderDate)}に${ordered.qty}個発注済み。その分を差し引いても、まだ${qty}個足りません</div>`
     : '';
   return `
-  <div class="prop-item${isGrey ? ' prop-ref' : ''}" data-code="${escHtml(p.code)}" data-unit-cost="${unitCost}" data-mg-unit="${step}" data-min-count="${minOrderCountsFor(code, p.code, p.name, p.groupId) ? 1 : 0}">
+  <div class="prop-item${isGrey ? ' prop-ref' : ''}" data-code="${escHtml(p.code)}" data-unit-cost="${unitCost}" data-mg-unit="${step}" data-mg-sub="${escAttr(mgSub.key)}" data-mg-step="${mgSub.step}" data-min-count="${minOrderCountsFor(code, p.code, p.name, p.groupId) ? 1 : 0}">
     <div class="prop-item-top">
       <input type="checkbox" class="prop-check" data-key="${escAttr(itemKey)}" ${propUncheckedItems.has(itemKey) ? '' : 'checked'}>
       <div class="prop-item-name">${escHtml(p.name)}
@@ -6498,8 +6503,9 @@ const MG_DAYS_PER_MONTH = 30.4;   // analyze_demand.py の DAYS_PER_MONTH と必
 // 単独発注グループ（v1.65.0）。この系列は単独で発注単位を満たせるため、同じ仕入先の
 // 他商品とは同じ発注書に混ぜない運用（千代田化学ミルフィ＝120本単位）。
 // 「発注グループ設定」シートに列を足す案もあるが、GASデプロイが必要になるうえ
-// 対象が1系列しかないため、当面はここで持つ。増えたらシート列に移す。
-const MG_SOLO_GROUPS = ['MILFY'];
+// 対象が少ないため、当面はここで持つ。
+// v1.75.0: ナプラ リラベール（10ケース）を追加。リラベールだけで1枚の発注書にする運用
+const MG_SOLO_GROUPS = ['MILFY', 'RELABEL'];
 function mgIsSolo(groupId) { return MG_SOLO_GROUPS.includes(groupId); }
 /* === /MG SOLO ORDER === */
 
@@ -6556,6 +6562,46 @@ function mgGroupBlocks(st, cfg) {
 // 画面に出す単位名と、ブロック数→表示値の倍率（本単位＝本数で見せる／ケース単位＝ケース数のまま）
 function mgLabel(st, cfg) { return (st && st.unitLabel) || (mgIsCaseUnit(cfg) ? 'ケース' : '本'); }
 function mgScale(cfg) { return mgIsCaseUnit(cfg) ? 1 : ((cfg && cfg.itemUnit) || 6); }
+
+// サイズ別の偶数単位（v1.75.0 ナプラ リラベール）。設定の `280:2,1000:2,4000:2` を
+// [{pattern, step}] にする。書式・正規化・長いパターン優先は商品別発注単位と同じ。
+// analyze_demand.py の parse_sub_units / group_sub_key と同じ判定にすること
+function mgSubUnitList(cfg) {
+  return mgItemUnitList({ itemUnits: (cfg && cfg.subUnits) || [] })
+    .filter(e => e.unit >= 2).map(e => ({ pattern: e.pattern, step: e.unit }));
+}
+// その商品のサイズ枠。枠に入らない商品は { key: '', step: 1 }（＝制約なし）
+function mgSubFor(cfg, name) {
+  const n = mgNormName(name);
+  const hit = mgSubUnitList(cfg).find(e => n.indexOf(e.pattern) >= 0);
+  return hit ? { key: hit.pattern, step: hit.step } : { key: '', step: 1 };
+}
+// 何ロットまで組んでよいか（0＝上限なし）
+function mgMaxLots(cfg) {
+  const n = parseInt(cfg && cfg.maxLots, 10);
+  return n > 0 ? n : 0;
+}
+// サイズ枠ごとの合計ブロック数と、倍数になっているか。
+// entries: [{ key, step, blocks }]（枠に入らない商品は key 空文字で渡してよい。集計しない）
+// 戻り値: [{ key, step, blocks, ok }]（出現順）
+function mgSubTotals(entries) {
+  const byKey = new Map();
+  (entries || []).forEach(e => {
+    if (!e.key || !(e.step >= 2)) return;
+    const cur = byKey.get(e.key) || { key: e.key, step: e.step, blocks: 0 };
+    cur.blocks += e.blocks;
+    byKey.set(e.key, cur);
+  });
+  return [...byKey.values()].map(x => {
+    const blocks = Math.round(x.blocks * 100) / 100;
+    return { key: x.key, step: x.step, blocks, ok: Math.abs(blocks % x.step) < 0.005 };
+  });
+}
+// 倍数になっていないサイズ枠を「1000が3ケース（偶数にする）」の文言にする
+function mgSubViolationText(subs, label) {
+  return subs.filter(x => !x.ok).map(x =>
+    `${x.key}が${x.blocks}${label}（${x.step === 2 ? '偶数' : x.step + label + '単位'}にする）`).join('・');
+}
 
 // その商品がどのまとめ発注グループに属するか（属さなければ空文字）。
 // 提案タブの行はサーバーが判定した groupId を使うので、これを使うのはカート側だけ。
@@ -6653,6 +6699,7 @@ function mgIsPinned(groupId, p) {
 // 自動配分（必須枠①②・任意枠）の対象から外す。残りを通常どおり配分する
 function mgAllocate(items, targetBlocks, cfg, pins) {
   pins = pins || {};
+  if (mgSubUnitList(cfg).length > 0) return mgAllocatePaired(items, targetBlocks, cfg, pins);
   const minMean  = (cfg.minMean !== undefined && cfg.minMean !== null) ? cfg.minMean : 0.5;
   const capDays  = cfg.capDays  || 60;
   const mustDays = cfg.mustDays || 7;
@@ -6705,6 +6752,85 @@ function mgAllocate(items, targetBlocks, cfg, pins) {
   return out;
 }
 
+// サイズ別の偶数単位を守りながら配分する（v1.75.0 ナプラ リラベール）。
+// analyze_demand.py の allocate_group_paired と同じロジック（ピンはアプリ側だけの機能）。
+// 1ケース積んだら、同じサイズ枠の合計が倍数になるまで、その枠で在庫日数の一番少ない商品に続けて積む。
+// 組の相手は積んだ商品自身のこともある。相手選びでは積み上げ上限日数を見ない（偶数はメーカーの条件なので絶対）
+function mgAllocatePaired(items, targetBlocks, cfg, pins) {
+  const minMean  = (cfg.minMean !== undefined && cfg.minMean !== null) ? cfg.minMean : 0.5;
+  const capDays  = cfg.capDays  || 60;
+  const mustDays = cfg.mustDays || 7;
+  const ms = items.map(p => {
+    const mm = parseFloat(p.meanMonthly) || 0;
+    const sub = mgSubFor(cfg, p.name);
+    return {
+      code: p.code, mm, sub: sub.key, step: sub.step,
+      unit: mgUnitFor(cfg, p.name),
+      daily: mm > 0 ? mm / MG_DAYS_PER_MONTH : 1e-9,
+      pos: (parseFloat(p.stock) || 0) + (parseFloat(p.onOrder) || 0),
+      alloc: 0, pinned: false
+    };
+  });
+  let placed = 0;
+  ms.forEach(m => {
+    if (pins[m.code] === undefined) return;
+    m.alloc = Math.max(0, pins[m.code]);
+    m.pinned = true;
+    placed += m.alloc / m.unit;
+  });
+  const active = ms.filter(m => !m.pinned && m.mm >= minMean);
+  const cover = m => (m.pos + m.alloc) / m.daily;
+  const subBlocks = key => Math.round(ms.reduce((s, x) => s + (x.sub === key ? x.alloc / x.unit : 0), 0));
+  const needFor = m => {
+    if (!m.sub) return 1;
+    const after = subBlocks(m.sub) + 1;
+    return 1 + (((-after) % m.step) + m.step) % m.step;
+  };
+  // サイズ枠を倍数になるまで埋める。枠内で在庫日数の一番少ない（ピン以外の）商品から積む
+  const complete = (key, step) => {
+    const pool = active.filter(x => x.sub === key);
+    while (pool.length > 0 && subBlocks(key) % step !== 0) {
+      let cand = null;
+      for (const x of pool) if (cand === null || cover(x) < cover(cand)) cand = x;
+      cand.alloc += cand.unit; placed += 1;
+    }
+  };
+  const place = m => {
+    if (placed + needFor(m) > targetBlocks + MG_EPS) return false;
+    m.alloc += m.unit; placed += 1;
+    if (m.sub) complete(m.sub, m.step);
+    return true;
+  };
+  // ピン: 手動指定で奇数になったサイズ枠は、残り枠に入る限りまず偶数に戻す（人の指定の相方を最優先）
+  mgSubUnitList(cfg).forEach(e => {
+    const rem = subBlocks(e.pattern) % e.step;
+    if (rem === 0 || !ms.some(m => m.pinned && m.sub === e.pattern)) return;
+    if (placed + (e.step - rem) > targetBlocks + MG_EPS) return;
+    complete(e.pattern, e.step);
+  });
+  // 必須枠①: 欠品中（在庫0以下）を最優先
+  active.slice().sort((a, b) => a.pos - b.pos).forEach(m => {
+    if (m.alloc === 0 && m.pos <= 0) place(m);
+  });
+  // 必須枠②: mustDays以内に切れる商品
+  active.slice().sort((a, b) => a.pos / a.daily - b.pos / b.daily).forEach(m => {
+    if (m.alloc === 0 && m.pos > 0 && m.pos / m.daily <= mustDays) place(m);
+  });
+  // 任意枠: 在庫日数の少ない順。組が残り枠に入らない商品は飛ばす。上限日数で届かなければ上限を外す
+  for (const capped of [true, false]) {
+    while (placed < targetBlocks - MG_EPS) {
+      const cands = active
+        .filter(m => !(capped && (m.pos + m.alloc + m.unit) / m.daily > capDays))
+        .sort((a, b) => cover(a) - cover(b));
+      if (!cands.some(m => place(m))) break;
+    }
+    if (placed >= targetBlocks - MG_EPS) break;
+  }
+  const out = {};
+  ms.forEach(m => { out[m.code] = m.alloc; });
+  return out;
+}
+
 // 表示用の合計。ブロック数と、グループの単位に直した値・実個数をまとめて返す
 function mgTotalsOf(groupId, items, cfg) {
   let blocks = 0, pieces = 0, amount = 0, count = 0;
@@ -6748,7 +6874,9 @@ function mgRebuild(groupId, lots, keepPins = true, changedCode) {
   items.forEach(p => { prevQty[p.code] = mgQtyOf(groupId, p); });
   if (!keepPins) delete propMgPins[groupId];
   const label       = mgLabel(st, cfg);
-  const lotCount    = Math.max(1, lots || st.lots || 1);
+  // ロット上限（v1.75.0）。リラベールのように1ロットちょうどしか発注しない系列は上限で止める
+  const maxLots     = mgMaxLots(cfg);
+  const lotCount    = Math.min(Math.max(1, lots || st.lots || 1), maxLots || Infinity);
   const groupBlocks = mgGroupBlocks(st, cfg);
   const targetBlocks = lotCount * groupBlocks;
   const target = targetBlocks * mgScale(cfg);   // 表示用（本単位＝本数 / ケース単位＝ケース数）
@@ -6767,12 +6895,23 @@ function mgRebuild(groupId, lots, keepPins = true, changedCode) {
   const placedPieces = Object.values(newQty).reduce((s, v) => s + v, 0);
   const placed = Math.round(placedBlocks * mgScale(cfg) * 100) / 100;
   reRenderProposalsKeepScroll();
+  // サイズ別の偶数単位（v1.75.0）。手動指定の組み合わせ次第で満たせないことがあるので必ず知らせる。
+  // 合計が足りない原因が「奇数のサイズを直せない」ことも多いので、合計のエラーにも添える
+  const subNg = mgSubViolationText(mgSubTotals(items.map(p => {
+    const sub = mgSubFor(cfg, p.name);
+    return { key: sub.key, step: sub.step, blocks: (newQty[p.code] || 0) / mgUnitFor(cfg, p.name) };
+  })), label);
+  const subNgNote = subNg ? `（${subNg}）` : '';
   if (placedBlocks > targetBlocks + MG_EPS) {
-    showToast(`${st.groupName}: 手動指定だけで${placed}${label}です（${target}${label}を${Math.round((placed - target) * 100) / 100}${label}超過）。数量を減らすか${target * 2}${label}にしてください`, 'error');
+    showToast(`${st.groupName}: 手動指定だけで${placed}${label}です（${target}${label}を${Math.round((placed - target) * 100) / 100}${label}超過）。${maxLots === 1 ? '数量を減らしてください' : `数量を減らすか${target * 2}${label}にしてください`}${subNgNote}`, 'error');
     return;
   }
   if (placedBlocks < targetBlocks - MG_EPS) {
-    showToast(`${st.groupName}: ${target}${label}に対し${placed}${label}しか配分できませんでした`, 'error');
+    showToast(`${st.groupName}: ${target}${label}に対し${placed}${label}しか配分できませんでした${subNgNote}`, 'error');
+    return;
+  }
+  if (subNg) {
+    showToast(`${st.groupName}: ${subNg}。手動指定の数量を見直してください`, 'error');
     return;
   }
   let diffNote = '';
@@ -6865,6 +7004,8 @@ function renderMgBlock(groupId, supplierCode, renderItem) {
   const cfg   = mgConfigById(groupId);
   const label = mgLabel(st, cfg);          // '本' か 'ケース'
   const unit  = st.groupUnit || 0;         // 発注単位（label の単位で数えた値）
+  const maxLots = mgMaxLots(cfg);          // 0＝上限なし（v1.75.0）
+  const subRules = mgSubUnitList(cfg);     // サイズ別の偶数単位（v1.75.0）
   const skipped = propMgSkipped.has(groupId);
   const skipBox = `
     <label class="prop-mg-skip">
@@ -6925,7 +7066,9 @@ function renderMgBlock(groupId, supplierCode, renderItem) {
     const startLabel = pinnedCount > 0 ? `🛒 手動指定を含めて今すぐ${unit}${label}を組む` : `🛒 今すぐ${unit}${label}を組む`;
     acts.push(`<button class="prop-mg-btn primary" ${orderAction('mgRebuild', groupId, 1)}>${startLabel}</button>`);
   }
-  acts.push(`<button class="prop-mg-btn" ${orderAction('mgRebuild', groupId, 2)}>${unit * 2}${label}（2ロット）にする</button>`);
+  if (maxLots === 0 || maxLots >= 2) {
+    acts.push(`<button class="prop-mg-btn" ${orderAction('mgRebuild', groupId, 2)}>${unit * 2}${label}（2ロット）にする</button>`);
+  }
   if ((st.lots || 1) > 1 || (propMgQty[groupId] && total > unit)) {
     acts.push(`<button class="prop-mg-btn" ${orderAction('mgRebuild', groupId, 1)}>${unit}${label}（1ロット）に戻す</button>`);
   }
@@ -6953,10 +7096,21 @@ function renderMgBlock(groupId, supplierCode, renderItem) {
        <div class="prop-mg-solo-note">この系列は単独で${unit}${label}の発注を組むため、他の商品とは別の発注書にします</div>`
     : '';
 
+  // 発注ルールの補足（サイズ別の偶数単位・ロット上限がある系列だけ）
+  const ruleParts = [];
+  if (subRules.length > 0) {
+    // 並びは設定に書いた順（mgSubUnitList は照合用に長いパターン順へ並べ替えているため使わない）
+    ruleParts.push(`同じサイズどうしの合計を${subRules.every(e => e.step === 2) ? '偶数' : '指定の倍数'}${escHtml(label)}にする（${
+      (cfg.subUnits || []).map(t => escHtml(String(t).replace(/:2$/, ''))).join(' / ')}）`);
+  }
+  if (maxLots === 1) ruleParts.push(`合計はちょうど${unit}${escHtml(label)}`);
+  const ruleNote = ruleParts.length > 0 ? `<div class="prop-mg-rule">📏 ${ruleParts.join('・')}</div>` : '';
+
   return `
-  <div class="prop-mg${st.due ? ' due' : ''}" data-group-id="${escAttr(groupId)}" data-group-unit="${unit}" data-unit-label="${escAttr(label)}">
+  <div class="prop-mg${st.due ? ' due' : ''}" data-group-id="${escAttr(groupId)}" data-group-unit="${unit}" data-unit-label="${escAttr(label)}" data-max-lots="${maxLots}">
     <div class="prop-mg-head">
       <div class="prop-mg-title">📦 ${escHtml(st.groupName)}<span class="prop-mg-unit">${unit}${escHtml(label)}単位</span></div>
+      ${ruleNote}
       <div class="prop-mg-state">${state}</div>
       <div class="prop-mg-state">${summary}</div>
       ${pinNote}
@@ -6986,12 +7140,14 @@ function updatePropMgTotal(mgEl) {
   const unit  = parseFloat(mgEl.dataset.groupUnit) || 0;
   const label = mgEl.dataset.unitLabel || '本';
   let total = 0, pieces = 0;
+  const subEntries = [];
   mgEl.querySelectorAll('.prop-item').forEach(item => {
     if (!item.querySelector('.prop-check').checked) return;
     const qty = parseFloat(item.querySelector('.prop-qty').value) || 0;
     const itemUnit = parseFloat(item.dataset.mgUnit) || 1;
     pieces += qty;
     total  += label === '本' ? qty : qty / itemUnit;
+    subEntries.push({ key: item.dataset.mgSub || '', step: parseInt(item.dataset.mgStep, 10) || 1, blocks: qty / itemUnit });
   });
   total = Math.round(total * 100) / 100;
   // 1本もチェックが無い状態（発注時期前など）は警告ではなく案内にする
@@ -7004,9 +7160,27 @@ function updatePropMgTotal(mgEl) {
   const pcs = label === '本' ? '' : `（${pieces}個）`;
   el.style.color = '';
   if (unit <= 0) { el.className = 'prop-mg-total'; el.textContent = `合計 ${total}${label}${pcs}`; return; }
-  if (Math.abs(total % unit) < 0.005) {
+  // サイズ別の偶数単位・ロット上限（v1.75.0）。どちらも無い系列では何も足さない（従来表示のまま）
+  const subs = mgSubTotals(subEntries);
+  const subNg = mgSubViolationText(subs, label);
+  const maxLots = parseInt(mgEl.dataset.maxLots, 10) || 0;
+  const overMax = maxLots > 0 && total > unit * maxLots + 0.005;
+  if (Math.abs(total % unit) < 0.005 && !subNg && !overMax) {
     el.className = 'prop-mg-total ok';
-    el.textContent = `合計 ${total} / ${total}${label}${pcs} ✅（${Math.round(total / unit)}ロット）`;
+    el.textContent = `合計 ${total} / ${total}${label}${pcs} ✅（${Math.round(total / unit)}ロット）`
+      + (subs.length > 0 ? ` ／ サイズ別 ${subs.map(x => `${x.key}:${x.blocks}`).join(' ')} ✅` : '');
+    return;
+  }
+  if (Math.abs(total % unit) < 0.005 && !overMax) {
+    // 合計は発注単位どおりだが、サイズ別の偶数が崩れている
+    el.className = 'prop-mg-total ng';
+    el.textContent = `合計 ${total} / ${total}${label}${pcs} ⚠️ ${subNg}`;
+    return;
+  }
+  if (overMax) {
+    el.className = 'prop-mg-total ng';
+    el.textContent = `合計 ${total}${label}${pcs} ⚠️ ${unit * maxLots}${label}ちょうどにしてください（${
+      Math.round((total - unit * maxLots) * 100) / 100}${label}超過）` + (subNg ? ` ／ ${subNg}` : '');
     return;
   }
   // 倍数から外れている。1ロット未満なら「あとN」、超えているなら減らす／増やす両方を出す
@@ -7015,10 +7189,11 @@ function updatePropMgTotal(mgEl) {
   const r2 = v => Math.round(v * 100) / 100;
   const lower = Math.floor(r2(total) / unit) * unit;
   const upper = Math.ceil(r2(total) / unit) * unit;
-  el.textContent = lower < unit
+  el.textContent = (lower < unit
     ? `合計 ${total} / ${unit}${label}${pcs} ⚠️ あと${r2(unit - total)}${label}`
     : `合計 ${total}${label}${pcs} ⚠️ ${lower}${label}を${r2(total - lower)}${label}超過`
-      + `（−${r2(total - lower)}で${lower}${label} / ＋${r2(upper - total)}で${upper}${label}）`;
+      + `（−${r2(total - lower)}で${lower}${label} / ＋${r2(upper - total)}で${upper}${label}）`)
+    + (subNg ? ` ／ ${subNg}` : '');
 }
 
 // 金額表示（¥12,400 形式）。仕入単価0円（マスター未整備）の商品行は「—」表示にする
@@ -7785,13 +7960,25 @@ function startOrderFromMgGroup(groupId, supplierCode) {
   //（手で数量を変えたい運用がある。強制ブロックにすると逃げ道が無くなる）
   const total = Math.round(picked.reduce(
     (s, x) => s + (label === '本' ? x.qty : x.qty / mgUnitFor(cfg, x.p.name)), 0) * 100) / 100;
+  // 発注ルールの違反を集めて1回の確認にまとめる（v1.75.0でサイズ別の偶数単位・ロット上限を追加）。
+  // たかしさん確認（2026-09-17）: リラベールも止めずに警告して進ませる
+  const problems = [];
+  const maxLots = mgMaxLots(cfg);
   if (unit > 0 && Math.abs(total % unit) >= 0.005) {
     const over  = Math.round((total % unit) * 100) / 100;
     const short = Math.round((unit - over) * 100) / 100;
-    if (!confirm(`合計${total}${label}は${unit}${label}単位になっていません（あと${short}${label}で${
-      Math.ceil(total / unit) * unit}${label} ／ ${over}${label}減らすと${Math.floor(total / unit) * unit}${label}）。\n` +
-      `このまま発注画面へ進みますか？`)) return;
+    problems.push(`合計${total}${label}は${unit}${label}単位になっていません（あと${short}${label}で${
+      Math.ceil(total / unit) * unit}${label} ／ ${over}${label}減らすと${Math.floor(total / unit) * unit}${label}）`);
+  } else if (maxLots > 0 && total > unit * maxLots + 0.005) {
+    problems.push(`合計${total}${label}です。この系列は${unit * maxLots}${label}ちょうどで発注します`);
   }
+  const subNg = mgSubViolationText(mgSubTotals(picked.map(x => {
+    const sub = mgSubFor(cfg, x.p.name);
+    return { key: sub.key, step: sub.step, blocks: x.qty / mgUnitFor(cfg, x.p.name) };
+  })), label);
+  if (subNg) problems.push(`同じサイズの合計が偶数になっていません: ${subNg}`);
+  if (problems.length > 0 &&
+      !confirm(problems.join('\n') + `\n\nこのまま発注画面へ進みますか？`)) return;
   startOrderWithPicked(supplierCode, picked, st ? st.groupName : '系列');
 }
 

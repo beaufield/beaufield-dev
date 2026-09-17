@@ -24,7 +24,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.38.1';
+const VERSION         = 'v1.39.0';
 const APP_NAME        = 'order-app';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 let _requestMetric = null;
@@ -1321,28 +1321,38 @@ const DEFAULT_POSTING_LAG_DAYS = 6;
 //                                商品別発注単位（例 `1kg:10,300g:30`）で指定する。
 //                                この種類では、商品別発注単位のどれかに名前が一致することが
 //                                グループ所属の条件にもなる（同じシリーズの別サイズを自然に外せる）
+// P列「サイズ別の偶数単位」・Q列「ロット上限」は v1.39.0 で追加（ナプラ リラベール対応）。
+//   サイズ別の偶数単位 = `280:2,1000:2,4000:2` … 商品名にそのパターンを含む商品どうしの合計ブロック数
+//                        （ケース単位ならケース数）を、その数の倍数にする。空欄＝この制約なし
+//   ロット上限         = 1 … 発注単位の何倍まで組んでよいか。1なら「2ロットにする」を出さない。空欄＝上限なし
 const ORDER_GROUP_HEADERS = ['グループID','グループ名','仕入先コード','発注単位（系列）','発注単位（商品）',
                              '名前に含む','名前に含まない','個別除外コード',
                              'トリガー割合(%)','必須枠日数','積み上げ上限日数','最低月需要','有効',
-                             '系列単位の種類','商品別発注単位'];
+                             '系列単位の種類','商品別発注単位','サイズ別の偶数単位','ロット上限'];
 
-// 初回アクセス時に投入する既定グループ（2026-07-30 時点の運用設定・CREAMS は 2026-09-15 / HSD 3件は 2026-09-16 追加）
+// 初回アクセス時に投入する既定グループ（2026-07-30 時点の運用設定・CREAMS は 2026-09-15 / HSD 3件は 2026-09-16 / RELABEL は 2026-09-17 追加）
 // ⚠️ 「名前に含む」のグラム表記は analyze_demand.py 側で全角ｇを半角gに正規化してから判定する。
 //   商品名に全角ｇを使っているものが実際にあり、半角だけで判定すると取りこぼす。
 //   カタカナも半角→全角に正規化されるので、商品名が半角カナ（ｸﾘｰﾑｽﾞｸﾘｰﾑ）でも全角で書いてよい
 const ORDER_GROUP_DEFAULTS = [
-  ['MILFY',       'ミルフィシリーズ',        '48', 120, 6, 'ミルフィ,120g',    'オキシ,OX', '', 50, 7, 60, 0.5, true, '本', ''],
-  ['WAKAN18',     '和漢彩染 十八番',        '54',  72, 6, '十八番,120g',      'LUC',       '', 50, 7, 60, 0.5, true, '本', ''],
-  ['WAKAN18_LUC', '和漢彩染 十八番 LUC',    '54',  72, 6, '十八番,120g,LUC',  '',          '', 50, 7, 60, 0.5, true, '本', ''],
+  ['MILFY',       'ミルフィシリーズ',        '48', 120, 6, 'ミルフィ,120g',    'オキシ,OX', '', 50, 7, 60, 0.5, true, '本', '', '', ''],
+  ['WAKAN18',     '和漢彩染 十八番',        '54',  72, 6, '十八番,120g',      'LUC',       '', 50, 7, 60, 0.5, true, '本', '', '', ''],
+  ['WAKAN18_LUC', '和漢彩染 十八番 LUC',    '54',  72, 6, '十八番,120g,LUC',  '',          '', 50, 7, 60, 0.5, true, '本', '', '', ''],
   // ODP クリームズクリーム: 300g・1kgを合わせて6ケース単位（300g=1ケース30個 / 1kg=1ケース10個）。
   // 100gは別枠（仕入先の最低発注金額ルール側で扱う）なので商品別発注単位に書かず自動的に外す
-  ['CREAMS',      'クリームズクリーム(300g/1kg)', '47', 6, 0, 'クリームズクリーム', '',      '', 50, 7, 60, 0.5, true, 'ケース', '1kg:10,300g:30'],
+  ['CREAMS',      'クリームズクリーム(300g/1kg)', '47', 6, 0, 'クリームズクリーム', '',      '', 50, 7, 60, 0.5, true, 'ケース', '1kg:10,300g:30', '', ''],
   // ODP HSD.（ヘアミルク／ヘアミスト）: サイズごとに別々の系列で、それぞれ7ケース単位（v1.38.0）。
   // 1ケースの入数は 150ml（ボトル・詰替）＝30本 / 業務用1L＝10本。ヘアミルクとヘアミストを
   // 合わせて7ケースにする（同じサイズなら中身の配分は自由）。仕入実績で確認済み（設計プラン Phase P）
-  ['HSD150',      'HSD ミルク/ミスト 150ml',     '47', 7, 0, 'HSD.,ボトル150ml', '',          '', 50, 7, 60, 0.5, true, 'ケース', 'ボトル150ml:30'],
-  ['HSD150R',     'HSD ミルク/ミスト 詰替150ml', '47', 7, 0, 'HSD.,詰替150ml',   '',          '', 50, 7, 60, 0.5, true, 'ケース', '詰替150ml:30'],
-  ['HSD1L',       'HSD ミルク/ミスト 業務用1L',  '47', 7, 0, 'HSD.,業務用1L',    '',          '', 50, 7, 60, 0.5, true, 'ケース', '業務用1L:10']
+  ['HSD150',      'HSD ミルク/ミスト 150ml',     '47', 7, 0, 'HSD.,ボトル150ml', '',          '', 50, 7, 60, 0.5, true, 'ケース', 'ボトル150ml:30', '', ''],
+  ['HSD150R',     'HSD ミルク/ミスト 詰替150ml', '47', 7, 0, 'HSD.,詰替150ml',   '',          '', 50, 7, 60, 0.5, true, 'ケース', '詰替150ml:30', '', ''],
+  ['HSD1L',       'HSD ミルク/ミスト 業務用1L',  '47', 7, 0, 'HSD.,業務用1L',    '',          '', 50, 7, 60, 0.5, true, 'ケース', '業務用1L:10', '', ''],
+  // ナプラ リラベール CMC シャンプー／ヘアマスク（v1.39.0）: リラベールだけで合計10ケースちょうど。
+  // 1ケースの入数は 280ml/280g＝36個 / 1000ml/1000g＝12個 / 4000ml/4000g＝4個。
+  // さらに同じサイズのシャンプー＋マスクの合計が偶数ケースであること（例: 1000が6ケース＋4000が4ケース）。
+  // 20ケース（2ロット）の運用は無いのでロット上限1。仕入実績で確認済み（設計プラン Phase Q）
+  ['RELABEL',     'リラベール シャンプー/マスク', '67', 10, 0, 'リラベール',     '',          '', 50, 7, 60, 0.5, true, 'ケース',
+   '280ml:36,280g:36,1000ml:12,1000g:12,4000ml:4,4000g:4', '280:2,1000:2,4000:2', 1]
 ];
 
 // 発注グループ状況シートの列定義（updateOrderProposals / getOrderProposals で共有）
@@ -1365,15 +1375,25 @@ function ensureOrderGroupSheet_() {
   if (sh) return migrateOrderGroupSheet_(sh);
   sh = ss.insertSheet(SHEET_ORDER_GROUPS);
   sh.getRange(1, 1, 1, ORDER_GROUP_HEADERS.length).setValues([ORDER_GROUP_HEADERS]);
+  // 仕入先コード・名前パターンは「48」「120g」等が数値・日付に化けないようテキスト固定にする
+  // （v1.20.0 で発注限時刻の '11:00' がDateシリアル値に変換された事案と同種の予防）。
+  // ⚠️ 書式は値を書く「前」に設定する。後から '@' にしても、書き込み時に変換済みの値は戻らない
+  //   （`280:2` のような「数字:数字」は時刻・経過時間として読まれうる。v1.39.0）
+  setOrderGroupTextFormat_(sh, 2, ORDER_GROUP_DEFAULTS.length);
   sh.getRange(2, 1, ORDER_GROUP_DEFAULTS.length, ORDER_GROUP_HEADERS.length)
     .setValues(ORDER_GROUP_DEFAULTS);
-  // 仕入先コード・名前パターンは「48」「120g」等が数値・日付に化けないようテキスト固定にする
-  // （v1.20.0 で発注限時刻の '11:00' がDateシリアル値に変換された事案と同種の予防）
-  sh.getRange(2, 3, ORDER_GROUP_DEFAULTS.length, 1).setNumberFormat('@');
-  sh.getRange(2, 6, ORDER_GROUP_DEFAULTS.length, 3).setNumberFormat('@');
   sh.setFrozenRows(1);
   Logger.log('✅ 発注グループ設定シートを既定値で作成しました');
   return sh;
+}
+
+// 発注グループ設定のうち文字列として扱う列をテキスト書式にする（v1.39.0で共通化）
+// C=仕入先コード / F〜H=名前パターン・除外コード / N〜P=系列単位の種類・商品別発注単位・サイズ別の偶数単位
+function setOrderGroupTextFormat_(sh, startRow, numRows) {
+  if (numRows <= 0) return;
+  sh.getRange(startRow, 3,  numRows, 1).setNumberFormat('@');
+  sh.getRange(startRow, 6,  numRows, 3).setNumberFormat('@');
+  sh.getRange(startRow, 14, numRows, 3).setNumberFormat('@');
 }
 
 // 既存の発注グループ設定シートに、後から増えた列と既定グループだけを足す（v1.37.0）
@@ -1396,10 +1416,8 @@ function migrateOrderGroupSheet_(sh) {
   const missing = ORDER_GROUP_DEFAULTS.filter(d => existing.indexOf(String(d[0])) === -1);
   if (missing.length > 0) {
     const start = sh.getLastRow() + 1;
+    setOrderGroupTextFormat_(sh, start, missing.length);   // 値より先に書式（ensureOrderGroupSheet_ 参照）
     sh.getRange(start, 1, missing.length, ORDER_GROUP_HEADERS.length).setValues(missing);
-    sh.getRange(start, 3, missing.length, 1).setNumberFormat('@');
-    sh.getRange(start, 6, missing.length, 3).setNumberFormat('@');
-    sh.getRange(start, 14, missing.length, 2).setNumberFormat('@');
     Logger.log('✅ 発注グループ設定シートに既定グループを追加しました: '
                + missing.map(d => d[0]).join(' / '));
   }
@@ -1430,7 +1448,11 @@ function readOrderGroups_() {
       minMean:      parseFloat(r[11]) >= 0 ? parseFloat(r[11]) : 0.5,
       // 列が無い旧シートは空欄＝'本'（従来どおりの挙動）
       unitKind:     String(r[13] || '').trim() || '本',
-      itemUnits:    csv(r[14])             // ['1kg:10','300g:30']
+      itemUnits:    csv(r[14]),            // ['1kg:10','300g:30']
+      // v1.39.0: サイズ別の偶数単位（['280:2','1000:2']）とロット上限（0＝上限なし）。
+      // 列が無い旧シート・空欄は制約なし＝従来どおりの挙動
+      subUnits:     csv(r[15]),
+      maxLots:      parseInt(r[16], 10) > 0 ? parseInt(r[16], 10) : 0
     }))
     .filter(g => g.groupUnit > 0 && g.nameIncludes.length > 0)
     .filter(g => (g.unitKind === 'ケース' ? g.itemUnits.length > 0 : g.itemUnit > 0));

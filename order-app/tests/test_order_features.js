@@ -562,7 +562,8 @@ function makeMgContext() {
     '/* === /MG SKIP GUARDS === */');
   vm.runInContext(caseBlock + '\n' + minBlock + '\n' + skipBlock + '\n globalThis.testApi = {\n' +
     '    mgNormName, mgUnitFor, mgGroupBlocks, mgScale, mgLabel, mgIsCaseUnit,\n' +
-    '    mgGroupIdForProduct, mgAllocate, minOrderCountsFor, minOrderNote\n' +
+    '    mgGroupIdForProduct, mgAllocate, minOrderCountsFor, minOrderNote,\n' +
+    '    mgSubUnitList, mgSubFor, mgMaxLots, mgSubTotals, mgSubViolationText\n' +
     '  };', context);
   return context;
 }
@@ -705,17 +706,17 @@ function testMinOrderAmount() {
    機能9（v1.72.0）: まとめ発注グループの「合計 N / M」表示
    （行ごとに1ケースの入数が違っても、合計をケース数で数えられること）
 =================================================== */
-function makeMgEl(unitLabel, groupUnit, rows) {
+function makeMgEl(unitLabel, groupUnit, rows, maxLots) {
   // updatePropMgTotal が触る範囲だけの最小DOMスタブ
   const totalEl = { className: '', textContent: '', style: {} };
   const items = rows.map(r => ({
-    dataset: { mgUnit: String(r.unit), unitCost: '0' },
+    dataset: { mgUnit: String(r.unit), unitCost: '0', mgSub: r.sub || '', mgStep: String(r.step || 1) },
     querySelector: sel => sel === '.prop-check' ? { checked: r.checked !== false }
                         : sel === '.prop-qty'   ? { value: String(r.qty) } : null
   }));
   return {
     el: {
-      dataset: { unitLabel, groupUnit: String(groupUnit) },
+      dataset: { unitLabel, groupUnit: String(groupUnit), maxLots: String(maxLots || 0) },
       querySelector: sel => (sel === '.prop-mg-total' ? totalEl : null),
       querySelectorAll: sel => (sel === '.prop-item' ? items : [])
     },
@@ -762,6 +763,39 @@ function testMgTotalLine() {
   api.updatePropMgTotal(m.el);
   assert.strictEqual(m.totalEl.className, 'prop-mg-total');
   assert.ok(m.totalEl.textContent.indexOf('チェックなし') >= 0, m.totalEl.textContent);
+
+  // サイズ別の偶数単位（v1.75.0 リラベール）: 1000が4ケース・4000が6ケース → OK
+  m = makeMgEl('ケース', 10, [
+    { unit: 12, qty: 48, sub: '1000', step: 2 }, { unit: 4, qty: 16, sub: '4000', step: 2 },
+    { unit: 4, qty: 8, sub: '4000', step: 2 }
+  ], 1);
+  api.updatePropMgTotal(m.el);
+  assert.strictEqual(m.totalEl.className, 'prop-mg-total ok', m.totalEl.textContent);
+  assert.ok(m.totalEl.textContent.indexOf('サイズ別 1000:4 4000:6') >= 0, m.totalEl.textContent);
+
+  // 合計10ケースでも、1000が3ケース・4000が7ケース（奇数）ならNG
+  m = makeMgEl('ケース', 10, [
+    { unit: 12, qty: 36, sub: '1000', step: 2 }, { unit: 4, qty: 28, sub: '4000', step: 2 }
+  ], 1);
+  api.updatePropMgTotal(m.el);
+  assert.strictEqual(m.totalEl.className, 'prop-mg-total ng', m.totalEl.textContent);
+  assert.ok(m.totalEl.textContent.indexOf('1000が3ケース（偶数にする）') >= 0, m.totalEl.textContent);
+  assert.ok(m.totalEl.textContent.indexOf('4000が7ケース（偶数にする）') >= 0, m.totalEl.textContent);
+
+  // ロット上限1で20ケース → 「10ケースちょうど」を促す（2ロット扱いの ✅ にしない）
+  m = makeMgEl('ケース', 10, [
+    { unit: 12, qty: 120, sub: '1000', step: 2 }, { unit: 4, qty: 40, sub: '4000', step: 2 }
+  ], 1);
+  api.updatePropMgTotal(m.el);
+  assert.strictEqual(m.totalEl.className, 'prop-mg-total ng', m.totalEl.textContent);
+  assert.ok(m.totalEl.textContent.indexOf('10ケースちょうど') >= 0, m.totalEl.textContent);
+
+  // 足りない＋奇数の両方
+  m = makeMgEl('ケース', 10, [{ unit: 12, qty: 36, sub: '1000', step: 2 }], 1);
+  api.updatePropMgTotal(m.el);
+  assert.strictEqual(m.totalEl.className, 'prop-mg-total ng', m.totalEl.textContent);
+  assert.ok(m.totalEl.textContent.indexOf('あと7ケース') >= 0, m.totalEl.textContent);
+  assert.ok(m.totalEl.textContent.indexOf('1000が3ケース') >= 0, m.totalEl.textContent);
 }
 
 /* ===================================================
@@ -780,7 +814,8 @@ function readGroupDefaults() {
     groupUnit: r[3], itemUnit: r[4] || 6,
     nameIncludes: csv(r[5]), nameExcludes: csv(r[6]), excludeCodes: csv(r[7]),
     triggerPct: r[8], mustDays: r[9], capDays: r[10], minMean: r[11],
-    unitKind: String(r[13] || '').trim() || '本', itemUnits: csv(r[14])
+    unitKind: String(r[13] || '').trim() || '本', itemUnits: csv(r[14]),
+    subUnits: csv(r[15]), maxLots: parseInt(r[16], 10) > 0 ? parseInt(r[16], 10) : 0
   }));
 }
 
@@ -855,6 +890,185 @@ function testHsdGroupDefaults() {
   Object.values(out1L).forEach(v => assert.strictEqual(v % 10, 0, '1商品10本単位'));
 }
 
+/* ===================================================
+   機能11（gas v1.39.0 / app v1.75.0）: ナプラ リラベール
+   リラベールだけで合計10ケース・同じサイズのシャンプー＋マスクは偶数ケース。
+   設計原本: まとめ発注グループ_設計プラン.md Phase Q
+=================================================== */
+// 商品名は商品マスターの表記そのまま（所属判定・入数判定は名前で行うため）。
+// 在庫・需要は架空の値
+const RELABEL_NAMES = {
+  S280: 'ナプラ リラベールCMCシャンプー 280ml',
+  M280: 'ナプラ リラベールCMCヘアマスク 280g',
+  S1L:  'ナプラ リラベールCMCシャンプー 1000ml',
+  M1L:  'ナプラ リラベールCMCヘアマスク 1000g',
+  S4L:  'ナプラ リラベールCMCシャンプー 4000ml',
+  M4L:  'ナプラ リラベールCMCヘアマスク 4000g'
+};
+function relabelItems(overrides) {
+  const base = {
+    S280: { stock: 90, meanMonthly: 50 }, M280: { stock: 130, meanMonthly: 50 },
+    S1L:  { stock: 30, meanMonthly: 30 }, M1L:  { stock: 18, meanMonthly: 20 },
+    S4L:  { stock: 20, meanMonthly: 25 }, M4L:  { stock: 10, meanMonthly: 11 }
+  };
+  return Object.keys(base).map(code => Object.assign(
+    { code, name: RELABEL_NAMES[code], onOrder: 0 }, base[code], (overrides || {})[code] || {}));
+}
+function relabelCheck(api, cfg, items, out) {
+  const bySub = {};
+  let blocks = 0;
+  items.forEach(p => {
+    const unit = api.mgUnitFor(cfg, p.name);
+    const qty = out[p.code] || 0;
+    assert.strictEqual(qty % unit, 0, p.code + ' はケース単位（' + unit + '個）');
+    const key = api.mgSubFor(cfg, p.name).key;
+    bySub[key] = (bySub[key] || 0) + qty / unit;
+    blocks += qty / unit;
+  });
+  return { blocks, bySub };
+}
+
+function testRelabelGroupDefaults() {
+  const context = makeMgContext();
+  const api = context.testApi;
+  const defaults = readGroupDefaults();
+  context.proposalsData.orderGroups = defaults;
+  const cfg = defaults.find(g => g.groupId === 'RELABEL');
+  assert.ok(cfg, '既定グループ RELABEL が無い');
+  assert.strictEqual(cfg.supplierCode, '67');
+  assert.strictEqual(cfg.groupUnit, 10, '10ケース単位');
+  assert.strictEqual(cfg.unitKind, 'ケース');
+  assert.strictEqual(api.mgMaxLots(cfg), 1, '2ロットは組まない');
+  assert.deepStrictEqual(api.mgSubUnitList(cfg).map(e => e.pattern + ':' + e.step).sort(),
+    ['1000:2', '280:2', '4000:2']);
+
+  // 所属・1ケースの入数・サイズ枠
+  [['S280', 36, '280'], ['M280', 36, '280'], ['S1L', 12, '1000'], ['M1L', 12, '1000'],
+   ['S4L', 4, '4000'], ['M4L', 4, '4000']].forEach(([code, unit, sub]) => {
+    const name = RELABEL_NAMES[code];
+    assert.strictEqual(api.mgGroupIdForProduct('67', name, code), 'RELABEL', name);
+    assert.strictEqual(api.mgUnitFor(cfg, name), unit, name);
+    assert.strictEqual(api.mgSubFor(cfg, name).key, sub, name);
+    assert.strictEqual(api.mgSubFor(cfg, name).step, 2, name);
+  });
+  // 同じリラベールでもセット・ギフト箱・詰替はグループ外（別の発注として扱う）
+  ['ナプラ リラベールCMCｼｬﾝﾌﾟｰ＆ﾏｽｸｾｯﾄ120g', 'ナプラ リラベールCMCｼｬﾝﾌﾟｰ＆ﾏｽｸ用ｷﾞﾌﾄ箱',
+   'ナプラ リラベールCMCシャンプー（詰）1L'].forEach((name, i) => {
+    assert.strictEqual(api.mgGroupIdForProduct('67', name, 'X' + i), '', name);
+  });
+  // 仕入先が違えば対象外
+  assert.strictEqual(api.mgGroupIdForProduct('47', RELABEL_NAMES.S280, 'S280'), '');
+  // 既存グループにはサイズ枠もロット上限も無い（従来どおりの挙動）
+  defaults.filter(g => g.groupId !== 'RELABEL').forEach(g => {
+    assert.strictEqual(api.mgSubUnitList(g).length, 0, g.groupId);
+    assert.strictEqual(api.mgMaxLots(g), 0, g.groupId);
+  });
+}
+
+function testMgAllocatePairedRelabel() {
+  const context = makeMgContext();
+  const api = context.testApi;
+  const cfg = readGroupDefaults().find(g => g.groupId === 'RELABEL');
+
+  // 通常: 合計10ケース・各サイズ偶数
+  let items = relabelItems();
+  let r = relabelCheck(api, cfg, items, api.mgAllocate(items, 10, cfg, {}));
+  assert.strictEqual(r.blocks, 10, '合計10ケース');
+  Object.entries(r.bySub).forEach(([k, v]) => assert.strictEqual(v % 2, 0, k + ' は偶数ケース: ' + v));
+
+  // 欠品中の商品は最優先で入り、同じサイズの相方も一緒に入る（4000mlが欠品）
+  items = relabelItems({ S4L: { stock: -2 }, M4L: { stock: 40 } });
+  let out = api.mgAllocate(items, 10, cfg, {});
+  r = relabelCheck(api, cfg, items, out);
+  assert.strictEqual(r.blocks, 10);
+  assert.ok(out.S4L >= 4, '欠品中の4000mlは必ず入る');
+  assert.strictEqual(r.bySub['4000'] % 2, 0, '4000は偶数ケース');
+
+  // マスクが十分あってシャンプーだけ足りないサイズは、シャンプー2ケースで組む
+  items = relabelItems({ S1L: { stock: 0 }, M1L: { stock: 200 } });
+  out = api.mgAllocate(items, 10, cfg, {});
+  assert.ok(out.S1L >= 24, 'シャンプー1000mlが2ケース以上: ' + out.S1L);
+  assert.strictEqual(out.M1L || 0, 0, 'マスク1000gは在庫十分なので入れない');
+
+  // 手動指定（ピン）で1000mlを1ケースにすると、相方（1000g）が1ケース補われて偶数に戻る
+  items = relabelItems();
+  out = api.mgAllocate(items, 10, cfg, { S1L: 12 });
+  r = relabelCheck(api, cfg, items, out);
+  assert.strictEqual(out.S1L, 12, 'ピンの数量は変えない');
+  assert.strictEqual(r.blocks, 10, 'ピンを含めて10ケース');
+  Object.entries(r.bySub).forEach(([k, v]) => assert.strictEqual(v % 2, 0, k + ' は偶数ケース: ' + v));
+
+  // シャンプーとマスクの両方を奇数でピンしたら、アプリは勝手に直さない（直す相手がいない）
+  out = api.mgAllocate(items, 10, cfg, { S1L: 12, M1L: 24 });
+  r = relabelCheck(api, cfg, items, out);
+  assert.strictEqual(r.bySub['1000'], 3, '人の指定はそのまま');
+  const ng = api.mgSubViolationText(api.mgSubTotals(items.map(p => ({
+    key: api.mgSubFor(cfg, p.name).key, step: 2, blocks: (out[p.code] || 0) / api.mgUnitFor(cfg, p.name)
+  }))), 'ケース');
+  assert.ok(ng.indexOf('1000が3ケース') >= 0, '違反として検出される: ' + ng);
+
+  // 既存グループ（サイズ枠なし）は従来の配分経路のまま
+  const hsd = readGroupDefaults().find(g => g.groupId === 'HSD150');
+  const hsdItems = [
+    { code: 'M', name: 'HSD.ヘアミルク ボトル150ml', stock: 16, onOrder: 0, meanMonthly: 30 },
+    { code: 'S', name: 'HSD.ヘアミスト ボトル150ml', stock: 45, onOrder: 0, meanMonthly: 30 }
+  ];
+  const hsdOut = api.mgAllocate(hsdItems, 7, hsd, {});
+  assert.strictEqual((hsdOut.M + hsdOut.S) / 30, 7, 'HSDは7ケース（奇数でもよい）');
+}
+
+function testStartOrderFromMgGroupRelabel() {
+  // 違反があれば確認を出し、キャンセルなら発注画面へ進まない／OKなら進む（たかしさん確認: 警告して進ませる）
+  const cfg = readGroupDefaults().find(g => g.groupId === 'RELABEL');
+  const confirms = [];
+  const started = [];
+  let confirmAnswer = false;
+  let picked = [];
+  const context = vm.createContext({
+    console, Math, Object, String, Number, Array, Map, Set,
+    propMgSkipped: new Set(),
+    proposalsData: { proposals: [], groupStatus: [], orderGroups: [cfg] },
+    document: { getElementById: () => ({ querySelector: () => ({}) }) },
+    mgStatusById: () => ({ groupId: 'RELABEL', groupName: 'リラベール シャンプー/マスク', groupUnit: 10, unitLabel: 'ケース' }),
+    mgConfigById: () => cfg,
+    collectPickedFrom: () => picked,
+    confirm: msg => { confirms.push(msg); return confirmAnswer; },
+    showToast: () => {},
+    startOrderWithPicked: (code, list) => { started.push(list); }
+  });
+  const caseBlock = section(html, '/* === MG CASE UNIT (test:mg-case) ===', '/* === /MG CASE UNIT === */');
+  const fn = section(html, 'function startOrderFromMgGroup(groupId, supplierCode) {',
+    '// 提案タブから発注画面へ送る共通処理');
+  vm.runInContext(caseBlock + '\n' + fn + '\n globalThis.startApi = { startOrderFromMgGroup };', context);
+  const api = context.startApi;
+  const pk = (code, qty) => ({ p: { code, name: RELABEL_NAMES[code] }, qty });
+
+  // ルールどおり（1000:4 / 4000:6）→ 確認なしで進む
+  picked = [pk('S1L', 24), pk('M1L', 24), pk('S4L', 16), pk('M4L', 8)];
+  api.startOrderFromMgGroup('RELABEL', '67');
+  assert.strictEqual(confirms.length, 0, confirms.join('\n'));
+  assert.strictEqual(started.length, 1);
+
+  // 合計10ケースだが1000が奇数 → 確認が出て、キャンセルなら進まない
+  picked = [pk('S1L', 36), pk('S4L', 20), pk('M4L', 8)];
+  api.startOrderFromMgGroup('RELABEL', '67');
+  assert.strictEqual(confirms.length, 1);
+  assert.ok(confirms[0].indexOf('1000が3ケース') >= 0, confirms[0]);
+  assert.strictEqual(started.length, 1, 'キャンセルしたので進まない');
+
+  // OKなら進める
+  confirmAnswer = true;
+  api.startOrderFromMgGroup('RELABEL', '67');
+  assert.strictEqual(started.length, 2, '警告のうえで進める');
+
+  // 20ケース（ロット上限超え）も確認を出す
+  confirmAnswer = false;
+  picked = [pk('S1L', 120), pk('M4L', 40)];
+  api.startOrderFromMgGroup('RELABEL', '67');
+  assert.ok(confirms[confirms.length - 1].indexOf('10ケースちょうど') >= 0, confirms[confirms.length - 1]);
+  assert.strictEqual(started.length, 2);
+}
+
 
 (async () => {
   testOrderDateHelpers();
@@ -869,6 +1083,9 @@ function testHsdGroupDefaults() {
   testMinOrderAmount();
   testMgTotalLine();
   testHsdGroupDefaults();
+  testRelabelGroupDefaults();
+  testMgAllocatePairedRelabel();
+  testStartOrderFromMgGroupRelabel();
   console.log('All order-feature tests passed.');
 })().catch(err => {
   console.error(err);

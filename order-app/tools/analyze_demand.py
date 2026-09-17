@@ -1,6 +1,6 @@
 # ============================================================
 # Beaufield 需要パターン分析・発注提案スクリプト
-# Version: v1.23.0
+# Version: v1.24.0
 #
 # 概要:
 #   売上データ明細表.CSV（過去24ヶ月）を分析し、商品ごとに
@@ -205,6 +205,12 @@
 #     この種類では、商品別発注単位のどれかに一致することがグループ所属の条件にもなる
 #     （同じシリーズでも100gのように別ルールで発注するサイズを自然に除外できる）。
 #
+#   サイズ別の偶数単位・ロット上限（v1.24.0で追加。ナプラ リラベール対応）:
+#     「サイズ別の偶数単位」列に `280:2,1000:2,4000:2` と書くと、商品名にそのパターンを含む
+#     商品どうし（同じサイズのシャンプーとマスク）の合計ブロック数を2の倍数にしながら配分する。
+#     配分は「1ケース積んだら、同じサイズで一番在庫日数の少ない商品にもう1ケース」の組で進む。
+#     「ロット上限」列が1なら、不足がどれだけ大きくても1ロット（10ケース）までしか組まない。
+#
 #   ⚠️ 必須枠も「月需要が最低月需要以上」の商品に限る。月0.1本しか出ない死に筋が在庫0に
 #     なるたびに必須枠を消費すると、1回の発注で30本前後が死に筋に吸われる（検証済み）。
 #     死に筋の欠品は自動発注ではなく人の判断に回す（画面には参考表示で出る）。
@@ -239,7 +245,7 @@ import requests
 
 # 冒頭ヘッダーの Version と対で必ず更新する。以前はログ側に文字列を直書きしていたため
 # ヘッダーが v1.21.0 なのにログは v1.16.0 のまま、という食い違いが起きていた（v1.22.0で定数化）
-SCRIPT_VERSION = 'v1.23.0'
+SCRIPT_VERSION = 'v1.24.0'
 
 SCRIPT_DIR  = Path(__file__).parent
 SECRET_ROOT = Path(os.environ.get(
@@ -812,6 +818,22 @@ def parse_item_units(raw):
     return out
 
 
+def parse_sub_units(raw):
+    """「サイズ別の偶数単位」（`280:2,1000:2`）を [(正規化パターン, 倍数)] に変換する（v1.24.0）
+
+    書式は商品別発注単位と同じ。長いパターンを先に評価する。倍数が2未満の指定は制約にならないので捨てる。
+    """
+    return [(pattern, step) for pattern, step in parse_item_units(raw) if step >= 2]
+
+
+def group_sub_key(group, name_normalized):
+    """その商品がどのサイズ枠に入るか（パターン文字列）と倍数を返す。該当なしは (None, 1)"""
+    for pattern, step in group.get('subUnits') or []:
+        if pattern in name_normalized:
+            return pattern, step
+    return None, 1
+
+
 def group_item_unit(group, name_normalized):
     """その商品の1ブロックが何個かを返す（該当なしは None＝グループ対象外）"""
     for pattern, unit in group['itemUnits']:
@@ -863,6 +885,9 @@ def parse_order_groups(raw_groups):
             'mustDays':     float(g.get('mustDays') or GROUP_MUST_DAYS_DEFAULT),
             'capDays':      float(g.get('capDays') or GROUP_CAP_DAYS_DEFAULT),
             'minMean':      float(g.get('minMean') if g.get('minMean') is not None else GROUP_MIN_MEAN_DEFAULT),
+            # v1.24.0: サイズ別の偶数単位（空なら制約なし）とロット上限（0＝上限なし）
+            'subUnits':     parse_sub_units(g.get('subUnits')),
+            'maxLots':      max(0, int(float(g.get('maxLots') or 0))),
         })
     return groups
 
@@ -958,6 +983,9 @@ def allocate_group(members, target_blocks, group):
     上位1〜2割の商品が系列需要の半分を占める一方、遅い色は「1ブロック入れると数ヶ月分」になるので、
     在庫日数の少ない順に積むだけでは永久に選ばれず静かに欠品する（シミュレーション検証済み）。
     """
+    if group.get('subUnits'):
+        return allocate_group_paired(members, target_blocks, group)
+
     min_mean = group['minMean']
     for m in members:
         m['alloc'] = 0
@@ -1012,6 +1040,93 @@ def allocate_group(members, target_blocks, group):
     return placed
 
 
+def allocate_group_paired(members, target_blocks, group):
+    """サイズ別の偶数単位を守りながら発注単位ぴったりに配分する（v1.24.0・ナプラ リラベール）
+
+    members の各要素には allocate_group のキーに加えて次を持たせておく:
+      sub     … サイズ枠のキー（group_sub_key のパターン。枠に入らない商品は None）
+      step    … そのサイズ枠の倍数（枠に入らない商品は 1）
+
+    考え方は allocate_group と同じ3段の優先枠＋在庫日数の水平化。違うのは「1ケース積んだら、
+    同じサイズ枠の合計が倍数になるまで、その枠で一番在庫日数の少ない商品に続けて積む」こと。
+    組の相手は積んだ商品自身のこともある（マスクが十分あってシャンプーだけ足りないときは
+    シャンプー2ケース）。相手を選ぶときは積み上げ上限日数を見ない（偶数はメーカーの条件で絶対だから）。
+
+    ⚠️ 残り枠が組に足りないときは、その商品を飛ばして次の候補を見る（allocate_group は break）。
+      組に必要なブロック数が商品ごとに違いうるため、先頭が入らなくても後ろが入ることがある。
+    ⚠️ index.html の mgAllocatePaired と同じ判定にすること（ピンの扱い以外は1行ずつ対応している）。
+    """
+    min_mean = group['minMean']
+    for m in members:
+        m['alloc'] = 0
+        m['tier'] = ''
+    active = [m for m in members if m['mm'] >= min_mean]
+    state = {'placed': 0}   # ブロック数
+
+    def cover(m):
+        return (m['pos'] + m['alloc']) / m['daily']
+
+    def natural_tier(m):
+        if m['pos'] <= 0:
+            return '欠品'
+        if m['pos'] / m['daily'] <= group['mustDays']:
+            return '切迫'
+        return 'サイズ調整'
+
+    def sub_blocks(key):
+        return round(sum(x['alloc'] / x['unit'] for x in members if x['sub'] == key))
+
+    def need_for(m):
+        """m に1ブロック積むとき、サイズ枠を倍数に戻すまでに必要なブロック数（m自身の1を含む）"""
+        if m['sub'] is None:
+            return 1
+        return 1 + (-(sub_blocks(m['sub']) + 1)) % m['step']
+
+    def complete(key, step):
+        """サイズ枠 key を倍数になるまで埋める。枠内で在庫日数の一番少ない商品から積む"""
+        pool = [x for x in active if x['sub'] == key]
+        while pool and sub_blocks(key) % step != 0:
+            cand = min(pool, key=cover)
+            cand['alloc'] += cand['unit']
+            if not cand['tier']:
+                cand['tier'] = natural_tier(cand)
+            state['placed'] += 1
+
+    def place(m, tier):
+        if state['placed'] + need_for(m) > target_blocks:
+            return False
+        m['alloc'] += m['unit']
+        if not m['tier']:
+            m['tier'] = tier
+        state['placed'] += 1
+        if m['sub'] is not None:
+            complete(m['sub'], m['step'])
+        return True
+
+    # 必須枠①: 欠品中（手当済在庫が0以下）を最優先。在庫の少ない順
+    for m in sorted(active, key=lambda x: x['pos']):
+        if m['alloc'] == 0 and m['pos'] <= 0:
+            place(m, '欠品')
+
+    # 必須枠②: mustDays以内に在庫が切れる商品。在庫日数の少ない順
+    for m in sorted(active, key=lambda x: x['pos'] / x['daily']):
+        if m['alloc'] == 0 and m['pos'] > 0 and m['pos'] / m['daily'] <= group['mustDays']:
+            place(m, '切迫')
+
+    # 任意枠: 配分後の在庫日数が一番少ない商品から。組が残り枠に入らない商品は飛ばす
+    for capped in (True, False):
+        while state['placed'] < target_blocks:
+            cands = [m for m in active
+                     if not (capped and (m['pos'] + m['alloc'] + m['unit']) / m['daily'] > group['capDays'])]
+            cands.sort(key=cover)
+            if not any(place(m, '追加' if capped else '単位調整') for m in cands):
+                break
+        if state['placed'] >= target_blocks:
+            break
+
+    return state['placed']
+
+
 def estimate_days_until_due(members, threshold_blocks, min_mean):
     """在庫が今のペースで減った場合、何日後に発注時期（不足合計≥閾値）になるかの目安
 
@@ -1042,6 +1157,8 @@ def build_group_note(group, m, due, shortage, threshold):
         parts.append(f"📎参考表示（{group['groupName']}はまだ発注時期ではありません。"
                      f"系列の不足{shortage:.0f}{label}／{threshold:.0f}{label}で発注時期）")
     block_note = f"1{label}={unit}個" if label != '本' else f"1商品{unit}本単位"
+    if m.get('sub'):
+        block_note += f"・同じサイズの合計は{m['step']}{label}単位"
     parts.append(f"{group['groupName']}は系列合計{group['groupUnit']}{label}単位でしか発注できないため、"
                  f"系列全体で組み合わせを算出（{block_note}）")
     if m['tier'] == '欠品':
@@ -1052,6 +1169,9 @@ def build_group_note(group, m, due, shortage, threshold):
     elif m['tier'] == '追加':
         parts.append(f"在庫日数が少ない順に{m['alloc']:.0f}本を配分"
                      f"（配分前{m['pos'] / m['daily']:.0f}日分→配分後{(m['pos'] + m['alloc']) / m['daily']:.0f}日分）")
+    elif m['tier'] == 'サイズ調整':
+        parts.append(f"同じサイズの合計を{m['step']}{label}単位にするため{m['alloc']:.0f}本を配分"
+                     f"（配分後{(m['pos'] + m['alloc']) / m['daily']:.0f}日分）")
     elif m['tier'] == '単位調整':
         parts.append(f"{group['groupUnit']}{label}ぴったりにするため{m['alloc']:.0f}本を追加配分"
                      f"（配分後{(m['pos'] + m['alloc']) / m['daily']:.0f}日分。積み上げ上限"
@@ -1115,10 +1235,15 @@ def build_group_proposals(groups, members_by_group, unit_by_code, results_by_cod
         for code in codes:
             unit = int(unit_by_code.get(code) or g['itemUnit'] or 1)
             r = results_by_code.get(code)
+            # サイズ枠（v1.24.0）。所属判定と同じく正規化した商品名で引く
+            prod_row = products.loc[code]
+            if isinstance(prod_row, pd.DataFrame):
+                prod_row = prod_row.iloc[0]
+            sub_key, sub_step = group_sub_key(g, normalize_group_name(prod_row['name']))
             if r:
                 mm = float(r['mean_monthly'])
                 members.append({
-                    'unit': unit,
+                    'unit': unit, 'sub': sub_key, 'step': sub_step,
                     'code': code, 'name': r['name'], 'supplierCode': r['supplier_cd'],
                     'supplierName': r['supplier'], 'pattern': r['pattern'], 'abc': r['abc'],
                     'stock': float(r['stock']), 'onOrder': float(r['on_order']),
@@ -1140,7 +1265,7 @@ def build_group_proposals(groups, members_by_group, unit_by_code, results_by_cod
                 if isinstance(prod, pd.DataFrame):
                     prod = prod.iloc[0]
                 members.append({
-                    'unit': unit,
+                    'unit': unit, 'sub': sub_key, 'step': sub_step,
                     'code': code, 'name': prod['name'],
                     'supplierCode': normalize_supplier_code(prod['supplier_cd']) or prod['supplier_cd'],
                     'supplierName': prod['supplier'], 'pattern': f'{WINDOW_MONTHS}ヶ月売上なし', 'abc': '',
@@ -1170,6 +1295,9 @@ def build_group_proposals(groups, members_by_group, unit_by_code, results_by_cod
 
         lots = (max(1, math.ceil(shortage_blocks / group_blocks))
                 if shortage_blocks > group_blocks else 1)
+        if g['maxLots'] > 0:
+            # ロット上限（v1.24.0）。リラベールは10ケースちょうどの運用で、20ケースは組まない
+            lots = min(lots, g['maxLots'])
         target_blocks = lots * group_blocks
         placed_blocks = allocate_group(members, target_blocks, g)
         # 画面・シートに出す値はグループの単位に直す（本単位=本数 / ケース単位=ケース数）
