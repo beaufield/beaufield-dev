@@ -130,7 +130,7 @@
   }
 </style>
 <link rel="stylesheet" href="../lib/booking.css?v=1.0.0">
-<script src="../lib/booking.js?v=1.0.0"></script>
+<script src="../lib/booking-v1.1.0.js"></script>
 </head>
 <body>
 <div id="testEnvBar">
@@ -253,7 +253,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.22.0';
+const APP_VERSION = '0.23.0';
 const GAS_URL = 'TEST_ENV_NO_GAS';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
