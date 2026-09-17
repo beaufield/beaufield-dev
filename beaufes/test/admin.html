@@ -292,8 +292,8 @@
   }
   .modalCard .ghostBtn { background: #fff; color: #10617c; border: 1px solid #10617c; }
 </style>
-<link rel="stylesheet" href="../lib/booking.css?v=1.0.0">
-<script src="../lib/booking.js?v=1.0.0"></script>
+<link rel="stylesheet" href="../lib/booking-v1.2.0.css">
+<script src="../lib/booking-v1.2.0.js"></script>
 </head>
 <body>
 <div id="testEnvBar">
@@ -537,7 +537,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.5.0';
+const APP_VERSION = '0.7.0';
 const GAS_URL = 'TEST_ENV_NO_GAS';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
@@ -2305,12 +2305,12 @@ async function loadBookingSummary() {
     const json=isMock()?{success:true,data:bookingApi.mockStaffSummary()}:
       await postWithRetry({action:'listReservations',data:JSON.stringify({session_token:session ? session.token : ''})});
     if(!json.success)throw new Error('予約集計');
-    const s=json.data.sessions.find(s=>s.session_id==='S1');
-    box.textContent=s?'フェムケアセミナー：予約 '+s.reserved_count+' / '+s.capacity+' 名':'フェムケアの予約枠は準備中です。';
+    const active=json.data.sessions.filter(s=>s.is_active && s.booking_channel!=='closed');
+    box.textContent=active.length?'予約状況：'+active.map(s=>s.session_id+' '+s.reserved_count+' / '+s.capacity).join(' ・ '):'予約枠は準備中です。';
     bookingReservedApps.clear();
-    json.data.reservations.filter(r=>r.session_id==='S1' && r.app_status!=='cancelled').forEach(r=>bookingReservedApps.add(r.app_id));
+    json.data.reservations.filter(r=>r.app_status!=='cancelled').forEach(r=>bookingReservedApps.add(r.app_id));
     document.querySelectorAll('[data-booking-app]').forEach(b=>{
-      const booked=json.data.reservations.some(r=>r.app_id===b.dataset.bookingApp && r.session_id==='S1' && r.app_status!=='cancelled');
+      const booked=json.data.reservations.some(r=>r.app_id===b.dataset.bookingApp && r.app_status!=='cancelled');
       b.textContent=booked?'予約済み・変更':'セミナー予約';
     });
   }catch(e){box.textContent='予約状況を取得できませんでした。各行の「セミナー予約」から確認できます。';}
