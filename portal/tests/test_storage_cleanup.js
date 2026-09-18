@@ -230,7 +230,48 @@ function run() {
     assert.equal(dump['bfc_dead'], undefined, 'T-11: 前提としてbfc_は消えていること');
   }
 
-  console.log('Portal storage cleanup: T-1〜T-11 全PASS');
+  // T-12（最重要・二重実行防止）: 引き直してよい操作の線引き
+  //   GASは結果配信に失敗しても①の処理は実行済み。requestIdの無い書き込みを
+  //   引き直すと二重実行になる（2026-09-19にカウンタで実測確認）。
+  {
+    const { ctx } = setup({});
+    const can = (a, d) => vm.runInContext(`_isRetryable(${JSON.stringify(a)}, ${JSON.stringify(d||null)})`, ctx);
+
+    // 読み取り専用はいつでも引き直してよい
+    assert.equal(can('getUsers'),        true,  'T-12: getUsers は引き直し可');
+    assert.equal(can('getUserApps'),     true,  'T-12: getUserApps は引き直し可');
+    assert.equal(can('validateSession'), true,  'T-12: validateSession は引き直し可');
+
+    // 🔴 書き込みは requestId が無ければ絶対に引き直さない
+    assert.equal(can('login'),     false, 'T-12: requestIdなしのlogin は引き直し禁止');
+    assert.equal(can('changePin'), false, 'T-12: requestIdなしのchangePin は引き直し禁止');
+    assert.equal(can('resetPin'),  false, 'T-12: requestIdなしのresetPin は引き直し禁止');
+    assert.equal(can('login', {}), false, 'T-12: requestIdが空でも引き直し禁止');
+
+    // requestId があればサーバーが二重実行を止めるので引き直してよい
+    assert.equal(can('login',     {requestId:'abcd-1234-efgh'}), true, 'T-12: requestId付きloginは引き直し可');
+    assert.equal(can('changePin', {requestId:'abcd-1234-efgh'}), true, 'T-12: requestId付きchangePinは引き直し可');
+    assert.equal(can('resetPin',  {requestId:'abcd-1234-efgh'}), true, 'T-12: requestId付きresetPinは引き直し可');
+
+    // 知らない書き込みは既定で引き直さない
+    assert.equal(can('logout'), false, 'T-12: 未登録のアクションは既定で引き直さない');
+    assert.equal(can('saveSomething', {requestId:'abcd-1234-efgh'}), false,
+      'T-12: 一覧に無い操作は requestId があっても引き直さない');
+  }
+
+  // T-13: requestId の形式がサーバー側の検証（[A-Za-z0-9-]{8,100}）を通ること
+  {
+    const { ctx } = setup({});
+    for (let i = 0; i < 20; i++) {
+      const id = vm.runInContext('newRequestId()', ctx);
+      assert.ok(/^[A-Za-z0-9-]{8,100}$/.test(id), `T-13: 形式が不正: ${id}`);
+    }
+    const a = vm.runInContext('newRequestId()', ctx);
+    const b = vm.runInContext('newRequestId()', ctx);
+    assert.notEqual(a, b, 'T-13: 呼ぶたびに別のIDになること');
+  }
+
+  console.log('Portal storage cleanup: T-1〜T-13 全PASS');
 }
 
 run();
