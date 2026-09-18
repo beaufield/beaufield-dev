@@ -186,7 +186,51 @@ function run() {
     assert.equal(result.removed, 1, 'T-9: 削除されたのは bf_pm の1件だけであること');
   }
 
-  console.log('Portal storage cleanup: T-1〜T-9 全PASS');
+  // T-10: アプリ一覧キャッシュ（v1.7.0）
+  //       「別人のキャッシュを使わない」が最重要。共有端末で他人の一覧が出ると事故になる。
+  {
+    const { ctx, ls } = setup({});
+    const apps = [{ url: 'https://example.com/a', icon: '📦', label: '発注' }];
+
+    // 保存して読み戻せること
+    vm.runInContext(`saveAppsCache('user-A', ${JSON.stringify(apps)})`, ctx);
+    const got = vm.runInContext("JSON.stringify(loadAppsCache('user-A'))", ctx);
+    assert.equal(got, JSON.stringify(apps), 'T-10: 同じ利用者なら読み戻せること');
+
+    // 🔴 別人では絶対に読めないこと
+    const other = vm.runInContext("loadAppsCache('user-B')", ctx);
+    assert.equal(other, null, 'T-10: 別人のキャッシュは使わないこと（共有端末対策）');
+
+    // 期限切れは使わないこと
+    const raw = JSON.parse(ls._dump()['bf_portal_apps_v1']);
+    raw.expires = Date.now() - 1000;
+    ls.setItem('bf_portal_apps_v1', JSON.stringify(raw));
+    assert.equal(vm.runInContext("loadAppsCache('user-A')", ctx), null, 'T-10: 期限切れは使わないこと');
+
+    // 破棄できること
+    vm.runInContext("saveAppsCache('user-A', [{url:'u',icon:'i',label:'l'}]); clearAppsCache();", ctx);
+    assert.equal(ls._dump()['bf_portal_apps_v1'], undefined, 'T-10: clearAppsCacheで消えること');
+
+    // 壊れたJSONでも落ちないこと
+    ls.setItem('bf_portal_apps_v1', '{壊れている');
+    assert.equal(vm.runInContext("loadAppsCache('user-A')", ctx), null, 'T-10: 壊れたキャッシュはnullを返すこと');
+  }
+
+  // T-11: 掃除がアプリ一覧キャッシュとセッションを巻き込まないこと
+  {
+    const { ctx, ls } = setup({
+      'bf_portal_apps_v1': '{"user_id":"u","expires":9999999999999,"apps":[]}',
+      'bf_session': 'session-data',
+      'bfc_dead': 'x'
+    });
+    vm.runInContext('cleanupSharedStorage()', ctx);
+    const dump = ls._dump();
+    assert.ok(dump['bf_portal_apps_v1'], 'T-11: アプリ一覧キャッシュは掃除の対象外であること');
+    assert.equal(dump['bf_session'], 'session-data', 'T-11: セッションは残ること');
+    assert.equal(dump['bfc_dead'], undefined, 'T-11: 前提としてbfc_は消えていること');
+  }
+
+  console.log('Portal storage cleanup: T-1〜T-11 全PASS');
 }
 
 run();
