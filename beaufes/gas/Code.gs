@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.37.0';
+const VERSION  = '0.38.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -5301,9 +5301,11 @@ function _shinbishinExperienceRows(channel) {
   const rows = [];
   products.forEach(function (product) {
     times.forEach(function (time, index) {
+      // HIFaceは単独枠。Mico StellaとNOVELUXEだけが同時刻の施術者枠を共有する。
+      const resourceGroup = product[0] === 'H' ? '' : time[2];
       rows.push([
         product[0] + (index + 1), product[1], time[0] + '〜' + time[1] + 'の回', '', '',
-        time[0], time[1], 1, true, product[2], product[3], channel || 'closed', time[2]
+        time[0], time[1], 1, true, product[2], product[3], channel || 'closed', resourceGroup
       ]);
     });
   });
@@ -5382,7 +5384,8 @@ function openExpandedSeminarBooking() {
   } finally {lock.releaseLock();}
 }
 
-// S1/S2/B/Fの16枠に、施術者を共有するシンビシン3機種18枠を追加する。
+// S1/S2/B/Fの16枠に、シンビシン3機種18枠を追加する。
+// Mico StellaとNOVELUXEは同時刻を共有し、HIFaceは単独枠にする。
 // 本番反映時だけGASエディタから実行する。処理中は予約受付を停止し、再実行しても同じ状態になる。
 function prepareShinbishinExperienceBooking() {
   const lock=LockService.getScriptLock();lock.waitLock(30000);
@@ -5419,12 +5422,46 @@ function prepareShinbishinExperienceBooking() {
     let log=ss.getSheetByName(BOOKING_LOG);
     if(!log){log=ss.insertSheet(BOOKING_LOG);log.getRange(1,1,1,10).setValues([BOOKING_LOG_HEADERS]);}
     _bookingLog(ss);
-    Logger.log('READY: 34枠（シンビシン3機種は同時刻の共有定員1名）、booking disabled');
+    Logger.log('READY: 34枠（HIFace単独、Mico Stella/NOVELUXEは同時刻共有）、booking disabled');
   } finally {lock.releaseLock();}
 }
 
-// prepareShinbishinExperienceBooking後の全34枠と共有定員設定を照合して受付を再開する。
-function openShinbishinExperienceBooking() {
+// 本番の既存34枠を維持し、H1〜H6のresource_groupだけを空欄にして単独枠へ移行する。
+// Mico Stella/NOVELUXEの共有設定・予約行・時刻・説明・定員には触れない。再実行しても同じ状態になる。
+function prepareHifaceStandaloneBooking() {
+  const lock=LockService.getScriptLock();lock.waitLock(30000);
+  try {
+    const ss=SpreadsheetApp.openById(SPREADSHEET_ID),sh=ss.getSheetByName(SHEET_SESSIONS);
+    if(!sh)throw new Error('BOOKING_NOT_READY');
+    const baseRules=_expandedBookingRules(),newRules=_shinbishinExperienceRules();
+    const allowed=Object.assign({},baseRules,newRules);
+    const rows=sh.getDataRange().getValues();
+    const ids=rows.slice(1).map(function(r){return String(r[0]||'').trim();}).filter(Boolean);
+    if(ids.length!==34||new Set(ids).size!==34||ids.some(function(id){return !allowed[id];}))throw new Error('UNEXPECTED_SESSION_ROWS');
+    const rowById={};
+    rows.slice(1).forEach(function(row,index){rowById[String(row[0]||'').trim()]={row:index+2,values:row};});
+    Object.keys(newRules).forEach(function(id){
+      const entry=rowById[id],rule=newRules[id];
+      if(!entry)throw new Error('MISSING_SESSION_'+id);
+      const current=String(entry.values[12]||'').trim();
+      const sharedId='M'+id.slice(1),legacyGroup=newRules[sharedId].resource_group;
+      if(id.charAt(0)==='H') {
+        if(current!==''&&current!==legacyGroup)throw new Error('UNEXPECTED_RESOURCE_GROUP_'+id);
+      } else if(current!==rule.resource_group)throw new Error('UNEXPECTED_RESOURCE_GROUP_'+id);
+    });
+    const counts=_countReserved(_readReservationRows(ss),_readCancelledAppIds(ss));
+    for(let i=1;i<=6;i++) {
+      const shared=(counts['M'+i]||0)+(counts['N'+i]||0),hiface=counts['H'+i]||0;
+      if(shared>1||hiface>1)throw new Error('UNEXPECTED_RESERVATION_COUNT_'+i);
+    }
+    _PROPS.setProperty('SEMINAR_BOOKING_ENABLED','false');
+    for(let i=1;i<=6;i++)sh.getRange(rowById['H'+i].row,13).setValue('');
+    Logger.log('READY: HIFace 6枠を単独化、Mico Stella/NOVELUXE共有6組、booking disabled');
+  } finally {lock.releaseLock();}
+}
+
+// HIFace単独6枠とMico Stella/NOVELUXE共有6組を含む全34枠を照合して受付を再開する。
+function openHifaceStandaloneBooking() {
   const lock=LockService.getScriptLock();lock.waitLock(30000);
   try {
     const ss=SpreadsheetApp.openById(SPREADSHEET_ID),baseRules=_expandedBookingRules(),newRules=_shinbishinExperienceRules();
@@ -5438,10 +5475,16 @@ function openShinbishinExperienceBooking() {
       const s=byId[id],r=newRules[id];
       if(!s||!s.is_active||_bookingChannel(s)!==r.booking_channel||s.starts_at!==r.starts_at||s.ends_at!==r.ends_at||s.capacity!==r.capacity||s.slot!==r.slot||s.resource_group!==r.resource_group||s.bullets.join('\n')!==r.bullets||s.overview!==r.overview)throw new Error('UNEXPECTED_OPEN_'+id);
     });
-    const pools={};Object.keys(newRules).forEach(function(id){const key=newRules[id].resource_group;pools[key]=(pools[key]||0)+1;});
-    if(Object.keys(pools).length!==6||Object.keys(pools).some(function(key){return pools[key]!==3;}))throw new Error('UNEXPECTED_RESOURCE_GROUPS');
+    const pools={};Object.keys(newRules).forEach(function(id){const key=newRules[id].resource_group;if(key)pools[key]=(pools[key]||0)+1;});
+    if(Object.keys(pools).length!==6||Object.keys(pools).some(function(key){return pools[key]!==2;}))throw new Error('UNEXPECTED_RESOURCE_GROUPS');
+    for(let i=1;i<=6;i++)if(byId['H'+i].resource_group)throw new Error('UNEXPECTED_HIFACE_RESOURCE_GROUP');
     if(byId.S2.overview!==EXPANDED_BOOKING_S2_OVERVIEW)throw new Error('UNEXPECTED_S2_CONTENT');
     _bookingRecover(ss);_PROPS.setProperty('SEMINAR_BOOKING_ENABLED','true');
-    Logger.log('OPEN: 34枠、シンビシン3機種は公開予約・同時刻共有');
+    Logger.log('OPEN: 34枠、HIFace単独、Mico Stella/NOVELUXEは公開予約・同時刻共有');
   } finally {lock.releaseLock();}
+}
+
+// 旧運用手順から呼ばれても、新しい単独枠仕様を照合してから再開する互換入口。
+function openShinbishinExperienceBooking() {
+  return openHifaceStandaloneBooking();
 }
