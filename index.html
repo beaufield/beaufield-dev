@@ -543,9 +543,45 @@
 
 <script>
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzNVW7AaPUTuwneE-M40DTN1clO5VT2yLCHq7cjYvaHqfMfXgVi38UAOsDZQbmmN3wOzw/exec';
-  const APP_VERSION  = 'v1.6.0';
+  const APP_VERSION  = 'v1.7.0';
   const SESSION_KEY  = 'bf_session';
   const SESSION_HOURS = 24 * 7;
+
+  // ── アプリ一覧のローカルキャッシュ（v1.7.0） ──────────────────
+  // 開くたびにGASへ取りに行くと実測3.25秒待たされる（混雑時は最大57.1秒）。
+  // アプリ一覧が変わるのは月1回あるかどうかなので、前回の内容を即座に出して
+  // 最新化は裏で走らせる（予約管理 v1.24.x で実証済みの形。6.2秒→0.04秒）。
+  //
+  // ⚠️ タイルは「ただのリンク」であって権限を与えない。各アプリが自分で
+  //    user_app_roles を読んで拒否する（7アプリすべてで確認済み・2026-09-18）。
+  //    そのため一覧が数秒古くても、権限のズレは起きない。
+  // ⚠️ 利用者ごとに分けること（共有端末で他人の一覧を出さないため）。
+  // ⚠️ ログアウトとセッション切れでは必ず破棄すること。
+  const APPS_CACHE_KEY = 'bf_portal_apps_v1';
+  const APPS_CACHE_TTL = SESSION_HOURS * 60 * 60 * 1000;  // セッション有効期限と揃える
+
+  function loadAppsCache(userId) {
+    try {
+      const raw = localStorage.getItem(APPS_CACHE_KEY);
+      if (!raw) return null;
+      const c = JSON.parse(raw);
+      if (!c || c.user_id !== userId) return null;   // 別人のキャッシュは使わない
+      if (Date.now() > c.expires) return null;
+      return (Array.isArray(c.apps) && c.apps.length) ? c.apps : null;
+    } catch (e) { return null; }
+  }
+
+  function saveAppsCache(userId, apps) {
+    try {
+      localStorage.setItem(APPS_CACHE_KEY, JSON.stringify({
+        user_id: userId, expires: Date.now() + APPS_CACHE_TTL, apps: apps
+      }));
+    } catch (e) {}   // 保存できなくても表示は妨げない（次回は普通に取りに行くだけ）
+  }
+
+  function clearAppsCache() {
+    try { localStorage.removeItem(APPS_CACHE_KEY); } catch (e) {}
+  }
 
   let selectedUserId     = null;
   let manageSelectedId   = null;
@@ -736,6 +772,54 @@
   }
 
   // ── ホーム画面表示 ─────────────────────────────────────────────
+  // アプリタイルを描画する（キャッシュ表示・最新化の両方から使う）
+  function renderAppTiles(apps) {
+    const grid = document.getElementById('appGrid');
+    if (!apps || !apps.length) {
+      grid.innerHTML = '<div class="no-apps">利用可能なアプリがありません<br><small style="font-size:11px;margin-top:4px;display:block">管理者にお問い合わせください</small></div>';
+      return;
+    }
+    grid.innerHTML = apps.map(app =>
+      `<a class="app-tile" href="${escHtml(app.url)}" target="_blank" rel="noopener noreferrer">
+        <div class="app-icon">${escHtml(app.icon)}</div>
+        <div class="app-label">${escHtml(app.label)}</div>
+      </a>`
+    ).join('');
+  }
+
+  function fetchUserApps() {
+    const session = getSession();
+    return gasPost('getUserApps', { session_token: session ? session.token : '' });
+  }
+
+  // セッション切れの出口。キャッシュを残したままログイン画面へ戻さないこと。
+  function handleSessionExpired() {
+    clearSession();
+    clearAppsCache();
+    backToLogin();
+    showError('ログインの有効期限が切れました。もう一度ログインしてください。');
+  }
+
+  // 裏で一覧を最新化する。画面は既に出ているので待ち時間は発生しない。
+  // ⚠️ ここはセッション切れの検出も兼ねている。
+  //    キャッシュにサーバーの判断を上書きさせないこと。
+  //    通信エラーだけは黙って据え置く（判断材料が得られていないため）。
+  async function refreshAppsInBackground(userId) {
+    let res;
+    try {
+      res = await fetchUserApps();
+    } catch (e) {
+      return;   // 圏外・タイムアウト等: キャッシュ表示のまま
+    }
+    if (!res.success) {
+      if (res.error === 'SESSION_INVALID') handleSessionExpired();
+      return;
+    }
+    renderAppTiles(res.apps);
+    if (res.apps && res.apps.length) saveAppsCache(userId, res.apps);
+    else clearAppsCache();
+  }
+
   async function showHome(userId, name, isAdmin) {
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('homeScreen').style.display  = 'block';
@@ -744,23 +828,22 @@
     // 管理者のみ「ユーザー管理」ボタンを表示
     document.getElementById('manageBtn').style.display = isAdmin ? 'block' : 'none';
 
+    // ① キャッシュがあれば即表示（GAS待ちゼロ）。最新化は裏で走らせる。
+    //    アプリが増減しても、約3秒後にこの画面が自動で書き換わる。
+    const cached = loadAppsCache(userId);
+    if (cached) {
+      renderAppTiles(cached);
+      refreshAppsInBackground(userId);
+      return;
+    }
+
+    // ② キャッシュなし（初回・別端末・7日以上ぶり）: 従来どおり取得を待つ
     setLoading(true);
     try {
-      const session = getSession();
-      const res  = await gasPost('getUserApps', {
-        session_token: session ? session.token : ''
-      });
-      const grid = document.getElementById('appGrid');
-      if (!res.success || !res.apps || !res.apps.length) {
-        grid.innerHTML = '<div class="no-apps">利用可能なアプリがありません<br><small style="font-size:11px;margin-top:4px;display:block">管理者にお問い合わせください</small></div>';
-        return;
-      }
-      grid.innerHTML = res.apps.map(app =>
-        `<a class="app-tile" href="${app.url}" target="_blank" rel="noopener noreferrer">
-          <div class="app-icon">${app.icon}</div>
-          <div class="app-label">${escHtml(app.label)}</div>
-        </a>`
-      ).join('');
+      const res = await fetchUserApps();
+      if (!res.success && res.error === 'SESSION_INVALID') { handleSessionExpired(); return; }
+      renderAppTiles(res.success ? res.apps : null);
+      if (res.success && res.apps && res.apps.length) saveAppsCache(userId, res.apps);
     } catch (e) {
       // 失敗しても利用者が必ず次の操作を取れるようにする（行き止まりを作らない）
       document.getElementById('appGrid').innerHTML =
@@ -774,6 +857,17 @@
   }
 
   // ── ログアウト ─────────────────────────────────────────────────
+  // ログイン画面へ戻す。エラー表示の扱いは呼び出し側に任せる
+  // （ログアウトは消したい／セッション切れは出したい、と要件が逆のため）
+  function backToLogin() {
+    document.getElementById('homeScreen').style.display  = 'none';
+    document.getElementById('loginScreen').style.display = 'flex';
+    selectedUserId = null;
+    clearPinInput();
+    document.querySelectorAll('.user-btn').forEach(b => b.classList.remove('active'));
+    loadUsers(); // ユーザー一覧を再取得
+  }
+
   async function doLogout() {
     const session = getSession();
     // 通信失敗時も端末側は必ずログアウトする。成功時はサーバー側トークンも失効する。
@@ -783,13 +877,10 @@
       }
     } catch (e) {}
     clearSession();
-    selectedUserId = null;
-    document.getElementById('homeScreen').style.display  = 'none';
-    document.getElementById('loginScreen').style.display = 'flex';
-    clearPinInput();
-    document.querySelectorAll('.user-btn').forEach(b => b.classList.remove('active'));
+    // ⚠️ 共有端末で次の人に前の人のアプリ一覧を見せないため、必ず破棄する
+    clearAppsCache();
     hideError();
-    loadUsers(); // ログアウト後にユーザー一覧を再取得
+    backToLogin();
   }
 
   // ── ユーザー管理モーダル ──────────────────────────────────────
