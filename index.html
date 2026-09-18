@@ -543,7 +543,7 @@
 
 <script>
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzNVW7AaPUTuwneE-M40DTN1clO5VT2yLCHq7cjYvaHqfMfXgVi38UAOsDZQbmmN3wOzw/exec';
-  const APP_VERSION  = 'v1.7.1';
+  const APP_VERSION  = 'v1.7.2';
   const SESSION_KEY  = 'bf_session';
   const SESSION_HOURS = 24 * 7;
 
@@ -760,6 +760,11 @@
         saveSession(res.user_id, res.name, res.session_token, res.is_admin);
         clearPinInput();
         await showHome(res.user_id, res.name, res.is_admin);
+      } else if (_looksLikeLostBody(res)) {
+        // 結果の配信だけが失われた形。ログイン自体は成立している可能性がある。
+        // 勝手に再送せず、利用者にやり直してもらう（二重実行を避ける）。
+        showError('結果を受け取れませんでした。お手数ですが、もう一度お試しください。');
+        clearPinInput();
       } else {
         showError(res.message || 'ログインに失敗しました');
         clearPinInput();
@@ -1069,8 +1074,18 @@
     return e;
   }
 
-  // GASがPOSTボディを落としたときの応答を見分ける。
-  // 「不明なアクション: 」（actionが空）＝こちらの送信内容が届いていない＝引き直す価値がある。
+  // 「不明なアクション: 」（actionが空）で返る現象を見分ける。
+  //
+  // ⚠️ 2026-09-19に仕組みを実測で解明した。これは「届かなかった」のではない。
+  //    GASのWebアプリは二段構え:
+  //      ① script.google.com/.../exec  … ここでスクリプトが実行され、302が返る
+  //      ② script.googleusercontent.com/... … ここで結果だけが配信される
+  //    ②のURLは【使い捨て・寿命は5〜30秒の間】（実測: 5秒後は有効、30秒後は無効）。
+  //    期限切れ／2回目のアクセスになると①へ差し戻され、
+  //    POSTはGETに変換されてボディを失い、空のactionで再実行される。
+  //    → **最初の実行は成功している可能性が高く、その答えだけが失われている**。
+  //    （GETはクエリが復元されるため自己回復する。POSTだけがこの形で失敗する）
+  //    したがって書き込みを引き直してはいけない。二重実行になる。
   function _looksLikeLostBody(j) {
     return !!(j && j.success === false && typeof j.error === 'string'
               && j.error.indexOf('不明なアクション') === 0);
@@ -1101,8 +1116,9 @@
       await new Promise(r => setTimeout(r, GAS_RETRY_WAIT_MS));
       return _fetchJsonOnce(url, options);
     }
-    // actionが空で届いた＝サーバーには何も届いていない。書き込みでも引き直して安全
     if (_looksLikeLostBody(first)) {
+      // 🔴 書き込みは引き直さない（①で既に実行済みの可能性がある）。そのまま返して呼び出し側に伝える
+      if (!retryOnFailure) return first;
       await new Promise(r => setTimeout(r, GAS_RETRY_WAIT_MS));
       return _fetchJsonOnce(url, options);
     }
