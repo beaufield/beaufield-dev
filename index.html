@@ -417,7 +417,14 @@
 
 <!-- ローディング -->
 <div class="loading-overlay" id="loading">
-  <div class="spinner"></div>
+  <div class="spinner" id="loadingSpinner"></div>
+  <div id="loadingNote" style="display:none;margin-top:16px;text-align:center;max-width:300px;padding:0 20px">
+    <div id="loadingNoteMsg" style="font-size:13px;line-height:1.8;color:#6b7280"></div>
+    <button type="button" id="loadingReloadBtn" onclick="location.reload()"
+      style="display:none;margin-top:14px;padding:10px 24px;font-size:14px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer">
+      やり直す
+    </button>
+  </div>
 </div>
 
 <!-- ── ログイン画面 ── -->
@@ -536,7 +543,7 @@
 
 <script>
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzNVW7AaPUTuwneE-M40DTN1clO5VT2yLCHq7cjYvaHqfMfXgVi38UAOsDZQbmmN3wOzw/exec';
-  const APP_VERSION  = 'v1.5.0';
+  const APP_VERSION  = 'v1.6.0';
   const SESSION_KEY  = 'bf_session';
   const SESSION_HOURS = 24 * 7;
 
@@ -547,6 +554,13 @@
   // ── 初期化 ────────────────────────────────────────────────────
   window.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('portalVersion').textContent = 'Beaufield Portal ' + APP_VERSION;
+
+    // ⚠️ 掃除は「ログインの前」に必ず動かすこと。
+    //    v1.5.0 では showHome()（＝ログイン成功後）から呼んでいたため、
+    //    保存容量が原因でログインできなくなった人には永久に届かなかった。
+    //    直すはずの機能が、直すべき問題の内側に閉じ込められていた。
+    try { cleanupSharedStorage(); } catch (e) {}
+
     const session = getSession();
     if (session) {
       await showHome(session.user_id, session.name, session.is_admin);
@@ -613,6 +627,14 @@
         ).pop();
         yoyaku.forEach(k => { if (k !== newest) doomed.push(k); });
       }
+
+      // ③ 発注アプリの旧世代キー。現行は bf_pm_v2 系で、これらはもう誰も読まない。
+      //    実測で bf_pm だけで267万文字（約5.1MB）。オリジン合計が約5.45MBと
+      //    iOS Safari の上限（約5MB）を超えており、全アプリの保存失敗の原因になる。
+      //    ⚠️ 完全一致の配列で持つこと。前方一致や正規表現にすると bf_pm_v2 を巻き込む。
+      //    ⚠️ bf_prod_hist は T-4 の保護対象。ここに足さないこと。
+      const SUPERSEDED_KEYS = ['bf_pm'];
+      all.forEach(k => { if (SUPERSEDED_KEYS.indexOf(k) >= 0) doomed.push(k); });
 
       doomed.forEach(k => {
         try {
@@ -706,8 +728,8 @@
         showError(res.message || 'ログインに失敗しました');
         clearPinInput();
       }
-    } catch {
-      showError('通信エラーが発生しました。再度お試しください。');
+    } catch (e) {
+      showError(describeError(e));
     } finally {
       setLoading(false);
     }
@@ -715,7 +737,6 @@
 
   // ── ホーム画面表示 ─────────────────────────────────────────────
   async function showHome(userId, name, isAdmin) {
-    try { cleanupSharedStorage(); } catch (e) {}   // ← v1.5.0で追加
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('homeScreen').style.display  = 'block';
     document.getElementById('welcomeText').textContent   = 'ようこそ、' + name + 'さん';
@@ -740,9 +761,13 @@
           <div class="app-label">${escHtml(app.label)}</div>
         </a>`
       ).join('');
-    } catch {
+    } catch (e) {
+      // 失敗しても利用者が必ず次の操作を取れるようにする（行き止まりを作らない）
       document.getElementById('appGrid').innerHTML =
-        '<div class="no-apps">アプリ一覧の読み込みに失敗しました</div>';
+        '<div class="no-apps">' + escHtml(describeError(e)) +
+        '<br><button type="button" onclick="location.reload()" ' +
+        'style="margin-top:12px;padding:8px 20px;font-size:13px;border:1px solid #d1d5db;' +
+        'border-radius:6px;background:#fff;cursor:pointer">やり直す</button></div>';
     } finally {
       setLoading(false);
     }
@@ -930,24 +955,90 @@
   }
 
   // ── GAS 通信 ──────────────────────────────────────────────────
+  // ⚠️ 実測（2026-09-18・本番）に基づく設定。値を変えるときは必ず測り直すこと。
+  //    ・1本ずつなら 2〜5秒（46件すべて5秒未満・失敗ゼロ）
+  //    ・同時に数本重なると跳ねる。実測で 9.8秒 / 17.5秒 / 57.1秒
+  //    ・稀にGASがPOSTボディを落とし、actionが空で届く（57秒の1本で発生）
+  //    したがって「短いタイムアウトで打ち切る」のは誤り。15秒で切ると
+  //    実測の4%（17秒・57秒で成功していたもの）を壊す。
+  //    待ち続けたうえで、利用者に状況を見せて逃げ道を出すのが正しい（setLoading参照）。
+  const GAS_HARD_TIMEOUT_MS = 60000;  // 最後の打ち切り。通常はここまで来ない
+  const GAS_RETRY_ONCE      = true;   // POSTボディ喪失を1回だけ自動で引き直す
+
+  function _timeoutError() {
+    const e = new Error('GAS_TIMEOUT');
+    e.code = 'GAS_TIMEOUT';
+    return e;
+  }
+
+  // GASがPOSTボディを落としたときの応答を見分ける。
+  // 「不明なアクション: 」（actionが空）＝こちらの送信内容が届いていない＝引き直す価値がある。
+  function _looksLikeLostBody(j) {
+    return !!(j && j.success === false && typeof j.error === 'string'
+              && j.error.indexOf('不明なアクション') === 0);
+  }
+
+  async function _fetchJsonOnce(url, options) {
+    const ac    = new AbortController();
+    const timer = setTimeout(() => ac.abort(), GAS_HARD_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, Object.assign({}, options || {}, { signal: ac.signal }));
+      return await res.json();
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw _timeoutError();
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // ⚠️ 引き直してよいのは「こちらの内容が1文字も届いていない」と分かる場合だけ。
+  //    書き込み系（login / PIN変更 / PINリセット）を無条件に再送してはいけない。
+  async function _fetchJson(url, options) {
+    const first = await _fetchJsonOnce(url, options);
+    if (GAS_RETRY_ONCE && _looksLikeLostBody(first)) {
+      return _fetchJsonOnce(url, options);
+    }
+    return first;
+  }
+
   async function gasGet(action, data) {
-    let qs = 'action=' + action + '&data=' + encodeURIComponent(JSON.stringify(data));
-    const res = await fetch(GAS_URL + '?' + qs);
-    return res.json();
+    const qs = 'action=' + action + '&data=' + encodeURIComponent(JSON.stringify(data));
+    return _fetchJson(GAS_URL + '?' + qs, {});
   }
 
   async function gasPost(action, data) {
     const body = 'action=' + encodeURIComponent(action)
                + '&data='   + encodeURIComponent(JSON.stringify(data));
-    const res  = await fetch(GAS_URL, {
+    return _fetchJson(GAS_URL, {
       method:  'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body
     });
-    return res.json();
   }
 
   // ── ヘルパー ──────────────────────────────────────────────────
+  function isQuotaError(e) {
+    if (!e) return false;
+    return e.name === 'QuotaExceededError'
+        || e.name === 'NS_ERROR_DOM_QUOTA_REACHED'
+        || e.code === 22
+        || e.code === 1014;
+  }
+
+  // ⚠️ 何が起きても「通信エラー」と出すのをやめる。
+  //    実際には通信が成功していたのに「通信エラー」と表示していたため、
+  //    2026-09-18の原因究明が大きく遅れた。文言は起きたことと一致させる。
+  function describeError(e) {
+    if (e && e.code === 'GAS_TIMEOUT') {
+      return '応答がありませんでした。時間をおいて、もう一度お試しください。';
+    }
+    if (isQuotaError(e)) {
+      return 'この端末の保存容量がいっぱいです。ブラウザの設定でこのサイトのデータを削除すると解消します。';
+    }
+    return '通信に失敗しました。もう一度お試しください。';
+  }
+
   function showError(msg) {
     const el = document.getElementById('errorMsg');
     el.textContent   = msg;
@@ -969,8 +1060,43 @@
       errEl.style.display = 'none';
     }
   }
+  // ⚠️ 待たせるときは必ず「動いていること」と「やめる手段」を見せる。
+  //    実測で最大57秒かかることがある（同時アクセス時）。通信は止めないので、
+  //    17秒で返ってくればこの表示は消えて普通に画面が出る。
+  //    57秒の沈黙は故障と区別がつかない——これが「ぐるぐる回ったまま」の正体だった。
+  const LOADING_NOTE_MS   = 6000;   // 「まだ読み込んでいます」
+  const LOADING_ESCAPE_MS = 15000;  // 「やり直す」ボタンを出す
+  let _loadingTimers = [];
+
+  function _clearLoadingTimers() {
+    _loadingTimers.forEach(clearTimeout);
+    _loadingTimers = [];
+  }
+
   function setLoading(on) {
-    document.getElementById('loading').style.display = on ? 'flex' : 'none';
+    const box  = document.getElementById('loading');
+    const note = document.getElementById('loadingNote');
+    const msg  = document.getElementById('loadingNoteMsg');
+    const btn  = document.getElementById('loadingReloadBtn');
+
+    _clearLoadingTimers();
+    box.style.display  = on ? 'flex' : 'none';
+    note.style.display = 'none';
+    btn.style.display  = 'none';
+    msg.textContent    = '';
+
+    if (!on) return;
+
+    _loadingTimers.push(setTimeout(function () {
+      msg.textContent    = 'まだ読み込んでいます…';
+      note.style.display = 'block';
+    }, LOADING_NOTE_MS));
+
+    _loadingTimers.push(setTimeout(function () {
+      msg.textContent    = '時間がかかっています。そのままお待ちいただくか、やり直してください。';
+      note.style.display = 'block';
+      btn.style.display  = 'inline-block';
+    }, LOADING_ESCAPE_MS));
   }
   function clearPinInput() {
     document.getElementById('pinInput').value = '';
