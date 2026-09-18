@@ -12,7 +12,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.13.1';
+const VERSION  = '1.14.0';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -25,8 +25,44 @@ const SHEET_PRODUCTS     = 'products';
 const SHEET_RESERVATIONS = 'reservations';
 
 // CacheService キャッシュ時間（秒）
-const CACHE_TTL_AUTH  = 60;   // 権限変更・ログアウトを最大1分で反映
-const CACHE_TTL_USERS = 600;  // ユーザー一覧キャッシュ: 10分（_getUsersFromAuth の二重シート読み込みを防ぐ）
+// 2026-09-18: 60秒→300秒。60秒だと「前回操作から1分空いた操作」がほぼ毎回
+// beaufield-auth の3シート全件読み直しになり、実測で1リクエストあたり約2.5秒の
+// 上乗せになっていた（起動6.0秒の主因）。権限変更・ログアウトの反映は最大5分遅れる。
+const CACHE_TTL_AUTH  = 300;  // 権限変更・ログアウトを最大5分で反映
+
+// ============================================================
+// 1リクエスト内メモ（認証ブックの読み取り重複を潰す）
+// ============================================================
+// GASの実行は1リクエスト＝1コンテキストで、グローバル変数はリクエストをまたいで
+// 残らない。そのため「同じリクエストの中でだけ」効くメモとして安全に使える。
+//
+// これを入れる前は initApp 1回で
+//   validateAndGetUser : openById(AUTH) + sessions/users/user_app_roles を全件読み
+//   _getUsersFromAuth  : openById(AUTH) をもう一度 + users/user_app_roles をもう一度
+// と、認証ブックを2回開いて同じ2シートを2回読んでいた（実測で約0.9秒の無駄）。
+// ============================================================
+let _reqAuthSS   = null;  // beaufield-auth の Spreadsheet オブジェクト
+let _reqAuthRows = null;  // { users: [][], roles: [][] }
+
+/** 認証ブックを開く（1リクエスト内で1回だけ） */
+function _authSS() {
+  if (!_reqAuthSS) _reqAuthSS = SpreadsheetApp.openById(AUTH_SHEET_ID);
+  return _reqAuthSS;
+}
+
+/** users / user_app_roles を読む（1リクエスト内で1回だけ） */
+function _authRows() {
+  if (!_reqAuthRows) {
+    const ss  = _authSS();
+    const ush = ss.getSheetByName('users');
+    const ash = ss.getSheetByName('user_app_roles');
+    _reqAuthRows = {
+      users: ush ? ush.getDataRange().getValues() : [],
+      roles: ash ? ash.getDataRange().getValues() : []
+    };
+  }
+  return _reqAuthRows;
+}
 
 // ============================================================
 // コールドスタート対策 ── Keep-Warm トリガー
@@ -75,7 +111,7 @@ function validateAndGetUser(token) {
     const cached   = cache.get(cacheKey);
     if (cached) return JSON.parse(cached);
 
-    const ss = SpreadsheetApp.openById(AUTH_SHEET_ID);
+    const ss = _authSS();
 
     // --- 1. セッション検証 ---
     const sh = ss.getSheetByName('sessions');
@@ -96,10 +132,9 @@ function validateAndGetUser(token) {
     }
     if (!userId) return { valid: false };
 
-    // --- 2. ユーザー情報取得 ---
-    const ush = ss.getSheetByName('users');
-    if (!ush) return { valid: false };
-    const uRows = ush.getDataRange().getValues();
+    // --- 2. ユーザー情報取得（_authRows で1リクエスト1回だけ読む） ---
+    const uRows = _authRows().users;
+    if (!uRows.length) return { valid: false };
     let userName = null;
     let activeUser = false;
     let isAdmin = false;
@@ -118,15 +153,12 @@ function validateAndGetUser(token) {
     //    "admin" → 事務（商品管理・全予約管理）
     //    "staff" → 営業（担当者として登録・自分の予約のみ操作）
     //    未登録  → null（アクセス不可）
-    const arSh = ss.getSheetByName('user_app_roles');
+    const arRows = _authRows().roles;
     let yoyakuRole = null;
-    if (arSh && arSh.getLastRow() >= 2) {
-      const arRows = arSh.getDataRange().getValues();
-      for (let i = 1; i < arRows.length; i++) {
-        if (String(arRows[i][0]) === userId && String(arRows[i][1]) === APP_NAME) {
-          yoyakuRole = String(arRows[i][2]).trim().toLowerCase() || null;
-          break;
-        }
+    for (let i = 1; i < arRows.length; i++) {
+      if (String(arRows[i][0]) === userId && String(arRows[i][1]) === APP_NAME) {
+        yoyakuRole = String(arRows[i][2]).trim().toLowerCase() || null;
+        break;
       }
     }
     if (!yoyakuRole || yoyakuRole === 'none') return { valid: false };
@@ -1025,33 +1057,28 @@ function processArrival(data) {
 //   yoyaku_role: "admin"（事務・担当者非表示）/ "staff"（営業・担当者として表示）
 //
 // ※ CacheService を使わない理由:
-//   user_app_roles に新規スタッフを追加してもキャッシュが10分間残ると
-//   担当者フィルタに反映されないため、毎回シートから読む。
-//   呼び出しは initApp（ページロード時のみ）に限定されるため
-//   フロントの localStorage 5分キャッシュで十分に保護される。
+//   user_app_roles に新規スタッフを追加してもキャッシュが残ると
+//   担当者フィルタに反映されないため、シートの内容そのものはキャッシュしない。
+//   代わりに _authRows() で「同じリクエスト内の重複読み取り」だけを潰している
+//   （validateAndGetUser が既に読んでいれば、その結果をそのまま使う）。
+//   鮮度は落とさずに openById 1回ぶん＋全件読み2回ぶんを削減できる。
 // ============================================================
 function _getUsersFromAuth() {
   try {
-    const ss = SpreadsheetApp.openById(AUTH_SHEET_ID);
-
     // user_app_roles から yoyaku-kanri 登録ユーザーとロールを取得
-    const arSh = ss.getSheetByName('user_app_roles');
+    const arRows  = _authRows().roles;
     const roleMap = {};
-    if (arSh && arSh.getLastRow() >= 2) {
-      const arRows = arSh.getDataRange().getValues();
-      for (let i = 1; i < arRows.length; i++) {
-        if (String(arRows[i][1]) === APP_NAME) {
-          const uid  = String(arRows[i][0]);
-          const role = String(arRows[i][2]).trim().toLowerCase();  // 大文字小文字を吸収
-          if (uid && role) roleMap[uid] = role;
-        }
+    for (let i = 1; i < arRows.length; i++) {
+      if (String(arRows[i][1]) === APP_NAME) {
+        const uid  = String(arRows[i][0]);
+        const role = String(arRows[i][2]).trim().toLowerCase();  // 大文字小文字を吸収
+        if (uid && role) roleMap[uid] = role;
       }
     }
 
-    const sh = ss.getSheetByName('users');
-    if (!sh || sh.getLastRow() < 2) return [];
+    const rows = _authRows().users;
+    if (rows.length < 2) return [];
 
-    const rows  = sh.getDataRange().getValues();
     const users = [];
     for (let i = 1; i < rows.length; i++) {
       const active = rows[i][3] === true || String(rows[i][3]).toUpperCase() === 'TRUE';
