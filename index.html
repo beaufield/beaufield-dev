@@ -543,7 +543,7 @@
 
 <script>
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzNVW7AaPUTuwneE-M40DTN1clO5VT2yLCHq7cjYvaHqfMfXgVi38UAOsDZQbmmN3wOzw/exec';
-  const APP_VERSION  = 'v1.7.0';
+  const APP_VERSION  = 'v1.7.1';
   const SESSION_KEY  = 'bf_session';
   const SESSION_HOURS = 24 * 7;
 
@@ -1054,7 +1054,14 @@
   //    実測の4%（17秒・57秒で成功していたもの）を壊す。
   //    待ち続けたうえで、利用者に状況を見せて逃げ道を出すのが正しい（setLoading参照）。
   const GAS_HARD_TIMEOUT_MS = 60000;  // 最後の打ち切り。通常はここまで来ない
-  const GAS_RETRY_ONCE      = true;   // POSTボディ喪失を1回だけ自動で引き直す
+  const GAS_RETRY_WAIT_MS   = 1200;   // 引き直す前の間
+
+  // ⚠️ 引き直してよいのは「サーバーが何もしていない」と言い切れるときだけ。
+  //    GASは結果配信に失敗して長い待ちのあと404を返すことがあり（実測: 35.5秒→404）、
+  //    そのとき**スクリプトは実行済みの可能性がある**。
+  //    したがって通信失敗での引き直しは、読み取り専用で何度呼んでも同じ操作に限る。
+  //    ログイン・PIN変更・PINリセットを再送すると二重実行になる。
+  const RETRYABLE_ACTIONS = ['getUsers', 'getUserApps'];
 
   function _timeoutError() {
     const e = new Error('GAS_TIMEOUT');
@@ -1083,19 +1090,32 @@
     }
   }
 
-  // ⚠️ 引き直してよいのは「こちらの内容が1文字も届いていない」と分かる場合だけ。
-  //    書き込み系（login / PIN変更 / PINリセット）を無条件に再送してはいけない。
-  async function _fetchJson(url, options) {
-    const first = await _fetchJsonOnce(url, options);
-    if (GAS_RETRY_ONCE && _looksLikeLostBody(first)) {
+  async function _fetchJson(url, options, retryOnFailure) {
+    let first;
+    try {
+      first = await _fetchJsonOnce(url, options);
+    } catch (e) {
+      // 404・JSONパース失敗・ネットワーク断など。
+      // 打ち切り(60秒)まで待った場合は、さらに60秒待たせても仕方ないので引き直さない。
+      if (!retryOnFailure || (e && e.code === 'GAS_TIMEOUT')) throw e;
+      await new Promise(r => setTimeout(r, GAS_RETRY_WAIT_MS));
+      return _fetchJsonOnce(url, options);
+    }
+    // actionが空で届いた＝サーバーには何も届いていない。書き込みでも引き直して安全
+    if (_looksLikeLostBody(first)) {
+      await new Promise(r => setTimeout(r, GAS_RETRY_WAIT_MS));
       return _fetchJsonOnce(url, options);
     }
     return first;
   }
 
+  function _isRetryable(action) {
+    return RETRYABLE_ACTIONS.indexOf(action) >= 0;
+  }
+
   async function gasGet(action, data) {
     const qs = 'action=' + action + '&data=' + encodeURIComponent(JSON.stringify(data));
-    return _fetchJson(GAS_URL + '?' + qs, {});
+    return _fetchJson(GAS_URL + '?' + qs, {}, _isRetryable(action));
   }
 
   async function gasPost(action, data) {
@@ -1105,7 +1125,7 @@
       method:  'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body
-    });
+    }, _isRetryable(action));
   }
 
   // ── ヘルパー ──────────────────────────────────────────────────
