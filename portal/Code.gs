@@ -10,7 +10,7 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.12.1';
+const VERSION       = 'v1.13.0';
 // ポータル画面（GitHub Pages）のURL。旧HTML向けの更新案内タイルのリンク先に使う。
 const PORTAL_URL    = 'https://beaufield.github.io/beaufield-dev/';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
@@ -185,6 +185,60 @@ function _legacyUpdateNotice() {
 // エントリーポイント（POST）
 // URL-encoded と JSON body の両方に対応
 // ============================================================
+// ============================================================
+// 冪等キー（requestId）による二重実行防止
+// ============================================================
+// GASのWebアプリは二段構え:
+//   ① script.google.com/.../exec        … ここでスクリプトが実行され、302が返る
+//   ② script.googleusercontent.com/...  … ここで結果だけが配信される
+//
+// ②のURLは【使い捨て】かつ【寿命が5〜30秒の間】で、切れると①へ差し戻される。
+// その差し戻しはGETなのでPOSTのボディが消え、クライアントには
+// 「不明なアクション: 」が返る。
+// ⚠️ **このとき①の処理は既に実行済み**（2026-09-19にカウンタで実測確認）。
+//    つまりクライアントから見た「失敗」は、実際には「成功したが答えを受け取れなかった」。
+//    iPhoneで302の直後にアプリを切り替えるとタブが止まるため、特に踏みやすい。
+//
+// したがってクライアントが同じ requestId で再送してきたら、処理をやり直さず
+// 前回の結果をそのまま返す。これで再送が安全になる。
+// 検証の詳細: portal/PLAN-stuck-spinner-fix.md
+const IDEMPOTENCY_TTL_SEC = 600;  // 10分。再送は数秒〜数十秒以内に来る
+
+function _withIdempotency(requestId, fn) {
+  const rid = String(requestId || '').trim();
+  // requestId が無い/不正なら従来どおり実行する（旧フロントとの後方互換）
+  if (!rid || !/^[A-Za-z0-9-]{8,100}$/.test(rid)) return fn();
+
+  const cache = CacheService.getScriptCache();
+  const key   = 'idem_portal_' + rid;
+
+  const cached = cache.get(key);
+  if (cached) {
+    try { const r = JSON.parse(cached); r.replayed = true; return r; } catch (e) {}
+  }
+
+  // 同じ requestId が同時に2本届いた場合に二重実行しないよう直列化する
+  const lock = LockService.getScriptLock();
+  let locked = false;
+  try { lock.waitLock(10000); locked = true; } catch (e) {}
+
+  try {
+    if (locked) {
+      const again = cache.get(key);  // ロック待ちの間に先行が終わっていないか
+      if (again) {
+        try { const r = JSON.parse(again); r.replayed = true; return r; } catch (e) {}
+      }
+    }
+    const result = fn();
+    // ⚠️ 成功・失敗どちらも記録する。失敗を記録しないと、再送で処理がやり直される。
+    //    PIN誤りの回数カウントが再送で二重に増えるのも防げる。
+    try { cache.put(key, JSON.stringify(result), IDEMPOTENCY_TTL_SEC); } catch (e) {}
+    return result;
+  } finally {
+    if (locked) { try { lock.releaseLock(); } catch (e) {} }
+  }
+}
+
 function doPost(e) {
   let action = '', data = {};
 
@@ -208,9 +262,10 @@ function doPost(e) {
 
   try {
     switch (action) {
-      case 'login':           return _json(login(data));
-      case 'resetPin':        return _json(resetPin(data));
-      case 'changePin':       return _json(changePin(data));
+      // 書き込みは冪等キーで包む。同じ requestId の再送は前回の結果を返すだけになる
+      case 'login':           return _json(_withIdempotency(data.requestId, function(){ return login(data); }));
+      case 'resetPin':        return _json(_withIdempotency(data.requestId, function(){ return resetPin(data); }));
+      case 'changePin':       return _json(_withIdempotency(data.requestId, function(){ return changePin(data); }));
       case 'logout':          return _json(logout(data));
       case 'validateSession': return _json(validateSession(data));
       case 'getUserApps':     return _json(getUserApps(data.session_token || ''));
