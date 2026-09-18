@@ -773,7 +773,7 @@
 </div>
 
 <script>
-const APP_VERSION = 'v1.24.0';
+const APP_VERSION = 'v1.24.1';
 document.getElementById('headerVersion').textContent = APP_VERSION;
 // ============================================================
 // 設定（デプロイ後に GAS_URL を変更すること）
@@ -845,13 +845,34 @@ function _clearLocalCache() {
   try { localStorage.removeItem(LS_CACHE_KEY); } catch(e) {}
 }
 
-/** アクセス権限なしの画面に差し替える（キャッシュも破棄する） */
+/** 旧バージョンのキャッシュキーを掃除する。
+ *  localStorageの容量は beaufield.github.io の全アプリで共有されるため、
+ *  二度と読まれない80KB級のゴミを残さない（iOS Safariは約5MBで頭打ちになる）。 */
+function _purgeOldCaches() {
+  try {
+    Object.keys(localStorage)
+      .filter(k => k.indexOf('bf_yoyaku_v') === 0 && k !== LS_CACHE_KEY)
+      .forEach(k => localStorage.removeItem(k));
+  } catch(e) {}
+}
+
+/** アクセス権限なしの画面に差し替える（キャッシュも破棄する）
+ *  2026-09-18: 以前は存在しない #mainContent を書き換えようとして例外になっていた。
+ *  権限を失った人に予約データを残さないため、タブ本体ごとDOMから取り除く。 */
 function _showAccessDenied() {
   _clearLocalCache();
   document.querySelector('.header').style.opacity = '';
-  document.getElementById('mainContent').innerHTML =
-    '<div style="padding:40px;text-align:center;color:#dc2626;font-size:15px;">' +
-    '⛔ このアプリへのアクセス権限がありません。<br>管理者にお問い合わせください。</div>';
+  document.querySelectorAll('.modal-overlay, .confirm-overlay')
+    .forEach(el => el.classList.remove('open'));
+  document.querySelectorAll('.tab').forEach(el => el.remove());
+  const nav = document.querySelector('.bottom-nav');
+  if (nav) nav.remove();
+  const msg = document.createElement('div');
+  msg.style.cssText = 'padding:40px;text-align:center;color:#dc2626;font-size:15px;line-height:1.7';
+  msg.appendChild(document.createTextNode('⛔ このアプリへのアクセス権限がありません。'));
+  msg.appendChild(document.createElement('br'));
+  msg.appendChild(document.createTextNode('管理者にお問い合わせください。'));
+  document.body.appendChild(msg);
 }
 
 /** init データをグローバル変数に適用してUIを描画
@@ -940,6 +961,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   token = session.token;
 
   switchTab('register');
+  _purgeOldCaches();
 
   // ① キャッシュがある場合は即座にUIを表示（GAS待ちゼロ）
   const cached = _loadLocalCache(session.user_id);
