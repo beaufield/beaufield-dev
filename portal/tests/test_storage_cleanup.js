@@ -164,7 +164,29 @@ function run() {
     assert.ok(typeof parsed.freedChars === 'number', 'T-8: freedCharsが数値であること');
   }
 
-  console.log('Portal storage cleanup: T-1〜T-8 全PASS');
+  // T-9: 発注アプリの旧世代キー bf_pm だけを消し、現行の _v2 系は残す
+  //      （前方一致や正規表現で実装すると bf_pm_v2 まで巻き込むため、ここで固定する）
+  {
+    const { ctx, ls } = setup({
+      'bf_pm':            'dead-5MB-master',
+      'bf_pm_v2':         'CURRENT-master',
+      'bf_pm_date_v2':    '2026-09-16',
+      'bf_pm_gas_date_v2':'2026-09-16 01:31',
+      'bf_prod_hist':     'history-data',
+      'bf_session':       'session-data'
+    });
+    const result = vm.runInContext('cleanupSharedStorage()', ctx);
+    const dump = ls._dump();
+    assert.equal(dump['bf_pm'], undefined, 'T-9: bf_pm（旧世代・約5.1MB）が削除されること');
+    assert.equal(dump['bf_pm_v2'], 'CURRENT-master', 'T-9: bf_pm_v2（現行）は絶対に残ること');
+    assert.equal(dump['bf_pm_date_v2'], '2026-09-16', 'T-9: bf_pm_date_v2 は残ること');
+    assert.equal(dump['bf_pm_gas_date_v2'], '2026-09-16 01:31', 'T-9: bf_pm_gas_date_v2 は残ること');
+    assert.equal(dump['bf_prod_hist'], 'history-data', 'T-9: bf_prod_hist は保護対象。残ること');
+    assert.equal(dump['bf_session'], 'session-data', 'T-9: セッションは残ること');
+    assert.equal(result.removed, 1, 'T-9: 削除されたのは bf_pm の1件だけであること');
+  }
+
+  console.log('Portal storage cleanup: T-1〜T-9 全PASS');
 }
 
 run();
