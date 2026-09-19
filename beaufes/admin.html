@@ -346,7 +346,7 @@
   .modalCard .ghostBtn { background: #fff; color: #10617c; border: 1px solid #10617c; }
 </style>
 <link rel="stylesheet" href="lib/booking-v1.3.1.css">
-<script src="lib/booking-v1.3.2.js"></script>
+<script src="lib/booking-v1.3.3.js"></script>
 </head>
 <body>
 
@@ -581,7 +581,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.7.1';
+const APP_VERSION = '0.8.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
@@ -1500,6 +1500,7 @@ function renderSummary() {
 // 一覧テーブル
 // ------------------------------------------------------------
 const COLUMNS = [
+  { key: '__booking_left', label: '予約',   sortable: false },
   { key: '',              label: '',        sortable: false },
   { key: 'app_id',        label: '受付番号', sortable: true },
   { key: 'created_key',   label: '申込日',   sortable: true },
@@ -1557,6 +1558,53 @@ function tdText(text, cls) {
   return td;
 }
 
+function cachedBookingView(appId) {
+  if (!bookingSummaryData) return null;
+  const reservations = Array.isArray(bookingSummaryData.reservations) ? bookingSummaryData.reservations : [];
+  const reserved = reservations
+    .filter(r => r.app_id === appId && r.app_status !== 'cancelled')
+    .map(r => String(r.session_id || ''))
+    .filter(Boolean);
+  const reservedSet = new Set(reserved);
+  const sessions = (Array.isArray(bookingSummaryData.sessions) ? bookingSummaryData.sessions : [])
+    .filter(s => s.is_active || reservedSet.has(String(s.session_id || '')))
+    .map(s => Object.assign({}, s, {
+      can_book: !!s.is_active && s.booking_channel !== 'closed',
+      can_cancel: true
+    }));
+  return {sessions:sessions,reserved:reserved,booking_revision:'',booking_open:true};
+}
+
+function openBookingForApp(a) {
+  bookingApi.staff({
+    url:GAS_URL,
+    app:a,
+    initialData:cachedBookingView(a.app_id),
+    sessionToken:()=>{const session=getSession();return session ? session.token : '';},
+    changed:()=>loadBookingSummary()
+  });
+}
+
+function setBookingButtonLabel(button, booked) {
+  button.textContent = button.dataset.bookingCompact === '1'
+    ? (booked ? '予約済' : '予約')
+    : (booked ? '予約済み・変更' : 'セミナー予約');
+}
+
+function makeBookingButton(a, compact) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'booking-op';
+  button.dataset.bookingApp = a.app_id;
+  button.dataset.bookingCompact = compact ? '1' : '0';
+  setBookingButtonLabel(button, bookingReservedApps.has(a.app_id));
+  button.title = 'セミナー・体験会の予約を確認・変更する';
+  button.setAttribute('aria-label', a.staff_name + '様のセミナー・体験会予約を確認・変更する');
+  button.disabled = a.status === 'cancelled';
+  button.addEventListener('click', function () { openBookingForApp(a); });
+  return button;
+}
+
 function renderTable() {
   renderHead();
   const body = el('listBody');
@@ -1569,6 +1617,12 @@ function renderTable() {
     const tr = document.createElement('tr');
     tr.dataset.appId = a.app_id;
     if (state.selected[a.app_id]) tr.className = 'selected';
+
+    // 横スクロールせず開けるよう、予約ボタンを表のいちばん左にも置く。
+    const tdBooking = document.createElement('td');
+    tdBooking.className = 'opsCell bookingLeadCell';
+    tdBooking.appendChild(makeBookingButton(a, true));
+    tr.appendChild(tdBooking);
 
     // 選択チェックボックス
     const tdCb = document.createElement('td');
@@ -1627,14 +1681,7 @@ function renderTable() {
     // 🆕 v0.3.0 当日の操作（予備名札の割当・パスの再送）
     const tdOps = document.createElement('td');
     tdOps.className = 'opsCell';
-    const bBooking = document.createElement('button');
-    bBooking.type = 'button'; bBooking.className = 'booking-op';
-    bBooking.textContent = bookingReservedApps.has(a.app_id) ? '予約済み・変更' : 'セミナー予約';
-    bBooking.dataset.bookingApp = a.app_id;
-    bBooking.disabled = a.status === 'cancelled';
-    bBooking.addEventListener('click', function () {
-      bookingApi.staff({url:GAS_URL,app:a,sessionToken:()=>{const session=getSession();return session ? session.token : '';},changed:()=>loadBookingSummary()});
-    });
+    const bBooking = makeBookingButton(a, false);
     tdOps.appendChild(bBooking);
 
 
@@ -2338,6 +2385,7 @@ function init() {
 }
 
 const bookingReservedApps = new Set();
+let bookingSummaryData = null;
 init();
 
 // セミナーは人数、体験会は時間枠ごとの予約有無を表示する。
@@ -2495,12 +2543,13 @@ async function loadBookingSummary() {
     const json=isMock()?{success:true,data:bookingApi.mockStaffSummary()}:
       await postWithRetry({action:'listReservations',data:JSON.stringify({session_token:session ? session.token : ''})});
     if(!json.success)throw new Error('予約集計');
-    renderBookingSummary(box, json.data);
+    bookingSummaryData = json.data;
+    renderBookingSummary(box, bookingSummaryData);
     bookingReservedApps.clear();
     json.data.reservations.filter(r=>r.app_status!=='cancelled').forEach(r=>bookingReservedApps.add(r.app_id));
     document.querySelectorAll('[data-booking-app]').forEach(b=>{
       const booked=json.data.reservations.some(r=>r.app_id===b.dataset.bookingApp && r.app_status!=='cancelled');
-      b.textContent=booked?'予約済み・変更':'セミナー予約';
+      setBookingButtonLabel(b,booked);
     });
   }catch(e){
     box.replaceChildren();
