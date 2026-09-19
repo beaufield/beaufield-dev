@@ -134,6 +134,7 @@
   .bookingSummarySectionTitle { margin: 0 0 9px; color: #334155; font-size: 14px; }
   .bookingSeminarGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .bookingSeminarCard {
+    min-width: 0;
     padding: 13px; border: 1px solid #bae6fd; border-left: 5px solid #0e7490;
     border-radius: 10px; background: #f0f9ff;
   }
@@ -153,7 +154,7 @@
   .bookingExperienceHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
   .bookingExperienceName { margin: 0; color: #0f172a; font-size: 13px; line-height: 1.5; }
   .bookingChannelBadge { flex: none; padding: 2px 6px; border-radius: 999px; background: #fef3c7; color: #92400e; font-size: 10px; font-weight: bold; }
-  .bookingSlotGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .bookingSlotGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
   .bookingSlot {
     min-width: 0; padding: 8px; border: 1px solid #a7f3d0; border-radius: 8px;
     background: #ecfdf5; color: #065f46;
@@ -162,7 +163,6 @@
   .bookingSlot.shared { border-color: #fcd34d; background: #fffbeb; color: #92400e; }
   .bookingSlotTime { display: block; font-size: 12px; font-weight: bold; white-space: nowrap; }
   .bookingSlotState { display: block; margin-top: 3px; font-size: 11px; font-weight: bold; }
-  .bookingSlotCode { display: block; margin-top: 2px; color: #64748b; font-size: 9px; }
   .bookingLegend { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 10px; color: #64748b; font-size: 11px; }
   .bookingLegendItem::before { content: ''; display: inline-block; width: 9px; height: 9px; margin-right: 4px; border-radius: 3px; vertical-align: -1px; }
   .bookingLegendItem.vacant::before { background: #6ee7b7; }
@@ -171,10 +171,22 @@
   .bookingSummaryMessage { margin: 0; color: #64748b; font-size: 13px; }
   .bookingSummaryMessage.error { color: var(--error); }
   @media (max-width: 640px) {
-    .bookingSummary { padding: 14px; }
+    .bookingSummary { padding: 12px; }
     .bookingSummaryHead { display: block; }
     .bookingSummaryUpdated { display: block; margin-top: 4px; }
-    .bookingSeminarGrid { grid-template-columns: 1fr; }
+    .bookingSeminarGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+    .bookingSeminarCard { padding: 9px; border-left-width: 4px; }
+    .bookingProgramMeta { font-size: 9px; }
+    .bookingProgramName { margin: 3px 0 7px; font-size: 12px; line-height: 1.4; }
+    .bookingSeminarNumbers strong { font-size: 22px; }
+    .bookingSeminarNumbers span { font-size: 11px; }
+    .bookingCapacityBar { margin-top: 7px; }
+    .bookingRemaining { margin-top: 5px; font-size: 11px; }
+    .bookingExperienceCard { padding: 9px; }
+    .bookingSlotGrid { gap: 4px; }
+    .bookingSlot { padding: 7px 5px; }
+    .bookingSlotTime { font-size: 10px; }
+    .bookingSlotState { font-size: 10px; }
     .bookingExperienceGrid { grid-template-columns: 1fr; }
   }
 
@@ -569,7 +581,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.7.0';
+const APP_VERSION = '0.7.1';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
@@ -2399,7 +2411,7 @@ function renderBookingSummary(box, data) {
       const full = capacity > 0 && remaining === 0;
       const card = document.createElement('article');
       card.className = 'bookingSeminarCard' + (full ? ' full' : '');
-      appendBookingText(card, 'div', (s.slot || 'セミナー') + ' ・ ' + bookingTimeLabel(s) + ' ・ ' + s.session_id, 'bookingProgramMeta');
+      appendBookingText(card, 'div', (s.slot || 'セミナー') + ' ・ ' + bookingTimeLabel(s), 'bookingProgramMeta');
       appendBookingText(card, 'h4', bookingProgramName(s), 'bookingProgramName');
       const numbers = document.createElement('div');
       numbers.className = 'bookingSeminarNumbers';
@@ -2458,7 +2470,6 @@ function renderBookingSummary(box, data) {
         slot.className = 'bookingSlot' + (booked ? ' booked' : shared ? ' shared' : '');
         appendBookingText(slot, 'span', bookingTimeLabel(s), 'bookingSlotTime');
         appendBookingText(slot, 'span', booked ? '● 予約あり' : shared ? '▲ 共有枠使用中' : '○ 空き', 'bookingSlotState');
-        appendBookingText(slot, 'span', s.session_id, 'bookingSlotCode');
         slots.appendChild(slot);
       });
       card.appendChild(slots);
