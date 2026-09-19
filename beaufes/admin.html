@@ -581,7 +581,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.8.0';
+const APP_VERSION = '0.8.1';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
@@ -1500,10 +1500,9 @@ function renderSummary() {
 // 一覧テーブル
 // ------------------------------------------------------------
 const COLUMNS = [
-  { key: '__booking_left', label: '予約',   sortable: false },
   { key: '',              label: '',        sortable: false },
-  { key: 'app_id',        label: '受付番号', sortable: true },
   { key: 'created_key',   label: '申込日',   sortable: true },
+  { key: '__booking',     label: '予約',     sortable: false },
   { key: 'salon_name',    label: 'サロン名', sortable: true },
   { key: 'staff_name',    label: 'お名前',   sortable: true },
   { key: 'business_type', label: '業態',     sortable: true },
@@ -1513,6 +1512,7 @@ const COLUMNS = [
   { key: 'email',         label: 'メール',   sortable: false },
   { key: 'referrer',      label: '紹介者',   sortable: false },
   { key: 'note',          label: '備考',     sortable: false },
+  { key: 'app_id',        label: '受付番号', sortable: true },
   { key: 'status',        label: '状態',     sortable: true },
   { key: '__ops',         label: '操作',     sortable: false }   // 🆕 v0.3.0 当日機能
 ];
@@ -1556,6 +1556,12 @@ function tdText(text, cls) {
   td.textContent = text == null ? '' : String(text);
   if (cls) td.className = cls;
   return td;
+}
+
+function listDateLabel(value) {
+  const text = String(value || '');
+  const match = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/.exec(text);
+  return match ? Number(match[2]) + '/' + Number(match[3]) : text;
 }
 
 function cachedBookingView(appId) {
@@ -1618,12 +1624,6 @@ function renderTable() {
     tr.dataset.appId = a.app_id;
     if (state.selected[a.app_id]) tr.className = 'selected';
 
-    // 横スクロールせず開けるよう、予約ボタンを表のいちばん左にも置く。
-    const tdBooking = document.createElement('td');
-    tdBooking.className = 'opsCell bookingLeadCell';
-    tdBooking.appendChild(makeBookingButton(a, true));
-    tr.appendChild(tdBooking);
-
     // 選択チェックボックス
     const tdCb = document.createElement('td');
     const cb = document.createElement('input');
@@ -1638,8 +1638,14 @@ function renderTable() {
     tdCb.appendChild(cb);
     tr.appendChild(tdCb);
 
-    tr.appendChild(tdText(a.app_id));
-    tr.appendChild(tdText(a.created_key));
+    tr.appendChild(tdText(listDateLabel(a.created_key)));
+
+    // 申込日を見た直後に予約操作へ進める位置に置く。
+    const tdBooking = document.createElement('td');
+    tdBooking.className = 'opsCell bookingListCell';
+    tdBooking.appendChild(makeBookingButton(a, true));
+    tr.appendChild(tdBooking);
+
     tr.appendChild(tdText(a.salon_name, 'wrapCell'));
     tr.appendChild(tdText(a.staff_name));
     tr.appendChild(tdText(a.business_type));
@@ -1661,6 +1667,7 @@ function renderTable() {
     tr.appendChild(tdText(a.email, 'wrapCell'));
     tr.appendChild(tdText(a.referrer));
     tr.appendChild(tdText(a.note, 'wrapCell'));
+    tr.appendChild(tdText(a.app_id));
 
     const tdS = document.createElement('td');
     if (a.status !== 'confirmed') {
