@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.38.0';
+const VERSION  = '0.39.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -423,6 +423,7 @@ function doPost(e) {
       case 'staffGetReservations': return _jsonResponse(staffGetReservations(data));
       case 'staffChangeReservation': return _jsonResponse(staffChangeReservation(data));
       case 'listReservations':  return _jsonResponse(listReservations(data));   // 🆕 v0.31.0 社員用 🔒
+      case 'adminBootstrap':     return _jsonResponse(adminBootstrap(data));     // 🆕 v0.39.0 社員用高速読取 🔒
       // 🆕 診断用（diag.html）。読み取りのみ・データを一切変更しない
       case 'ping':              return _jsonResponse(pingLight(data));
       case 'pingHeavy':         return _jsonResponse(pingHeavy(data));
@@ -2067,31 +2068,7 @@ function _splitLines(v) {
 function _readSessions(ss) {
   const sh = ss.getSheetByName(SHEET_SESSIONS);
   if (!sh) return [];
-  const rows = sh.getDataRange().getValues();
-  const out = [];
-  for (let i = 1; i < rows.length; i++) {
-    const id = String(rows[i][SES_COL.id] == null ? '' : rows[i][SES_COL.id]).trim();
-    if (!id) continue;
-    const capRaw = rows[i][SES_COL.capacity];
-    const capNum = (capRaw === '' || capRaw === null || capRaw === undefined) ? null : Number(capRaw);
-    out.push({
-      booking_channel: String(rows[i][SES_COL.bookingChannel] || 'closed').trim(),
-      resource_group: String(rows[i][SES_COL.resourceGroup] == null ? '' : rows[i][SES_COL.resourceGroup]).trim(),
-      session_id: id,
-      slot:       String(rows[i][SES_COL.slot]  == null ? '' : rows[i][SES_COL.slot]).trim() || id,
-      title:      String(rows[i][SES_COL.title] == null ? '' : rows[i][SES_COL.title]).trim(),
-      speaker:    String(rows[i][SES_COL.speaker] == null ? '' : rows[i][SES_COL.speaker]).trim(),
-      room:       String(rows[i][SES_COL.room]  == null ? '' : rows[i][SES_COL.room]).trim(),
-      starts_at:  _fmtTimeCell(rows[i][SES_COL.starts]),
-      ends_at:    _fmtTimeCell(rows[i][SES_COL.ends]),
-      capacity:   (capNum === null || isNaN(capNum)) ? null : capNum,
-      // 🔴 空欄は「有効」。書き忘れで枠が黙って消えるほうが害が大きい（booth と同じ判断）
-      is_active:  _boothIsActive(rows[i][SES_COL.active]),
-      bullets:    _splitLines(rows[i][SES_COL.bullets]),
-      overview:   String(rows[i][SES_COL.overview] == null ? '' : rows[i][SES_COL.overview]).trim()
-    });
-  }
-  return out;
+  return _sessionsFromRows(sh.getDataRange().getValues());
 }
 
 // reservations シートの生データ（ヘッダー込み）。書き込み側は行番号が要るのでそのまま返す。
@@ -3053,19 +3030,17 @@ function _parseTantouList(cfg) {
   return out;
 }
 
-// 申込一覧を返す（doPost: action=listApplications）。data: { session_token }
-// 🔴 絞り込み・集計は画面側で行う（件数が数百なので全件返して即時フィルタするほうが速く、
-//    GAS側の分岐も増えない）。ticket_token は返さない（入場パスの鍵そのものなので一覧に不要）。
-function listApplications(data) {
-  const auth = _requireSession(data);
-  if (!auth.ok) return _err(auth.error);
-  _checkProps();
+// 読み込み済みの config 行をオブジェクトへ変換する。adminBootstrap は同じブックを開き直さない。
+function _configFromRows(rows) {
+  const cfg = {};
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0]) cfg[String(rows[i][0])] = rows[i][1];
+  }
+  return cfg;
+}
 
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const sh = _ensureTantouColumn(_getSheet(ss, SHEET_APPLICATIONS));
-  const rows = sh.getDataRange().getValues();
-  const cfg  = _getConfig();
-
+// applications の読み込み済み行から、社員一覧の既存契約を作る純粋関数。
+function _applicationListFromRows(rows) {
   const list = [];
   for (let i = 1; i < rows.length; i++) {
     if (!rows[i][0]) continue;
@@ -3090,8 +3065,266 @@ function listApplications(data) {
       tantou:          String(rows[i][COL_TANTOU - 1] || '')
     });
   }
-
   list.sort(function (a, b) { return a.app_id < b.app_id ? -1 : (a.app_id > b.app_id ? 1 : 0); });
+  return list;
+}
+
+// sessions の読み込み済み行を、既存 _readSessions と同じ形へ変換する。
+function _sessionsFromRows(rows) {
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const id = String(rows[i][SES_COL.id] == null ? '' : rows[i][SES_COL.id]).trim();
+    if (!id) continue;
+    const capRaw = rows[i][SES_COL.capacity];
+    const capNum = (capRaw === '' || capRaw === null || capRaw === undefined) ? null : Number(capRaw);
+    out.push({
+      booking_channel: String(rows[i][SES_COL.bookingChannel] || 'closed').trim(),
+      resource_group: String(rows[i][SES_COL.resourceGroup] == null ? '' : rows[i][SES_COL.resourceGroup]).trim(),
+      session_id: id,
+      slot:       String(rows[i][SES_COL.slot] == null ? '' : rows[i][SES_COL.slot]).trim() || id,
+      title:      String(rows[i][SES_COL.title] == null ? '' : rows[i][SES_COL.title]).trim(),
+      speaker:    String(rows[i][SES_COL.speaker] == null ? '' : rows[i][SES_COL.speaker]).trim(),
+      room:       String(rows[i][SES_COL.room] == null ? '' : rows[i][SES_COL.room]).trim(),
+      starts_at:  _fmtTimeCell(rows[i][SES_COL.starts]),
+      ends_at:    _fmtTimeCell(rows[i][SES_COL.ends]),
+      capacity:   (capNum === null || isNaN(capNum)) ? null : capNum,
+      is_active:  _boothIsActive(rows[i][SES_COL.active]),
+      bullets:    _splitLines(rows[i][SES_COL.bullets]),
+      overview:   String(rows[i][SES_COL.overview] == null ? '' : rows[i][SES_COL.overview]).trim()
+    });
+  }
+  return out;
+}
+
+// 現行 _bookingRevision と同じ値を、全app_id分まとめて計算する。
+function _bookingRevisionIndex(resRows, operationRows) {
+  const maxRevision = {}, mineByApp = {}, out = {};
+  for (let i = 1; i < operationRows.length; i++) {
+    if (String(operationRows[i][4]) !== 'committed') continue;
+    const appId = String(operationRows[i][1]);
+    maxRevision[appId] = Math.max(maxRevision[appId] || 0, Number(operationRows[i][5]) || 0);
+  }
+  for (let i = 1; i < resRows.length; i++) {
+    const appId = String(resRows[i][RES_COL.appId]);
+    if (!mineByApp[appId]) mineByApp[appId] = [];
+    mineByApp[appId].push([
+      String(resRows[i][RES_COL.id]),
+      String(resRows[i][RES_COL.sessionId]),
+      String(resRows[i][RES_COL.status])
+    ]);
+  }
+  Object.keys(maxRevision).concat(Object.keys(mineByApp)).forEach(function (appId) {
+    if (Object.prototype.hasOwnProperty.call(out, appId)) return;
+    out[appId] = (maxRevision[appId] || 0) + ':' + _bookingHash(mineByApp[appId] || []).slice(0,24);
+  });
+  return out;
+}
+
+function _adminBookingUnavailable(error) {
+  return {
+    state: 'unavailable', error: error || 'BOOKING_NOT_READY', captured_at: null,
+    booking_open: false, sessions: [], reservations: [], by_app: {}
+  };
+}
+
+// 1回ずつ読んだ4シートから、集計表示と編集用snapshotを同時に構築する。
+function _adminBookingSnapshot(appRows, resRows, sessionRows, operationRows, bookingOpen, capturedAt) {
+  if (!resRows.length || !sessionRows.length || !operationRows.length) return _adminBookingUnavailable('BOOKING_NOT_READY');
+  const reservationHeaders = ['res_id','app_id','session_id','created_at','status','attended_at'];
+  const sessionHeaders = ['session_id','slot','title','speaker','room','starts_at','ends_at','capacity','is_active','bullets','overview','booking_channel','resource_group'];
+  if (JSON.stringify(resRows[0].slice(0, reservationHeaders.length)) !== JSON.stringify(reservationHeaders) ||
+      JSON.stringify(sessionRows[0].slice(0, sessionHeaders.length)) !== JSON.stringify(sessionHeaders)) {
+    return _adminBookingUnavailable('BOOKING_SCHEMA');
+  }
+  if (JSON.stringify(operationRows[0].slice(0, BOOKING_LOG_HEADERS.length)) !== JSON.stringify(BOOKING_LOG_HEADERS)) {
+    return _adminBookingUnavailable('BOOKING_SCHEMA');
+  }
+  if (operationRows.slice(1).some(function (r) { return String(r[4]) === 'prepared'; })) {
+    return _adminBookingUnavailable('BOOKING_RECOVERY_REQUIRED');
+  }
+
+  const appInfo = {}, appCount = {};
+  for (let i = 1; i < appRows.length; i++) {
+    const id = String(appRows[i][0] || '');
+    if (!id) continue;
+    appCount[id] = (appCount[id] || 0) + 1;
+    appInfo[id] = {
+      salon_name: String(appRows[i][4]), staff_name: String(appRows[i][5]),
+      phone: String(appRows[i][8]), tantou: String(appRows[i][22] == null ? '' : appRows[i][22]),
+      app_status: String(appRows[i][17])
+    };
+  }
+
+  const cancelled = _cancelledAppIdSet(appRows);
+  const counts = _countReserved(resRows, cancelled);
+  const allSessions = _sessionsFromRows(sessionRows);
+  const sessionIds = {};
+  for (let i = 0; i < allSessions.length; i++) {
+    if (sessionIds[allSessions[i].session_id]) return _adminBookingUnavailable('BOOKING_SCHEMA');
+    sessionIds[allSessions[i].session_id] = true;
+  }
+  const sessions = allSessions.map(function (s) {
+    const used = _capacityUsed(s, counts, allSessions);
+    const remaining = s.capacity === null ? null : Math.max(0, s.capacity - used);
+    const channel = _bookingChannel(s);
+    const visible = !!(s.is_active && bookingOpen && (channel === 'public' || channel === 'staff'));
+    return {
+      session_id:s.session_id, slot:s.slot, title:s.title, speaker:s.speaker, room:s.room,
+      starts_at:s.starts_at, ends_at:s.ends_at, capacity:s.capacity, is_active:s.is_active,
+      booking_channel:channel, resource_group:s.resource_group, reserved_count:used,
+      remaining:remaining, is_full:remaining !== null && remaining <= 0,
+      bullets:s.bullets, overview:s.overview, visible_to_staff:visible,
+      can_book:visible, can_cancel:true
+    };
+  });
+
+  const reservations = [], reservedByApp = {};
+  for (let i = 1; i < resRows.length; i++) {
+    if (String(resRows[i][RES_COL.status]) !== RES_STATUS_RESERVED) continue;
+    const appId = String(resRows[i][RES_COL.appId]);
+    if (!reservedByApp[appId]) reservedByApp[appId] = [];
+    reservedByApp[appId].push(String(resRows[i][RES_COL.sessionId]).trim());
+    const info = appInfo[appId] || {salon_name:'(申込が見つかりません)',staff_name:'',phone:'',tantou:'',app_status:''};
+    reservations.push({
+      res_id:String(resRows[i][RES_COL.id]), app_id:appId,
+      session_id:String(resRows[i][RES_COL.sessionId]).trim(), created_at:String(resRows[i][RES_COL.createdAt]),
+      salon_name:info.salon_name, staff_name:info.staff_name, phone:info.phone,
+      tantou:info.tantou, app_status:info.app_status
+    });
+  }
+
+  const revisionIndex = _bookingRevisionIndex(resRows, operationRows), byApp = {};
+  Object.keys(appInfo).forEach(function (appId) {
+    const mine = reservedByApp[appId] || [];
+    const revision = revisionIndex[appId] || ('0:' + _bookingHash([]).slice(0,24));
+    byApp[appId] = {
+      reserved:mine, booking_revision:revision, app_status:appInfo[appId].app_status,
+      editable:appCount[appId] === 1 && appInfo[appId].app_status !== 'cancelled'
+    };
+  });
+  return {
+    state:'ready', error:'', captured_at:capturedAt, booking_open:bookingOpen,
+    sessions:sessions, reservations:reservations, by_app:byApp
+  };
+}
+
+// 社員ページの一覧・設定・予約snapshotを1往復で返す。業務データは一切書き換えない。
+function adminBootstrap(data) {
+  const started = Date.now();
+  const authStarted = Date.now();
+  const auth = _requireSession(data);
+  const authMs = Date.now() - authStarted;
+  if (!auth.ok) return _err(auth.error);
+  _checkProps();
+
+  const includeApplications = data.include_applications !== false;
+  const ssOpenStarted = Date.now();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const spreadsheetOpenMs = Date.now() - ssOpenStarted;
+  let cfgRows = [], configReadMs = 0;
+  if (includeApplications) {
+    const cfgSh = ss.getSheetByName(SHEET_CONFIG);
+    if (!cfgSh) return _err('ADMIN_SCHEMA');
+    const cfgStarted = Date.now();
+    cfgRows = cfgSh.getDataRange().getValues();
+    configReadMs = Date.now() - cfgStarted;
+  }
+
+  let appRows = [], resRows = [], sessionRows = [], operationRows = [];
+  let bookingOpen = false, capturedAt = null, bookingRowsReady = false;
+  const timing = {applications_read_ms:0,reservations_read_ms:0,sessions_read_ms:0,operations_read_ms:0,lock_wait_ms:0,lock_hold_ms:0,build_response_ms:0};
+  const lock = LockService.getScriptLock();
+  const lockStarted = Date.now();
+  const locked = lock.tryLock(2000);
+  timing.lock_wait_ms = Date.now() - lockStarted;
+  let booking = _adminBookingUnavailable('LOCK_BUSY');
+  if (locked) {
+    const holdStarted = Date.now();
+    try {
+      let t = Date.now();
+      const appSh = ss.getSheetByName(SHEET_APPLICATIONS);
+      if (!appSh) return _err('ADMIN_SCHEMA');
+      appRows = appSh.getDataRange().getValues();
+      timing.applications_read_ms = Date.now() - t;
+      if (!appRows.length || String((appRows[0] || [])[COL_TANTOU - 1] || '').trim() !== 'tantou') return _err('ADMIN_SCHEMA');
+
+      t = Date.now();
+      const resSh = ss.getSheetByName(SHEET_RESERVATIONS);
+      resRows = resSh ? resSh.getDataRange().getValues() : [];
+      timing.reservations_read_ms = Date.now() - t;
+      t = Date.now();
+      const sessionSh = ss.getSheetByName(SHEET_SESSIONS);
+      sessionRows = sessionSh ? sessionSh.getDataRange().getValues() : [];
+      timing.sessions_read_ms = Date.now() - t;
+      t = Date.now();
+      const operationSh = ss.getSheetByName(BOOKING_LOG);
+      operationRows = operationSh ? operationSh.getDataRange().getValues() : [];
+      timing.operations_read_ms = Date.now() - t;
+      bookingOpen = _bookingOpen();
+      capturedAt = new Date().toISOString();
+      bookingRowsReady = true;
+    } finally {
+      timing.lock_hold_ms = Date.now() - holdStarted;
+      lock.releaseLock();
+    }
+  } else {
+    const t = Date.now();
+    const appSh = ss.getSheetByName(SHEET_APPLICATIONS);
+    if (!appSh) return _err('ADMIN_SCHEMA');
+    appRows = appSh.getDataRange().getValues();
+    timing.applications_read_ms = Date.now() - t;
+    if (!appRows.length || String((appRows[0] || [])[COL_TANTOU - 1] || '').trim() !== 'tantou') return _err('ADMIN_SCHEMA');
+  }
+
+  // ロック中は整合した行配列の取得だけに限定し、集計・ハッシュ計算は解放後に行う。
+  if (bookingRowsReady) {
+    const buildStarted = Date.now();
+    booking = _adminBookingSnapshot(appRows, resRows, sessionRows, operationRows, bookingOpen, capturedAt);
+    timing.build_response_ms = Date.now() - buildStarted;
+  }
+
+  const list = includeApplications ? _applicationListFromRows(appRows) : null;
+  const result = {
+    schema_version:1, server_version:VERSION,
+    viewer:auth.session.name || auth.session.user_id || '', booking:booking
+  };
+  if (includeApplications) {
+    result.total = list.length;
+    result.tantou_list = _parseTantouList(_configFromRows(cfgRows));
+    result.business_types = BUSINESS_TYPE_OPTIONS;
+    result.applications = list;
+  }
+  if (data.diagnostics === true) result.diagnostics = {
+    contract_version:1, auth_ms:authMs, auth_cache_hit:null,
+    spreadsheet_open_ms:spreadsheetOpenMs, config_read_ms:configReadMs,
+    applications_read_ms:timing.applications_read_ms, reservations_read_ms:timing.reservations_read_ms,
+    sessions_read_ms:timing.sessions_read_ms, operations_read_ms:timing.operations_read_ms,
+    lock_wait_ms:timing.lock_wait_ms, lock_hold_ms:timing.lock_hold_ms, build_response_ms:timing.build_response_ms,
+    recovery_ms:0,
+    applications_read_count:appRows.length?1:0, reservations_read_count:resRows.length?1:0,
+    sessions_read_count:sessionRows.length?1:0, operations_read_count:operationRows.length?1:0,
+    application_rows:Math.max(0,appRows.length-1), reservation_rows:Math.max(0,resRows.length-1),
+    session_rows:Math.max(0,sessionRows.length-1), operation_rows:Math.max(0,operationRows.length-1),
+    prepared_operations:operationRows.slice(1).filter(function(r){return String(r[4])==='prepared';}).length,
+    total_ms:Date.now() - started
+  };
+  return _ok(result);
+}
+
+// 申込一覧を返す（doPost: action=listApplications）。data: { session_token }
+// 🔴 絞り込み・集計は画面側で行う（件数が数百なので全件返して即時フィルタするほうが速く、
+//    GAS側の分岐も増えない）。ticket_token は返さない（入場パスの鍵そのものなので一覧に不要）。
+function listApplications(data) {
+  const auth = _requireSession(data);
+  if (!auth.ok) return _err(auth.error);
+  _checkProps();
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh = _ensureTantouColumn(_getSheet(ss, SHEET_APPLICATIONS));
+  const rows = sh.getDataRange().getValues();
+  const cfg  = _getConfig();
+
+  const list = _applicationListFromRows(rows);
 
   return _ok({
     total:            list.length,
@@ -5076,6 +5309,10 @@ function _bookingRevision(ss, appId) {
     .map(function (r) { return [String(r[0]),String(r[2]),String(r[4])]; });
   return n + ':' + _bookingHash(mine).slice(0,24);
 }
+function _bookingRevisionFromRows(resRows, operationRows, appId) {
+  const index = _bookingRevisionIndex(resRows, operationRows);
+  return index[appId] || ('0:' + _bookingHash([]).slice(0,24));
+}
 function _bookingResult(error) {
   return {reserved:[],added:[],full:[],invalid:[],conflict:[],cancelled:[],error:error || ''};
 }
@@ -5185,9 +5422,34 @@ function _bookingWrite(ss, appId, wantIds, opts) {
 }
 function _bookingApplicant(ss, appId) {
   const rows=ss.getSheetByName(SHEET_APPLICATIONS).getDataRange().getValues();
+  return _bookingApplicantFromRows(rows,appId);
+}
+function _bookingApplicantFromRows(rows, appId) {
   const found=rows.slice(1).filter(function(r){return String(r[0])===String(appId);});
   if(found.length!==1) return null;
   const r=found[0];return {app_id:String(r[0]),salon_name:String(r[4]),staff_name:String(r[5]),status:String(r[17])};
+}
+function _bookingViewFromRows(appRows,resRows,sessionRows,operationRows,appId,actorKind,bookingOpen) {
+  const reserved=_reservedSessionIdsOf(resRows,appId),cancelled=_cancelledAppIdSet(appRows);
+  const counts=_countReserved(resRows,cancelled),all=_sessionsFromRows(sessionRows),actor=actorKind||'customer';
+  const sessions=all.filter(function(s){
+    const channel=_bookingChannel(s),visible=!!(s.is_active&&bookingOpen&&(channel==='public'||channel==='staff'));
+    return visible||reserved.indexOf(s.session_id)>=0;
+  }).map(function(s){
+    const used=_capacityUsed(s,counts,all),remaining=s.capacity===null?null:Math.max(0,s.capacity-used),channel=_bookingChannel(s);
+    return {
+      session_id:s.session_id,slot:s.slot,title:s.title,speaker:s.speaker,room:s.room,
+      starts_at:s.starts_at,ends_at:s.ends_at,
+      can_book:!!(s.is_active&&bookingOpen&&(channel==='public'||(channel==='staff'&&actor==='staff'))),
+      can_cancel:actor==='staff'||channel==='public',booking_channel:channel,resource_group:s.resource_group,
+      capacity:s.capacity,remaining:remaining,is_full:remaining!==null&&remaining<=0,
+      bullets:s.bullets,overview:s.overview
+    };
+  });
+  return {
+    app_id:appId,sessions:sessions,reserved:reserved,
+    booking_revision:_bookingRevisionFromRows(resRows,operationRows,appId),booking_open:bookingOpen
+  };
 }
 function _bookingView(ss,appId,actorKind) {
   // 表示内容と版数を同じ時点で読む。途中に他画面の保存を挟んで取りこぼさない。
@@ -5201,9 +5463,27 @@ function _bookingView(ss,appId,actorKind) {
 }
 function staffGetReservations(data) {
   const auth=_requireSession(data);if(!auth.ok)return _err(auth.error);
-  const ss=SpreadsheetApp.openById(SPREADSHEET_ID), app=_bookingApplicant(ss,String(data.app_id||''));
-  if(!app)return _err('APP_NOT_FOUND');
-  return _ok(Object.assign(_bookingView(ss,app.app_id,'staff'),{applicant:app}));
+  const ss=SpreadsheetApp.openById(SPREADSHEET_ID),appId=String(data.app_id||'');
+  const lock=LockService.getScriptLock();if(!lock.tryLock(10000))return _err('LOCK_BUSY');
+  try {
+    const logSh=ss.getSheetByName(BOOKING_LOG);
+    if(!logSh)return _err('BOOKING_NOT_READY');
+    let operationRows=logSh.getDataRange().getValues();
+    if(JSON.stringify(operationRows[0].slice(0,BOOKING_LOG_HEADERS.length))!==JSON.stringify(BOOKING_LOG_HEADERS))return _err('BOOKING_SCHEMA');
+    if(operationRows.slice(1).some(function(r){return String(r[4])==='prepared';})){
+      _bookingRecover(ss);
+      operationRows=logSh.getDataRange().getValues();
+    }
+    const appSh=ss.getSheetByName(SHEET_APPLICATIONS),resSh=ss.getSheetByName(SHEET_RESERVATIONS),sessionSh=ss.getSheetByName(SHEET_SESSIONS);
+    if(!appSh||!resSh||!sessionSh)return _err('BOOKING_NOT_READY');
+    const appRows=appSh.getDataRange().getValues(),resRows=resSh.getDataRange().getValues(),sessionRows=sessionSh.getDataRange().getValues();
+    const app=_bookingApplicantFromRows(appRows,appId);
+    if(!app)return _err('APP_NOT_FOUND');
+    return _ok(Object.assign(_bookingViewFromRows(appRows,resRows,sessionRows,operationRows,app.app_id,'staff',_bookingOpen()),{applicant:app}));
+  } catch(e) {
+    Logger.log('staffGetReservations error: '+e);
+    return _err(String(e&&e.message||e)==='BOOKING_RECOVERY_REQUIRED'?'BOOKING_RECOVERY_REQUIRED':'INTERNAL_ERROR');
+  } finally {lock.releaseLock();}
 }
 function staffChangeReservation(data) {
   const auth=_requireSession(data);if(!auth.ok)return _err(auth.error);

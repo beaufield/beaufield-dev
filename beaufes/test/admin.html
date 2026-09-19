@@ -138,6 +138,77 @@
   .versionLine { font-size: 11px; color: #ccc; text-align: center; margin-top: 20px; }
 
   /* ------------------------------------------------------------
+     セミナー・体験会の予約状況
+     コードだけの1行表示にせず、名称・定員・時間枠の状態を見分けられるようにする。
+     ------------------------------------------------------------ */
+  .bookingSummary {
+    margin-bottom: 18px; padding: 18px 20px; border-radius: 12px;
+    background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  }
+  .bookingSummaryHead { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+  .bookingSummaryTitle { margin: 0; color: var(--main-dark); font-size: 18px; }
+  .bookingSummaryUpdated { color: #64748b; font-size: 11px; white-space: nowrap; }
+  .bookingSummarySection + .bookingSummarySection { margin-top: 18px; }
+  .bookingSummarySectionTitle { margin: 0 0 9px; color: #334155; font-size: 14px; }
+  .bookingSeminarGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .bookingSeminarCard {
+    min-width: 0;
+    padding: 13px; border: 1px solid #bae6fd; border-left: 5px solid #0e7490;
+    border-radius: 10px; background: #f0f9ff;
+  }
+  .bookingSeminarCard.full { border-color: #fecaca; border-left-color: #dc2626; background: #fef2f2; }
+  .bookingProgramMeta { color: #64748b; font-size: 11px; font-weight: bold; }
+  .bookingProgramName { margin: 3px 0 9px; color: #0f172a; font-size: 14px; font-weight: bold; line-height: 1.5; }
+  .bookingSeminarNumbers { display: flex; align-items: baseline; gap: 5px; }
+  .bookingSeminarNumbers strong { color: #0e7490; font-size: 26px; line-height: 1; }
+  .bookingSeminarCard.full .bookingSeminarNumbers strong { color: #dc2626; }
+  .bookingSeminarNumbers span { color: #475569; font-size: 13px; }
+  .bookingCapacityBar { height: 7px; margin-top: 9px; overflow: hidden; border-radius: 999px; background: #dbeafe; }
+  .bookingCapacityBar > span { display: block; height: 100%; border-radius: inherit; background: #0891b2; }
+  .bookingSeminarCard.full .bookingCapacityBar > span { background: #dc2626; }
+  .bookingRemaining { margin-top: 6px; color: #475569; font-size: 12px; font-weight: bold; }
+  .bookingExperienceGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+  .bookingExperienceCard { padding: 12px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; }
+  .bookingExperienceHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
+  .bookingExperienceName { margin: 0; color: #0f172a; font-size: 13px; line-height: 1.5; }
+  .bookingChannelBadge { flex: none; padding: 2px 6px; border-radius: 999px; background: #fef3c7; color: #92400e; font-size: 10px; font-weight: bold; }
+  .bookingSlotGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .bookingSlot {
+    min-width: 0; padding: 8px; border: 1px solid #a7f3d0; border-radius: 8px;
+    background: #ecfdf5; color: #065f46;
+  }
+  .bookingSlot.booked { border-color: #fca5a5; background: #fef2f2; color: #991b1b; }
+  .bookingSlot.shared { border-color: #fcd34d; background: #fffbeb; color: #92400e; }
+  .bookingSlotTime { display: block; font-size: 12px; font-weight: bold; white-space: nowrap; }
+  .bookingSlotState { display: block; margin-top: 3px; font-size: 11px; font-weight: bold; }
+  .bookingLegend { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 10px; color: #64748b; font-size: 11px; }
+  .bookingLegendItem::before { content: ''; display: inline-block; width: 9px; height: 9px; margin-right: 4px; border-radius: 3px; vertical-align: -1px; }
+  .bookingLegendItem.vacant::before { background: #6ee7b7; }
+  .bookingLegendItem.booked::before { background: #f87171; }
+  .bookingLegendItem.shared::before { background: #fbbf24; }
+  .bookingSummaryMessage { margin: 0; color: #64748b; font-size: 13px; }
+  .bookingSummaryMessage.error { color: var(--error); }
+  @media (max-width: 640px) {
+    .bookingSummary { padding: 12px; }
+    .bookingSummaryHead { display: block; }
+    .bookingSummaryUpdated { display: block; margin-top: 4px; }
+    .bookingSeminarGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+    .bookingSeminarCard { padding: 9px; border-left-width: 4px; }
+    .bookingProgramMeta { font-size: 9px; }
+    .bookingProgramName { margin: 3px 0 7px; font-size: 12px; line-height: 1.4; }
+    .bookingSeminarNumbers strong { font-size: 22px; }
+    .bookingSeminarNumbers span { font-size: 11px; }
+    .bookingCapacityBar { margin-top: 7px; }
+    .bookingRemaining { margin-top: 5px; font-size: 11px; }
+    .bookingExperienceCard { padding: 9px; }
+    .bookingSlotGrid { gap: 4px; }
+    .bookingSlot { padding: 7px 5px; }
+    .bookingSlotTime { font-size: 10px; }
+    .bookingSlotState { font-size: 10px; }
+    .bookingExperienceGrid { grid-template-columns: 1fr; }
+  }
+
+  /* ------------------------------------------------------------
      担当別サマリー（クリックでその担当に絞り込む）
      ------------------------------------------------------------ */
   /* 🔴 スマホで必ず横3列になるよう grid で列数を固定する
@@ -292,8 +363,8 @@
   }
   .modalCard .ghostBtn { background: #fff; color: #10617c; border: 1px solid #10617c; }
 </style>
-<link rel="stylesheet" href="../lib/booking-v1.3.1.css">
-<script src="../lib/booking-v1.3.2.js"></script>
+<link rel="stylesheet" href="../lib/booking-v1.3.2.css">
+<script src="../lib/booking-v1.4.0.js"></script>
 </head>
 <body>
 <div id="testEnvBar">
@@ -537,7 +608,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.8.2';
+const APP_VERSION = '0.10.0';
 const GAS_URL = 'TEST_ENV_NO_GAS';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
@@ -573,9 +644,9 @@ function getSession() {
 // ------------------------------------------------------------
 // GASへのPOST
 // ------------------------------------------------------------
-async function postOnce(params) {
+async function postOnce(params, timeoutMs) {
   const ctrl  = new AbortController();
-  const timer = setTimeout(function () { ctrl.abort(); }, FETCH_TIMEOUT_MS);
+  const timer = setTimeout(function () { ctrl.abort(); }, timeoutMs || FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(GAS_URL, {
       method: 'POST',
@@ -595,15 +666,21 @@ async function postOnce(params) {
   }
 }
 
-async function postWithRetry(params, onProgress) {
+async function postWithRetry(params, onProgress, options) {
+  options = options || {};
+  const attempts = options.attempts || MAX_ATTEMPTS;
+  const timeoutMs = options.timeoutMs || FETCH_TIMEOUT_MS;
+  const waits = options.waits || RETRY_WAIT_MS;
   let lastErr = null;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     if (attempt > 0) {
-      if (onProgress) onProgress(attempt + 1, MAX_ATTEMPTS);
-      await sleep(RETRY_WAIT_MS[attempt - 1] || 8000);
+      if (onProgress) onProgress(attempt + 1, attempts);
+      await sleep(waits[attempt - 1] || 8000);
     }
     try {
-      const json = await postOnce(params);
+      const json = await postOnce(params, timeoutMs);
+      const serverError = String((json && json.error) || '');
+      if (options.stopOnUnknownAction && serverError === '不明なアクション: adminBootstrap') return json;
       if (json && json.success === false && TRANSPORT_ERROR_PATTERN.test(String(json.error || ''))) {
         lastErr = json.error;
         continue; // 輸送路の破損とみなしリトライ
@@ -614,6 +691,10 @@ async function postWithRetry(params, onProgress) {
     }
   }
   throw new Error(lastErr || 'UNKNOWN');
+}
+
+function postReadWithRetry(params, onProgress, options) {
+  return postWithRetry(params, onProgress, Object.assign({attempts:2,timeoutMs:12000,waits:[600]}, options || {}));
 }
 
 // ------------------------------------------------------------
@@ -780,47 +861,89 @@ function makeRowSelect(app) {
 // 取得
 // ------------------------------------------------------------
 async function fetchApplications() {
+  if (adminFetchInFlight) return adminFetchInFlight;
+  const generation = ++adminRequestGeneration;
+  const requestStartedAt = Date.now();
   const btn = el('fetchBtn');
   el('fetchError').style.display = 'none';
   el('fetchWarning').style.display = 'none';
   btn.disabled = true;
   el('fetchStatusLine').textContent = '取得中…';
 
-  try {
+  adminFetchInFlight = (async function () {
+   try {
     let data;
     if (isMock()) {
       data = generateMockData();
       await sleep(200);
+      if (generation !== adminRequestGeneration) return;
+      applyFetchResult(data);
+      applyBookingSnapshot(mockAdminBookingSnapshot(data), {
+        generation:generation, requestStartedAt:requestStartedAt, sessionToken:'mock', viewerId:'mock'
+      });
+      return;
     } else {
       const session = getSession();
       if (!session) { showGate(LOGIN_REQUIRED_HTML); return; }
-      // 🔴 GASの doPost は POST本文を `data` パラメータのJSONからしか読まない（Code.gs の doPost）。
-      //    session_token をフラットなフォーム項目で送ると、サーバーには一切届かず必ず
-      //    SESSION_INVALID になる（v0.1.1までの実際のバグ）。この形を崩さないこと。
-      const json = await postWithRetry(
-        { action: 'listApplications', data: JSON.stringify({ session_token: session.token || '' }) },
-        function (n, max) { el('fetchStatusLine').textContent = '再試行中… (' + n + '/' + max + ')'; }
-      );
-      if (!json || json.success !== true) {
-        const err = String((json && json.error) || 'UNKNOWN');
-        if (showAuthGate(err)) return;
-        if (err === 'AUTH_TRANSIENT') {
-          throw new Error('認証シートを読めませんでした（Google側の一時的な不調の可能性）。少し待ってからもう一度お試しください。');
-        }
-        throw new Error(err);
+      let json;
+      if (adminBootstrapSupported !== false) {
+        json = await postReadWithRetry(
+          {action:'adminBootstrap',data:JSON.stringify({session_token:session.token || '',include_applications:true})},
+          function (n,max) { el('fetchStatusLine').textContent='再試行中… ('+n+'/'+max+')'; },
+          {stopOnUnknownAction:true}
+        );
+        if (json && json.success === false && String(json.error || '') === '不明なアクション: adminBootstrap') {
+          adminBootstrapSupported = false;
+        } else if (json && json.success === true && validAdminBootstrap(json.data, true)) {
+          adminBootstrapSupported = true;
+          if (generation !== adminRequestGeneration) return;
+          applyFetchResult(json.data);
+          applyBookingSnapshot(json.data.booking, {
+            generation:generation, requestStartedAt:requestStartedAt,
+            sessionToken:session.token || '', viewerId:session.user_id || ''
+          });
+          return;
+        } else if (json && json.success === true) {
+          throw new Error('ADMIN_BOOTSTRAP_SCHEMA');
+        } else throwAdminReadError(json);
       }
-      data = json.data;
-    }
 
-    applyFetchResult(data);
-    loadBookingSummary();
+      // 旧GASとの切替時間中だけ使う後方互換経路。即時編集には使わない。
+      json = await postReadWithRetry(
+        {action:'listApplications',data:JSON.stringify({session_token:session.token || ''})},
+        function (n,max) { el('fetchStatusLine').textContent='再試行中… ('+n+'/'+max+')'; }
+      );
+      if (!json || json.success !== true) throwAdminReadError(json);
+      if (generation !== adminRequestGeneration) return;
+      data = json.data;
+      applyFetchResult(data);
+      await loadBookingSummary({legacyOnly:true,generation:generation,requestStartedAt:requestStartedAt,session:session});
+      return;
+    }
   } catch (e) {
     el('fetchError').textContent = '取得に失敗しました: ' + (e && e.message ? e.message : String(e));
     el('fetchError').style.display = 'block';
     el('fetchStatusLine').textContent = '';
   } finally {
-    btn.disabled = false;
+    if (generation === adminRequestGeneration) btn.disabled = false;
+    adminFetchInFlight = null;
   }
+  })();
+  return adminFetchInFlight;
+}
+
+function throwAdminReadError(json) {
+  const err = String((json && json.error) || 'UNKNOWN');
+  if (showAuthGate(err)) throw new Error(err);
+  if (err === 'AUTH_TRANSIENT') throw new Error('認証シートを読めませんでした（Google側の一時的な不調の可能性）。少し待ってからもう一度お試しください。');
+  throw new Error(err);
+}
+
+function validAdminBootstrap(data, requireApplications) {
+  if (!data || data.schema_version !== 1 || !data.booking || !['ready','unavailable'].includes(data.booking.state)) return false;
+  if (requireApplications && (!Array.isArray(data.applications) || !Array.isArray(data.tantou_list) || !Array.isArray(data.business_types))) return false;
+  const b = data.booking;
+  return Array.isArray(b.sessions) && Array.isArray(b.reservations) && b.by_app && typeof b.by_app === 'object';
 }
 
 function applyFetchResult(data) {
@@ -1457,8 +1580,8 @@ function renderSummary() {
 // ------------------------------------------------------------
 const COLUMNS = [
   { key: '',              label: '',        sortable: false },
-  { key: 'app_id',        label: '受付番号', sortable: true },
   { key: 'created_key',   label: '申込日',   sortable: true },
+  { key: '__booking',     label: '予約',     sortable: false },
   { key: 'salon_name',    label: 'サロン名', sortable: true },
   { key: 'staff_name',    label: 'お名前',   sortable: true },
   { key: 'business_type', label: '業態',     sortable: true },
@@ -1468,6 +1591,7 @@ const COLUMNS = [
   { key: 'email',         label: 'メール',   sortable: false },
   { key: 'referrer',      label: '紹介者',   sortable: false },
   { key: 'note',          label: '備考',     sortable: false },
+  { key: 'app_id',        label: '受付番号', sortable: true },
   { key: 'status',        label: '状態',     sortable: true },
   { key: '__ops',         label: '操作',     sortable: false }   // 🆕 v0.3.0 当日機能
 ];
@@ -1513,6 +1637,78 @@ function tdText(text, cls) {
   return td;
 }
 
+function listDateLabel(value) {
+  const text = String(value || '');
+  const match = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/.exec(text);
+  return match ? Number(match[2]) + '/' + Number(match[3]) : text;
+}
+
+function cachedBookingView(appId) {
+  if (!bookingSummaryData) return null;
+  const entry = bookingSummaryData.by_app && bookingSummaryData.by_app[appId];
+  const authoritativeContract = bookingSummaryData.state === 'ready' && !!entry;
+  const reservations = Array.isArray(bookingSummaryData.reservations) ? bookingSummaryData.reservations : [];
+  const reserved = entry && Array.isArray(entry.reserved) ? entry.reserved.slice() : reservations
+      .filter(r => r.app_id === appId && r.app_status !== 'cancelled')
+      .map(r => String(r.session_id || '')).filter(Boolean);
+  const reservedSet = new Set(reserved);
+  const sessions = (Array.isArray(bookingSummaryData.sessions) ? bookingSummaryData.sessions : [])
+    .filter(s => authoritativeContract
+      ? (s.visible_to_staff === true || reservedSet.has(String(s.session_id || '')))
+      : (s.is_active || reservedSet.has(String(s.session_id || ''))))
+    .map(s => Object.assign({}, s));
+  return {
+    data:{
+      sessions:sessions, reserved:reserved,
+      booking_revision:entry ? String(entry.booking_revision || '') : '',
+      booking_open:bookingSummaryData.booking_open === true
+    },
+    authoritative:!!(entry && entry.editable === true && entry.booking_revision && isBookingSnapshotFresh())
+  };
+}
+
+function isBookingSnapshotFresh() {
+  if (!bookingSnapshotMeta || bookingSummaryData.state !== 'ready') return false;
+  if (Date.now() - bookingSnapshotMeta.requestStartedAt > 30000 || document.visibilityState === 'hidden') return false;
+  const session = getSession();
+  if (!session) return false;
+  return String(session.token || '') === bookingSnapshotMeta.sessionToken &&
+    String(session.user_id || '') === bookingSnapshotMeta.viewerId;
+}
+
+function openBookingForApp(a) {
+  const cached = cachedBookingView(a.app_id);
+  bookingApi.staff({
+    url:GAS_URL,
+    app:a,
+    initialData:cached ? cached.data : null,
+    initialDataAuthoritative:cached ? cached.authoritative : false,
+    sessionToken:()=>{const session=getSession();return session ? session.token : '';},
+    onAuthError:code=>{bookingSnapshotMeta=null;bookingSummaryData=null;showAuthGate(code);},
+    changed:()=>{bookingSnapshotMeta=null;loadBookingSummary();}
+  });
+}
+
+function setBookingButtonLabel(button, booked) {
+  button.textContent = button.dataset.bookingCompact === '1'
+    ? (booked ? '予約済' : '予約')
+    : (booked ? '予約済み・変更' : 'セミナー予約');
+}
+
+function makeBookingButton(a, compact) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'booking-op';
+  button.dataset.bookingApp = a.app_id;
+  button.dataset.bookingCompact = compact ? '1' : '0';
+  setBookingButtonLabel(button, bookingReservedApps.has(a.app_id));
+  button.title = 'セミナー・体験会の予約を確認・変更する';
+  button.setAttribute('aria-label', a.staff_name + '様のセミナー・体験会予約を確認・変更する');
+  button.disabled = a.status === 'cancelled';
+  button.addEventListener('click', function () { openBookingForApp(a); });
+  return button;
+}
+
 function renderTable() {
   renderHead();
   const body = el('listBody');
@@ -1540,8 +1736,14 @@ function renderTable() {
     tdCb.appendChild(cb);
     tr.appendChild(tdCb);
 
-    tr.appendChild(tdText(a.app_id));
-    tr.appendChild(tdText(a.created_key));
+    tr.appendChild(tdText(listDateLabel(a.created_key)));
+
+    // 申込日を見た直後に予約操作へ進める位置に置く。
+    const tdBooking = document.createElement('td');
+    tdBooking.className = 'opsCell bookingListCell';
+    tdBooking.appendChild(makeBookingButton(a, true));
+    tr.appendChild(tdBooking);
+
     tr.appendChild(tdText(a.salon_name, 'wrapCell'));
     tr.appendChild(tdText(a.staff_name));
     tr.appendChild(tdText(a.business_type));
@@ -1563,6 +1765,7 @@ function renderTable() {
     tr.appendChild(tdText(a.email, 'wrapCell'));
     tr.appendChild(tdText(a.referrer));
     tr.appendChild(tdText(a.note, 'wrapCell'));
+    tr.appendChild(tdText(a.app_id));
 
     const tdS = document.createElement('td');
     if (a.status !== 'confirmed') {
@@ -1583,14 +1786,7 @@ function renderTable() {
     // 🆕 v0.3.0 当日の操作（予備名札の割当・パスの再送）
     const tdOps = document.createElement('td');
     tdOps.className = 'opsCell';
-    const bBooking = document.createElement('button');
-    bBooking.type = 'button'; bBooking.className = 'booking-op';
-    bBooking.textContent = bookingReservedApps.has(a.app_id) ? '予約済み・変更' : 'セミナー予約';
-    bBooking.dataset.bookingApp = a.app_id;
-    bBooking.disabled = a.status === 'cancelled';
-    bBooking.addEventListener('click', function () {
-      bookingApi.staff({url:GAS_URL,app:a,sessionToken:()=>{const session=getSession();return session ? session.token : '';},changed:()=>loadBookingSummary()});
-    });
+    const bBooking = makeBookingButton(a, false);
     tdOps.appendChild(bBooking);
 
 
@@ -2294,26 +2490,251 @@ function init() {
 }
 
 const bookingReservedApps = new Set();
+let bookingSummaryData = null;
+let bookingSnapshotMeta = null;
+let adminBootstrapSupported = null;
+let adminRequestGeneration = 0;
+let adminFetchInFlight = null;
 init();
 
-// 枠別件数と各申込者の予約状況。予約APIの失敗で一覧本体を隠さない。
-async function loadBookingSummary() {
-  let box=document.getElementById('bookingSummary');
-  if(!box){box=document.createElement('p');box.id='bookingSummary';document.getElementById('listPanel').prepend(box);}
+// セミナーは人数、体験会は時間枠ごとの予約有無を表示する。
+// 予約APIの失敗で申込一覧本体を隠さない。
+function ensureBookingSummaryBox() {
+  let box = document.getElementById('bookingSummary');
+  if (box) return box;
+  box = document.createElement('section');
+  box.id = 'bookingSummary';
+  box.className = 'bookingSummary';
+  box.setAttribute('aria-live', 'polite');
+  document.getElementById('listPanel').prepend(box);
+  return box;
+}
+
+function bookingTimeLabel(session) {
+  if (!session.starts_at) return '時間未設定';
+  return session.starts_at + (session.ends_at ? '〜' + session.ends_at : '〜');
+}
+
+function bookingProgramName(session) {
+  const titleIsTime = !!(session.starts_at && String(session.title || '').indexOf(session.starts_at) >= 0);
+  return (titleIsTime && session.slot) ? session.slot : (session.title || session.slot || session.session_id);
+}
+
+function appendBookingText(parent, tag, text, className) {
+  const node = document.createElement(tag);
+  node.className = className || '';
+  node.textContent = text;
+  parent.appendChild(node);
+  return node;
+}
+
+function renderBookingSummary(box, data) {
+  const sessions = Array.isArray(data && data.sessions) ? data.sessions : [];
+  const reservations = Array.isArray(data && data.reservations) ? data.reservations : [];
+  const active = sessions.filter(s => s.is_active && s.booking_channel !== 'closed');
+  box.replaceChildren();
+
+  const head = document.createElement('div');
+  head.className = 'bookingSummaryHead';
+  appendBookingText(head, 'h2', 'セミナー・体験会 予約状況', 'bookingSummaryTitle');
+  appendBookingText(head, 'span', '最新の集計', 'bookingSummaryUpdated');
+  box.appendChild(head);
+
+  if (!active.length) {
+    appendBookingText(box, 'p', '現在表示できる予約枠はありません。', 'bookingSummaryMessage');
+    return;
+  }
+
+  const validReservations = reservations.filter(r => r.app_status !== 'cancelled');
+  const directCounts = {};
+  validReservations.forEach(r => {
+    const id = String(r.session_id || '');
+    if (id) directCounts[id] = (directCounts[id] || 0) + 1;
+  });
+
+  const seminars = active.filter(s => String(s.session_id || '').startsWith('S'));
+  const experiences = active.filter(s => !String(s.session_id || '').startsWith('S'));
+
+  if (seminars.length) {
+    const section = document.createElement('section');
+    section.className = 'bookingSummarySection';
+    appendBookingText(section, 'h3', 'セミナー（予約数／定員）', 'bookingSummarySectionTitle');
+    const grid = document.createElement('div');
+    grid.className = 'bookingSeminarGrid';
+    seminars.forEach(s => {
+      const reserved = Number(s.reserved_count || 0);
+      const capacity = Number(s.capacity || 0);
+      const remaining = Math.max(0, capacity - reserved);
+      const full = capacity > 0 && remaining === 0;
+      const card = document.createElement('article');
+      card.className = 'bookingSeminarCard' + (full ? ' full' : '');
+      appendBookingText(card, 'div', (s.slot || 'セミナー') + ' ・ ' + bookingTimeLabel(s), 'bookingProgramMeta');
+      appendBookingText(card, 'h4', bookingProgramName(s), 'bookingProgramName');
+      const numbers = document.createElement('div');
+      numbers.className = 'bookingSeminarNumbers';
+      appendBookingText(numbers, 'strong', String(reserved), '');
+      appendBookingText(numbers, 'span', '／ ' + capacity + '名', '');
+      card.appendChild(numbers);
+      const bar = document.createElement('div');
+      bar.className = 'bookingCapacityBar';
+      bar.setAttribute('role', 'progressbar');
+      bar.setAttribute('aria-label', bookingProgramName(s) + 'の予約数');
+      bar.setAttribute('aria-valuemin', '0');
+      bar.setAttribute('aria-valuemax', String(capacity));
+      bar.setAttribute('aria-valuenow', String(reserved));
+      const fill = document.createElement('span');
+      fill.style.width = (capacity > 0 ? Math.min(100, reserved / capacity * 100) : 0) + '%';
+      bar.appendChild(fill);
+      card.appendChild(bar);
+      appendBookingText(card, 'div', full ? '満席' : '残り ' + remaining + '名', 'bookingRemaining');
+      grid.appendChild(card);
+    });
+    section.appendChild(grid);
+    box.appendChild(section);
+  }
+
+  if (experiences.length) {
+    const section = document.createElement('section');
+    section.className = 'bookingSummarySection';
+    appendBookingText(section, 'h3', '体験会（時間枠ごとの状況）', 'bookingSummarySectionTitle');
+    const grid = document.createElement('div');
+    grid.className = 'bookingExperienceGrid';
+    const groups = new Map();
+    experiences.forEach(s => {
+      const name = bookingProgramName(s);
+      if (!groups.has(name)) groups.set(name, []);
+      groups.get(name).push(s);
+    });
+    groups.forEach((group, name) => {
+      group.sort((a, b) => String(a.starts_at || '').localeCompare(String(b.starts_at || '')));
+      const card = document.createElement('article');
+      card.className = 'bookingExperienceCard';
+      const cardHead = document.createElement('div');
+      cardHead.className = 'bookingExperienceHead';
+      appendBookingText(cardHead, 'h4', name, 'bookingExperienceName');
+      if (group.some(s => s.booking_channel === 'staff')) {
+        appendBookingText(cardHead, 'span', '社員受付', 'bookingChannelBadge');
+      }
+      card.appendChild(cardHead);
+      const slots = document.createElement('div');
+      slots.className = 'bookingSlotGrid';
+      group.forEach(s => {
+        const direct = directCounts[s.session_id] || 0;
+        const poolUsed = Number(s.reserved_count || 0);
+        const shared = !!s.resource_group && direct === 0 && poolUsed > 0;
+        const booked = direct > 0 || (!s.resource_group && poolUsed > 0);
+        const slot = document.createElement('div');
+        slot.className = 'bookingSlot' + (booked ? ' booked' : shared ? ' shared' : '');
+        appendBookingText(slot, 'span', bookingTimeLabel(s), 'bookingSlotTime');
+        appendBookingText(slot, 'span', booked ? '● 予約あり' : shared ? '▲ 共有枠使用中' : '○ 空き', 'bookingSlotState');
+        slots.appendChild(slot);
+      });
+      card.appendChild(slots);
+      grid.appendChild(card);
+    });
+    section.appendChild(grid);
+    const legend = document.createElement('div');
+    legend.className = 'bookingLegend';
+    appendBookingText(legend, 'span', '空き', 'bookingLegendItem vacant');
+    appendBookingText(legend, 'span', '予約あり', 'bookingLegendItem booked');
+    appendBookingText(legend, 'span', '同時刻の別機種で予約あり', 'bookingLegendItem shared');
+    section.appendChild(legend);
+    box.appendChild(section);
+  }
+}
+
+function mockAdminBookingSnapshot(data) {
+  const summary = bookingApi.mockStaffSummary();
+  const byApp = {};
+  (data.applications || []).forEach(a=>{
+    byApp[a.app_id] = {
+      reserved:summary.reservations.filter(r=>r.app_id===a.app_id).map(r=>r.session_id),
+      booking_revision:'mock-'+a.app_id, app_status:a.status || 'confirmed', editable:a.status!=='cancelled'
+    };
+  });
+  summary.sessions = summary.sessions.map(s=>Object.assign({},s,{
+    visible_to_staff:true, can_book:true, can_cancel:true,
+    is_full:s.remaining!==null&&s.remaining<=0
+  }));
+  return Object.assign(summary,{
+    state:'ready',error:'',captured_at:new Date().toISOString(),booking_open:true,by_app:byApp
+  });
+}
+
+function applyBookingSnapshot(snapshot, meta) {
+  const box = ensureBookingSummaryBox();
+  if (!snapshot || snapshot.state !== 'ready') {
+    bookingSummaryData = null;
+    bookingSnapshotMeta = null;
+    box.replaceChildren();
+    appendBookingText(box,'p','予約状況を更新できませんでした。各行の「セミナー予約」から再確認できます。','bookingSummaryMessage error');
+    return;
+  }
+  bookingSummaryData = snapshot;
+  bookingSnapshotMeta = Object.assign({},meta,{receivedAt:Date.now()});
+  renderBookingSummary(box,snapshot);
+  bookingReservedApps.clear();
+  snapshot.reservations.filter(r=>r.app_status!=='cancelled').forEach(r=>bookingReservedApps.add(r.app_id));
+  document.querySelectorAll('[data-booking-app]').forEach(b=>{
+    const booked=bookingReservedApps.has(b.dataset.bookingApp);
+    setBookingButtonLabel(b,booked);
+  });
+}
+
+async function loadBookingSummary(options) {
+  options = options || {};
+  const generation = options.generation || ++adminRequestGeneration;
+  const requestStartedAt = options.requestStartedAt || Date.now();
+  const box = ensureBookingSummaryBox();
+  box.replaceChildren();
+  appendBookingText(box, 'p', '予約状況を取得しています…', 'bookingSummaryMessage');
   try {
-    const session=getSession();
-    const json=isMock()?{success:true,data:bookingApi.mockStaffSummary()}:
-      await postWithRetry({action:'listReservations',data:JSON.stringify({session_token:session ? session.token : ''})});
-    if(!json.success)throw new Error('予約集計');
-    const active=json.data.sessions.filter(s=>s.is_active && s.booking_channel!=='closed');
-    box.textContent=active.length?'予約状況：'+active.map(s=>s.session_id+' '+s.reserved_count+' / '+s.capacity).join(' ・ '):'予約枠は準備中です。';
+    const session=options.session || getSession();
+    if(isMock()) {
+      await sleep(30);
+      if(generation!==adminRequestGeneration)return;
+      applyBookingSnapshot(mockAdminBookingSnapshot({applications:state.apps}),{
+        generation:generation,requestStartedAt:requestStartedAt,sessionToken:'mock',viewerId:'mock'
+      });
+      return;
+    }
+    if(!session){showGate(LOGIN_REQUIRED_HTML);return;}
+
+    if(!options.legacyOnly && adminBootstrapSupported!==false){
+      const bootstrap=await postReadWithRetry(
+        {action:'adminBootstrap',data:JSON.stringify({session_token:session.token || '',include_applications:false})},
+        null,{stopOnUnknownAction:true}
+      );
+      if(bootstrap&&bootstrap.success===false&&String(bootstrap.error||'')==='不明なアクション: adminBootstrap'){
+        adminBootstrapSupported=false;
+      }else if(bootstrap&&bootstrap.success===true&&validAdminBootstrap(bootstrap.data,false)){
+        adminBootstrapSupported=true;
+        if(generation!==adminRequestGeneration)return;
+        applyBookingSnapshot(bootstrap.data.booking,{
+          generation:generation,requestStartedAt:requestStartedAt,
+          sessionToken:session.token || '',viewerId:session.user_id || ''
+        });
+        return;
+      }else if(bootstrap&&bootstrap.success===true){
+        throw new Error('ADMIN_BOOTSTRAP_SCHEMA');
+      }else throwAdminReadError(bootstrap);
+    }
+
+    const json=await postReadWithRetry({action:'listReservations',data:JSON.stringify({session_token:session.token || ''})});
+    if(!json||json.success!==true)throwAdminReadError(json);
+    if(generation!==adminRequestGeneration)return;
+    bookingSummaryData=Object.assign({state:'legacy',booking_open:true,by_app:{}},json.data);
+    bookingSnapshotMeta=null;
+    renderBookingSummary(box,bookingSummaryData);
     bookingReservedApps.clear();
     json.data.reservations.filter(r=>r.app_status!=='cancelled').forEach(r=>bookingReservedApps.add(r.app_id));
-    document.querySelectorAll('[data-booking-app]').forEach(b=>{
-      const booked=json.data.reservations.some(r=>r.app_id===b.dataset.bookingApp && r.app_status!=='cancelled');
-      b.textContent=booked?'予約済み・変更':'セミナー予約';
-    });
-  }catch(e){box.textContent='予約状況を取得できませんでした。各行の「セミナー予約」から確認できます。';}
+    document.querySelectorAll('[data-booking-app]').forEach(b=>setBookingButtonLabel(b,bookingReservedApps.has(b.dataset.bookingApp)));
+  }catch(e){
+    if(generation!==adminRequestGeneration)return;
+    bookingSnapshotMeta=null;
+    box.replaceChildren();
+    appendBookingText(box, 'p', '予約状況を取得できませんでした。各行の「セミナー予約」から確認できます。', 'bookingSummaryMessage error');
+  }
 }
 
 </script>
