@@ -1380,7 +1380,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.75.0';
+const APP_VERSION    = 'v1.75.5';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1405,6 +1405,8 @@ let productMaster = [];
 let cartItems     = [];
 let allHistoryOrders  = []; // 履歴全件（フィルタ前）
 let historyDetailCache = {}; // 履歴明細キャッシュ { orderNo: items[] }
+let historyDetailApiMode = null; // null=未確認, true=V2, false=旧action。通信失敗で旧へ落とさない。
+let historyListApiMode = null;   // 一覧も同じ原則。明示的な未対応だけ旧actionへ戻す。
 let productHistory    = {}; // 直近20件発注から構築した商品別最終注文情報 { code/jan: { date, qty, unit } }
 let productHistoryLoaded = false;
 
@@ -1469,7 +1471,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     const savedOrder = sessionStorage.getItem(SS_ORDER);
     if (savedOrder) {
       const o = JSON.parse(savedOrder);
-      if (o && typeof o === 'object') currentOrder = { ...currentOrder, ...o, staff: session.name };
+      if (o && typeof o === 'object') {
+        currentOrder = { ...currentOrder, ...o, staff: session.name };
+        // 保存確認済みだが出力処理が完了する前に再読み込みされた場合、同じ内容を
+        // 新しいrequestIdで再登録しない。保存済みNoと送信IDを復元してから再出力する。
+        savedOrderNo = String(o.savedOrderNo || '').trim() || null;
+        orderRequestId = String(o.orderRequestId || '').trim() || null;
+        revisionBaseOrderNo = String(o.revisionBaseOrderNo || '').trim() || null;
+      }
     }
   } catch(e) {}
   updateCartNavBadge();
@@ -1540,11 +1549,11 @@ const _GAS_PROFILES = {
   normal: { attemptMs: 15000, totalMs: 30000 },
   heavy:  { attemptMs: 30000, totalMs: 60000 }
 };
-const _GAS_LIGHT_ACTIONS = new Set(['getOrderDetail', 'checkOrderByRequestId']);
+const _GAS_LIGHT_ACTIONS = new Set(['getOrderDetail', 'getOrderDetailV2', 'getOrdersV2', 'getCapabilities', 'checkOrderByRequestId']);
 const _GAS_HEAVY_ACTIONS = new Set(['getOrderProposals', 'getProductMaster', 'getOrders', 'getMasters', 'getOrderTemplate']);
 // 読み取りは名前から推定しない。ここに明示したものだけ通信失敗時に自動再試行する。
 const _GAS_READ_RETRYABLE_ACTIONS = new Set([
-  'getMasters', 'getProductMaster', 'getOrders', 'getOrderDetail',
+  'getMasters', 'getProductMaster', 'getOrders', 'getOrdersV2', 'getOrderDetail', 'getOrderDetailV2', 'getCapabilities',
   'getOrderTemplate', 'getOrderProposals', 'checkOrderByRequestId'
 ]);
 
@@ -3241,7 +3250,16 @@ function saveCart() {
 // 発注先が失われ、step-selectから戻る手段が無くなる（唯一の導線 startOrder がカートを消す）
 // という袋小路が起きていた。復帰バナー（renderCartResumeBanner）もこの値を使う
 function saveOrderMeta() {
-  try { sessionStorage.setItem(SS_ORDER, JSON.stringify(currentOrder)); } catch(e) {}
+  // 出力の直前に再読み込み・アプリ中断が起きても、同じ保存済み発注を再出力できるよう
+  // 発注先情報だけでなく、サーバーが確定した発注Noと送信IDも対で保持する。
+  try {
+    sessionStorage.setItem(SS_ORDER, JSON.stringify({
+      ...currentOrder,
+      savedOrderNo: savedOrderNo || '',
+      orderRequestId: orderRequestId || '',
+      revisionBaseOrderNo: revisionBaseOrderNo || ''
+    }));
+  } catch(e) {}
 }
 
 /* ===================================================
@@ -3525,9 +3543,21 @@ const _orderOutboxInFlight = new Map();
 
 function _readOrderOutbox() {
   try {
-    const rows = JSON.parse(localStorage.getItem(LS_ORDER_OUTBOX) || '[]');
-    return Array.isArray(rows) ? rows : [];
-  } catch(e) { return []; }
+    const raw = localStorage.getItem(LS_ORDER_OUTBOX);
+    const rows = JSON.parse(raw || '[]');
+    if (!Array.isArray(rows)) {
+      const err = new Error('未確定発注の控えの形式が正しくありません。');
+      err.code = 'ORDER_OUTBOX_UNREADABLE';
+      throw err;
+    }
+    return rows;
+  } catch(e) {
+    // 未確定発注の控えを読めない状態で新しい出力を許すと、同じ内容を新しいrequestIdで
+    // 再送してしまう。空の控えとして扱わず、利用者に診断・復旧を求めて止める。
+    const err = new Error('未確定発注の控えを読み取れません。設定画面の診断結果をコピーして管理者へ連絡してください。');
+    err.code = 'ORDER_OUTBOX_UNREADABLE';
+    throw err;
+  }
 }
 
 function _writeOrderOutbox(rows) {
@@ -3553,7 +3583,8 @@ function updateOrderOutboxStatus() {
   if (!el) return;
   const userId = currentUser ? String(currentUser.user_id || '') : '';
   const rows = _readOrderOutbox().filter(x => !userId || String(x.userId || '') === userId);
-  const needsReview = rows.filter(x => x.status === 'CONFLICT' || x.status === 'STALE' || Date.now() - x.createdAt > ORDER_OUTBOX_AUTO_RECOVER_MS).length;
+  const needsReview = rows.filter(x => x.status === 'CONFLICT' || x.status === 'STALE' ||
+    x.status === 'DUPLICATE_REVIEW' || Date.now() - x.createdAt > ORDER_OUTBOX_AUTO_RECOVER_MS).length;
   el.textContent = `未確定発注: ${rows.length}件` + (needsReview ? `（要確認 ${needsReview}件）` : '');
   el.style.color = rows.length ? 'var(--danger)' : 'var(--text-light)';
 }
@@ -3667,7 +3698,12 @@ function _completeOrderEntry(entry, orderNo) {
   // ① 保存成立の確定。ここは代入だけで、失敗しうる処理を絶対に入れない。
   //    savedOrderNo が入っていれば saveOrderToGAS() が即returnするので、
   //    以降で何が起きても新しいrequestIdでの再送は起きない
-  if (orderRequestId === entry.requestId) savedOrderNo = orderNo;
+  if (orderRequestId === entry.requestId) {
+    savedOrderNo = orderNo;
+    // ここで先に保存しないと、通信が成功した直後に画面が再読み込みされた場合に
+    // savedOrderNo を失い、新しい送信IDで重複登録する余地が残る。
+    try { saveOrderMeta(); } catch(e) {}
+  }
 
   // ② 永続記録の後始末（_removeOrderOutbox は内部で例外を握りつぶす）
   _removeOrderOutbox(entry.requestId);
@@ -3705,14 +3741,38 @@ function _completeOrderEntry(entry, orderNo) {
 function _serverOrderError(res) {
   const err = new Error((res && (res.message || res.error)) || 'GAS保存に失敗しました');
   err.code = res && res.error;
+  err.conflicts = res && Array.isArray(res.conflicts) ? res.conflicts : [];
   return err;
+}
+
+// 保存成功の応答は、送信したrequestId・発注No・品目数まで一致して初めて受理する。
+// HTTP 200だけ、または別の保存の応答だけで外部発注用ファイルを出すことを防ぐ。
+function _confirmedOrderNo(entry, res) {
+  if (!res || res.success !== true) return '';
+  const requestId = String(res.requestId || '').trim();
+  const orderNo = String(res.orderNo || '').trim();
+  let expectedItemCount = 0;
+  try { expectedItemCount = JSON.parse(entry.params.items || '[]').length; } catch(e) {}
+  if (!requestId || requestId !== entry.requestId || !orderNo ||
+      !Number.isInteger(Number(res.itemCount)) || Number(res.itemCount) !== expectedItemCount) {
+    const err = new Error('発注履歴の保存結果を確認できませんでした。ファイルは出力していません。');
+    err.code = 'SAVE_ACK_INVALID';
+    throw err;
+  }
+  return orderNo;
+}
+
+function _confirmedOrderNoFromCheck(entry, check) {
+  if (!check || check.state !== 'COMPLETE') return '';
+  return _confirmedOrderNo(entry, check);
 }
 
 function _isTerminalOrderError(code) {
   return [
     'REQUEST_ID_REQUIRED', 'REQUEST_ID_INVALID', 'ITEMS_INVALID',
     'REQUIRED_FIELDS_MISSING', 'REQUEST_ID_CONFLICT', 'ORDER_STATE_INVALID',
-    'DATE_INVALID', 'DATE_OUT_OF_RANGE'
+    'DATE_INVALID', 'DATE_OUT_OF_RANGE', 'DUPLICATE_ORDER_REVIEW_REQUIRED',
+    'ANALYSIS_NOT_READY', 'ANALYSIS_STATE_CONFLICT'
   ].includes(String(code || ''));
 }
 
@@ -3733,7 +3793,7 @@ async function _recoverOrderEntry(entry) {
     throw new GasOutcomeUnknownError(e);
   }
 
-  if (check && check.state === 'COMPLETE') return _completeOrderEntry(entry, check.orderNo);
+  if (check && check.state === 'COMPLETE') return _completeOrderEntry(entry, _confirmedOrderNoFromCheck(entry, check));
   if (check && check.state === 'CONFLICT') {
     _markOrderEntry(entry, 'CONFLICT', 'requestId conflict');
     throw new Error('同じ送信IDの発注が複数見つかりました。管理者に連絡してください。');
@@ -3755,7 +3815,11 @@ async function _recoverOrderEntry(entry) {
     // 応答喪失の可能性があるため、この時点では新しいrequestIdを発行しない。
     // 下の再照会でサーバー側の状態を確かめる
   }
-  if (saved && saved.success) return _completeOrderEntry(entry, saved.orderNo);
+  if (saved && saved.success) return _completeOrderEntry(entry, _confirmedOrderNo(entry, saved));
+  if (saved && saved.error === 'DUPLICATE_ORDER_REVIEW_REQUIRED') {
+    _markOrderEntry(entry, 'DUPLICATE_REVIEW', saved.message || saved.error);
+    throw _serverOrderError(saved);
+  }
   if (saved && _isTerminalOrderError(saved.error)) {
     _markOrderEntry(entry, saved.error === 'REQUEST_ID_CONFLICT' ? 'CONFLICT' : 'ERROR', saved.message || saved.error);
     throw _serverOrderError(saved);
@@ -3767,7 +3831,7 @@ async function _recoverOrderEntry(entry) {
     _markOrderEntry(entry, 'UNKNOWN', e.name || e.message);
     throw new GasOutcomeUnknownError(e);
   }
-  if (check && check.state === 'COMPLETE') return _completeOrderEntry(entry, check.orderNo);
+  if (check && check.state === 'COMPLETE') return _completeOrderEntry(entry, _confirmedOrderNoFromCheck(entry, check));
   if (check && check.state === 'CONFLICT') {
     _markOrderEntry(entry, 'CONFLICT', 'requestId conflict');
     throw new Error('同じ送信IDの発注が複数見つかりました。管理者に連絡してください。');
@@ -3789,7 +3853,11 @@ async function _processOrderEntry(entry, initialSend) {
       if (e && e.name !== 'GasOutcomeUnknownError') throw e;
       return _recoverOrderEntry(entry);
     }
-    if (res && res.success) return _completeOrderEntry(entry, res.orderNo);
+    if (res && res.success) return _completeOrderEntry(entry, _confirmedOrderNo(entry, res));
+    if (res && res.error === 'DUPLICATE_ORDER_REVIEW_REQUIRED') {
+      _markOrderEntry(entry, 'DUPLICATE_REVIEW', res.message || res.error);
+      throw _serverOrderError(res);
+    }
     if (res && _isTerminalOrderError(res.error)) {
       _markOrderEntry(entry, res.error === 'REQUEST_ID_CONFLICT' ? 'CONFLICT' : 'ERROR', res.message || res.error);
       throw _serverOrderError(res);
@@ -3805,7 +3873,8 @@ async function _processOrderEntry(entry, initialSend) {
 async function recoverPendingOrders(manual = false) {
   if (!currentUser) return;
   const userId = String(currentUser.user_id || '');
-  const rows = _readOrderOutbox().filter(x => String(x.userId || '') === userId && x.status !== 'CONFLICT');
+  const rows = _readOrderOutbox().filter(x => String(x.userId || '') === userId &&
+    x.status !== 'CONFLICT' && x.status !== 'DUPLICATE_REVIEW');
   if (rows.length === 0) {
     if (manual) showToast('未確定の発注はありません', 'success');
     updateOrderOutboxStatus();
@@ -3868,10 +3937,50 @@ async function copyGasDiagnostics() {
   showToast(copied ? '通信診断をコピーしました' : '通信診断をコピーできませんでした', copied ? 'success' : 'error');
 }
 
+function _formatDuplicateConflicts(conflicts) {
+  return (Array.isArray(conflicts) ? conflicts : []).map(conflict => {
+    const items = (conflict.items || []).map(item =>
+      `・${item.name || item.code} ${item.qty || 0}個（${item.code || 'コードなし'}）`).join('\n');
+    return `発注No ${conflict.orderNo || '不明'}${conflict.orderDate ? '（' + conflict.orderDate + '）' : ''}\n${items}`;
+  }).join('\n\n');
+}
+
+async function _approveDuplicateOrder(entry, conflicts) {
+  const summary = _formatDuplicateConflicts(conflicts);
+  if (!summary) return false;
+  const ok = confirm(
+    '同じ商品を含む未入荷の発注があります。\n\n' + summary +
+    '\n\n追加発注が必要な場合だけ、理由を記録して続けてください。'
+  );
+  if (!ok) return false;
+  const reason = window.prompt('追加発注が必要な理由を入力してください（2文字以上）。');
+  if (reason === null) return false;
+  const trimmed = String(reason).trim();
+  if (trimmed.length < 2 || trimmed.length > 200) {
+    showToast('追加発注の理由は2〜200文字で入力してください。ファイルは出力していません。', 'error');
+    return false;
+  }
+  const orderNos = conflicts.map(x => String(x.orderNo || '')).filter(Boolean).sort();
+  entry.params.duplicateOverride = JSON.stringify({ orderNos, reason: trimmed });
+  _markOrderEntry(entry, 'READY', 'duplicate override approved');
+  return true;
+}
+
 async function saveOrderToGAS(outputType) {
   if (savedOrderNo) return savedOrderNo;
   const entry = _newOrderOutboxEntry(outputType);
-  return _processOrderEntry(entry, entry.status === 'READY');
+  try {
+    return await _processOrderEntry(entry, entry.status === 'READY');
+  } catch(e) {
+    if (!e || e.code !== 'DUPLICATE_ORDER_REVIEW_REQUIRED') throw e;
+    const approved = await _approveDuplicateOrder(entry, e.conflicts || []);
+    if (!approved) {
+      const err = new Error('追加発注の確認が完了していません。ファイルは出力していません。');
+      err.code = 'DUPLICATE_ORDER_REVIEW_REQUIRED';
+      throw err;
+    }
+    return _processOrderEntry(entry, true);
+  }
 }
 
 // クリップボードコピー共通ヘルパー
@@ -3910,11 +4019,8 @@ async function copyToClipboard(text) {
   }
 }
 
-// バックグラウンド保存の状態表示
-// 出力（.txt/.csv のダウンロード）が終わっても、GAS側の発注履歴は保存が完了するまで
-// saveState=PENDING で、履歴取得（getOrders）には出てこない。ここを黙って進めると
-// 「出力したのに履歴に出ない・更新を押しても出ない」だけが利用者に残るため、
-// 登録中／登録済み／要再試行を確認画面に出し続ける
+// 発注用ファイルを出す前に、GASの保存が確定したことを明示する。
+// 保存が不明・失敗のときは、ファイルを出さない。この順序を守ることが二重発注防止の前提。
 function _setOrderSaveStatus(state, detail = '', outputType = '') {
   const el = document.getElementById('save-status');
   if (!el) return;
@@ -3929,65 +4035,64 @@ function _setOrderSaveStatus(state, detail = '', outputType = '') {
   } else if (state === 'failed') {
     el.style.display = 'block';
     el.style.color = 'var(--danger)';
-    el.innerHTML = '⚠️ 出力は完了していますが、発注履歴への登録が終わっていません。'
-      + '<br>このままでは履歴画面に出てきません。'
-      + `<button class="btn btn-outline btn-sm" style="margin-top:6px" ${orderAction('retryOrderSave', outputType)}>🔄 履歴登録をやり直す</button>`;
+    el.innerHTML = '⚠️ 発注履歴の保存を確認できません。ファイルは出力していません。'
+      + '<br>通信が回復してから、同じ内容のまま確認をやり直してください。'
+      + `<button class="btn btn-outline btn-sm" style="margin-top:6px" ${orderAction('retryOrderSave', outputType)}>🔄 保存確認をやり直す</button>`;
   } else {
     el.style.display = 'none';
     el.innerHTML = '';
   }
 }
 
-function _trackBackgroundOrderSave(outputType) {
+async function _saveBeforeExternalOutput(outputType) {
   _setOrderSaveStatus('saving');
-  return saveOrderToGAS(outputType)
-    .then(orderNo => { _setOrderSaveStatus('done', orderNo); })
-    .catch(e => {
-      _setOrderSaveStatus('failed', '', outputType);
-      showToast(`${outputType}は出力済みです。発注履歴への登録が完了していないため、画面の「履歴登録をやり直す」で再試行してください。`, 'error');
-    });
+  try {
+    const orderNo = await saveOrderToGAS(outputType);
+    _setOrderSaveStatus('done', orderNo);
+    return orderNo;
+  } catch(e) {
+    _setOrderSaveStatus('failed', '', outputType);
+    throw e;
+  }
 }
 
 function retryOrderSave(outputType) {
-  return _trackBackgroundOrderSave(outputType || 'テキスト');
+  return _saveBeforeExternalOutput(outputType || '発注').then(
+    orderNo => showToast(`発注履歴を確認しました（発注No: ${orderNo}）`, 'success'),
+    e => showToast('保存確認を完了できませんでした: ' + _gasErrorMessage(e), 'error')
+  );
+}
+
+function _finishExternalOutput() {
+  // ファイルを実際に作成した後だけ、作成中カートを完了扱いにする。
+  // 保存確認の途中では消さないため、通信不安定時でも同じ内容を再確認・再出力できる。
+  sessionStorage.removeItem(SS_CART);
+  sessionStorage.removeItem(SS_ORDER);
+  showCompleteState();
 }
 
 // テキスト出力（LINE等のメッセージ用）
 // 手書き商品も含め「商品名 × 数量単位」形式で出力
 // クリップボードコピー + .txtダウンロードの両方を実行
 //
-// GAS保存(saveOrderToGAS)は404・POSTボディ喪失で応答に最悪1分超かかることがある
-// （通信エラー対策_設計プラン.md参照）。以前はこの保存完了を待ってからテキストを
-// 出力していたため、GASが詰まると「保存・出力中...」のまま固まり、テキストも
-// 一切受け取れなかった。テキスト出力の本来の目的（LINE送信用テキストをすぐ得る）に
-// GAS保存を待たせる理由は無いため、テキスト出力は即座に行い、履歴への保存は
-// バックグラウンドで実行する（requestIdで冪等なので再送・重複の心配なし）
+// 保存確認後にだけ出力する。確認が曖昧な通信障害で先にテキストを渡すと、外部発注だけが
+// 完了して履歴に残らず、翌日の提案で同じ商品が再び候補になる。
 async function outputText() {
   const lines = cartItems.map(i => `${i.name} × ${i.qty}${i.unit || ''}`);
   const text  = lines.join('\n');
 
-  showLoading('出力中...');
+  showLoading('発注履歴を保存・確認中...');
   try {
-    // ダウンロードと画面遷移を先に済ませてからクリップボードへ書く。
-    // クリップボード書き込みは環境要因（他アプリがクリップボードを掴んでいる等）で
-    // いつまでも返ってこないことがあり、先に await すると .txt すら受け取れないまま
-    // 「出力中...」で固まる。出力の本体を待たせない順序にしている
+    await _saveBeforeExternalOutput('テキスト');
     const bom  = new Uint8Array([0xEF, 0xBB, 0xBF]);
     const blob = new Blob([bom, text], { type: 'text/plain;charset=utf-8' });
     const dateStr = currentOrder.date.replace(/-/g, '');
     downloadBlob(blob, `${currentOrder.supplierName}_${dateStr}.txt`);
-    sessionStorage.removeItem(SS_CART);
-    sessionStorage.removeItem(SS_ORDER); // 出力済みの発注を再読み込み後に「作成中」として復帰させない
-    showCompleteState();
+    _finishExternalOutput();
   } catch(e) {
-    hideLoading();
-    showToast('エラー: ' + e.message, 'error');
+    showToast('テキストは出力していません: ' + _gasErrorMessage(e), 'error');
     return;
-  }
-  hideLoading();
-
-  // 発注履歴への保存はテキスト出力完了後にバックグラウンドで実行
-  _trackBackgroundOrderSave('テキスト');
+  } finally { hideLoading(); }
 
   const copied = await copyToClipboard(text);
   showToast(copied ? 'テキストをコピー＆ダウンロードしました'
@@ -4002,42 +4107,40 @@ async function outputWebRecord() {
     '発注サイトで注文した（する）内容で間違いありませんか？\n' +
     '記録すると、この数量は「発注済み」として提案から差し引かれます。'
   )) return;
-  showLoading('記録を保存中...');
+  showLoading('発注記録を保存・確認中...');
   try {
-    await saveOrderToGAS('Web記録');
-    showCompleteState();
+    await _saveBeforeExternalOutput('Web記録');
+    _finishExternalOutput();
     showToast('発注記録として保存しました', 'success');
   } catch(e) {
     showToast('エラー: ' + e.message, 'error');
   } finally { hideLoading(); }
 }
 
-// CSV出力（ヘッダー行なし）
-// テキスト出力と同じ理由（GAS保存の遅延で本来の出力まで固まるのを避ける）で、
-// CSV出力を先に完了させ、履歴への保存はバックグラウンドで実行する
+// CSV出力（ヘッダー行なし）。保存確認後にだけダウンロードする。
 async function outputCSV() {
   const csvItems = cartItems.filter(i => !i.isHandwritten);
   if (csvItems.length === 0) {
     showToast('CSV出力可能な商品がありません\n（手書き商品はCSV対象外）', 'error'); return;
   }
-  showLoading('出力中...');
+  if (csvItems.length !== cartItems.length) {
+    showToast('手書き商品が含まれるためCSVは出力していません。CSVに含まれない商品まで発注済みとして保存しないため、手書き商品を別の発注に分けてください。', 'error');
+    return;
+  }
+  showLoading('発注履歴を保存・確認中...');
   try {
+    await _saveBeforeExternalOutput('CSV');
     const body = csvItems.map(i => `${i.janCode},${i.qty}`).join('\n');
     const bom  = new Uint8Array([0xEF, 0xBB, 0xBF]);
     const blob = new Blob([bom, body], { type: 'text/csv;charset=utf-8' });
     const dateStr = currentOrder.date.replace(/-/g, '');
     downloadBlob(blob, `${currentOrder.supplierName}_${dateStr}.csv`);
-    sessionStorage.removeItem(SS_CART);
-    sessionStorage.removeItem(SS_ORDER); // 出力済みの発注を再読み込み後に「作成中」として復帰させない
-    showCompleteState();
+    _finishExternalOutput();
     showToast('CSV出力が完了しました', 'success');
   } catch(e) {
-    showToast('エラー: ' + e.message, 'error');
+    showToast('CSVは出力していません: ' + _gasErrorMessage(e), 'error');
     return;
   } finally { hideLoading(); }
-
-  // 発注履歴への保存はCSV出力完了後にバックグラウンドで実行
-  _trackBackgroundOrderSave('CSV');
 }
 
 /* ===================================================
@@ -4129,12 +4232,12 @@ async function outputGrandexPDF() {
         x: coord.x, y: coord.y, size: 9, font, color: rgb(0, 0, 0.7)
       });
     }
-    await saveOrderToGAS('メーカー発注書');
+    await _saveBeforeExternalOutput('メーカー発注書');
     const pdfBytesOut = await pdfDoc.save();
     const blob = new Blob([pdfBytesOut], { type: 'application/pdf' });
     const dateStr = currentOrder.date.replace(/-/g, '');
     downloadBlob(blob, `グランデックス発注書_${dateStr}.pdf`);
-    showCompleteState();
+    _finishExternalOutput();
     showToast(`グランデックス発注書を出力しました（自動記入: ${matched.length}件）`, 'success');
   } catch(e) {
     showToast('PDFエラー: ' + e.message, 'error');
@@ -4261,12 +4364,12 @@ async function outputChiyodaPDF() {
         x: coord.x, y: coord.y, size: 9, font, color: blue
       });
     }
-    await saveOrderToGAS('メーカー発注書');
+    await _saveBeforeExternalOutput('メーカー発注書');
     const pdfBytesOut = await pdfDoc.save();
     const blob = new Blob([pdfBytesOut], { type: 'application/pdf' });
     const dateStr = currentOrder.date.replace(/-/g, '');
     downloadBlob(blob, `千代田化学発注書_${dateStr}.pdf`);
-    showCompleteState();
+    _finishExternalOutput();
     showToast(`千代田化学発注書を出力しました（自動記入: ${matched.length}件）`, 'success');
   } catch(e) {
     showToast('PDFエラー: ' + e.message, 'error');
@@ -4400,12 +4503,12 @@ async function outputAlpenrosePDF() {
       page.drawText(String(item.qty), { x: coord.x, y: coord.y, size: 9, font, color: rgb(0, 0, 0.7) });
     }
 
-    await saveOrderToGAS('メーカー発注書');
+    await _saveBeforeExternalOutput('メーカー発注書');
     const pdfBytesOut = await pdfDoc.save();
     const blob = new Blob([pdfBytesOut], { type: 'application/pdf' });
     const dateStr = currentOrder.date.replace(/-/g, '');
     downloadBlob(blob, `アルペンローゼ発注書_${dateStr}.pdf`);
-    showCompleteState();
+    _finishExternalOutput();
     showToast(`アルペンローゼ発注書を出力しました（自動記入: ${matched.length}件）`, 'success');
   } catch(e) {
     showToast('PDFエラー: ' + e.message, 'error');
@@ -4444,12 +4547,12 @@ async function outputMelosPDF() {
       page.drawText(String(item.qty), { x: coord.x, y: coord.y, size: 9, font, color: blue });
     }
 
-    await saveOrderToGAS('メーカー発注書');
+    await _saveBeforeExternalOutput('メーカー発注書');
     const pdfBytesOut = await pdfDoc.save();
     const blob = new Blob([pdfBytesOut], { type: 'application/pdf' });
     const dateStr = currentOrder.date.replace(/-/g, '');
     downloadBlob(blob, `メロス発注書_${dateStr}.pdf`);
-    showCompleteState();
+    _finishExternalOutput();
     showToast(`メロス発注書を出力しました（自動記入: ${matched.length}件）`, 'success');
   } catch(e) {
     showToast('PDFエラー: ' + e.message, 'error');
@@ -4521,12 +4624,12 @@ async function outputAderansPDF() {
       page.drawText(String(item.qty), { x: coord.x, y: coord.y, size: 9, font, color: blue });
     }
 
-    await saveOrderToGAS('メーカー発注書');
+    await _saveBeforeExternalOutput('メーカー発注書');
     const pdfBytesOut = await pdfDoc.save();
     const blob = new Blob([pdfBytesOut], { type: 'application/pdf' });
     const dateStr = currentOrder.date.replace(/-/g, '');
     downloadBlob(blob, `アデランス発注書_${dateStr}.pdf`);
-    showCompleteState();
+    _finishExternalOutput();
     showToast(`アデランス発注書を出力しました（自動記入: ${matched.length}件）`, 'success');
   } catch(e) {
     showToast('PDFエラー: ' + e.message, 'error');
@@ -4534,9 +4637,9 @@ async function outputAderansPDF() {
 }
 
 async function outputPDF() {
-  showLoading('PDF生成中...');
+  showLoading('発注履歴を保存・確認中...');
   try {
-    const orderNo = await saveOrderToGAS('PDF');
+    const orderNo = await _saveBeforeExternalOutput('PDF');
     const { jsPDF } = window.jspdf;
     const pdf     = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     const pdfPage = document.getElementById('pdf-page');
@@ -4556,9 +4659,7 @@ async function outputPDF() {
     pdfWrap.style.left = '-9999px'; pdfWrap.style.zIndex = '-1';
     const dateStr = currentOrder.date.replace(/-/g, '');
     pdf.save(`${currentOrder.supplierName}_${dateStr}_${orderNo}.pdf`);
-    sessionStorage.removeItem(SS_CART);
-    sessionStorage.removeItem(SS_ORDER); // 出力済みの発注を再読み込み後に「作成中」として復帰させない
-    showCompleteState();
+    _finishExternalOutput();
     showToast('PDF保存が完了しました', 'success');
   } catch(e) {
     document.getElementById('pdf-wrap').style.left = '-9999px';
@@ -4734,9 +4835,7 @@ async function _loadHistoryRead(forceRefresh, filterSupplierCode) {
 
   container.innerHTML = `<div class="empty-state"><div class="spinner"></div><div style="margin-top:8px">読み込み中...</div></div>`;
   try {
-    const params = { action: 'getOrders' };
-    if (filterSupplierCode) params.supplierCode = filterSupplierCode; // メーカー絞り込み
-    const res = await gasGet(params);
+    const res = await getHistoryList_(filterSupplierCode);
     if (!isCurrent()) return; // 古い要求・別ログインの結果を反映しない
     if (res && res.success && Array.isArray(res.orders)) {
       allHistoryOrders = res.orders;
@@ -4853,7 +4952,7 @@ async function toggleHistoryDetail(el, orderNo) {
   if (!detailDiv.querySelector('.spinner')) return;
 
   try {
-    const res = await gasGet({ action: 'getOrderDetail', orderNo });
+    const res = await getHistoryDetail_(orderNo);
     if (res.success && res.items && res.items.length > 0) {
       historyDetailCache[orderNo] = res.items;
 
@@ -4875,6 +4974,65 @@ async function toggleHistoryDetail(el, orderNo) {
   } catch(e) {
     detailDiv.innerHTML = `<div style="font-size:13px;color:var(--danger)">${escHtml(_gasErrorMessage(e))}</div>`;
   }
+}
+
+function _isUnsupportedOrderDetailAction(res) {
+  const error = String(res && res.error || '');
+  return error === 'API_UNSUPPORTED' || error.indexOf('不明なアクション') === 0;
+}
+
+// 履歴一覧はG2b公開viewを読めるときだけV2へ切り替える。公開view未作成の新GASや旧GASは
+// capabilitiesが明示するため旧actionを1回だけ使う。通信例外・認証例外では二重送信しない。
+async function getHistoryList_(filterSupplierCode) {
+  if (historyListApiMode === null) {
+    const caps = await gasGet({ action: 'getCapabilities' });
+    if (_isUnsupportedOrderDetailAction(caps)) {
+      historyListApiMode = false;
+    } else if (caps && caps.success === true && caps.apiSchema >= 2 && caps.actions && caps.actions.getOrdersV2) {
+      historyListApiMode = true;
+    } else if (caps && caps.success === true) {
+      historyListApiMode = false;
+    } else {
+      return caps;
+    }
+  }
+  const params = { action: historyListApiMode ? 'getOrdersV2' : 'getOrders' };
+  if (filterSupplierCode) params.supplierCode = filterSupplierCode;
+  const result = await gasGet(params);
+  if (historyListApiMode && _isUnsupportedOrderDetailAction(result)) {
+    historyListApiMode = false;
+    return gasGet({ action: 'getOrders', supplierCode: filterSupplierCode || '' });
+  }
+  if (historyListApiMode && result && result.success === true && result.apiSchema === 2 && result.data) {
+    return { success: true, orders: result.data.orders || [], productHistory: result.data.productHistory || {}, meta: result.meta || {} };
+  }
+  return result;
+}
+
+// capabilitiesが明示的にV2未対応と返した場合だけ旧actionを使う。
+// タイムアウト・認証障害・JSON障害はcatchして旧actionへ再送しない。
+async function getHistoryDetail_(orderNo) {
+  if (historyDetailApiMode === null) {
+    const caps = await gasGet({ action: 'getCapabilities' });
+    if (_isUnsupportedOrderDetailAction(caps)) {
+      historyDetailApiMode = false;
+    } else if (caps && caps.success === true && caps.apiSchema >= 2 &&
+        caps.actions && caps.actions.getOrderDetailV2) {
+      historyDetailApiMode = true;
+    } else if (caps && caps.success === true) {
+      historyDetailApiMode = false;
+    } else {
+      return caps;
+    }
+  }
+  if (historyDetailApiMode === false) return gasGet({ action: 'getOrderDetail', orderNo });
+  const v2 = await gasGet({ action: 'getOrderDetailV2', orderNo });
+  if (_isUnsupportedOrderDetailAction(v2)) {
+    historyDetailApiMode = false;
+    return gasGet({ action: 'getOrderDetail', orderNo });
+  }
+  if (!v2 || v2.success !== true || v2.apiSchema !== 2 || !v2.data) return v2;
+  return { success: true, items: v2.data.items || [], meta: v2.meta || {} };
 }
 
 // 発注方法設定に基づいて履歴の再出力ボタンHTMLを生成
@@ -5225,7 +5383,7 @@ async function copyOrderFromHistory(orderNo) {
   if (!historyDetailCache[orderNo]) {
     showLoading('データを取得中...');
     try {
-      const res = await gasGet({ action: 'getOrderDetail', orderNo });
+      const res = await getHistoryDetail_(orderNo);
       if (res.success) {
         historyDetailCache[orderNo] = res.items;
       } else {
@@ -5885,10 +6043,27 @@ function _analyzedAtMs() {
   if (!m) return null;
   return new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0)).getTime();
 }
-// この発注は既に推奨発注数へ反映されているか（＝分析より前の発注か）。v1.70.0
+// この発注は既に推奨発注数へ反映されているか（＝分析時点までに確定保存されていたか）。
+// 発注日だけでは、過去日指定の注文が分析後に遅れて登録された事例を判定できない。
 function _isOrderReflected(orderDate) {
   const day = _analyzedDayStr();
   return !!(day && orderDate && String(orderDate) < day);
+}
+
+function _registeredAtMs(value) {
+  const m = String(value || '')
+    .match(/^(\d{4})[-\/](\d{2})[-\/](\d{2})(?:[ T](\d{1,2}):(\d{2}))?/);
+  if (!m) return null;
+  return new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0)).getTime();
+}
+
+function _isServerOrderReflected(order) {
+  const analyzedMs = _analyzedAtMs();
+  if (analyzedMs === null) return false; // 分析時点が不明なら安全側で「未反映」として保護する
+  const registeredMs = _registeredAtMs(order && order.registeredAt);
+  if (registeredMs !== null) return registeredMs <= analyzedMs;
+  // 旧履歴など保存時刻がない行は、推測して候補を出し直さない。安全側で未反映とする。
+  return false;
 }
 
 // 発注済み（アプリ経由・仕入未計上）の商品コード → { qty合計, 直近の発注日, 発注No, isDelayed }
@@ -5918,7 +6093,7 @@ function buildOrderedByCode(opts) {
     if (orderDate > cur.orderDate) { cur.orderDate = orderDate; cur.orderNo = orderNo; }
   };
   (proposalsData.pendingOrders || []).forEach(x => {
-    if (analyzedDay && _isOrderReflected(x.orderDate)) return; // 提案数に反映済み＝隠す対象ではない
+    if (analyzedDay && _isServerOrderReflected(x)) return; // 分析時点までに確定済み＝提案数に反映済み
     put(x.code, x.qty || 0, x.orderDate || '', x.orderNo || '', x.isDelayed);
   });
   // ローカル記録は pendingOrders と重複しうるので、同じ明細（発注No＋商品コード）は二重計上しない。
@@ -6170,7 +6345,9 @@ async function loadProposals(force = false) {
   if (proposalsLoaded && !force) { renderProposalList(); return; }
   proposalsLoading = true;
   const wrap = document.getElementById('prop-list');
-  wrap.innerHTML = '<div class="empty-state"><div class="spinner"></div><div style="margin-top:8px">読み込み中...</div></div>';
+  if (!proposalsLoaded) {
+    wrap.innerHTML = '<div class="empty-state"><div class="spinner"></div><div style="margin-top:8px">読み込み中...</div></div>';
+  }
   try {
     const res = await gasGet({ action: 'getOrderProposals' });
     if (res.success) {
@@ -6229,7 +6406,14 @@ async function loadProposals(force = false) {
       updateDeadBadge();
       renderDeadScreen();
     } else {
-      wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div>取得エラー: ${escHtml(res.error || '不明')}</div></div>`;
+      const message = res && res.error === 'ANALYSIS_NOT_READY'
+        ? (res.message || '分析結果を更新中です。完了まで発注を確定できません。')
+        : `取得エラー: ${res.error || '不明'}`;
+      if (proposalsLoaded) {
+        document.getElementById('prop-analyzed-at').textContent = '⚠️ ' + message + '（表示中の提案では発注確定できません）';
+      } else {
+        wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div>${escHtml(message)}</div></div>`;
+      }
     }
   } catch(e) {
     wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div>${escHtml(_gasErrorMessage(e))}</div></div>`;
