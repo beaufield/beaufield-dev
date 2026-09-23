@@ -170,6 +170,27 @@
   .bookingLegendItem.shared::before { background: #fbbf24; }
   .bookingSummaryMessage { margin: 0; color: #64748b; font-size: 13px; }
   .bookingSummaryMessage.error { color: var(--error); }
+  /* 🆕 v0.11.0 予約の入っている枠をタップすると予約者の一覧を出す */
+  .bookingTapHint { margin: -6px 0 12px; color: #64748b; font-size: 12px; }
+  .bookingClickable { cursor: pointer; transition: box-shadow .15s; }
+  .bookingClickable:hover, .bookingClickable:focus-visible {
+    outline: none; box-shadow: 0 0 0 2px rgba(16,97,124,.45);
+  }
+  .bookingSlot.bookingClickable .bookingSlotState::after,
+  .bookingSeminarCard.bookingClickable .bookingRemaining::after { content: ' ›'; }
+  .reserverList {
+    list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto;
+    border: 1px solid #e5e7eb; border-radius: 8px;
+  }
+  .reserverList li { padding: 9px 10px; border-bottom: 1px solid #f1f5f9; }
+  .reserverList li:last-child { border-bottom: none; }
+  .reserverList li.reserverGroupHead {
+    background: #fffbeb; color: #92400e; font-size: 12px; font-weight: bold;
+  }
+  .reserverSalon { font-size: 14px; font-weight: bold; color: #0f172a; }
+  .reserverStaff { margin-left: 6px; font-size: 14px; color: #0f172a; }
+  .reserverSub { margin-top: 2px; font-size: 12px; color: #64748b; }
+  .reserverSub .unassigned { color: #b45309; }
   @media (max-width: 640px) {
     .bookingSummary { padding: 12px; }
     .bookingSummaryHead { display: block; }
@@ -434,6 +455,18 @@
   </div>
 </div>
 
+<!-- 🆕 v0.11.0 予約状況の枠をタップしたときの予約者一覧（見るだけ。ここから予約の変更はしない） -->
+<div class="modalOverlay" id="reserversModal" hidden>
+  <div class="modalCard formCard" role="dialog" aria-modal="true" aria-labelledby="rvTitle">
+    <h2 id="rvTitle"></h2>
+    <div class="modalNote" id="rvMeta"></div>
+    <ul class="reserverList" id="rvList"></ul>
+    <div class="modalBtns">
+      <button type="button" id="rvClose" class="ghostBtn">閉じる</button>
+    </div>
+  </div>
+</div>
+
 <div class="wrap">
 
   <div class="mockBanner" id="mockBanner">⚠ モック表示中（ダミーデータ・GAS未接続）</div>
@@ -581,7 +614,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.10.0';
+const APP_VERSION = '0.11.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
@@ -2030,7 +2063,7 @@ function openModal(id) {
 }
 function closeModal(id) {
   el(id).hidden = true;
-  if (el('qrModal').hidden && el('walkInModal').hidden && el('spareModal').hidden) {
+  if (el('qrModal').hidden && el('walkInModal').hidden && el('spareModal').hidden && el('reserversModal').hidden) {
     document.body.style.overflow = '';
   }
 }
@@ -2413,10 +2446,14 @@ function init() {
   el('wiClose').addEventListener('click', function () { closeModal('walkInModal'); });
   el('spSubmit').addEventListener('click', doAssignSpare);
   el('spClose').addEventListener('click', function () { closeModal('spareModal'); });
-  [['walkInModal'], ['spareModal']].forEach(function (pair) {
+  [['walkInModal'], ['spareModal'], ['reserversModal']].forEach(function (pair) {
     el(pair[0]).addEventListener('click', function (ev) {
       if (ev.target === el(pair[0])) closeModal(pair[0]);
     });
+  });
+  el('rvClose').addEventListener('click', function () { closeModal('reserversModal'); });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape' && !el('reserversModal').hidden) closeModal('reserversModal');
   });
 
   el('filterToggle').addEventListener('click', function () {
@@ -2501,6 +2538,58 @@ function appendBookingText(parent, tag, text, className) {
   return node;
 }
 
+// 🆕 v0.11.0 予約日時。GASは 'yyyy-MM-dd HH:mm:ss' で書くが、シートが日付型に
+// 変換していると Date の文字列で届くので両方を読む。読めなければそのまま出す。
+function bookingReservedAtDate(value) {
+  const text = String(value || '').trim();
+  const m = text.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})[ T](\d{1,2}):(\d{2})/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
+  const t = Date.parse(text.replace(/\s*\([^)]*\)\s*$/, ''));
+  return isNaN(t) ? null : new Date(t);
+}
+
+function bookingReservedAtLabel(value) {
+  const d = bookingReservedAtDate(value);
+  if (!d) return String(value || '');
+  return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + d.getHours() + ':' + ('0' + d.getMinutes()).slice(-2);
+}
+
+// 🆕 v0.11.0 枠をタップしたときに出す予約者。
+// 共有枠（同じ resource_group の別機種）で埋まっている枠は、どの機種で誰が使っているかも返す。
+// 🔴 件数表示と食い違わないよう、キャンセル済み申込の予約は数えるときと同じく除外する。
+function bookingReserversFor(session, data) {
+  const sessions = Array.isArray(data && data.sessions) ? data.sessions : [];
+  const reservations = (Array.isArray(data && data.reservations) ? data.reservations : [])
+    .filter(r => r.app_status !== 'cancelled');
+  const sortKey = r => {
+    const d = bookingReservedAtDate(r.created_at);
+    return d ? d.getTime() : Number.MAX_SAFE_INTEGER;
+  };
+  const rowsOf = id => reservations
+    .filter(r => String(r.session_id || '') === String(id || ''))
+    .sort((a, b) => sortKey(a) - sortKey(b));
+  const shared = [];
+  if (session.resource_group) {
+    sessions.forEach(s => {
+      if (s.session_id === session.session_id || s.resource_group !== session.resource_group) return;
+      const rows = rowsOf(s.session_id);
+      if (rows.length) shared.push({ name: bookingProgramName(s), time: bookingTimeLabel(s), rows: rows });
+    });
+  }
+  return { direct: rowsOf(session.session_id), shared: shared };
+}
+
+function makeBookingClickable(node, label, onOpen) {
+  node.className += ' bookingClickable';
+  node.setAttribute('role', 'button');
+  node.setAttribute('tabindex', '0');
+  node.setAttribute('aria-label', label);
+  node.addEventListener('click', onOpen);
+  node.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onOpen(); }
+  });
+}
+
 function renderBookingSummary(box, data) {
   const sessions = Array.isArray(data && data.sessions) ? data.sessions : [];
   const reservations = Array.isArray(data && data.reservations) ? data.reservations : [];
@@ -2517,6 +2606,7 @@ function renderBookingSummary(box, data) {
     appendBookingText(box, 'p', '現在表示できる予約枠はありません。', 'bookingSummaryMessage');
     return;
   }
+  appendBookingText(box, 'p', '予約の入っている枠をタップすると、予約者の一覧を表示します。', 'bookingTapHint');
 
   const validReservations = reservations.filter(r => r.app_status !== 'cancelled');
   const directCounts = {};
@@ -2560,6 +2650,9 @@ function renderBookingSummary(box, data) {
       bar.appendChild(fill);
       card.appendChild(bar);
       appendBookingText(card, 'div', full ? '満席' : '残り ' + remaining + '名', 'bookingRemaining');
+      if (directCounts[s.session_id]) {
+        makeBookingClickable(card, bookingProgramName(s) + 'の予約者を表示', () => openBookingReservers(s, data));
+      }
       grid.appendChild(card);
     });
     section.appendChild(grid);
@@ -2600,6 +2693,9 @@ function renderBookingSummary(box, data) {
         slot.className = 'bookingSlot' + (booked ? ' booked' : shared ? ' shared' : '');
         appendBookingText(slot, 'span', bookingTimeLabel(s), 'bookingSlotTime');
         appendBookingText(slot, 'span', booked ? '● 予約あり' : shared ? '▲ 共有枠使用中' : '○ 空き', 'bookingSlotState');
+        if (booked || shared) {
+          makeBookingClickable(slot, name + ' ' + bookingTimeLabel(s) + 'の予約者を表示', () => openBookingReservers(s, data));
+        }
         slots.appendChild(slot);
       });
       card.appendChild(slots);
@@ -2632,6 +2728,44 @@ function mockAdminBookingSnapshot(data) {
   return Object.assign(summary,{
     state:'ready',error:'',captured_at:new Date().toISOString(),booking_open:true,by_app:byApp
   });
+}
+
+// 🆕 v0.11.0 予約者一覧のポップアップ。表示は サロン名・氏名・担当営業・予約日時 のみ（電話番号は出さない）。
+function openBookingReservers(session, data) {
+  const info = bookingReserversFor(session, data);
+  const isSeminar = String(session.session_id || '').startsWith('S');
+  el('rvTitle').textContent = bookingProgramName(session);
+  const meta = (isSeminar ? (session.slot || 'セミナー') + ' ・ ' : '') + bookingTimeLabel(session);
+  el('rvMeta').textContent = info.direct.length
+    ? meta + ' ／ 予約 ' + info.direct.length + '件'
+    : meta + ' ／ この機種の予約はありません（同時刻の別機種で使用中）';
+
+  const list = el('rvList');
+  list.replaceChildren();
+  const appendRow = r => {
+    // 申込側に名前が無いとき（モック等）は一覧の申込データから補う
+    const app = (state.apps || []).find(a => a.app_id === r.app_id) || {};
+    const li = document.createElement('li');
+    const main = document.createElement('div');
+    appendBookingText(main, 'span', r.salon_name || app.salon_name || '(サロン名なし)', 'reserverSalon');
+    appendBookingText(main, 'span', r.staff_name || app.staff_name || '', 'reserverStaff');
+    li.appendChild(main);
+    const sub = document.createElement('div');
+    sub.className = 'reserverSub';
+    const tantou = r.tantou || app.tantou || '';
+    appendBookingText(sub, 'span', '担当: ' + (tantou || '未割当'), tantou ? '' : 'unassigned');
+    const at = bookingReservedAtLabel(r.created_at);
+    if (at) appendBookingText(sub, 'span', ' ・ 予約 ' + at, '');
+    li.appendChild(sub);
+    list.appendChild(li);
+  };
+  info.direct.forEach(appendRow);
+  info.shared.forEach(g => {
+    appendBookingText(list, 'li', '▲ ' + g.name + '（' + g.time + '）で使用中', 'reserverGroupHead');
+    g.rows.forEach(appendRow);
+  });
+  openModal('reserversModal');
+  el('rvClose').focus();
 }
 
 function applyBookingSnapshot(snapshot, meta) {
