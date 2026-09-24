@@ -367,7 +367,7 @@
   .modalCard .ghostBtn { background: #fff; color: #10617c; border: 1px solid #10617c; }
 </style>
 <link rel="stylesheet" href="lib/booking-v1.3.2.css">
-<script src="lib/booking-v1.4.0.js"></script>
+<script src="lib/booking-v1.4.1.js"></script>
 </head>
 <body>
 
@@ -614,7 +614,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.11.0';
+const APP_VERSION = '0.12.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
@@ -699,8 +699,34 @@ async function postWithRetry(params, onProgress, options) {
   throw new Error(lastErr || 'UNKNOWN');
 }
 
+// 🔴 v0.12.0: 読み取りの打ち切りを12秒→45秒へ。12秒ではGASの処理（3〜7秒）が完了していても、
+//    受け付け待ちと結果の受け取りが枠からはみ出して捨てられ「signal is aborted」になっていた
+//    （2026-09-24 実行数と突合して確認）。8月の実測では12秒超の通信の半数以上が最終的に成功し、
+//    45秒までにその9割が届いていた。何度呼んでも同じ読み取りだけに適用し、保存系は変えない。
+const READ_TIMEOUT_MS = 45000;
+const READ_RETRY_WAIT_MS = 3000;
 function postReadWithRetry(params, onProgress, options) {
-  return postWithRetry(params, onProgress, Object.assign({attempts:2,timeoutMs:12000,waits:[600]}, options || {}));
+  return postWithRetry(params, onProgress, Object.assign({attempts:2,timeoutMs:READ_TIMEOUT_MS,waits:[READ_RETRY_WAIT_MS]}, options || {}));
+}
+
+// 待ち時間が長くなりうるため、止まって見えないよう経過秒数を出す。
+let fetchTicker = null;
+function startFetchTicker() {
+  stopFetchTicker();
+  const startedAt = Date.now();
+  let phase = '取得中…';
+  const render = function () {
+    const sec = Math.floor((Date.now() - startedAt) / 1000);
+    el('fetchStatusLine').textContent = phase + (sec >= 3 ? '（' + sec + '秒）' : '') +
+      (sec >= 12 ? ' Google側の応答を待っています。そのままお待ちください。' : '');
+  };
+  render();
+  fetchTicker = { timer: setInterval(render, 1000), setPhase: function (text) { phase = text; render(); } };
+  return fetchTicker;
+}
+function stopFetchTicker() {
+  if (fetchTicker) clearInterval(fetchTicker.timer);
+  fetchTicker = null;
 }
 
 // ------------------------------------------------------------
@@ -874,7 +900,8 @@ async function fetchApplications() {
   el('fetchError').style.display = 'none';
   el('fetchWarning').style.display = 'none';
   btn.disabled = true;
-  el('fetchStatusLine').textContent = '取得中…';
+  const ticker = startFetchTicker();
+  const onRetry = function (n, max) { ticker.setPhase('再試行中… (' + n + '/' + max + ')'); };
 
   adminFetchInFlight = (async function () {
    try {
@@ -895,7 +922,7 @@ async function fetchApplications() {
       if (adminBootstrapSupported !== false) {
         json = await postReadWithRetry(
           {action:'adminBootstrap',data:JSON.stringify({session_token:session.token || '',include_applications:true})},
-          function (n,max) { el('fetchStatusLine').textContent='再試行中… ('+n+'/'+max+')'; },
+          onRetry,
           {stopOnUnknownAction:true}
         );
         if (json && json.success === false && String(json.error || '') === '不明なアクション: adminBootstrap') {
@@ -917,7 +944,7 @@ async function fetchApplications() {
       // 旧GASとの切替時間中だけ使う後方互換経路。即時編集には使わない。
       json = await postReadWithRetry(
         {action:'listApplications',data:JSON.stringify({session_token:session.token || ''})},
-        function (n,max) { el('fetchStatusLine').textContent='再試行中… ('+n+'/'+max+')'; }
+        onRetry
       );
       if (!json || json.success !== true) throwAdminReadError(json);
       if (generation !== adminRequestGeneration) return;
@@ -927,10 +954,12 @@ async function fetchApplications() {
       return;
     }
   } catch (e) {
+    stopFetchTicker();
     el('fetchError').textContent = '取得に失敗しました: ' + (e && e.message ? e.message : String(e));
     el('fetchError').style.display = 'block';
     el('fetchStatusLine').textContent = '';
   } finally {
+    if (ticker === fetchTicker) stopFetchTicker();
     if (generation === adminRequestGeneration) btn.disabled = false;
     adminFetchInFlight = null;
   }
@@ -953,6 +982,7 @@ function validAdminBootstrap(data, requireApplications) {
 }
 
 function applyFetchResult(data) {
+  stopFetchTicker(); // 「全N件を取得」を経過秒数の表示で上書きさせない
   state.apps = Array.isArray(data.applications) ? data.applications : [];
   state.tantouList = Array.isArray(data.tantou_list) ? data.tantou_list : [];
   state.businessTypes = Array.isArray(data.business_types) ? data.business_types : [];
