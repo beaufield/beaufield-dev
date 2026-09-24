@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="robots" content="noindex,nofollow">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>中継の診断（試験）</title>
+<style>
+  body { font-family: system-ui, sans-serif; font-size: 14px; margin: 16px; color: #0f172a; }
+  h1 { font-size: 17px; margin: 0 0 6px; }
+  .note { color: #64748b; font-size: 12px; margin-bottom: 10px; }
+  #st { font-weight: bold; margin: 10px 0; white-space: pre-wrap; }
+  iframe { width: 100%; height: 280px; border: 2px dashed #94a3b8; border-radius: 8px; background: #fff; }
+</style>
+</head>
+<body>
+<h1>中継の診断（試験ページ）</h1>
+<div class="note">業務データ・個人情報は扱いません。30秒ほどで終わります。終わったら画面全体のスクリーンショットを送ってください。</div>
+<div id="st">準備中…</div>
+<div class="note">↓ 埋め込んだGoogleのページ（何が表示されているかを見ます）</div>
+<div id="host"></div>
+<script>
+const qs = new URLSearchParams(location.search);
+const EXEC = qs.get('gas') || '';
+const st = document.getElementById('st');
+const log = [];
+const t0 = performance.now();
+const stamp = m => { log.push(Math.round(performance.now() - t0) + 'ms ' + m); st.textContent = log.join('\n'); };
+function report(final) {
+  const v = JSON.stringify({ stage: 'host-' + final, log: log.slice(0, 8), ua: navigator.userAgent.slice(0, 110) }).slice(0, 590);
+  fetch(EXEC + '?mode=log&v=' + encodeURIComponent(v)).catch(() => {});
+}
+if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(EXEC)) {
+  st.textContent = 'URLに試験用GASの指定（gas=）がありません';
+} else {
+  let ready = false;
+  window.addEventListener('message', ev => {
+    const d = ev.data && typeof ev.data === 'object' ? ev.data : null;
+    if (d && d.type === 'gas-relay-ready') {
+      ready = true;
+      stamp('準備完了の合図を受信（送信元 ' + ev.origin.replace(/^https:\/\//, '').slice(0, 40) + '、通信路 ' + (ev.ports[0] ? 'あり' : 'なし') + '）');
+      const port = ev.ports[0];
+      if (port) {
+        const s = performance.now();
+        port.onmessage = e => { stamp('中継経由の呼び出し: ' + (e.data.ok ? '成功 ' + Math.round(performance.now() - s) + 'ms' : '失敗 ' + e.data.error)); report('done'); };
+        port.postMessage({ type: 'call', id: 1, fn: 'rpcPing', args: ['diag-host'] });
+      }
+    } else {
+      stamp('その他のメッセージ（送信元 ' + String(ev.origin).replace(/^https:\/\//, '').slice(0, 40) + '）');
+    }
+  });
+  const f = document.createElement('iframe');
+  f.title = 'relay';
+  f.addEventListener('load', () => stamp('埋め込みページの読み込みイベント'));
+  f.src = EXEC + '?mode=relay&diag=1&origin=' + encodeURIComponent(location.origin) + '&_=' + Date.now();
+  document.getElementById('host').appendChild(f);
+  stamp('埋め込み開始');
+  setTimeout(() => { if (!ready) { stamp('30秒たっても準備完了の合図なし'); report('timeout'); } }, 30000);
+}
+</script>
+</body>
+</html>
