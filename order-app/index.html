@@ -149,6 +149,8 @@
     .btn-sm        { padding: 8px 14px; font-size: 13px; min-height: 36px; width: auto; display: inline-block; }
     .btn-row       { display: flex; gap: 8px; }
     .btn-row .btn  { flex: 1; }
+    .diagnostics-actions { flex-wrap: wrap; }
+    .diagnostics-actions .btn { flex: 1 1 140px; min-width: 140px; white-space: normal; }
 
     .master-badge {
       display: flex;
@@ -1040,11 +1042,12 @@
       通常は操作不要です。不具合調査を依頼された場合だけ診断結果をコピーしてください。
     </p>
     <div id="order-outbox-status" style="font-size:13px;margin-bottom:8px">未確定発注: 0件</div>
-    <div class="btn-row">
+    <div class="btn-row diagnostics-actions">
       <button class="btn btn-secondary" onclick="recoverPendingOrders(true)">🔄 未確定を再確認</button>
       <button class="btn btn-outline" onclick="copyGasDiagnostics()">📋 診断結果をコピー</button>
       <button class="btn btn-outline" onclick="showGasDiagnostics()">通信診断を表示</button>
     </div>
+    <div id="gas-diagnostics-output"></div>
   </div>
   <div class="card">
     <div class="card-label">アカウント</div>
@@ -1380,7 +1383,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.75.5';
+const APP_VERSION    = 'v1.75.6';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -3921,20 +3924,43 @@ function _gasDiagnosticsText() {
 
 function showGasDiagnostics() {
   // コピーできない端末でも、既存の診断情報を画面から確認できるようにする。
+  const host = document.getElementById('gas-diagnostics-output');
+  if (!host) return;
   let view = document.getElementById('gas-diagnostics-view');
   if (!view) {
     view = document.createElement('pre');
     view.id = 'gas-diagnostics-view';
     view.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;font-size:11px';
-    document.querySelector('[onclick="showGasDiagnostics()"]').parentElement.appendChild(view);
+    host.appendChild(view);
   }
   view.textContent = _gasDiagnosticsText();
 }
 
 async function copyGasDiagnostics() {
-  const text = _gasDiagnosticsText();
-  const copied = await copyToClipboard(text);
-  showToast(copied ? '通信診断をコピーしました' : '通信診断をコピーできませんでした', copied ? 'success' : 'error');
+  const diagnosticText = _gasDiagnosticsText();
+  const copied = await copyToClipboard(diagnosticText);
+  if (copied) {
+    showToast('通信診断をコピーしました', 'success');
+    return;
+  }
+  // iOS Safari などで自動コピーが拒否されても、診断の全文を手動で選択できるようにする。
+  const host = document.getElementById('gas-diagnostics-output');
+  if (!host) {
+    showToast('通信診断をコピーできませんでした', 'error');
+    return;
+  }
+  let field = document.getElementById('gas-diagnostics-copy-field');
+  if (!field) {
+    field = document.createElement('textarea');
+    field.id = 'gas-diagnostics-copy-field';
+    field.setAttribute('aria-label', '通信診断の全文');
+    field.style.cssText = 'display:block;width:100%;height:160px;margin-top:12px;box-sizing:border-box;font-size:12px;line-height:1.4';
+    host.appendChild(field);
+  }
+  field.value = diagnosticText;
+  field.focus();
+  field.select();
+  showToast('自動コピーできませんでした。下の診断欄を長押しして「コピー」を選んでください。', 'error');
 }
 
 function _formatDuplicateConflicts(conflicts) {
