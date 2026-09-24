@@ -773,7 +773,7 @@
 </div>
 
 <script>
-const APP_VERSION = 'v1.24.2';
+const APP_VERSION = 'v1.24.3';
 document.getElementById('headerVersion').textContent = APP_VERSION;
 // ============================================================
 // 設定（デプロイ後に GAS_URL を変更すること）
@@ -2816,7 +2816,12 @@ function renderProducts() {
     return;
   }
 
-  container.innerHTML = products.map(p => {
+  // 受付中を先にまとめ、各グループ内は元の商品順を維持する。
+  const todayStr = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const isAccepting = p => p.is_active && !p.is_expired && (!p.deadline || p.deadline >= todayStr);
+  const displayProducts = products.filter(isAccepting).concat(products.filter(p => !isAccepting(p)));
+
+  container.innerHTML = displayProducts.map(p => {
     const limitStr    = p.stock_limit > 0 ? `上限 ${p.stock_limit}個` : '上限なし';
     const reservedStr = `予約済 ${p.reserved_total}個`;
     const priceStr    = p.unit_price > 0 ? `単価 ${p.unit_price.toLocaleString()}円` : '単価未設定';
@@ -2824,7 +2829,7 @@ function renderProducts() {
 
     const statusBadge = !p.is_active
       ? `<span class="badge badge-red">停止中</span>`
-      : p.is_expired
+      : !isAccepting(p)
         ? `<span class="badge badge-gray">期限切れ</span>`
         : `<span class="badge badge-green">受付中</span>`;
 
