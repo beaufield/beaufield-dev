@@ -52,7 +52,10 @@ if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(EXE
   const f = document.createElement('iframe');
   f.title = 'relay';
   f.addEventListener('load', () => stamp('埋め込みページの読み込みイベント'));
-  f.src = EXEC + '?mode=relay&diag=1&origin=' + encodeURIComponent(location.origin) + '&_=' + Date.now();
+  // 複数のGoogleアカウントでログインしている端末向けの回避策の試験（authuser=0/1 を付ける）
+  const AU = /^[0-9]$/.test(qs.get('au') || '') ? qs.get('au') : '';
+  f.src = EXEC + '?mode=relay&diag=1&origin=' + encodeURIComponent(location.origin) + (AU ? '&authuser=' + AU : '') + '&_=' + Date.now();
+  if (AU) stamp('authuser=' + AU + ' を付けて埋め込み');
   document.getElementById('host').appendChild(f);
   stamp('埋め込み開始');
   setTimeout(() => { if (!ready) { stamp('30秒たっても準備完了の合図なし'); report('timeout'); } }, 30000);
