@@ -24,7 +24,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.39.0';
+const VERSION         = 'v1.39.24';
 const APP_NAME        = 'order-app';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 let _requestMetric = null;
@@ -1039,7 +1039,8 @@ function saveOrder(p, user_id) {
         return { success: false, error: 'REQUEST_ID_CONFLICT', message: '同じrequestIdに異なる内容が送信されました' };
       }
       if (existingState === 'COMPLETE' && existingHash === requestHash) {
-        return { success: true, orderNo, alreadyComplete: true };
+        // 旧GASへ切戻した後も新HTMLが保存結果を照合できるよう、応答に送信IDと品目数を含める。
+        return { success: true, orderNo, requestId, itemCount: Number(existing[6]), alreadyComplete: true };
       }
       // 移行前行またはPENDINGは、存在確認だけで済ませず同じorderNoへ全明細を書き直す。
     } else {
@@ -1066,7 +1067,7 @@ function saveOrder(p, user_id) {
     if (finalRows.length !== 1) throw new Error('REQUEST_ROW_LOST_DURING_SAVE');
     histSh.getRange(finalRows[0], 14).setValue('COMPLETE');
     SpreadsheetApp.flush();
-    return { success: true, orderNo };
+    return { success: true, orderNo, requestId, itemCount: items.length };
   } finally {
     lock.releaseLock();
   }
@@ -1092,7 +1093,9 @@ function checkOrderByRequestId(p, user_id) {
     return {
       success: true,
       state: state === 'COMPLETE' ? 'COMPLETE' : 'PARTIAL',
-      orderNo: String(row[0] || '').trim()
+      orderNo: String(row[0] || '').trim(),
+      requestId: String(row[10] || '').trim(),
+      itemCount: Number(row[6])
     };
   } finally {
     lock.releaseLock();
