@@ -24,7 +24,7 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.39.24';
+const VERSION         = 'v1.39.25';
 const APP_NAME        = 'order-app';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 let _requestMetric = null;
@@ -1694,7 +1694,11 @@ function buildPendingOrders() {
       const orderNo = String(r[0] || '').trim();
       const state = String(r[13] || '').trim();
       if (orderNo && (state === '' || state === 'COMPLETE')) {
-        supplierByOrderNo[orderNo] = { code: String(r[2] || '').trim(), name: String(r[3] || '') };
+        // registeredAt（I列=登録日時）は提案タブが「分析より後の発注か」を判定するのに使う（v1.39.25）。
+        // ⚠️ 返さないと画面は全発注を「分析より後」とみなし、未入荷の注文がある商品を提案から全部隠す
+        //    （2026-09-24 版62への切り戻しでこの項目が消え、ミルフィ等18商品が消えていた）
+        supplierByOrderNo[orderNo] = { code: String(r[2] || '').trim(), name: String(r[3] || ''),
+                                       registeredAt: cellToStr(r[8]) };
       }
     });
   }
@@ -1735,6 +1739,7 @@ function buildPendingOrders() {
       supplierName: supp.name,
       orderNo,
       orderDate: dateKey.slice(0, 4) + '-' + dateKey.slice(4, 6) + '-' + dateKey.slice(6, 8),
+      registeredAt: supp.registeredAt,
       qty,
       leadTimeDays,
       postingLagDays,
