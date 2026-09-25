@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.39.0';
+const VERSION  = '0.41.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -813,6 +813,7 @@ function applyApplication(data, clientAttempt) {
     const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
     const sh  = _getSheet(ss, SHEET_APPLICATIONS);
     const rows = sh.getDataRange().getValues();
+    if (_duplicateAliasIndex(ss, rows).pendingCount) return _err('MIGRATION_IN_PROGRESS');
 
     // 🆕 request_id が一致する既存行を最優先で探す（空文字同士は誤マッチしないよう対象外）。
     if (requestId) {
@@ -981,14 +982,20 @@ function updateApplication(data) {
     const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
     const sh  = _getSheet(ss, SHEET_APPLICATIONS);
     const rows = sh.getDataRange().getValues();
+    const aliases = _duplicateAliasIndex(ss, rows);
+    if (aliases.pendingTokens[token]) return _err('MIGRATION_IN_PROGRESS');
+    const canonicalId = aliases.byToken[token] || '';
 
     let foundRow = -1;
     for (let i = 1; i < rows.length; i++) {
-      if (String(rows[i][16]) === token) { foundRow = i + 1; break; }
+      if ((canonicalId && String(rows[i][0]) === canonicalId) ||
+          (!canonicalId && String(rows[i][16]) === token)) { foundRow = i + 1; break; }
     }
     if (foundRow < 0) return _err('NOT_FOUND');
 
     appId = rows[foundRow - 1][0];
+    if (aliases.pendingIds[String(appId)]) return _err('MIGRATION_IN_PROGRESS');
+    if (String(rows[foundRow - 1][17]) === 'cancelled') return _err('APPLICATION_CANCELLED');
     _updateApplicationRow(sh, foundRow, f);
 
     if (touchSessions) {
@@ -1093,6 +1100,7 @@ function applyLiff(data) {
     const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
     const sh  = _getSheet(ss, SHEET_APPLICATIONS);
     const rows = sh.getDataRange().getValues();
+    if (_duplicateAliasIndex(ss, rows).pendingCount) return _err('MIGRATION_IN_PROGRESS');
 
     let foundRow = -1;
     for (let i = 1; i < rows.length; i++) {
@@ -1338,6 +1346,7 @@ function listBadges(data) {
   const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sh  = _getSheet(ss, SHEET_APPLICATIONS);
   const rows = sh.getDataRange().getValues();
+  if (_duplicateAliasIndex(ss, rows).pendingCount) return _err('MIGRATION_IN_PROGRESS');
   const cfg  = _getConfig(); // 🔴 _getConfig()は自分でopenByIdする実装のため呼び出しが2回になるが、
                               // 既存関数を書き換えない（§0-1の原則）。読み取り2回は誤差なので最適化しない
 
@@ -1432,9 +1441,13 @@ function getPass(data) {
   const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sh  = _getSheet(ss, SHEET_APPLICATIONS);
   const rows = sh.getDataRange().getValues();
+  const aliases = _duplicateAliasIndex(ss, rows);
+  if (aliases.pendingTokens[token]) return _err('MIGRATION_IN_PROGRESS');
+  const canonicalId = aliases.byToken[token] || '';
 
   for (let i = 1; i < rows.length; i++) {
-    if (String(rows[i][16]) === token) {
+    if ((canonicalId && String(rows[i][0]) === canonicalId) ||
+        (!canonicalId && String(rows[i][16]) === token)) {
       const cfg = _getConfig();
       return _ok({
         app_id:         rows[i][0],
@@ -1456,7 +1469,7 @@ function getPass(data) {
           venue_name: cfg.venue_name       || '',
           venue_addr: cfg.venue_addr       || ''
         },
-        pass_url: SITE_BASE_URL + 'pass.html?t=' + token
+        pass_url: SITE_BASE_URL + 'pass.html?t=' + (canonicalId ? String(rows[i][16]) : token)
       });
     }
   }
@@ -2197,12 +2210,28 @@ function _findApplicantInRows(rows, token) {
   return null;
 }
 
+// 統合済みの旧パスを正本へ解決する。本人確認は旧tokenの所持で行う。
+function _duplicateApplicantInRows(rows, token, aliases) {
+  if (aliases.pendingTokens[token]) return { pending: true };
+  const canonicalId = aliases.byToken[token] || '';
+  if (!canonicalId) return _findApplicantInRows(rows, token);
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) !== canonicalId) continue;
+    return {
+      appId: canonicalId, salonName: String(rows[i][4]), staffName: String(rows[i][5]),
+      email: String(rows[i][6]), status: String(rows[i][17])
+    };
+  }
+  return null;
+}
+
 // ticket_token から申込者を引く（見つからなければ null）。
 // 予約の控えメールに宛先と氏名が要るので、app_id だけでなく行の内容も返す。
 function _applicantByTicketToken(ss, token) {
   if (!token) return null;
   const sh = _getSheet(ss, SHEET_APPLICATIONS);
-  return _findApplicantInRows(sh.getDataRange().getValues(), token);
+  const rows = sh.getDataRange().getValues();
+  return _duplicateApplicantInRows(rows, token, _duplicateAliasIndex(ss, rows));
 }
 
 // ticket_token から app_id を引く（見つからなければ null）
@@ -2255,6 +2284,7 @@ function listSessions(data) {
   if(token) {
     const app=_applicantByTicketToken(ss,token);
     if(!app)return _err('INVALID_TOKEN');
+    if(app.pending)return _err('MIGRATION_IN_PROGRESS');
     if(app.status==='cancelled')return _err('APPLICATION_CANCELLED');
     return _ok(_bookingView(ss,app.appId,'customer'));
   }
@@ -2418,8 +2448,9 @@ function reserveSessions(data) {
     const ss     = SpreadsheetApp.openById(SPREADSHEET_ID);
     const appSh  = _getSheet(ss, SHEET_APPLICATIONS);
     const appRows = appSh.getDataRange().getValues();
-    applicant = _findApplicantInRows(appRows, token);
+    applicant = _duplicateApplicantInRows(appRows, token, _duplicateAliasIndex(ss, appRows));
     if (!applicant) return _err('NOT_FOUND');
+    if (applicant.pending) return _err('MIGRATION_IN_PROGRESS');
     // 🔴 キャンセル済みの申込から予約させない。放置すると「来場しない人が席を持つ」ことになる。
     if (applicant.status === 'cancelled') return _err('APPLICATION_CANCELLED');
     appId  = applicant.appId;
@@ -3797,6 +3828,8 @@ function _boothSnapshotProducts(sheets, boothId, canonItems) {
 // 🔴 ロックの外で呼ぶこと（一番重い読み取り・§5-2）。
 function _boothLoadSubjectIndex(ss) {
   const appRows = _getSheet(ss, SHEET_APPLICATIONS).getDataRange().getValues();
+  const aliases = _duplicateAliasIndex(ss, appRows);
+  if (aliases.pendingCount) throw new Error('MIGRATION_IN_PROGRESS');
   const appsById = {}, appsByToken = {};
   for (let i = 1; i < appRows.length; i++) {
     const appId = String(appRows[i][0] || '').trim();
@@ -3812,6 +3845,9 @@ function _boothLoadSubjectIndex(ss) {
     // だからここは「いまの値」の索引でしかない。集計の正キーは app_id。
     if (rec.ticket_token) appsByToken[rec.ticket_token] = rec;
   }
+  Object.keys(aliases.byToken).forEach(function(token){
+    appsByToken[token]=appsById[aliases.byToken[token]];
+  });
 
   const spRows = _ensureSpareBadgesSheet(ss).getDataRange().getValues();
   const sparesByNo = {}, sparesByToken = {};
@@ -3827,7 +3863,8 @@ function _boothLoadSubjectIndex(ss) {
     if (rec.ticket_token) sparesByToken[rec.ticket_token] = rec;
   }
 
-  return { appsById: appsById, appsByToken: appsByToken,
+  return { appsById: appsById, appsByToken: appsByToken, aliasByCode: aliases.byCode,
+           aliasStamp: aliases.stamp,
            sparesByNo: sparesByNo, sparesByToken: sparesByToken };
 }
 
@@ -3861,7 +3898,7 @@ function _boothResolveByCode(ec, idx) {
   const code = _boothPadCode(ec);
 
   if (/^F\d{4}-/.test(code)) {
-    const app = idx.appsById[code];
+    const app = idx.appsById[(idx.aliasByCode||{})[code]||code];
     if (app) return { status: 'ok', app_id: app.app_id, flag: '' };
     return { status: 'unresolved', app_id: '', flag: 'unknown_code' };
   }
@@ -4075,6 +4112,7 @@ function boothSubmit(data) {
 
   let result, rowNum, notifyOrderId;
   try {
+    if (_duplicateAliasStamp(ss)!==idx.aliasStamp) return _err('SUBJECT_CHANGED_RETRY');
     const or = sheets.orders;
     const lastRow = or.getLastRow();
     const keys = (lastRow >= 2) ? or.getRange(2, 1, lastRow - 1, BOOTH_KEY_COLS).getValues() : [];
@@ -4666,6 +4704,8 @@ function scanRoster(data) {
 
   const ss   = SpreadsheetApp.openById(SPREADSHEET_ID);
   const rows = _getSheet(ss, SHEET_APPLICATIONS).getDataRange().getValues();
+  const aliases = _duplicateAliasIndex(ss, rows);
+  if (aliases.pendingCount) return _err('MIGRATION_IN_PROGRESS');
   const cfg  = _getConfig();
 
   let skippedNoToken = 0;
@@ -4709,6 +4749,9 @@ function scanRoster(data) {
     skipped_no_token: skippedNoToken,
     bands:            _buildBandsFromConfig(cfg),
     roster:           roster,
+    aliases:          aliases.rows.filter(function(r){return r.state==='complete';}).map(function(r){
+      return {old_app_id:r.oldId,old_ticket_token:r.oldToken,canonical_app_id:r.canonicalId};
+    }),
     spares:           spares
   });
 }
@@ -4767,6 +4810,7 @@ function scanCheckin(data) {
 
   const results = [];
   try {
+    if (_duplicateAliasStamp(ss)!==idx.aliasStamp) return _err('SUBJECT_CHANGED_RETRY');
     const lastRow  = sh.getLastRow();
     const existing = (lastRow >= 2)
       ? sh.getRange(2, 1, lastRow - 1, CHECKIN_COLS).getValues() : [];
@@ -5030,6 +5074,9 @@ function assignSpare(data) {
     }
 
     const appRows = appSh.getDataRange().getValues();
+    const duplicateAliases = _duplicateAliasIndex(ss, appRows);
+    if (duplicateAliases.pendingIds[appId]) return _err('MIGRATION_IN_PROGRESS');
+    if (duplicateAliases.byCode[appId]) return _err('APPLICATION_CANCELLED');
     let appRow = -1, appName = '', appSalon = '', prevToken = '';   // prevToken = 割当前のticket_token（E列に控える）
     for (let i = 1; i < appRows.length; i++) {
       if (String(appRows[i][0] || '').trim() === appId) {
@@ -5037,6 +5084,7 @@ function assignSpare(data) {
         appSalon = String(appRows[i][4] || '');
         appName  = String(appRows[i][5] || '');
         prevToken = String(appRows[i][16] || '').trim();
+        if (String(appRows[i][17]) !== 'confirmed') return _err('APPLICATION_CANCELLED');
         break;
       }
     }
@@ -5362,6 +5410,7 @@ function _bookingWrite(ss, appId, wantIds, opts) {
   const result = _bookingResult(), data = opts.data || {}, actorKind = opts.actorKind || 'customer';
   const actor = actorKind + ':' + (opts.actorId || appId);
   try {
+    _duplicateRejectPending(ss, appId);
     _bookingRecover(ss);
     const log = _bookingLog(ss), history = log.getDataRange().getValues();
     const requestId = String(data.booking_request_id || '').trim();
@@ -5399,7 +5448,8 @@ function _bookingWrite(ss, appId, wantIds, opts) {
       const occupied=keep.concat(additions).map(function(k){return byId[k];}).filter(Boolean);
       if(occupied.some(function(k){return k.slot===s.slot;})){result.invalid.push(id);return;}
       if(s.resource_group && occupied.some(function(k){return _capacityPoolKey(k)===_capacityPoolKey(s);})){result.invalid.push(id);return;}
-      if(occupied.some(function(k){return _sessionsOverlap(k,s);})){result.conflict.push(id);return;}
+       // 社員の代理予約は時間の重なりを許す。同一枠・共有施術枠・定員は上記と下記で引き続き守る。
+       if(actorKind!=='staff' && occupied.some(function(k){return _sessionsOverlap(k,s);})){result.conflict.push(id);return;}
       if(s.capacity!==null && _capacityUsed(s,counts,all)>=s.capacity){result.full.push(id);return;}
       additions.push(id);
       counts[id]=(counts[id]||0)+1;
@@ -5418,7 +5468,7 @@ function _bookingWrite(ss, appId, wantIds, opts) {
     log.getRange(log.getLastRow()+1,1,1,10).setValues([[requestId,appId,actor,fingerprint,'prepared',revision,JSON.stringify(plan),JSON.stringify(result),now,'not_requested']]);
     _bookingRecover(ss);
     return result;
-  } catch(e) { result.error='BOOKING_RECOVERY_REQUIRED'; return result; }
+  } catch(e) { result.error=String(e&&e.message||e)==='MIGRATION_IN_PROGRESS'?'MIGRATION_IN_PROGRESS':'BOOKING_RECOVERY_REQUIRED'; return result; }
 }
 function _bookingApplicant(ss, appId) {
   const rows=ss.getSheetByName(SHEET_APPLICATIONS).getDataRange().getValues();
@@ -5498,6 +5548,193 @@ function staffChangeReservation(data) {
   } finally {lock.releaseLock();}
   if(result.error)return _err(result.error);
   return _ok(Object.assign(_bookingView(ss,app.app_id,'staff'),{result:result,mail_sent:false}));
+}
+
+// ============================================================
+// 申込重複の統合。対応台帳は業務シート内に置き、公開APIから更新できない。
+// 旧パスは消さず、受付・予約・ブースで正本へ解決する。
+// ============================================================
+const DUPLICATE_ALIAS_SHEET = 'application_aliases';
+const DUPLICATE_ALIAS_HEADERS = [
+  'old_app_id','old_ticket_token','canonical_app_id','state',
+  'plan_hash','plan_json','created_at','completed_at'
+];
+
+function _duplicateAliasSheet(ss, create) {
+  let sh = ss.getSheetByName(DUPLICATE_ALIAS_SHEET);
+  if (!sh && create) {
+    sh = ss.insertSheet(DUPLICATE_ALIAS_SHEET);
+    sh.getRange(1,1,1,DUPLICATE_ALIAS_HEADERS.length).setValues([DUPLICATE_ALIAS_HEADERS]);
+    sh.setFrozenRows(1);
+    sh.getRange(1,2,sh.getMaxRows(),1).setNumberFormat('@');
+  }
+  if (sh && JSON.stringify(sh.getRange(1,1,1,DUPLICATE_ALIAS_HEADERS.length).getValues()[0]) !==
+      JSON.stringify(DUPLICATE_ALIAS_HEADERS)) throw new Error('DUPLICATE_ALIAS_SCHEMA');
+  return sh;
+}
+
+function _duplicateAliasStamp(ss) {
+  const sh=_duplicateAliasSheet(ss,false);
+  if(!sh)return '';
+  return JSON.stringify(sh.getDataRange().getValues().slice(1).map(function(r){return r.slice(0,4);}));
+}
+
+// 読取経路ではシートを作らない。未完了の統合があれば対象者の操作を止める。
+function _duplicateAliasIndex(ss, appRows) {
+  const out = {byToken:{},byCode:{},pendingTokens:{},pendingIds:{},rows:[],pendingCount:0,stamp:''};
+  const sh = _duplicateAliasSheet(ss,false);
+  if (!sh) return out;
+  const rows = sh.getDataRange().getValues();
+  out.stamp=JSON.stringify(rows.slice(1).map(function(r){return r.slice(0,4);}));
+  const byId = {};
+  for (let i=1;i<appRows.length;i++) {
+    const id=String(appRows[i][0]||'').trim();
+    if (id) { if (byId[id]) throw new Error('DUPLICATE_APP_ID'); byId[id]=appRows[i]; }
+  }
+  const seenOld={},seenToken={};
+  for (let i=1;i<rows.length;i++) {
+    const oldId=String(rows[i][0]||'').trim(),oldToken=String(rows[i][1]||'').trim();
+    const canonicalId=String(rows[i][2]||'').trim(),state=String(rows[i][3]||'').trim();
+    if (!oldId && !oldToken && !canonicalId && !state) continue;
+    if (!oldId || !oldToken || !canonicalId || oldId===canonicalId ||
+        seenOld[oldId] || seenToken[oldToken] || !byId[oldId] || !byId[canonicalId] ||
+        String(byId[oldId][16])!==oldToken) throw new Error('DUPLICATE_ALIAS_INVALID');
+    seenOld[oldId]=true;seenToken[oldToken]=true;
+    if (state==='prepared') {
+      out.pendingIds[oldId]=true;out.pendingIds[canonicalId]=true;
+      out.pendingTokens[oldToken]=true;out.pendingTokens[String(byId[canonicalId][16])]=true;
+      out.pendingCount++;
+    } else if (state==='complete') {
+      if (String(byId[oldId][17])!=='cancelled' || String(byId[canonicalId][17])!=='confirmed' ||
+          seenOld[canonicalId]) throw new Error('DUPLICATE_ALIAS_INVALID');
+      out.byToken[oldToken]=canonicalId;out.byCode[oldId]=canonicalId;
+    } else throw new Error('DUPLICATE_ALIAS_STATE');
+    out.rows.push({sheetRow:i+1,oldId:oldId,oldToken:oldToken,canonicalId:canonicalId,
+                   state:state,hash:String(rows[i][4]||''),plan:String(rows[i][5]||'')});
+  }
+  if (out.rows.some(function(r){return seenOld[r.canonicalId];})) throw new Error('DUPLICATE_ALIAS_CHAIN');
+  return out;
+}
+
+function _duplicateRejectPending(ss, appId) {
+  const sh=_duplicateAliasSheet(ss,false);
+  if (!sh) return;
+  const rows=sh.getDataRange().getValues();
+  for(let i=1;i<rows.length;i++) {
+    if(String(rows[i][3])==='prepared'&&
+       (String(rows[i][0])===String(appId)||String(rows[i][2])===String(appId)))
+      throw new Error('MIGRATION_IN_PROGRESS');
+  }
+}
+
+// GASエディタ／認可済み運用ツールからのみ実行。doGet/doPostには接続しない。
+// 指定例: {old_app_id:'...',canonical_app_id:'...',retain_old_session_ids:['F1'],
+//         cancel_old_session_ids:[],cancel_new_session_ids:[]}
+function mergeApplicationDuplicate(input) {
+  _checkProps();
+  const d=input||{},oldId=String(d.old_app_id||'').trim(),newId=String(d.canonical_app_id||'').trim();
+  const retain=d.retain_old_session_ids,cancelOld=d.cancel_old_session_ids,cancelNew=d.cancel_new_session_ids;
+  const allowTimeOverlap=d.allow_time_overlap===true;
+  const validIds=function(a){return Array.isArray(a)&&a.length<=32&&a.every(function(x){return typeof x==='string'&&/^[A-Za-z0-9_-]{1,64}$/.test(x);})&&new Set(a).size===a.length;};
+  if (!/^F\d{4}-\d{4}$/.test(oldId)||!/^F\d{4}-\d{4}$/.test(newId)||oldId===newId||
+       !validIds(retain)||!validIds(cancelOld)||!validIds(cancelNew)||
+       (d.allow_time_overlap!==undefined&&typeof d.allow_time_overlap!=='boolean')) throw new Error('DUPLICATE_REQUEST_INVALID');
+  const fingerprint=_bookingHash([oldId,newId,retain.slice().sort(),cancelOld.slice().sort(),cancelNew.slice().sort(),allowTimeOverlap]);
+  const lock=LockService.getScriptLock();lock.waitLock(30000);
+  try {
+    const ss=SpreadsheetApp.openById(SPREADSHEET_ID),appSh=_getSheet(ss,SHEET_APPLICATIONS);
+    const appRows=appSh.getDataRange().getValues(),index=_duplicateAliasIndex(ss,appRows);
+    const oldMatches=[],newMatches=[];
+    for(let i=1;i<appRows.length;i++) {
+      if(String(appRows[i][0])===oldId)oldMatches.push({n:i+1,r:appRows[i]});
+      if(String(appRows[i][0])===newId)newMatches.push({n:i+1,r:appRows[i]});
+    }
+    if(oldMatches.length!==1||newMatches.length!==1)throw new Error('DUPLICATE_APP_NOT_UNIQUE');
+    const old=oldMatches[0],target=newMatches[0];
+    const token=String(old.r[16]||'').trim(),newToken=String(target.r[16]||'').trim();
+    if(!token||!newToken||token===newToken||!String(old.r[7]||'').trim()||
+       !String(old.r[8]||'').trim()||String(target.r[17])!=='confirmed'||
+       String(old.r[3])!=='web'||String(target.r[3])!=='liff'||
+       String(old.r[15]||'')||!String(target.r[15]||'')||
+       String(old.r[7]||'').toLowerCase()!==String(target.r[7]||'').toLowerCase()||
+       String(old.r[8]||'')!==String(target.r[8]||'')||
+       String(old.r[4]||'').normalize('NFKC')!==String(target.r[4]||'').normalize('NFKC'))
+      throw new Error('DUPLICATE_IDENTITY_MISMATCH');
+    const oldName=_normalizeName(old.r[5]),newName=_normalizeName(target.r[5]);
+    if(oldName!==newName&&!oldName.startsWith(newName+'(')&&!oldName.startsWith(newName+'（'))
+      throw new Error('DUPLICATE_NAME_MISMATCH');
+    if(appRows.slice(1).filter(function(r){return String(r[15]||'')===String(target.r[15]);}).length!==1)
+      throw new Error('DUPLICATE_LINE_ID_MISMATCH');
+    if(appRows.slice(1).filter(function(r){return String(r[16]||'')===token;}).length!==1||
+       appRows.slice(1).filter(function(r){return String(r[16]||'')===newToken;}).length!==1)
+      throw new Error('DUPLICATE_TOKEN_NOT_UNIQUE');
+    const prior=index.rows.filter(function(r){return r.oldId===oldId;});
+    if(prior.length>1||index.rows.some(function(r){return r.oldId!==oldId&&(r.oldId===newId||r.canonicalId===oldId||r.canonicalId===newId);}))
+      throw new Error('DUPLICATE_ALIAS_CONFLICT');
+    if(prior.length&&prior[0].hash!==fingerprint)throw new Error('DUPLICATE_PLAN_CONFLICT');
+    if(prior.length&&prior[0].state==='complete')return {state:'complete',already_done:true,canonical_app_id:newId};
+    if(index.pendingCount>(prior.length?1:0))throw new Error('DUPLICATE_OTHER_MIGRATION_PENDING');
+    const bookingRows=_bookingLog(ss).getDataRange().getValues();
+    if(bookingRows.slice(1).some(function(r){return String(r[4])==='prepared';}))
+      throw new Error('DUPLICATE_BOOKING_PENDING');
+    let plan;
+    if(prior.length) {
+      plan=JSON.parse(prior[0].plan);
+    } else {
+      if(String(old.r[17])!=='confirmed')throw new Error('DUPLICATE_OLD_STATUS');
+      // 対象に当日記録や予備名札割当があれば手動調査へ戻す。
+      const ck=ss.getSheetByName(SHEET_CHECKINS),orders=ss.getSheetByName(SHEET_ORDERS),sp=ss.getSheetByName(SHEET_SPARE_BADGES);
+      const containsRef=function(sh){if(!sh)return false;return sh.getDataRange().getValues().slice(1).some(function(r){return r.some(function(v){const x=String(v||'').trim();return x===oldId||x===newId||x===token||x===newToken;});});};
+      if(containsRef(ck)||containsRef(orders)||containsRef(sp))throw new Error('DUPLICATE_SUBJECT_IN_USE');
+      const resRows=_readReservationRows(ss),oldActive=[],newActive=[];
+      for(let i=1;i<resRows.length;i++)if(String(resRows[i][4])==='reserved'){
+        if(String(resRows[i][1])===oldId)oldActive.push(resRows[i]);
+        if(String(resRows[i][1])===newId)newActive.push(resRows[i]);
+      }
+      const oldIds=oldActive.map(function(r){return String(r[2]);});
+      if(oldIds.length!==retain.length+cancelOld.length||oldIds.some(function(id){return retain.indexOf(id)<0&&cancelOld.indexOf(id)<0;})||
+         retain.some(function(id){return cancelOld.indexOf(id)>=0;})||
+         cancelNew.some(function(id){return !newActive.some(function(r){return String(r[2])===id;});}))
+        throw new Error('DUPLICATE_BOOKING_PLAN_MISMATCH');
+      const finalIds=newActive.map(function(r){return String(r[2]);}).filter(function(id){return cancelNew.indexOf(id)<0;}).concat(retain);
+      const all=_readSessions(ss),byId={};all.forEach(function(s){byId[s.session_id]=s;});
+       if(finalIds.some(function(id){return !byId[id];})||new Set(finalIds).size!==finalIds.length||
+          finalIds.some(function(id,i){return finalIds.slice(i+1).some(function(other){
+            const a=byId[id],b=byId[other];
+            return a.slot===b.slot || (a.resource_group&&_capacityPoolKey(a)===_capacityPoolKey(b)) ||
+              (!allowTimeOverlap&&_sessionsOverlap(a,b));
+          });}))
+        throw new Error('DUPLICATE_BOOKING_CONFLICT');
+      plan={move:oldActive.filter(function(r){return retain.indexOf(String(r[2]))>=0;}).map(function(r){return {id:String(r[0]),app_id:oldId,session_id:String(r[2])};}),
+            cancel:oldActive.filter(function(r){return cancelOld.indexOf(String(r[2]))>=0;}).concat(
+              newActive.filter(function(r){return cancelNew.indexOf(String(r[2]))>=0;})).map(function(r){return {id:String(r[0]),app_id:String(r[1]),session_id:String(r[2])};}),
+            expected_sessions:finalIds.sort(),copy_tantou:!String(target.r[22]||'').trim()?String(old.r[22]||'').trim():''};
+      const aliasSh=_duplicateAliasSheet(ss,true),now=_now();
+      aliasSh.getRange(aliasSh.getLastRow()+1,1,1,8).setValues([[oldId,token,newId,'prepared',fingerprint,JSON.stringify(plan),now,'']]);
+    }
+    const resSh=_getSheet(ss,SHEET_RESERVATIONS),resRows=_readReservationRows(ss),byRes={};
+    for(let i=1;i<resRows.length;i++){const id=String(resRows[i][0]||'');if(id){if(byRes[id])throw new Error('DUPLICATE_RES_ID');byRes[id]={n:i+1,r:resRows[i]};}}
+    plan.cancel.forEach(function(p){
+      const entry=byRes[p.id];if(!entry||String(entry.r[1])!==p.app_id||String(entry.r[2])!==p.session_id||
+        ['reserved','cancelled'].indexOf(String(entry.r[4]))<0)throw new Error('DUPLICATE_RESERVATION_CHANGED');
+      if(String(entry.r[4])==='reserved')resSh.getRange(entry.n,5).setValue('cancelled');
+    });
+    plan.move.forEach(function(p){
+      const entry=byRes[p.id];if(!entry||String(entry.r[2])!==p.session_id||String(entry.r[4])!=='reserved'||
+        [p.app_id,newId].indexOf(String(entry.r[1]))<0)throw new Error('DUPLICATE_RESERVATION_CHANGED');
+      if(String(entry.r[1])===oldId)resSh.getRange(entry.n,2).setValue(newId);
+    });
+    if(plan.copy_tantou&&!String(appSh.getRange(target.n,23).getValue()||'').trim())appSh.getRange(target.n,23).setValue(plan.copy_tantou);
+    if(String(appSh.getRange(old.n,18).getValue())==='confirmed')appSh.getRange(old.n,18).setValue('cancelled');
+    const after=_readReservationRows(ss),activeOld=_reservedSessionIdsOf(after,oldId),activeNew=_reservedSessionIdsOf(after,newId).sort();
+    if(activeOld.length||JSON.stringify(activeNew)!==JSON.stringify(plan.expected_sessions))throw new Error('DUPLICATE_VERIFY_FAILED');
+    const aliasSh=_duplicateAliasSheet(ss,false),aliasRows=aliasSh.getDataRange().getValues();
+    let aliasRow=-1;for(let i=1;i<aliasRows.length;i++)if(String(aliasRows[i][0])===oldId)aliasRow=i+1;
+    if(aliasRow<0)throw new Error('DUPLICATE_ALIAS_MISSING');
+    aliasSh.getRange(aliasRow,4).setValue('complete');
+    aliasSh.getRange(aliasRow,8).setValue(_now());
+    return {state:'complete',already_done:false,canonical_app_id:newId,reserved:activeNew};
+  } finally {lock.releaseLock();}
 }
 // 管理用の移行はGASエディタだけから実行し、公開doGet/doPostには接続しない。
 function prepareFemcareBooking() {

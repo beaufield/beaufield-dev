@@ -252,7 +252,7 @@
 //    予備名札は朝の名簿に載らない）。最終的な照合はサーバーが行う。
 // ============================================================
 
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.2.0';
 
 // 本番GAS（HTML=GitHub Pages / GAS=版番号固定の分離型。ローカル検証はモックに差し替える）
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
@@ -261,7 +261,7 @@ const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
 const SESSION_KEY = 'bf_session';   // ポータルと共通（badges.html と同じ）
 
 const K_DEVICE    = 'bf_scan_device_id';
-const K_ROSTER    = 'bf_scan_roster';
+const K_ROSTER    = 'bf_scan_roster_v2'; // 統合前に保存した名簿を新版へ持ち越さない
 const K_QUEUE     = 'bf_scan_queue';
 const K_REMOTE    = 'bf_scan_remote';
 const K_EVACUATED = 'bf_scan_evacuated_at';
@@ -417,6 +417,14 @@ function indexRoster() {
   (roster.roster || []).forEach(function (r) {
     if (r.ticket_token) byToken[r.ticket_token] = r;
     if (r.app_id) byCode[r.app_id] = r;
+  });
+  // 統合前のQRと受付番号も、オフラインで正本1人へ解決する。
+  (roster.aliases || []).forEach(function (a) {
+    const owner = byCode[a.canonical_app_id];
+    if (!owner || !a.old_app_id || !a.old_ticket_token ||
+        byCode[a.old_app_id] || byToken[a.old_ticket_token]) return;
+    byCode[a.old_app_id] = owner;
+    byToken[a.old_ticket_token] = owner;
   });
   // 予備名札は「割当済み」だけが来る。割当先の申込行に紐づけて同じ人として扱う
   (roster.spares || []).forEach(function (sp) {
