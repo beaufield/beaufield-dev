@@ -716,7 +716,8 @@ function postReadWithRetry(params, onProgress, options) {
 // 🆕 v0.14.0 一覧・予約状況の読み込みは、読み込み専用の中継GAS（gas-staff-read）経由を優先する。
 //    fetch→/exec は結果の配送で失敗するが、google.script.run は失敗しなかった（2026-09-24 実測：10.6% 対 0%）。
 //    Googleに2アカウント以上ログインしているブラウザでは中継が開けないので、そのときは従来の fetch で読む。
-//    🔴 中継で読んだ予約状況は表示用。予約の編集は必ず本番GASで最新を確かめる（ロック・設定を共有していないため）。
+//    中継で読んだ予約状況も30秒以内なら編集に使う（保存時に本番GASが版番号・定員・受付可否を検査する）。
+//    🔴 予約受付の開閉（SEMINAR_BOOKING_ENABLED）は中継GASにも別に持っている。変えるときは両方変えること。
 //    🔴 中継GASは本番GASの読み込み処理の写し。本番GASを更新したら tools/build_staff_read_gas.py で作り直すこと。
 const STAFF_READ_URL = 'https://script.google.com/macros/s/AKfycbxzOmgV1l8f8HCfxnbdxceLRL2_rPuz-vxmTwsSjLA_z9WYaVhXFA7G460algrEB24/exec';
 const RELAY_WAIT_MS = 3000;
@@ -1743,8 +1744,8 @@ function cachedBookingView(appId) {
 
 function isBookingSnapshotFresh() {
   if (!bookingSnapshotMeta || bookingSummaryData.state !== 'ready') return false;
-  // 🆕 v0.14.0 中継GASで読んだ予約状況は表示用。編集の前に本番GASで最新を確かめさせる
-  if (bookingSnapshotMeta.via === 'relay') return false;
+  // 中継GASで読んだ予約状況も30秒以内なら編集に使う（2026-09-25 Takashiさん承認）。
+  // 保存時は本番GASが版番号・定員・受付可否をロック内で検査するので、古い表示でも二重予約・定員超過にはならない。
   if (Date.now() - bookingSnapshotMeta.requestStartedAt > 30000 || document.visibilityState === 'hidden') return false;
   const session = getSession();
   if (!session) return false;
@@ -1752,7 +1753,31 @@ function isBookingSnapshotFresh() {
     String(session.user_id || '') === bookingSnapshotMeta.viewerId;
 }
 
-function openBookingForApp(a) {
+// 🆕 v0.14.0 予約画面を開く前に、予約状況が古ければ中継GASで読み直す（3〜5秒）。
+// 本番GAS（fetch）での読み直しは配送の失敗で35秒待って404になることがある（2026-09-25 11:23 実測）。
+// 中継が使えない端末・読み直しに失敗したときは、従来どおり予約部品が本番GASで確かめる。
+async function refreshBookingSnapshotViaRelay() {
+  const session = getSession();
+  if (!session || !staffRelay || staffRelay.state !== 'ready') return;
+  const requestStartedAt = Date.now();
+  const text = await staffRelay.call([JSON.stringify({ action: 'adminBootstrap', data: { session_token: session.token || '', include_applications: false } })], RELAY_CALL_TIMEOUT_MS);
+  const json = JSON.parse(text);
+  if (json && json.success === true && validAdminBootstrap(json.data, false) && json.data.booking.state === 'ready') {
+    applyBookingSnapshot(json.data.booking, {
+      generation: adminRequestGeneration, requestStartedAt: requestStartedAt,
+      sessionToken: session.token || '', viewerId: session.user_id || '', via: 'relay'
+    });
+  }
+}
+
+async function openBookingForApp(a, button) {
+  if (!isBookingSnapshotFresh() && staffRelay && staffRelay.state === 'ready') {
+    if (button) { button.disabled = true; button.textContent = '確認中…'; }
+    try { await refreshBookingSnapshotViaRelay(); } catch (e) { /* 予約部品が本番GASで確かめる */ }
+    finally {
+      if (button) { button.disabled = a.status === 'cancelled'; setBookingButtonLabel(button, bookingReservedApps.has(a.app_id)); }
+    }
+  }
   const cached = cachedBookingView(a.app_id);
   bookingApi.staff({
     url:GAS_URL,
@@ -1781,7 +1806,7 @@ function makeBookingButton(a, compact) {
   button.title = 'セミナー・体験会の予約を確認・変更する';
   button.setAttribute('aria-label', a.staff_name + '様のセミナー・体験会予約を確認・変更する');
   button.disabled = a.status === 'cancelled';
-  button.addEventListener('click', function () { openBookingForApp(a); });
+  button.addEventListener('click', function () { openBookingForApp(a, button); });
   return button;
 }
 
