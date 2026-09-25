@@ -769,6 +769,7 @@
     .prop-group-ordered-note   { color: var(--text-light); font-size: 11px; }
     .prop-group-ordered-only .prop-group-count { color: #1e7e34; font-weight: 700; }
     #prop-ordered-toggle.active { background: var(--primary); color: #fff; }
+    .prop-registered-warn { margin-top: 8px; padding: 8px 10px; border-left: 3px solid #ef9a9a; background: rgba(239,154,154,.12); font-size: 12px; font-weight: 700; color: #c62828; line-height: 1.5; }
     .excess-item      { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
     .excess-item-name { font-size: 13px; font-weight: 600; }
     .excess-item-sub  { font-size: 11px; color: var(--text-light); margin-top: 2px; }
@@ -1102,6 +1103,7 @@
       <span id="prop-analyzed-at" style="font-size:12px;color:var(--text-light)">—</span>
       <button class="btn btn-outline btn-sm" onclick="loadProposals(true)">🔄 更新</button>
     </div>
+    <div id="prop-registered-warn" class="prop-registered-warn" style="display:none"></div>
     <select id="prop-filter-supplier" onchange="renderProposalList()" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text)">
       <option value="">-- メーカー: 全て --</option>
     </select>
@@ -1383,7 +1385,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.75.6';
+const APP_VERSION    = 'v1.75.7';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -6092,6 +6094,20 @@ function _isServerOrderReflected(order) {
   return false;
 }
 
+// 保存時刻（registeredAt）が読めない入荷待ちの注文コード（v1.75.7）。
+// 上の安全側の判定で「分析より後の発注」として隠されるので、件数を画面に必ず出す。
+// ⚠️ 黙って隠すと、GASが保存時刻を返さない版に戻っただけで未入荷の注文がある商品が
+//    提案から全部消える（2026-09-24 版62への切り戻しで、ミルフィの売れ筋18商品・
+//    分析が組んだ120本のうち72本ぶんが画面から消えていた）
+function _pendingCodesWithoutRegisteredAt() {
+  const codes = new Set();
+  if (_analyzedAtMs() === null) return codes; // 分析日時が不明なときは全件が未反映扱いで、原因が別
+  (proposalsData.pendingOrders || []).forEach(x => {
+    if (x && x.code && _registeredAtMs(x.registeredAt) === null) codes.add(String(x.code));
+  });
+  return codes;
+}
+
 // 発注済み（アプリ経由・仕入未計上）の商品コード → { qty合計, 直近の発注日, 発注No, isDelayed }
 // GASの pendingOrders（リアルタイム集計・受領✓と自動突合済み・30日超過は除外済み）と
 // ローカル発注記録（即時性を担保するため）の両方を突き合わせて作る（v1.62.0）
@@ -6537,6 +6553,22 @@ function renderProposalFilter() {
   if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
 }
 
+// 保存時刻の読めない注文で提案を隠しているときの警告（v1.75.7）。
+// まとめ発注グループの商品も数える（グループ行は mgItemsOf 側で隠れ、仕入先見出しの
+// 「発注済み○件を非表示」には入らないため、そこだけ見ても消えた件数が分からない）
+function renderRegisteredAtWarning() {
+  const el = document.getElementById('prop-registered-warn');
+  if (!el) return;
+  const missing = _pendingCodesWithoutRegisteredAt();
+  const hidden = propHideOrdered
+    ? new Set(proposalsData.proposals.filter(p => missing.has(String(p.code))).map(p => String(p.code)))
+    : new Set();
+  if (hidden.size === 0) { el.style.display = 'none'; el.textContent = ''; return; }
+  el.textContent = `⚠️ サーバーから発注の保存時刻が届いていないため、未入荷の注文がある商品 ${hidden.size}件を「発注済み」として隠しています。`
+    + '分析より前の注文なら提案に出すべき商品が含まれます。「✅ 発注済みを隠す」を押して確認してください（システム管理者へ連絡）';
+  el.style.display = '';
+}
+
 function renderProposalList() {
   const wrap = document.getElementById('prop-list');
   const filter = document.getElementById('prop-filter-supplier').value;
@@ -6577,6 +6609,7 @@ function renderProposalList() {
     orderedBtn.classList.toggle('active', propHideOrdered);
     orderedBtn.textContent = propHideOrdered ? '✅ 発注済みを隠す' : '✅ 発注済みも表示中';
   }
+  renderRegisteredAtWarning();
 
   if (props.length === 0 && totalHiddenOrdered === 0) {
     wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">🎉</div><div>現在、発注提案はありません</div></div>';
