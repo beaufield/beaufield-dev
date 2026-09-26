@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <!-- 静的LPの通信先と実行スクリプトを限定します。申込は既存フォームへのリンクです。 -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'sha256-9DOta0EsPcsyRmdH/xFBwgswis3Cgn4WAX3MZqzZwrg='; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'sha256-8f6Db9Lifrp/493xhLx05k3VS7S8H4QNianPc/sEXhE='; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <link rel="canonical" href="https://beaufield.github.io/beaufield-dev/beaufes/event.html">
 
@@ -168,7 +168,7 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
 .program-card-summary .seminar-visual picture{display:block;height:auto}
 .fold-heading{display:flex;flex-wrap:wrap;align-items:flex-start;gap:7px 10px;min-height:126px;padding:18px 20px 17px;transition:background .18s ease}
 .fold-heading .card-category{width:100%;margin:0;font-size:11px}
-.fold-heading h4{width:100%;margin:0;color:#174c61;font:600 22px/1.45 'Yu Mincho',serif}
+.fold-heading h4{width:100%;margin:0;color:#174c61;text-wrap:balance;font:600 22px/1.45 'Yu Mincho',serif}
 .fold-heading h4 span{font-size:inherit;color:inherit}
 .fold-action{display:inline-flex;align-items:center;gap:6px;margin-top:auto;color:#73572c;font-size:11px;font-weight:700;letter-spacing:.03em}
 .fold-action::before{content:'＋';display:inline-grid;place-items:center;width:22px;height:22px;border:1px solid #b69a66;border-radius:50%;background:#fff;color:#765526;font-size:15px;line-height:1}
@@ -196,6 +196,7 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
   .program-fold[open] .seminar-meta{flex-wrap:wrap}
   .program-fold[open] .reservation-badge{margin-left:3px;padding:3px 7px;font-size:9px;letter-spacing:.03em}
 }
+
 </style>
 </head>
 <body>
@@ -317,6 +318,26 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
           <summary class="program-card-summary"><figure class="card-visual"><img src="event-assets/scene-beautymerit.webp" width="1200" height="800" loading="lazy" alt="ビューティメリットの予約管理画面をスマートフォンとパソコンに表示した紹介イメージ"></figure><div class="fold-heading"><p class="card-category">メーカーブース / サインド</p><h4>BeautyMerit〈ビューティメリット〉</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
           <div class="card-copy"><p class="card-hook">予約の入口をまとめて、サロン運営をスマートに。</p><p class="card-description">複数の予約サイトをまとめて管理し、LINE・Google・Instagramなどからの予約導線や顧客管理にも対応するBeautyMerit。現在の予約運用を相談しながら、自店に合う活用イメージを確認できます。</p><p class="points-label">会場で相談できること</p><ul class="card-points"><li>予約一元管理</li><li>LINE・SNS予約</li><li>顧客管理</li></ul></div>
         </details>
+<details class="discovery-card program-fold" id="creates-preview">
+          <summary class="program-card-summary"><figure class="card-visual"><img src="event-assets/scene-creates-preview.webp" width="1200" height="800" loading="lazy" alt="クレイツのスタイリング機器を海辺のサロンに配した紹介イメージ"></figure><div class="fold-heading"><p class="card-category">メーカーブース / クレイツ</p><h4>CREATEs</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
+          <div class="card-copy"><p class="card-hook">毎日使う道具を、その手で選ぶ。</p><p class="card-description">ヘアアイロンなど、クレイツのスタイリング機器を多数展示。手に取ってサイズ感や操作感を比べ、サロンワークに合う道具を探せます。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>機器のサイズと重さ</li><li>持ちやすさ</li><li>ラインナップ</li></ul></div>
+        </details>
+<details class="discovery-card program-fold" id="creamscream-preview">
+          <summary class="program-card-summary"><figure class="card-visual"><img src="event-assets/scene-creamscream-real-preview.webp" width="1200" height="800" loading="lazy" alt="CreamsCreamの実商品パウチと緑の容器を海辺のサロンに配した紹介イメージ"></figure><div class="fold-heading"><p class="card-category">メーカーブース / ODP</p><h4>CreamsCream</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
+          <div class="card-copy"><p class="card-hook">香りを楽しむ、泡立てないケア。</p><p class="card-description">泡立てずに洗うクリームタイプの洗浄料、CreamsCream。香りやクリームの質感を確かめながら、サロンでの使い方や店販での伝え方を相談できます。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>香りとクリームの質感</li><li>サロンでの使い方</li><li>店販での伝え方</li></ul></div>
+        </details>
+<details class="discovery-card program-fold" id="mytrex-preview">
+          <summary class="program-card-summary"><figure class="card-visual"><img src="event-assets/scene-mytrex-preview.webp" width="1200" height="800" loading="lazy" alt="セルフケア用美容機器を海辺のサロンに配した紹介イメージ"></figure><div class="fold-heading"><p class="card-category">メーカーブース / MYTREX</p><h4>MYTREX</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
+          <div class="card-copy"><p class="card-hook">セルフケアの選択肢を、見比べる。</p><p class="card-description">美容と健康に向けたMYTREXのアイテムを展示。実物を見ながら、それぞれの特徴や使い方、店販での紹介方法を確認できます。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>商品ごとの違い</li><li>使い方</li><li>店販提案</li></ul></div>
+        </details>
+<details class="discovery-card program-fold" id="wordcross-preview">
+          <summary class="program-card-summary"><figure class="card-visual"><img src="event-assets/scene-wordcross-preview.webp" width="1200" height="800" loading="lazy" alt="理美容室用クロスを明るい海辺のサロンに並べた紹介イメージ"></figure><div class="fold-heading"><p class="card-category">メーカーブース / ワード</p><h4>ワードクロス</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
+          <div class="card-copy"><p class="card-hook">サロンの印象を、クロスから。</p><p class="card-description">多彩なクロスを手に取って、素材や色を比較できます。サロンに合う一枚を探しながら、名入れについても相談できます。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>素材と手触り</li><li>色とデザイン</li><li>名入れ</li></ul></div>
+        </details>
+<details class="discovery-card program-fold" id="gzero-preview">
+          <summary class="program-card-summary"><figure class="card-visual"><img src="event-assets/scene-gzero-preview.webp" width="1200" height="800" loading="lazy" alt="シャンプーブラシをサロンのシャンプー台に配した紹介イメージ"></figure><div class="fold-heading"><p class="card-category">メーカーブース / G-ZERO COIL</p><h4>G-ZERO マイクロカレント</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
+          <div class="card-copy"><p class="card-hook">シャンプーの泡に、新しい体感を。</p><p class="card-description">G-ZERO COILを搭載したシャンプーブラシ。手に持った感覚や使い方、シャンプーメニューへの取り入れ方を会場で確かめられます。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>ブラシの持ちやすさ</li><li>シャンプー時の使い方</li><li>メニューへの組み込み方</li></ul></div>
+        </details>
         <h4 class="program-subgroup-title">機器展示</h4>
         <details class="discovery-card program-fold" id="aquapod">
           <summary class="program-card-summary"><figure class="card-visual"><img src="event-assets/scene-aquapod.webp" width="1200" height="800" loading="lazy" alt="タカラベルモントのaqua pod自動シャンプー機器をサロンに設置した紹介イメージ"></figure><div class="fold-heading"><p class="card-category">機器展示 / タカラベルモント</p><h4>aqua pod</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
@@ -355,6 +376,14 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
           <summary class="program-card-summary"><figure class="card-visual"><img src="event-assets/scene-sonique.webp" width="1200" height="800" loading="lazy" alt="白と黒のソニーク本体と複数の施術用ハンドピースをサロンに配した紹介イメージ"></figure><div class="fold-heading"><p class="card-category">体験可能機器 / リズム</p><h4>ソニーク</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
           <div class="card-copy"><p class="card-hook">測って、狙って、深部へ届ける。</p><p class="card-description">脂肪厚センサーで状態を確認しながら、可変式干渉波と連続超音波を組み合わせてボディへアプローチする業務用機器。測定から施術までの流れと体感を実機で確認できます。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>脂肪厚センサー</li><li>可変式干渉波</li><li>連続超音波</li></ul></div>
         </details>
+        <details class="discovery-card program-fold" id="refreinsole-preview">
+          <summary class="program-card-summary"><figure class="card-visual"><img src="event-assets/scene-refreinsole-preview.webp" width="1200" height="800" loading="lazy" alt="サポートインソールと靴を海辺のサロンに配した紹介イメージ"></figure><div class="fold-heading"><p class="card-category">体験ブース</p><h4>リフレインソール</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
+          <div class="card-copy"><p class="card-hook">いつもの靴から、足元を見直す。</p><p class="card-description">靴に入れて使う部位別サポートインソール。形や足への当たり方を確かめ、日常の靴に取り入れるイメージを持てます。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>部位別の形</li><li>履いたときの感覚</li><li>靴への合わせ方</li></ul></div>
+        </details>
+        <details class="discovery-card program-fold" id="venex-preview">
+          <summary class="program-card-summary"><figure class="card-visual"><img src="event-assets/scene-venex-preview.webp" width="1200" height="800" loading="lazy" alt="休養時のウェアを着た人物を海辺のラウンジに配した紹介イメージ"></figure><div class="fold-heading"><p class="card-category">体験ブース / VENEX</p><h4>ベネクス リカバリーウェア</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
+          <div class="card-copy"><p class="card-hook">休む時間に、着るものの選択肢を。</p><p class="card-description">休養時に着ることを考えたベネクスのウェア。生地の質感や着心地を確かめながら、お客様への紹介の仕方も相談できます。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>生地の質感</li><li>サイズと着心地</li><li>店販での伝え方</li></ul></div>
+        </details>
       </div></section>
   <div class="program-guidance"><p><strong>来場申込と、個別の予約について</strong><br>セミナー2種、バランス革命、Mico Stella、HIFace、NOVELUXEは、来場申込画面・入場パスからご予約いただけます。Face Makerは担当営業へご連絡ください。イベントへの来場は先にお申し込みいただけますが、来場申込だけで個別予約が完了するものではありません。</p><a href="#entry">来場申込の案内へ <span aria-hidden="true">→</span></a></div>
   <p class="program-image-note">画像は提供カタログ・実機写真、または実商品写真をもとに制作した紹介イメージです。人物は着用・サロン体験のイメージで、実際の装着例や施術結果を示すものではありません。掲載モデルと当日の展示内容が異なる場合があります。</p>
@@ -377,7 +406,7 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
   <aside class="mobile-cta" aria-label="来場申し込み"><span><strong>入場無料</strong><br>10/20 申込締切</span><a class="button" href="https://liff.line.me/2010404613-cwHA5B0U">LINEから申込<span aria-hidden="true">↗</span></a></aside>
   <script>
     // LPの版数はこの定数だけで管理します。
-    const APP_VERSION = '0.8.1';
+    const APP_VERSION = '0.9.0';
     document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
   </script>
 </body>
