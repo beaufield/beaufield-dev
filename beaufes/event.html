@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <!-- 静的LPの通信先と実行スクリプトを限定します。申込は既存フォームへのリンクです。 -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'sha256-O2NtsMrmDcn/iZS/XzEZl1qNGJtFfzzqyxudjO06XCo='; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'sha256-2y5cUXvOFHHXGRVv3PgzwajcXomxs3pPVmcnlJYN0WM='; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <link rel="canonical" href="https://beaufield.github.io/beaufield-dev/beaufes/event.html">
 
@@ -197,16 +197,6 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
   .program-fold[open] .reservation-badge{margin-left:3px;padding:3px 7px;font-size:9px;letter-spacing:.03em}
 }
 
-/* MYTREXの紹介例は公式写真を見比べられるようにします。 */
-.mytrex-product-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin:22px 0 3px}
-.mytrex-product-grid a{display:block;min-width:0;padding:10px 10px 13px;text-decoration:none;color:#174c61;background:#fff;border:1px solid #dfd5c3}
-.mytrex-product-grid a:hover,.mytrex-product-grid a:focus-visible{border-color:#a98b57;box-shadow:0 5px 15px #294b5616}
-.mytrex-product-grid img{display:block;width:100%;height:185px;object-fit:contain;background:#fff}
-.mytrex-product-grid a:last-child img{object-fit:cover;object-position:left center}
-.mytrex-product-grid strong{display:block;margin-top:10px;font:700 15px/1.4 Georgia,'Yu Mincho',serif}
-.mytrex-product-grid span{display:block;margin-top:5px;font-size:11px;line-height:1.6}
-.mytrex-product-grid small{display:block;margin-top:10px;color:#8b6f3f;font-size:10px}
-@media(max-width:700px){.mytrex-product-grid{grid-template-columns:1fr}.mytrex-product-grid img{height:190px}}
 </style>
 </head>
 <body>
@@ -337,8 +327,8 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
           <div class="card-copy"><p class="card-hook">香りを楽しむ、泡立てないケア。</p><p class="card-description">泡立てずに洗うクリームタイプの洗浄料、CreamsCream。香りやクリームの質感を確かめながら、サロンでの使い方や店販での伝え方を相談できます。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>香りとクリームの質感</li><li>サロンでの使い方</li><li>店販での伝え方</li></ul></div>
         </details>
         <details class="discovery-card program-fold" id="mytrex-preview">
-          <summary class="program-card-summary"><figure class="card-visual"><img src="event-assets/scene-mytrex-three-products.webp" width="1200" height="800" loading="lazy" alt="SHAPE POINTER、PROVE CORE、MiRAY RJ-40の公式商品写真を参考に、海辺のサロンに3製品を配した紹介イメージ"></figure><div class="fold-heading"><p class="card-category">メーカーブース / MYTREX</p><h4>MYTREX</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
-          <div class="card-copy"><p class="card-hook">MYTREXの話題のアイテムを、見比べる。</p><p class="card-description">SHAPE POINTER、PROVE CORE、MiRAY RJ-40など、MYTREXの話題のアイテムをご紹介します。形や使い方の違いを実物で確認し、サロンでの紹介方法を相談できます。</p><p class="card-description"><strong>SHAPE POINTER：</strong>2つのヘッドを備えたペン型のフェイスケアアイテム。<br><strong>PROVE CORE：</strong>ブラシ型アタッチメントを備えた美顔器。<br><strong>MiRAY RJ-40：</strong>鏡面から光を照射するミラー型光美容器。</p><div class="mytrex-product-grid" aria-label="MYTREXの紹介アイテム例"><a href="https://mytrex.jp/shape-pointer/" target="_blank" rel="noopener noreferrer"><img src="event-assets/mytrex-shape-pointer-official.jpg" width="1000" height="1000" loading="lazy" alt="MYTREX SHAPE POINTERの公式商品写真"><strong>SHAPE POINTER</strong><span>2つのヘッドを備えたペン型ケア</span><small>公式製品ページ ↗</small></a><a href="https://mytrex.jp/prove-core/" target="_blank" rel="noopener noreferrer"><img src="event-assets/mytrex-prove-core-official.jpg" width="750" height="825" loading="lazy" alt="MYTREX PROVE COREの公式商品写真"><strong>PROVE CORE</strong><span>ブラシ型アタッチメントを備えた美顔器</span><small>公式製品ページ ↗</small></a><a href="https://mytrex.jp/miray-rj40/" target="_blank" rel="noopener noreferrer"><img src="event-assets/mytrex-miray-rj40-official.jpg" width="1600" height="998" loading="lazy" alt="MYTREX MiRAY RJ-40の公式商品写真"><strong>MiRAY RJ-40</strong><span>鏡面から光を照射するミラー型美容器</span><small>公式製品ページ ↗</small></a></div><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>アイテムごとの形とサイズ</li><li>使い方の違い</li><li>サロンでの紹介方法</li></ul></div>
+          <summary class="program-card-summary"><figure class="card-visual"><img src="event-assets/scene-mytrex-three-products.webp" width="1200" height="800" loading="lazy" alt="MYTREXの美容機器を海辺のサロンに配した紹介イメージ。掲載モデルは当日の展示を示すものではありません"></figure><div class="fold-heading"><p class="card-category">メーカーブース / MYTREX</p><h4>MYTREX</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
+          <div class="card-copy"><p class="card-hook">MYTREXの話題のアイテムに触れる。</p><p class="card-description">MYTREXの美容機器やセルフケアアイテムをご紹介します。会場で実物の形や使い心地を確かめながら、サロンでの提案方法を担当者に相談できます。展示するモデルは当日のご案内をご確認ください。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>実物の形と使い心地</li><li>アイテムごとの特徴</li><li>サロンでの紹介方法</li></ul></div>
         </details>
 <details class="discovery-card program-fold" id="wordcross-preview">
           <summary class="program-card-summary"><figure class="card-visual"><img src="event-assets/scene-wordcross-preview.webp" width="1200" height="800" loading="lazy" alt="理美容室用クロスを明るい海辺のサロンに並べた紹介イメージ"></figure><div class="fold-heading"><p class="card-category">メーカーブース / ワード</p><h4>ワードクロス</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
@@ -416,7 +406,7 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
   <aside class="mobile-cta" aria-label="来場申し込み"><span><strong>入場無料</strong><br>10/20 申込締切</span><a class="button" href="https://liff.line.me/2010404613-cwHA5B0U">LINEから申込<span aria-hidden="true">↗</span></a></aside>
   <script>
     // LPの版数はこの定数だけで管理します。
-    const APP_VERSION = '0.10.0';
+    const APP_VERSION = '0.10.1';
     document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
   </script>
 </body>
