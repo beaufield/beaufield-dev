@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.41.0';
+const VERSION  = '0.41.1';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -872,6 +872,8 @@ function applyApplication(data, clientAttempt) {
             sessionsResult = { reserved: [], full: [], invalid: (Array.isArray(wantSessions) ? wantSessions : []).slice(), cancelled: [], error: String(e) };
           }
         }
+        // 新規申込と予約の保留中の書込みを確定してから採番ロックを解放する。
+        SpreadsheetApp.flush();
       }
     }
   } finally {
@@ -1126,6 +1128,10 @@ function applyLiff(data) {
     } catch (e) {
       Logger.log('セミナー予約の書き込みに失敗（申込自体は成立済み）: ' + e);
       sessionsResult = { reserved: [], full: [], invalid: (wantSessions || []).slice(), cancelled: [], error: String(e) };
+    }
+    if (!isUpdate) {
+      // 次の申込が確定済みの最大番号と行数を読めるよう、新規時だけロック内で確定する。
+      SpreadsheetApp.flush();
     }
   } finally {
     lock.releaseLock();
@@ -5012,6 +5018,9 @@ function adminCreateApplication(data) {
     // 🔴 行の組み立ては公開フォームと同じ _appendApplicationRow を使う。
     //    列レイアウトを知っている場所を1つに保つため（別に書くと列がずれても気づけない）
     const created = _appendApplicationRow(sh, rows, f, 'admin', '', '', requestId);
+
+    // 成功応答を返す前に新規行を確定し、後続の代理申込との採番競合を防ぐ。
+    SpreadsheetApp.flush();
 
     return _ok({
       app_id: created.appId, ticket_token: created.ticketToken,
