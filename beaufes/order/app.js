@@ -1,6 +1,6 @@
 import {get,set,records,update,mergeReceipt,sanitizeLegacyQr} from './storage.js';
 import {buildWorkbook} from './export.js';
-const APP_VERSION='v0.6.0';
+const APP_VERSION='v0.6.1';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -49,9 +49,12 @@ function renderOffer(offer){
  const remove=element('button','条件を外す','secondary small-action');remove.type='button';remove.onclick=()=>removeOffer(offer.offer_id).catch(e=>message(errorText(e)));head.append(title,remove);card.append(head);
  const countRow=element('div',undefined,'set-row');countRow.append(element('span','セット数','set-label'));
  const count=numberInput(selected.sets,99,`${offer.label}のセット数`);count.dataset.offer=offer.offer_id;count.dataset.kind='sets';
- count.addEventListener('change',()=>saveForm().catch(e=>message(errorText(e))));countRow.append(count);
+ countRow.append(count);
  const chips=element('div',undefined,'quick-counts');
- for(const n of [1,2,3,4,5,6,10]){const chip=element('button',String(n),'secondary');chip.type='button';chip.setAttribute('aria-label',`${offer.label}を${n}セット`);chip.setAttribute('aria-pressed',String(Number(count.value)===n));chip.onclick=async()=>{count.value=String(n);chips.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(Number(b.textContent)===n)));await saveForm();};chips.append(chip);}
+ const syncChips=()=>chips.querySelectorAll('button').forEach(button=>button.setAttribute('aria-pressed',String(Number(count.value)>0&&Number(button.textContent)===Number(count.value))));
+ count.addEventListener('input',syncChips);
+ count.addEventListener('change',()=>{syncChips();saveForm().catch(e=>message(errorText(e)));});
+ for(const n of [1,2,3,4,5,6,10]){const chip=element('button',String(n),'secondary');chip.type='button';chip.setAttribute('aria-label',`${offer.label}を${n}セット`);chip.setAttribute('aria-pressed',String(Number(count.value)===n));chip.onclick=async()=>{count.value=String(n);syncChips();await saveForm();};chips.append(chip);}
  countRow.append(chips);card.append(countRow);
  if(offer.product_codes.length===1){
   const p=info.catalog.products.find(item=>item.product_code===offer.product_codes[0]);
