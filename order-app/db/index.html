@@ -1386,7 +1386,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.76.0-db';
+const APP_VERSION    = 'v1.76.1-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -2207,15 +2207,115 @@ window.addEventListener('beforeunload', () => {
 });
 
 /* ===================================================
-   メーカー発注書テンプレート取得（GAS Drive配信）
+   メーカー発注書テンプレート取得
+   GASモード: GAS（Drive配信）から取る（今までどおり）
+   DBモード（新画面）: Supabase Storage の非公開バケットから通行証で直接取り、取れなければGASへ戻る。
+   雛形には卸価格が入っているので公開バケットにしない（2026-04-28 漏洩事案）。
+   計画: docs/発注書テンプレート_Supabase配信_実装計画_20260929.md
 =================================================== */
-async function fetchTemplateAsArrayBuffer(makerKey) {
+const TEMPLATE_BUCKET = 'order-templates';
+// 本番GASの ORDER_TEMPLATES と同じファイル名（Driveと同じ名前のままアップロードする）
+const TEMPLATE_FILES = { grandex: '54.pdf', chiyoda: '48.pdf', alpenrose: '57.pdf', melos: '2.pdf', adelans: '82.pdf' };
+const TEMPLATE_STORAGE_TIMEOUT_MS = 20000;
+
+async function _fetchTemplateFromGas(makerKey) {
   const res = await gasGet({ action: 'getOrderTemplate', makerKey });
   if (!res.success) throw new Error(res.error || 'テンプレート取得失敗: ' + makerKey);
   const bin = atob(res.data);
   const buf = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
   return buf.buffer;
+}
+
+function _isPdfBytes(buf) {
+  if (!buf || buf.byteLength < 5) return false;
+  const h = new Uint8Array(buf, 0, 5);
+  return String.fromCharCode(h[0], h[1], h[2], h[3], h[4]) === '%PDF-';
+}
+
+class TemplateFetchError extends Error {
+  constructor(code) { super(code); this.name = 'TemplateFetchError'; this.code = code; }
+}
+
+// 通行証で Storage から取る。401/403 は通行証を取り直して1回だけやり直す（dbRpc と同じ作法）
+async function _fetchTemplateFromStorage(fileName) {
+  let tokenObj;
+  try { tokenObj = await getDbToken(); } catch(e) { throw new TemplateFetchError('TOKEN_ERROR'); }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TEMPLATE_STORAGE_TIMEOUT_MS);
+    try {
+      let resp;
+      try {
+        resp = await fetch(DB_URL + '/storage/v1/object/authenticated/' + TEMPLATE_BUCKET + '/' + encodeURIComponent(fileName), {
+          headers: { apikey: DB_PUBLISHABLE_KEY, Authorization: 'Bearer ' + tokenObj.token },
+          signal: controller.signal
+        });
+      } catch(e) {
+        throw new TemplateFetchError(e && e.name === 'AbortError' ? 'TIMEOUT' : 'TRANSPORT_ERROR');
+      }
+      if (!resp.ok) {
+        // Storage は認証エラー・見つからないを HTTP 400 で返し、本当の番号を本文の statusCode に書く
+        let code = resp.status;
+        if (code === 400) {
+          try { const j = JSON.parse(await resp.text()); const sc = parseInt(j && j.statusCode, 10); if (sc) code = sc; } catch(e) {}
+        }
+        if ((code === 401 || code === 403) && attempt === 0) {
+          _dbClearToken();
+          try { tokenObj = await getDbToken(); } catch(e) { throw new TemplateFetchError('TOKEN_ERROR'); }
+          continue;
+        }
+        throw new TemplateFetchError('HTTP_' + code);
+      }
+      let buf;
+      try { buf = await resp.arrayBuffer(); }
+      catch(e) { throw new TemplateFetchError(e && e.name === 'AbortError' ? 'TIMEOUT' : 'TRANSPORT_ERROR'); }
+      if (!_isPdfBytes(buf)) throw new TemplateFetchError('NOT_PDF');
+      return buf;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw new TemplateFetchError('AUTH_ERROR');
+}
+
+// 診断記録（設定画面の「通信診断を表示」に出る）。通行証・応答本文は残さない
+function _templateDiagRecord(makerKey, via, startedAt, outcome) {
+  try {
+    const rows = _gasReadDiagnostics();
+    const now = Date.now();
+    rows.push({
+      opId: 'template-' + makerKey + '-' + startedAt + '-' + Math.random().toString(36).slice(2, 7),
+      action: 'template:' + makerKey, kind: 'template', via, version: APP_VERSION,
+      startedAt, endedAt: now, elapsedMs: now - startedAt, state: 'END', outcome, attempts: 1
+    });
+    _gasWriteDiagnostics(rows);
+  } catch(e) { /* 診断記録の失敗で出力を止めない */ }
+}
+
+async function fetchTemplateAsArrayBuffer(makerKey) {
+  const fileName = TEMPLATE_FILES[makerKey];
+  if (DATA_BACKEND !== 'db' || !fileName) return _fetchTemplateFromGas(makerKey);
+  const startedAt = Date.now();
+  try {
+    const buf = await _fetchTemplateFromStorage(fileName);
+    _templateDiagRecord(makerKey, 'storage', startedAt, 'success');
+    return buf;
+  } catch(e) {
+    // 定型コード（英大文字・数字・_）だけを記録する
+    const code = e && /^[A-Z0-9_]+$/.test(String(e.code || '')) ? e.code : 'ERROR';
+    _templateDiagRecord(makerKey, 'storage', startedAt, code);
+  }
+  // Storage で取れなければ今までの経路（GAS）で取る
+  const gasStartedAt = Date.now();
+  try {
+    const buf = await _fetchTemplateFromGas(makerKey);
+    _templateDiagRecord(makerKey, 'gas', gasStartedAt, 'success');
+    return buf;
+  } catch(e) {
+    _templateDiagRecord(makerKey, 'gas', gasStartedAt, 'error');
+    throw e;
+  }
 }
 
 /* ===================================================
