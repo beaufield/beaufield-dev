@@ -5,6 +5,11 @@
 
 ## クラウド環境での試験
 
+初回はCodexの「Work in > Cloud > Select environment > Create environment」で、
+`beaufield/beaufield-dev` を選び、準備の依頼文で `codex/ai-order-cloud-probe` を指定する。
+このブランチの `order-app/ai-order/` が対象。公開範囲はOnly me。DBやOpenAIの秘密値は不要。
+環境の準備・公開が終わったら、その環境のタスクで以下を実行する。
+
 Node.js 18以上。追加npmパッケージ・APIキー・DB接続は不要。
 `manifest.json` のファイルだけを準備する。価格・顧客・実在庫・Dropbox設定は含めない。
 
@@ -45,5 +50,6 @@ node tests/test_ai_order_pipeline.js
 node tests/test_ai_order_assist.js
 ```
 
-Cloud環境はまだ未作成。GitHubへのコミット/公開も未実施。
+Cloud環境はまだ未作成。試作7ファイルは `codex/ai-order-cloud-probe` ブランチへ配置する。
+GitHub mainと本番画面への公開は未実施。
 先にプラン内呼出しの正規経路を確定する。API従量課金への自動フォールバックはない。
