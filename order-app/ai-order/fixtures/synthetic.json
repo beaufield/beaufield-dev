@@ -1,0 +1,25 @@
+{
+  "note": "Synthetic products, stock and demand. Not production order data.",
+  "nowMs": 1780000000000,
+  "request": {
+    "protocolVersion": "1", "requestId": "synthetic-001", "inputRevision": 0,
+    "messages": ["千代田化学のプロCMCシリーズを1000サイズ6ケース（12本/ケース）、3000サイズ6ケース（6本/ケース）で注文したい。"],
+    "suppliers": [{"code": "SYNTH-CH", "name": "千代田化学"}], "selectedSupplierCode": null
+  },
+  "snapshot": {
+    "analysisId": "synthetic-analysis", "analyzedAt": "synthetic-time", "analyzedMs": 1780000000000,
+    "analysisInputAt": "synthetic-input", "blockedCodes": [], "proposals": [],
+    "products": [
+      {"code": "SYN-A", "supplierCD": "SYNTH-CH", "discontinued": ""},
+      {"code": "SYN-B", "supplierCD": "SYNTH-CH", "discontinued": ""},
+      {"code": "SYN-C", "supplierCD": "SYNTH-CH", "discontinued": ""},
+      {"code": "SYN-D", "supplierCD": "SYNTH-CH", "discontinued": ""}
+    ],
+    "metrics": [
+      {"code": "SYN-A", "name": "プロCMC 合成A 1000", "supplierCode": "SYNTH-CH", "stock": 12, "onOrder": 0, "recommended": 8, "recentDemandMonthly": 4, "lot": 12, "excluded": false, "eolFlagged": false, "groupId": null},
+      {"code": "SYN-B", "name": "プロCMC 合成B 1000", "supplierCode": "SYNTH-CH", "stock": 0, "onOrder": 0, "recommended": 2, "recentDemandMonthly": 2, "lot": 12, "excluded": false, "eolFlagged": false, "groupId": null},
+      {"code": "SYN-C", "name": "プロCMC 合成C 3000", "supplierCode": "SYNTH-CH", "stock": 0, "onOrder": 0, "recommended": 1, "recentDemandMonthly": 3, "lot": 6, "excluded": false, "eolFlagged": false, "groupId": null},
+      {"code": "SYN-D", "name": "プロCMC 合成D 3000", "supplierCode": "SYNTH-CH", "stock": 6, "onOrder": 0, "recommended": 2, "recentDemandMonthly": 1, "lot": 6, "excluded": false, "eolFlagged": false, "groupId": null}
+    ]
+  }
+}

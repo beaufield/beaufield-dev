@@ -1,0 +1,35 @@
+{
+  "format": 1,
+  "files": [
+    {
+      "path": "interpretation.js",
+      "bytes": 8496,
+      "sha256": "770d66d31b67bb902e8c23963352013532522250c5c4c42b2d4f3c568a18c553"
+    },
+    {
+      "path": "core.generated.cjs",
+      "bytes": 11105,
+      "sha256": "8ebf3b7dcd6f6e841b99856717f0d7edcd533357060d7f9e0446a6569ce02e5b"
+    },
+    {
+      "path": "worker.cjs",
+      "bytes": 1334,
+      "sha256": "dc53e53a3b2095087a2331c8f3eb6562d46f61942274021d17325ae7f7025676"
+    },
+    {
+      "path": "cloud-task.cjs",
+      "bytes": 1400,
+      "sha256": "cba302612a6debac628a697828dedce384f8a2c56150f5e19b25c61f14374b52"
+    },
+    {
+      "path": "README.md",
+      "bytes": 3193,
+      "sha256": "5f0c76f55f9060c1b17bb00d155e02cd4426bffdb40ddea07fb00fe9d6aabf43"
+    },
+    {
+      "path": "fixtures/synthetic.json",
+      "bytes": 1907,
+      "sha256": "ee54a9d47e159bc509cb5f111c3830ec96bc9e8a797f56a11233fb4f1e0432d4"
+    }
+  ]
+}
