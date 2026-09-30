@@ -1,6 +1,6 @@
 import {get,set,records,update,mergeReceipt,sanitizeLegacyQr} from './storage.js';
 import {buildWorkbook} from './export.js';
-const APP_VERSION='v0.7.0';
+const APP_VERSION='v0.8.0';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -38,6 +38,7 @@ function addSelectedProduct(group,offer,kind,code,quantity){
  name.append(element('small',kind==='paid'?yen(product.event_sale_price_yen):'サービス品・0円'));
  const input=numberInput(quantity,297,`${product.product_name} ${kind==='paid'?'購入':'サービス'}数`);
  input.dataset.offer=offer.offer_id;input.dataset.kind=kind;input.dataset.code=code;
+ input.addEventListener('input',()=>updateQuantityGuidance(offer,group.closest('.offer-card')));
  input.addEventListener('change',()=>saveForm().catch(e=>message(errorText(e))));
  row.append(name,input);group.append(row);
 }
@@ -50,7 +51,7 @@ function renderOffer(offer){
  countRow.append(count);
  const chips=element('div',undefined,'quick-counts');
  const syncChips=()=>chips.querySelectorAll('button').forEach(button=>button.setAttribute('aria-pressed',String(Number(count.value)>0&&Number(button.textContent)===Number(count.value))));
- count.addEventListener('input',syncChips);
+ count.addEventListener('input',()=>{syncChips();updateQuantityGuidance(offer,card);});
  count.addEventListener('change',()=>{syncChips();saveForm().catch(e=>message(errorText(e)));});
  for(const n of [1,2,3,4,5,6,10]){const chip=element('button',String(n),'secondary');chip.type='button';chip.setAttribute('aria-label',`${offer.label}を${n}セット`);chip.setAttribute('aria-pressed',String(Number(count.value)===n));chip.onclick=async()=>{count.value=String(n);syncChips();await saveForm();};chips.append(chip);}
  countRow.append(chips);card.append(countRow);
@@ -60,13 +61,13 @@ function renderOffer(offer){
  }else{
   for(const kind of ['paid','gift']){
    const group=element('div',undefined,'product-group');group.append(element('h4',kind==='paid'?'購入する商品':'サービス品（0円）'));
+   const progress=element('p',undefined,'quantity-progress');progress.dataset.progressKind=kind;progress.setAttribute('role','status');group.append(progress);
    const choices=selected[kind]||{};
    // 複数商品を選べる条件は最初から全商品を並べ、未入力は0点として扱う。
    for(const code of offer.product_codes)addSelectedProduct(group,offer,kind,code,choices[code]||0);
    card.append(group);
   }
-  const paid=Object.values(selected.paid||{}).reduce((n,x)=>n+Number(x||0),0);const gift=Object.values(selected.gift||{}).reduce((n,x)=>n+Number(x||0),0);
-  card.append(element('p',`現在：購入 ${paid}／${selected.sets*offer.paid_per_set}点、サービス ${gift}／${selected.sets*offer.gift_per_set}点`,'selection-summary'));
+  updateQuantityGuidance(offer,card);
  }
  return card;
 }
@@ -85,7 +86,26 @@ function renderForm(){
  calculate();
 }
 async function readForm(){const offers={};for(const i of $('offers').querySelectorAll('input[data-offer]')){const o=offers[i.dataset.offer]||={sets:0,paid:{},gift:{}};if(i.dataset.kind==='sets')o.sets=i.value===''?0:Number(i.value);else o[i.dataset.kind][i.dataset.code]=i.value===''?0:Number(i.value);}const {qr:oldRawQr,...oldForm}=draft.form;const raw=$('qr').value.trim();$('qr').value='';const qr_hash=raw?await digest(tokenFromQr(raw)):oldForm.qr_hash;const delivery=document.querySelector('input[name=delivery]:checked')?.value||'';return {...oldForm,qr_hash,customer:raw?'':oldForm.customer,resolved:raw?false:oldForm.resolved,delivery,delivery_confirmed:!!delivery,ui_version:2,offers};}
-function updateSelectionSummaries(){for(const offer of info.catalog.offers){const selected=draft.form.offers[offer.offer_id];if(!selected||offer.product_codes.length===1)continue;const card=Array.from($('offers').querySelectorAll('.offer-card')).find(node=>node.dataset.offerCard===offer.offer_id);const summary=card?.querySelector('.selection-summary');if(!summary)continue;const paid=Object.values(selected.paid||{}).reduce((n,x)=>n+Number(x||0),0);const gift=Object.values(selected.gift||{}).reduce((n,x)=>n+Number(x||0),0);summary.textContent=`現在：購入 ${paid}／${selected.sets*offer.paid_per_set}点、サービス ${gift}／${selected.sets*offer.gift_per_set}点`;}}
+function updateQuantityGuidance(offer,card){
+ if(!card)return;
+ const setsInput=card.querySelector('input[data-kind=sets]');const sets=Number(setsInput?.value||0);
+ for(const kind of ['paid','gift']){
+  const progress=card.querySelector(`[data-progress-kind=${kind}]`);if(!progress)continue;
+  const inputs=[...card.querySelectorAll(`input[data-kind=${kind}]`)];
+  const quantities=inputs.map(input=>Number(input.value||0));
+  const valid=inputs.every((input,i)=>input.value===''||(Number.isInteger(quantities[i])&&quantities[i]>=0));
+  const total=quantities.reduce((sum,n)=>sum+n,0);const perSet=offer[`${kind}_per_set`];const label=kind==='paid'?'購入':'サービス';
+  progress.className='quantity-progress';
+  if(!valid||!Number.isInteger(sets)||sets<0||sets>99){progress.classList.add('quantity-error');progress.textContent='整数の数量を入力してください。';continue;}
+  if(!sets){progress.classList.add(total?'quantity-error':'quantity-neutral');progress.textContent=total?`${label} ${total}点入力済み。先にセット数を選んでください。`:'セット数を選ぶと必要な数量が表示されます。';continue;}
+  const required=sets*perSet;const difference=required-total;
+  const base=`${label}：${perSet}点 × ${sets}セット ＝ 必要${required}点 ／ 入力済み${total}点`;
+  if(difference>0){progress.classList.add('quantity-error');progress.textContent=`${base}　あと${difference}点`;}
+  else if(difference<0){progress.classList.add('quantity-error');progress.textContent=`${base}　${-difference}点多いです`+(kind==='paid'&&perSet===3&&total%3!==0?'（購入合計は3の倍数にしてください）':'');}
+  else{progress.classList.add('quantity-complete');progress.textContent=`${base}　✓ 数量一致`;}
+ }
+}
+function updateSelectionSummaries(){for(const offer of info.catalog.offers){if(!draft.form.offers[offer.offer_id]||offer.product_codes.length===1)continue;const card=Array.from($('offers').querySelectorAll('.offer-card')).find(node=>node.dataset.offerCard===offer.offer_id);updateQuantityGuidance(offer,card);}}
 async function saveForm(){if(draft.stage!=='draft')return;const form=await readForm();draft=await update(draft.id,r=>({...r,form}));$('customer').textContent=form.customer||'';calculate();updateSelectionSummaries();}
 async function removeOffer(id){await saveForm();const current=draft.form.offers[id];if(current&&(current.sets>0||Object.values(current.paid||{}).some(Boolean)||Object.values(current.gift||{}).some(Boolean))&&!confirm('選択した条件と数量を外しますか？'))return;draft=await update(draft.id,r=>{const offers={...r.form.offers};delete offers[id];return {...r,form:{...r.form,offers}};});renderForm();}
 function openPicker(state){if(draft.stage!=='draft')return;pickerState=state;modalReturnFocus=document.activeElement;$('picker-title').textContent='特売条件を追加';$('picker-search').value='';$('picker-modal').hidden=false;document.body.classList.add('modal-open');renderPicker();$('picker-search').focus();}
@@ -104,12 +124,37 @@ function bundles(check=false){return info.catalog.offers.flatMap(o=>{const selec
  const value={offer_id:o.offer_id,sets:n};for(const k of ['paid','gift']){value[k]=o.product_codes.length===1?[{code:o.product_codes[0],qty:n*o[`${k}_per_set`]}]:Object.entries(selected[k]).filter(([,qty])=>qty!==0).map(([code,qty])=>({code,qty}));if(check&&(value[k].some(x=>!Number.isInteger(x.qty)||x.qty<1)||value[k].reduce((s,x)=>s+x.qty,0)!==n*o[`${k}_per_set`]))throw Error(`${o.label}：${k==='paid'?'購入':'サービス'}数は${n*o[`${k}_per_set`]}点にしてください。`);}return [value];});}
 function calculate(){const amount=bundles().reduce((sum,b)=>sum+b.paid.reduce((s,x)=>s+x.qty*info.catalog.products.find(p=>p.product_code===x.code).event_sale_price_yen,0),0);$('total').textContent=yen(amount);}
 async function activate(value){info=value;$('login').hidden=true;if(!officeMode)await set('maker-catalog',info);$('maker').textContent=info.catalog?.manufacturer_name||'メーカー未設定';$('workspace').hidden=info.role==='admin';$('admin').hidden=info.role!=='admin';$('ledger').hidden=info.role!=='admin';$('identity').hidden=info.role!=='admin';if(info.role==='admin')return;const id=await get('draft:'+scopeKey());draft=(await records()).find(x=>x.id===id);if(!draft)await fresh();else{if(draft.stage==='draft'&&draft.form.ui_version!==2){draft=await update(draft.id,r=>{const offers={};for(const [key,item] of Object.entries(r.form.offers||{})){const paid=Object.fromEntries(Object.entries(item.paid||{}).filter(([,qty])=>qty>0));const gift=Object.fromEntries(Object.entries(item.gift||{}).filter(([,qty])=>qty>0));if(item.sets>0||Object.keys(paid).length||Object.keys(gift).length)offers[key]={sets:item.sets||0,paid,gift};}return {...r,form:{...r.form,offers,delivery:'',delivery_confirmed:false,ui_version:2}};});}if(draft.stage!=='draft'&&draft.receipt?.state==='active'&&!draft.pending)await fresh();else renderForm();}await renderOrders();}
+function orderDetails(record){
+ // 登録確定後はサーバーの確定明細を使用し、通信待ちは端末に保存した注文内容と明示する。
+ let lines=Array.isArray(record.receipt?.lines)?record.receipt.lines:null;
+ const confirmed=!!lines;
+ if(!lines&&record.body?.catalog_version===info.catalog.version){
+  lines=(record.body.bundles||[]).flatMap(bundle=>['paid','gift'].flatMap(kind=>(bundle[kind]||[]).map(item=>{
+   const product=info.catalog.products.find(p=>p.product_code===item.code);
+   return product?{kind,product_name:product.product_name,qty:item.qty,unit_price_yen:kind==='gift'?0:product.event_sale_price_yen}:null;
+  }).filter(Boolean)));
+ }
+ const details=element('details',undefined,'order-details');
+ const paid=(lines||[]).filter(line=>line.kind==='paid').reduce((sum,line)=>sum+Number(line.qty||0),0);
+ const gift=(lines||[]).filter(line=>line.kind==='gift').reduce((sum,line)=>sum+Number(line.qty||0),0);
+ details.append(element('summary',lines?.length?`商品明細を見る（購入${paid}点・サービス${gift}点）`:'商品明細を確認'));
+ if(!lines?.length){details.append(element('p','商品明細を取得できません。事務担当者に確認してください。','error'));return details;}
+ if(!confirmed)details.append(element('p','端末に保存した送信前の内容です。登録確定後に再確認してください。','muted'));
+ for(const kind of ['paid','gift']){
+  const list=lines.filter(line=>line.kind===kind);
+  if(!list.length)continue;
+  details.append(element('h4',kind==='paid'?'購入商品':'サービス品（0円）'));
+  for(const line of list){const qty=Number(line.qty||0);const price=Number(line.unit_price_yen||0);details.append(element('p',`${line.product_name}　${qty}点 × ${yen(price)}${kind==='paid'?` ＝ ${yen(qty*price)}`:''}`,'order-line'));}
+ }
+ return details;
+}
 async function renderOrders(){
  if(!info)return;$('orders').replaceChildren();
  for(const r of (await records()).filter(r=>r.backend===location.origin&&JSON.stringify(r.scope)===scopeKey()&&(r.stage!=='draft'||r.id!==draft?.id)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt))){
   const node=element('div',undefined,'order');
   const state=r.stage==='draft'?'下書き':r.pending==='cancel'?'取消待ち':r.pending?'未送信・結果確認中':r.receipt?.state==='cancelled'?'取消済み':'登録済み';
   node.append(element('strong',state),element('p',r.form.customer||'名札から照合'),element('p',`${r.receipt?.total_yen==null?'金額未確定':yen(r.receipt.total_yen)} ／ ${r.id}`,'muted'));
+   if(r.stage!=='draft')node.append(orderDetails(r));
   if(r.error)node.append(element('p',r.error,'error'));
   if(r.stage==='draft'){
    const resume=element('button','この下書きの続きを入力','secondary');resume.onclick=async()=>{try{await saveForm();draft=(await records()).find(x=>x.id===r.id);await set('draft:'+scopeKey(),draft.id);renderForm();await renderOrders();}catch(e){message(errorText(e));}};node.append(resume);

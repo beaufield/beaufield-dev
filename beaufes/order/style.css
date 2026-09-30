@@ -41,7 +41,10 @@ button:disabled{opacity:.55;cursor:default}
 .selected-product small{display:block;color:#66776e}
 .selected-product input{width:75px;padding:8px}
 .selected-product button{padding:5px 8px;min-height:36px}
-.selection-summary{font-size:13px;color:#455f50;margin:10px 0 0}
+.quantity-progress{font-size:14px;font-weight:700;line-height:1.5;margin:6px 0 10px;padding:9px 10px;border-radius:8px}
+.quantity-neutral{background:#eef3ef;color:#455f50}
+.quantity-error{background:#fff0ed;color:#a32f24;border:1px solid #e9ada5}
+.quantity-complete{background:#e0f2e6;color:#15563c;border:1px solid #9ccfac}
 .delivery-field{border:0;padding:0;margin:24px 0 16px;min-width:0}
 .delivery-field legend{font-weight:700;margin-bottom:8px}
 .required{background:#a3322b;color:white;font-size:12px;border-radius:4px;padding:2px 5px}
@@ -60,6 +63,10 @@ button:disabled{opacity:.55;cursor:default}
 #message{white-space:pre-wrap;background:#e4eee8;border-radius:8px;padding:12px}
 #message:empty{display:none}
 .order{border-bottom:1px solid #dbe5dd;padding:14px 0;overflow-wrap:anywhere}
+.order-details{margin:10px 0;border:1px solid #cbded0;border-radius:9px;background:#f7faf7;padding:10px 12px}
+.order-details summary{cursor:pointer;color:#214d42;font-weight:700;min-height:34px;line-height:34px}
+.order-details h4{font-size:14px;margin:14px 0 5px}
+.order-line{margin:4px 0;padding:7px 0;border-bottom:1px solid #e1ebe3;line-height:1.5}
 .error{color:#9d3125}
 #customer{background:#eef5ee;border-radius:8px;padding:12px;margin-top:12px}
 #customer:empty{display:none}
