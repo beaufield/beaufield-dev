@@ -1446,7 +1446,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.77.0-db';
+const APP_VERSION    = 'v1.77.1-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -7146,19 +7146,23 @@ function aiOrderDemand(row) {
 function aiOrderParseText(value) {
   const text = String(value || '').normalize('NFKC');
   const result = { mode: '', series: '', sizes: [], eachCases: null, days: null, questions: [] };
-  const seriesMatch = text.match(/の([^\s、。]{2,30}?)を/);
-  if (seriesMatch) result.series = seriesMatch[1].replace(/シリーズ$/, '');
+  const seriesMatch = text.match(/(?:の|^|[\s、。])([^\s、。の]{2,30})シリーズ/) ||
+    text.match(/(?:の|^|[\s、。])([^\s、。の]{2,30})の\d{3,4}(?=サイズ|ML|G)/i);
+  if (seriesMatch) result.series = seriesMatch[1];
   const sizes = [...text.matchAll(/(?:^|[^\d])(\d{3,4})(?=\s*(?:ML|G|サイズ|と|、|は|で|$))/gi)]
     .map(m => m[1]);
   result.sizes = [...new Set(sizes)].map(size => {
-    const packMatch = text.match(new RegExp(size + '[^、。\\n]{0,22}?(\\d+)\\s*本[^、。\\n]{0,6}?1\\s*ケース'));
-    return { size, pack: packMatch ? Number(packMatch[1]) : null };
+    const packMatch = text.match(new RegExp(size + '[^、。\\n]{0,30}?(\\d+)\\s*本\\s*(?:で\\s*1\\s*ケース|[/／]\\s*ケース)'));
+    const casesMatch = text.match(new RegExp(size + '\\s*(?:サイズ|ml|g)?\\s*(?:を|は|で)?\\s*(\\d+)\\s*ケース', 'i'));
+    return { size, pack: packMatch ? Number(packMatch[1]) : null,
+      cases: casesMatch ? Number(casesMatch[1]) : null };
   });
   if (/ケース/.test(text)) {
     result.mode = 'cases';
     const each = text.match(/(?:各(?:サイズ)?|それぞれ)\s*(\d+)\s*ケース/);
     if (each) result.eachCases = Number(each[1]);
-    else result.questions.push('ケース数が各サイズか合計かを確認し、サイズ別に入力してください。');
+    else if (!result.sizes.length || result.sizes.some(x => !x.cases))
+      result.questions.push('ケース数が各サイズか合計かを確認し、サイズ別に入力してください。');
     if (result.sizes.length === 0) result.questions.push('対象サイズを入力してください。');
   } else if (/日分/.test(text)) {
     result.mode = 'extra';
@@ -9591,7 +9595,7 @@ function aiOrderReadText() {
   if (parsed.series) document.getElementById('ai-order-series').value = parsed.series;
   if (parsed.mode === 'cases' && parsed.sizes.length) {
     document.getElementById('ai-order-case-rows').replaceChildren();
-    parsed.sizes.forEach(x => aiOrderAddSizeRow(x.size, parsed.eachCases || '', x.pack || ''));
+    parsed.sizes.forEach(x => aiOrderAddSizeRow(x.size, x.cases || parsed.eachCases || '', x.pack || ''));
   }
   if (parsed.mode === 'extra' && parsed.days) document.getElementById('ai-order-days').value = parsed.days;
   aiOrderSetMessage(parsed.questions.length ? parsed.questions.join(' ') :
