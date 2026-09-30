@@ -797,6 +797,25 @@
     .prop-pending-warn   { font-size: 11px; color: #c62828; font-weight: 600; margin-top: 4px; line-height: 1.5; }
     /* 分析より前に発注済み＝推奨発注数に既に反映されている、と伝える行（v1.70.0） */
     .prop-pending-info   { font-size: 11px; color: #1e7e34; font-weight: 600; margin-top: 4px; line-height: 1.5; }
+    .ai-order-card h3 { margin: 0 0 6px; font-size: 17px; }
+    .ai-order-card label { display: block; margin-top: 10px; font-size: 12px; font-weight: 700; }
+    .ai-order-card input, .ai-order-card select, .ai-order-card textarea {
+      width: 100%; box-sizing: border-box; min-height: 38px; padding: 8px;
+      border: 1px solid var(--border); border-radius: 7px; background: var(--surface);
+      color: var(--text); font-size: 15px;
+    }
+    .ai-order-card textarea { min-height: 72px; resize: vertical; }
+    .ai-order-hint { font-size: 12px; line-height: 1.55; color: var(--text-light); }
+    .ai-order-row { display: grid; grid-template-columns: 1.2fr .8fr .8fr; gap: 6px; align-items: end; margin-top: 8px; }
+    .ai-order-row label { margin: 0; }
+    .ai-order-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+    .ai-order-actions .btn { flex: 1 1 130px; }
+    .ai-order-result { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+    .ai-order-result table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .ai-order-result th, .ai-order-result td { border-bottom: 1px solid var(--border); padding: 6px 3px; text-align: left; }
+    .ai-order-result .qty-input { width: 58px; min-height: 30px; padding: 4px; font-size: 13px; }
+    .ai-order-warning { margin-top: 8px; padding: 8px; border-radius: 6px; background: #fff3e0; color: #7b4100; font-size: 12px; line-height: 1.5; }
+    .ai-order-error { margin-top: 8px; padding: 8px; border-radius: 6px; background: #ffebee; color: #b71c1c; font-size: 12px; line-height: 1.5; }
     .kpi-row          { display: flex; gap: 8px; }
     .kpi-card         { flex: 1; padding: 10px 8px; text-align: center; cursor: pointer; -webkit-tap-highlight-color: transparent; }
     .kpi-label        { font-size: 11px; color: var(--text-light); }
@@ -1099,6 +1118,47 @@
 <div class="screen" id="screen-proposal">
   <div id="prop-kpi"></div>
   <div id="prop-urgent"></div>
+  <div class="card ai-order-card" id="ai-order-card" style="display:none;padding:14px">
+    <h3>今回の条件から発注候補を作る</h3>
+    <div class="ai-order-hint">ケース配分または通常提案への数日分の追加を試算します。文章の読取りは現在、定型表現のみ対応しています。候補を表示しても発注は保存されません。</div>
+    <label for="ai-order-supplier">発注先</label>
+    <select id="ai-order-supplier"><option value="">発注先を選択</option></select>
+    <label for="ai-order-request">今回の希望（任意）</label>
+    <textarea id="ai-order-request" placeholder="例：プロCMCの1000と3000を各6ケース。1000は12本、3000は6本で1ケース"></textarea>
+    <div class="ai-order-actions">
+      <button type="button" class="btn btn-outline btn-sm" onclick="aiOrderReadText()">文章から条件を読取る</button>
+    </div>
+    <label for="ai-order-mode">計算方法</label>
+    <select id="ai-order-mode" onchange="aiOrderSwitchMode()">
+      <option value="cases">系列・サイズ別のケース配分</option>
+      <option value="extra">通常提案に日数分を追加</option>
+    </select>
+    <div id="ai-order-case-fields">
+      <label for="ai-order-series">商品名に含まれる系列名</label>
+      <input id="ai-order-series" type="text" placeholder="例：プロCMC">
+      <div id="ai-order-case-rows">
+        <div class="ai-order-row">
+          <label>サイズ<input class="ai-size" inputmode="numeric" placeholder="1000"></label>
+          <label>ケース数<input class="ai-cases" type="number" inputmode="numeric" min="1" max="100" placeholder="6"></label>
+          <label>本/ケース<input class="ai-pack" type="number" inputmode="numeric" min="1" max="1000" placeholder="12"></label>
+        </div>
+      </div>
+      <button type="button" class="btn btn-outline btn-sm" style="margin-top:8px" onclick="aiOrderAddSizeRow()">＋ サイズを追加</button>
+      <label style="font-weight:400"><input id="ai-order-pack-confirm" type="checkbox" style="width:auto;min-height:auto;margin-right:5px">今回のケース入数を確認しました</label>
+    </div>
+    <div id="ai-order-extra-fields" style="display:none">
+      <label for="ai-order-days">通常提案へ追加する日数</label>
+      <input id="ai-order-days" type="number" inputmode="numeric" min="1" max="30" placeholder="例：2">
+      <label for="ai-order-target">対象商品名・商品コード（任意）</label>
+      <input id="ai-order-target" type="text" placeholder="空欄なら発注先の通常提案すべて">
+      <div class="ai-order-hint">対象の通常提案に、商品別の直近月間需要から計算した日数分を発注単位で切り上げて追加します。系列単位の提案は対象外です。</div>
+    </div>
+    <div id="ai-order-message" role="status" aria-live="polite"></div>
+    <div class="ai-order-actions">
+      <button type="button" class="btn btn-primary" onclick="aiOrderBuildDraft()">候補を計算</button>
+    </div>
+    <div id="ai-order-result" class="ai-order-result" style="display:none"></div>
+  </div>
   <div class="card" style="padding:12px 14px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <span id="prop-analyzed-at" style="font-size:12px;color:var(--text-light)">—</span>
@@ -1386,7 +1446,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.76.1-db';
+const APP_VERSION    = 'v1.77.0-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1411,6 +1471,7 @@ const DB_SCHEMA_VERSION  = '1';
 const DATA_BACKEND       = 'db'; // 新画面（本番DB）用の値。build_db_pages.py が生成
 const DB_ACTIONS = new Set([
   'getMasters', 'getProductMaster', 'getOrders', 'getOrderDetail', 'getOrderProposals',
+  'getAiOrderMetrics',
   'saveOrder', 'checkOrderByRequestId', 'deleteOrder', 'saveSupplier', 'saveReceived',
   'saveExcessAck', 'saveDeadAck', 'saveProposalExclusion', 'saveEolFlag', 'saveLotOverride',
   'getCapabilities'
@@ -3168,6 +3229,9 @@ dbAdapter.getOrderProposals = async function() {
   }
   return _dbAssembleProposals(live, staticData);
 };
+dbAdapter.getAiOrderMetrics = params => dbRpc('get_ai_order_metrics', {
+  supplierCode: params.supplierCode, analysisId: params.analysisId
+});
 
 /* ---- H6: 保存直後の履歴（最重要）— 端末の「発注の最新状態」＋先に描画 ----
    ① histStore: 発注番号ごとの最新状態（メモリ + IndexedDB db_history_store）
@@ -3569,6 +3633,7 @@ function switchScreen(name) {
     renderInventoryList();
     document.getElementById('header-sub').textContent = '在庫一覧';
   } else if (name === 'proposal') {
+    aiOrderInit();
     loadProposals(false);
     document.getElementById('header-sub').textContent = '発注提案';
   } else if (name === 'dead') {
@@ -7052,7 +7117,7 @@ function closeModal(id) { document.getElementById(id).classList.remove('open'); 
    analyze_demand.py（週次）が「発注提案」シートに書いた提案を表示し、
    チェックした商品をカートに積んで発注フローへ流し込む
 =================================================== */
-let proposalsData    = { proposals: [], analyzedAt: '', exclusions: [], eol: [], excess: [], excessAcks: [], dead: [], deadAcks: [], pendingOrders: [], kpi: null, lotOverrides: [], groupStatus: [], orderGroups: [] };
+let proposalsData    = { proposals: [], analyzedAt: '', analysisInputAt: '', analysisId: '', exclusions: [], eol: [], excess: [], excessAcks: [], dead: [], deadAcks: [], pendingOrders: [], kpi: null, lotOverrides: [], groupStatus: [], orderGroups: [] };
 let proposalsLoaded  = false;
 let proposalsLoading = false;
 let proposalsSort    = 'name'; // 'name'（あ順・既定）| 'amount'（金額が多い順）| 'stuck'（滞留が長い順・v1.58.0）
@@ -7068,6 +7133,98 @@ let propMgSkipped     = new Set(); // 「今回はこの系列を発注しない
 let deadShowCount    = 20; // 「整理」タブの初期表示件数（もっと見るで増える）
 let deadFilter       = 'all'; // 'all' | 'tier1'（完全死蔵）| 'tier2'（休眠）| 'unsold'（未販売）
 let deadSort         = 'amount'; // 'amount'（金額が多い順）| 'months'（放置期間が長い順）
+
+/* AI_ORDER_CORE_BEGIN: 入力解釈は補助。数量・配分はこの決定的処理だけで行う。 */
+function aiOrderNorm(value) {
+  return String(value || '').normalize('NFKC').toUpperCase().replace(/[\s　]/g, '');
+}
+function aiOrderDemand(row) {
+  const value = row.recentDemandMonthly !== undefined && row.recentDemandMonthly !== null
+    ? row.recentDemandMonthly : row.meanMonthly;
+  return Number(value);
+}
+function aiOrderParseText(value) {
+  const text = String(value || '').normalize('NFKC');
+  const result = { mode: '', series: '', sizes: [], eachCases: null, days: null, questions: [] };
+  const seriesMatch = text.match(/の([^\s、。]{2,30}?)を/);
+  if (seriesMatch) result.series = seriesMatch[1].replace(/シリーズ$/, '');
+  const sizes = [...text.matchAll(/(?:^|[^\d])(\d{3,4})(?=\s*(?:ML|G|サイズ|と|、|は|で|$))/gi)]
+    .map(m => m[1]);
+  result.sizes = [...new Set(sizes)].map(size => {
+    const packMatch = text.match(new RegExp(size + '[^、。\\n]{0,22}?(\\d+)\\s*本[^、。\\n]{0,6}?1\\s*ケース'));
+    return { size, pack: packMatch ? Number(packMatch[1]) : null };
+  });
+  if (/ケース/.test(text)) {
+    result.mode = 'cases';
+    const each = text.match(/(?:各(?:サイズ)?|それぞれ)\s*(\d+)\s*ケース/);
+    if (each) result.eachCases = Number(each[1]);
+    else result.questions.push('ケース数が各サイズか合計かを確認し、サイズ別に入力してください。');
+    if (result.sizes.length === 0) result.questions.push('対象サイズを入力してください。');
+  } else if (/日分/.test(text)) {
+    result.mode = 'extra';
+    const range = /\d+\s*[〜~～、,－-]\s*\d+\s*日分/.test(text);
+    const day = text.match(/(\d+)\s*日分/);
+    if (!range && day) result.days = Number(day[1]);
+    else result.questions.push('追加する日数を1つ選んでください。');
+  } else {
+    result.questions.push('ケース配分か、通常提案へ追加する日数を選んでください。');
+  }
+  return result;
+}
+function aiOrderAllocate(rows, targetCases, pack) {
+  if (!Number.isInteger(targetCases) || targetCases < 1 || targetCases > 100 ||
+      !Number.isInteger(pack) || pack < 1 || pack > 1000) {
+    throw new Error('ケース数と入数は正の整数で入力してください。');
+  }
+  if ((rows || []).some(r => r.stock == null || r.onOrder == null || r.recommended == null ||
+      !Number.isFinite(Number(r.stock)) || !Number.isFinite(Number(r.onOrder)) ||
+      !Number.isFinite(aiOrderDemand(r)) || aiOrderDemand(r) < 0 ||
+      !Number.isFinite(Number(r.recommended)))) {
+    throw new Error('分析値に欠損があります。通常提案で在庫と需要を確認してください。');
+  }
+  const active = (rows || []).filter(r => !r.excluded && !r.eolFlagged &&
+    aiOrderDemand(r) > 0).map(r => ({
+      ...r, demand: aiOrderDemand(r),
+      pos: Number(r.stock || 0) + Number(r.onOrder || 0), cases: 0
+    }));
+  if (!active.length) throw new Error('需要のある対象商品がありません。');
+  const totalDemand = active.reduce((s, r) => s + r.demand, 0);
+  const targetMonths = (active.reduce((s, r) => s + r.pos, 0) + targetCases * pack) / totalDemand;
+  // 需要加重の発注後在庫月数の二乗偏差。ケースごとの限界費用が増加するため逐次最小を選ぶ。
+  for (let i = 0; i < targetCases; i++) {
+    let chosen = null;
+    let best = Infinity;
+    for (const r of active) {
+      const before = r.pos + r.cases * pack - r.demand * targetMonths;
+      const delta = (2 * before * pack + pack * pack) / r.demand;
+      if (delta < best - 1e-9 || (Math.abs(delta - best) <= 1e-9 && chosen && String(r.code) < String(chosen.code))) {
+        best = delta;
+        chosen = r;
+      }
+    }
+    chosen.cases++;
+  }
+  return {
+    rows: active.map(r => ({
+      ...r, pack, qty: r.cases * pack,
+      monthsAfter: (r.pos + r.cases * pack) / r.demand
+    })),
+    ignored: (rows || []).length - active.length,
+    allAboveRecommended: active.every(r => Number.isFinite(Number(r.recommended)) &&
+      r.pos >= Number(r.recommended)),
+    targetMonths
+  };
+}
+function aiOrderExtraQty(baseQty, monthlyDemand, days, lot) {
+  if (!Number.isInteger(days) || days < 1 || days > 30) throw new Error('追加日数は1〜30日の整数にしてください。');
+  if (!Number.isInteger(lot) || lot < 1) throw new Error('発注単位を確認できません。');
+  const base = Number(baseQty);
+  const demand = Number(monthlyDemand);
+  if (!Number.isInteger(base) || base < 1 || !Number.isFinite(demand) || demand < 0)
+    throw new Error('通常提案または需要の値が不正です。');
+  return base + Math.ceil(demand * days / 30.4 / lot) * lot;
+}
+/* AI_ORDER_CORE_END */
 
 function setProposalSort(mode) {
   proposalsSort = mode;
@@ -7447,8 +7604,8 @@ function renderProposalUrgent() {
 }
 
 async function loadProposals(force = false) {
-  if (proposalsLoading) return;
-  if (proposalsLoaded && !force) { renderProposalList(); return; }
+  if (proposalsLoading) return false;
+  if (proposalsLoaded && !force) { renderProposalList(); return true; }
   proposalsLoading = true;
   const wrap = document.getElementById('prop-list');
   if (!proposalsLoaded) {
@@ -7470,6 +7627,8 @@ async function loadProposals(force = false) {
       proposalsData = {
         proposals:  res.proposals  || [],
         analyzedAt: res.analyzedAt || '',
+        analysisInputAt: res.analysisInputAt || '',
+        analysisId: res.analysisId || '',
         exclusions: res.exclusions || [],
         eol:        res.eol        || [],
         excess:     res.excess     || [],
@@ -7511,6 +7670,7 @@ async function loadProposals(force = false) {
       updateProposalBadge();
       updateDeadBadge();
       renderDeadScreen();
+      return true;
     } else {
       const message = res && res.error === 'ANALYSIS_NOT_READY'
         ? (res.message || '分析結果を更新中です。完了まで発注を確定できません。')
@@ -7520,9 +7680,11 @@ async function loadProposals(force = false) {
       } else {
         wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div>${escHtml(message)}</div></div>`;
       }
+      return false;
     }
   } catch(e) {
     wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div>${escHtml(_gasErrorMessage(e))}</div></div>`;
+    return false;
   } finally {
     proposalsLoading = false;
   }
@@ -9289,6 +9451,26 @@ function startOrderFromMgGroup(groupId, supplierCode) {
   startOrderWithPicked(supplierCode, picked, st ? st.groupName : '系列');
 }
 
+function cartItemsFromProposalPicked(supplierCode, picked) {
+  const basisAnalysisId = (DATA_BACKEND === 'db' && proposalsData && proposalsData.analysisId) || '';
+  return picked.map(({ p, qty }) => {
+    const master = productMaster.find(m => m.code === p.code) || {};
+    return {
+      janCode:       master.jan           || '',
+      code:          p.code,
+      name:          p.name,
+      qty,
+      unit:          master.unit          || '',
+      memo:          '',
+      isHandwritten: false,
+      supplierCD:    master.supplierCD    || supplierCode,
+      makerCode:     master.makerCode     || '',
+      purchasePrice: master.purchasePrice || 0,
+      basisAnalysisId
+    };
+  });
+}
+
 // 提案タブから発注画面へ送る共通処理（v1.65.0で startOrderFromProposals から切り出し）。
 // picked: [{ p: 提案行, qty: 発注数 }]。仕入先カード全体からでも、まとめ発注グループ
 // ブロック単体からでも、ここに流し込めば以降はまったく同じ経路で動く
@@ -9314,23 +9496,7 @@ function startOrderWithPicked(supplierCode, picked, toastLabel) {
 
   // H4: 提案から入れた商品には基準の分析IDを付ける（DBモードで分析IDがあるときだけ）。
   // 検索・手入力・履歴修正で入れた商品には付けない（＝基準なし。安全側）
-  const basisAnalysisId = (DATA_BACKEND === 'db' && proposalsData && proposalsData.analysisId) || '';
-  cartItems = picked.map(({ p, qty }) => {
-    const master = productMaster.find(m => m.code === p.code) || {};
-    return {
-      janCode:       master.jan           || '',
-      code:          p.code,
-      name:          p.name,
-      qty,
-      unit:          master.unit          || '',
-      memo:          '',
-      isHandwritten: false,
-      supplierCD:    master.supplierCD    || supplierCode,
-      makerCode:     master.makerCode     || '',
-      purchasePrice: master.purchasePrice || 0,
-      basisAnalysisId
-    };
-  });
+  cartItems = cartItemsFromProposalPicked(supplierCode, picked);
   saveCart();
 
   switchScreen('order');
@@ -9339,6 +9505,366 @@ function startOrderWithPicked(supplierCode, picked, toastLabel) {
   renderItemList();
   updateInventoryCartBtn();
   showToast(`${toastLabel || '提案'}から${cartItems.length}件をカートに追加しました`, 'success');
+}
+
+/* === 発注条件の相談: 決定的な候補生成。AI接続は利用条件の判定後に追加する。 === */
+let aiOrderDraft = null;
+let aiOrderInitialized = false;
+let aiOrderInputVersion = 0;
+let aiOrderBuilding = false;
+let aiOrderApplying = false;
+function aiOrderInit() {
+  const card = document.getElementById('ai-order-card');
+  if (!card || DATA_BACKEND !== 'db') return;
+  card.style.display = '';
+  const select = document.getElementById('ai-order-supplier');
+  const previous = select.value;
+  select.replaceChildren(new Option('発注先を選択', ''));
+  (masters.suppliers || []).forEach(s => select.add(new Option(s.name || s.code, s.code)));
+  if (previous && [...select.options].some(o => o.value === previous)) select.value = previous;
+  else {
+    const filter = document.getElementById('prop-filter-supplier');
+    if (filter && filter.value) select.value = filter.value;
+  }
+  if (!aiOrderInitialized) {
+    const invalidate = e => {
+      if (e.target.closest('#ai-order-result')) return;
+      aiOrderInputVersion++;
+      if (!aiOrderDraft) return;
+      aiOrderDraft = null;
+      document.getElementById('ai-order-result').style.display = 'none';
+      aiOrderSetMessage('条件が変わりました。候補を計算し直してください。', 'warning');
+    };
+    card.addEventListener('input', invalidate);
+    card.addEventListener('change', invalidate);
+    document.getElementById('ai-order-result').addEventListener('change', e => {
+      const input = e.target.closest('input[data-ai-code]');
+      if (input) aiOrderEditQty(input.dataset.aiCode, input.value);
+    });
+    aiOrderInitialized = true;
+  }
+}
+function aiOrderSetMessage(message, kind) {
+  const el = document.getElementById('ai-order-message');
+  el.className = kind === 'error' ? 'ai-order-error' : kind === 'warning' ? 'ai-order-warning' : 'ai-order-hint';
+  el.textContent = message || '';
+}
+function aiOrderSwitchMode() {
+  aiOrderInputVersion++;
+  const cases = document.getElementById('ai-order-mode').value === 'cases';
+  document.getElementById('ai-order-case-fields').style.display = cases ? '' : 'none';
+  document.getElementById('ai-order-extra-fields').style.display = cases ? 'none' : '';
+  aiOrderDraft = null;
+  document.getElementById('ai-order-result').style.display = 'none';
+}
+function aiOrderAddSizeRow(size = '', cases = '', pack = '') {
+  aiOrderInputVersion++;
+  if (aiOrderDraft) {
+    aiOrderDraft = null;
+    document.getElementById('ai-order-result').style.display = 'none';
+    aiOrderSetMessage('条件が変わりました。候補を計算し直してください。', 'warning');
+  }
+  const wrap = document.getElementById('ai-order-case-rows');
+  const row = document.createElement('div');
+  row.className = 'ai-order-row';
+  row.innerHTML = '<label>サイズ<input class="ai-size" inputmode="numeric" placeholder="3000"></label>' +
+    '<label>ケース数<input class="ai-cases" type="number" inputmode="numeric" min="1" max="100" placeholder="6"></label>' +
+    '<label>本/ケース<input class="ai-pack" type="number" inputmode="numeric" min="1" max="1000" placeholder="6"></label>';
+  row.querySelector('.ai-size').value = size;
+  row.querySelector('.ai-cases').value = cases;
+  row.querySelector('.ai-pack').value = pack;
+  wrap.appendChild(row);
+}
+function aiOrderReadText() {
+  const text = document.getElementById('ai-order-request').value.trim();
+  if (!text) { aiOrderSetMessage('希望を入力してください。手入力の条件カードだけでも計算できます。', 'warning'); return; }
+  const parsed = aiOrderParseText(text);
+  const normalized = aiOrderNorm(text).replace(/株式会社|有限会社/g, '');
+  const select = document.getElementById('ai-order-supplier');
+  const supplier = (masters.suppliers || []).find(s => {
+    const name = aiOrderNorm(s.name).replace(/株式会社|有限会社/g, '');
+    return name.length >= 3 && normalized.includes(name);
+  });
+  if (supplier) select.value = supplier.code;
+  if (parsed.mode) document.getElementById('ai-order-mode').value = parsed.mode;
+  aiOrderSwitchMode();
+  if (parsed.series) document.getElementById('ai-order-series').value = parsed.series;
+  if (parsed.mode === 'cases' && parsed.sizes.length) {
+    document.getElementById('ai-order-case-rows').replaceChildren();
+    parsed.sizes.forEach(x => aiOrderAddSizeRow(x.size, parsed.eachCases || '', x.pack || ''));
+  }
+  if (parsed.mode === 'extra' && parsed.days) document.getElementById('ai-order-days').value = parsed.days;
+  aiOrderSetMessage(parsed.questions.length ? parsed.questions.join(' ') :
+    '読み取った条件を確認し、足りない項目を入力してください。数量はまだ計算していません。',
+    parsed.questions.length ? 'warning' : '');
+}
+function aiOrderSizeInputs() {
+  return [...document.querySelectorAll('#ai-order-case-rows .ai-order-row')].map(row => ({
+    size: row.querySelector('.ai-size').value.trim(),
+    cases: Number(row.querySelector('.ai-cases').value),
+    pack: Number(row.querySelector('.ai-pack').value)
+  }));
+}
+function aiOrderSupplierSame(a, b) {
+  return String(a || '').replace(/^0+/, '') === String(b || '').replace(/^0+/, '');
+}
+async function aiOrderBuildDraft() {
+  if (aiOrderBuilding || aiOrderApplying) return;
+  aiOrderBuilding = true;
+  const inputVersion = aiOrderInputVersion;
+  aiOrderDraft = null;
+  document.getElementById('ai-order-result').style.display = 'none';
+  const supplierCode = document.getElementById('ai-order-supplier').value;
+  if (!supplierCode) { aiOrderSetMessage('発注先を選択してください。', 'error'); aiOrderBuilding = false; return; }
+  if (DATA_BACKEND !== 'db') { aiOrderSetMessage('新しい発注画面で利用してください。', 'error'); aiOrderBuilding = false; return; }
+  aiOrderSetMessage('分析データから候補を計算しています…');
+  try {
+    const loaded = await loadProposals(false);
+    if (!loaded || !proposalsData.analysisId || !proposalsData.analyzedAt)
+      throw new Error('分析データを取得できません。提案を更新してください。');
+    if (!productMaster.length) throw new Error('商品マスターを読み込めません。商品を再取得してください。');
+    const analysisId = proposalsData.analysisId;
+    const mode = document.getElementById('ai-order-mode').value;
+    const draft = {
+      mode, supplierCode, analysisId, analyzedAt: proposalsData.analyzedAt,
+      analysisInputAt: proposalsData.analysisInputAt || '', sections: [], rows: [], warnings: []
+    };
+    const analyzedMs = _analyzedAtMs();
+    if (analyzedMs === null) throw new Error('分析時刻を確認できません。通常提案を更新してください。');
+    if (Date.now() - analyzedMs > 36 * 60 * 60 * 1000)
+      draft.warnings.push('分析時点から36時間以上経過しています。現在庫と未入荷を確認してください。');
+    const ordered = buildOrderedByCode({ unreflectedOnly: true });
+    if (mode === 'cases') {
+      if (!document.getElementById('ai-order-pack-confirm').checked)
+        throw new Error('今回のケース入数を確認してチェックしてください。');
+      const series = document.getElementById('ai-order-series').value.trim();
+      if (aiOrderNorm(series).length < 2) throw new Error('系列名を2文字以上で入力してください。');
+      const inputs = aiOrderSizeInputs();
+      if (!inputs.length || inputs.some(x => !/^\d{3,4}$/.test(x.size) ||
+          !Number.isInteger(x.cases) || x.cases < 1 || x.cases > 100 ||
+          !Number.isInteger(x.pack) || x.pack < 1 || x.pack > 1000) ||
+          new Set(inputs.map(x => x.size)).size !== inputs.length)
+        throw new Error('サイズ、ケース数、本/ケースを正の整数で入力してください。サイズの重複も確認してください。');
+      const res = await gasGet({ action: 'getAiOrderMetrics', supplierCode, analysisId });
+      if (!res || res.success !== true || res.analysisId !== analysisId)
+        throw new Error('商品別分析値を取得できません。補助データが未公開の場合は通常の発注提案を利用してください。');
+      draft.analysisInputAt = res.analysisInputAt || draft.analysisInputAt;
+      for (const input of inputs) {
+        const matches = (res.rows || []).filter(r => {
+          const name = aiOrderNorm(r.name);
+          return name.includes(aiOrderNorm(series)) && name.includes(input.size) &&
+            !r.excluded && !r.eolFlagged;
+        });
+        if (!matches.length) throw new Error(input.size + 'サイズの商品を特定できません。系列名とサイズを確認してください。');
+        if (matches.some(r => r.groupId))
+          throw new Error(input.size + 'サイズには系列単位の既存発注ルールがあります。現在は従来の系列カードで確認してください。');
+        if (matches.some(r => !productMaster.some(m => m.code === r.code &&
+            aiOrderSupplierSame(m.supplierCD, supplierCode) && m.discontinued !== '廃番')))
+          throw new Error(input.size + 'サイズの商品マスターが不足または終売です。更新してから確認してください。');
+        if (matches.some(r => ordered[r.code] || (proposalsData.pendingOrders || []).some(x => x.code === r.code && x.isDelayed)))
+          throw new Error(input.size + 'サイズに分析後の未入荷発注があります。二重発注を避けるため通常の履歴で確認してください。');
+        const allocation = aiOrderAllocate(matches, input.cases, input.pack);
+        if (allocation.allAboveRecommended)
+          draft.warnings.push(input.size + 'は対象商品の現在庫＋未入荷が分析上の推奨在庫以上です。指定ケース数を見直してください。');
+        if (allocation.ignored)
+          draft.warnings.push(input.size + 'で需要ゼロなどの' + allocation.ignored + '品目は自動配分から外しました。');
+        const sizeRows = allocation.rows.map(r => ({ ...r, size: input.size }));
+        draft.sections.push({ size: input.size, targetCases: input.cases, pack: input.pack, rows: sizeRows });
+        draft.rows.push(...sizeRows);
+      }
+    } else {
+      const days = Number(document.getElementById('ai-order-days').value);
+      if (!Number.isInteger(days) || days < 1 || days > 30)
+        throw new Error('追加日数は1〜30日の整数で入力してください。');
+      draft.days = days;
+      const target = aiOrderNorm(document.getElementById('ai-order-target').value);
+      const source = (proposalsData.proposals || []).filter(p =>
+        aiOrderSupplierSame(p.supplierCode, supplierCode) && !p.refOnly && Number(p.proposedQty) > 0 &&
+        (!target || aiOrderNorm(p.name).includes(target) || aiOrderNorm(p.code).includes(target)));
+      const eligible = source.filter(p => !p.groupId && !ordered[p.code] &&
+        !(proposalsData.pendingOrders || []).some(x => x.code === p.code && x.isDelayed));
+      if (!eligible.length) throw new Error('追加できる通常提案がありません。系列単位の商品は従来の系列カードで確認してください。');
+      if (eligible.length < source.length)
+        draft.warnings.push('系列単位または分析後に発注済みの商品は追加対象から外しました。');
+      draft.rows = eligible.map(p => {
+        const lot = Number(p.lot);
+        const qty = aiOrderExtraQty(Number(p.proposedQty), aiOrderDemand(p), days, lot);
+        return { ...p, baseQty: Number(p.proposedQty), qty, lot, stock: Number(p.stock || 0),
+          onOrder: Number(p.onOrder || 0), demand: aiOrderDemand(p) };
+      });
+    }
+    if (proposalsData.analysisId !== analysisId)
+      throw new Error('計算中に分析世代が変わりました。もう一度計算してください。');
+    if (aiOrderInputVersion !== inputVersion)
+      throw new Error('計算中に条件が変わりました。候補を計算し直してください。');
+    aiOrderDraft = draft;
+    aiOrderSetMessage('候補を計算しました。数量と注意を確認してください。');
+    aiOrderRenderDraft();
+  } catch(e) {
+    aiOrderSetMessage(e && e.message ? e.message : '候補を計算できませんでした。', 'error');
+  } finally {
+    aiOrderBuilding = false;
+  }
+}
+function aiOrderDraftErrors(draft) {
+  const errors = [];
+  if (!draft) return ['候補がありません。'];
+  if (draft.mode === 'cases') {
+    draft.sections.forEach(section => {
+      const total = section.rows.reduce((s, r) => s + r.cases, 0);
+      if (total !== section.targetCases)
+        errors.push(section.size + 'の合計は' + total + 'ケースです。指定の' + section.targetCases + 'ケースに合わせてください。');
+    });
+  }
+  draft.rows.forEach(r => {
+    if (!Number.isInteger(r.qty) || r.qty < 0)
+      errors.push(r.name + ': 数量は0以上の整数にしてください。');
+    const lot = Number(r.lot);
+    if (r.qty > 0 && (!Number.isInteger(lot) || lot < 1 || r.qty % lot !== 0))
+      errors.push(r.name + ': 発注単位' + (Number.isFinite(lot) ? lot : '不明') + '本の倍数ではありません。');
+    if (draft.mode === 'extra' && r.qty < r.baseQty)
+      errors.push(r.name + ': 通常提案より少ない数量です。');
+  });
+  if (!draft.rows.some(r => r.qty > 0)) errors.push('発注候補が0本です。');
+  return errors;
+}
+function aiOrderRenderDraft() {
+  const draft = aiOrderDraft;
+  const el = document.getElementById('ai-order-result');
+  if (!draft) { el.style.display = 'none'; return; }
+  const caseMode = draft.mode === 'cases';
+  const totalQty = draft.rows.reduce((s, r) => s + r.qty, 0);
+  const totalCases = caseMode ? draft.rows.reduce((s, r) => s + r.cases, 0) : 0;
+  const amount = draft.rows.reduce((s, r) => {
+    const master = productMaster.find(m => m.code === r.code);
+    return s + r.qty * Number((master && master.purchasePrice) || r.unitCost || 0);
+  }, 0);
+  const errors = aiOrderDraftErrors(draft);
+  const rows = draft.rows.map(r => {
+    const qtyField = caseMode
+      ? `<input class="qty-input" type="number" inputmode="numeric" min="0" max="100" data-ai-code="${escAttr(r.code)}" value="${r.cases}"> ケース<br><small>${r.qty}本</small>`
+      : `<input class="qty-input" type="number" inputmode="numeric" min="${r.baseQty}" data-ai-code="${escAttr(r.code)}" value="${r.qty}"> 本<br><small>通常${r.baseQty}本</small>`;
+    const months = r.demand > 0
+      ? `<small>発注後 約${((Number(r.stock || 0) + Number(r.onOrder || 0) + r.qty) / r.demand).toFixed(1)}か月</small>`
+      : '';
+    return `<tr><td>${escHtml(r.name)}<br><small>${escHtml(r.code)}${caseMode ? ' / ' + escHtml(r.size) : ''}</small></td><td>${qtyField}</td><td>${months}</td></tr>`;
+  }).join('');
+  const warningHtml = draft.warnings.map(w => `<div class="ai-order-warning">${escHtml(w)}</div>`).join('');
+  const errorHtml = errors.map(w => `<div class="ai-order-error">${escHtml(w)}</div>`).join('');
+  el.innerHTML = `
+    <strong>候補: ${caseMode ? totalCases + 'ケース / ' : ''}${totalQty}本</strong>
+    <div class="ai-order-hint">概算仕入額 ${Math.round(amount).toLocaleString()}円 ／ 分析: ${escHtml(draft.analyzedAt || '不明')} ／ 在庫元: ${escHtml(draft.analysisInputAt || '時刻不明')}。在庫は分析時点の値です。</div>
+    ${warningHtml}${errorHtml}
+    <div style="overflow-x:auto"><table><thead><tr><th>商品</th><th>${caseMode ? 'ケース' : '本数'}</th><th>在庫目安</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="ai-order-hint" style="margin-top:8px">候補をカートへ反映した後、従来の確認画面で最終内容を確認します。</div>
+    <div class="ai-order-actions">
+      <button type="button" class="btn btn-primary" onclick="aiOrderApply('add')" ${errors.length ? 'disabled' : ''}>カートへ追加</button>
+      <button type="button" class="btn btn-outline" onclick="aiOrderApply('replace')" ${errors.length ? 'disabled' : ''}>該当商品だけ置換</button>
+    </div>`;
+  el.style.display = '';
+}
+function aiOrderEditQty(code, value) {
+  if (!aiOrderDraft) return;
+  const row = aiOrderDraft.rows.find(r => r.code === code);
+  if (!row) return;
+  const number = Number(value);
+  if (aiOrderDraft.mode === 'cases') {
+    row.cases = Number.isInteger(number) && number >= 0 ? number : NaN;
+    row.qty = row.cases * row.pack;
+  } else {
+    row.qty = Number.isInteger(number) && number >= 0 ? number : NaN;
+  }
+  aiOrderRenderDraft();
+}
+async function aiOrderApply(mode) {
+  if (aiOrderApplying || aiOrderBuilding) return;
+  const draft = aiOrderDraft;
+  if (!draft || (mode !== 'add' && mode !== 'replace')) return;
+  const problems = aiOrderDraftErrors(draft);
+  if (problems.length) { aiOrderSetMessage(problems.join(' '), 'error'); return; }
+  if (savedOrderNo || orderRequestId || revisionBaseOrderNo) {
+    aiOrderSetMessage('保存済み・送信中・修正中の発注には候補を反映できません。現在の発注状態を確認してください。', 'error');
+    return;
+  }
+  aiOrderApplying = true;
+  const inputVersion = aiOrderInputVersion;
+  aiOrderSetMessage('分析と未入荷の状態を再確認しています…');
+  try {
+    const fresh = await loadProposals(true);
+    if (aiOrderInputVersion !== inputVersion || aiOrderDraft !== draft)
+      throw new Error('条件が変わりました。候補を計算し直してください。');
+    if (!fresh || proposalsData.analysisId !== draft.analysisId)
+      throw new Error('分析データが更新されました。候補を計算し直してください。');
+    const ordered = buildOrderedByCode({ unreflectedOnly: true });
+    if (draft.rows.some(r => ordered[r.code] || (proposalsData.pendingOrders || []).some(x => x.code === r.code && x.isDelayed)))
+      throw new Error('候補の商品に新しい未入荷発注があります。履歴を確認して候補を計算し直してください。');
+    if (draft.mode === 'extra' && draft.rows.some(r => {
+      const p = proposalsData.proposals.find(x => x.code === r.code && aiOrderSupplierSame(x.supplierCode, draft.supplierCode));
+      return !p || Number(p.proposedQty) !== r.baseQty || Number(p.lot) !== r.lot;
+    })) throw new Error('通常提案または発注単位が変わりました。候補を計算し直してください。');
+    if (draft.rows.some(r => {
+      const master = productMaster.find(m => m.code === r.code);
+      return !master || !aiOrderSupplierSame(master.supplierCD, draft.supplierCode) || master.discontinued === '廃番';
+    })) throw new Error('商品マスターが変わりました。候補を計算し直してください。');
+    const picked = draft.rows.filter(r => r.qty > 0).map(r => ({
+      p: { code: r.code, name: r.name, supplierCode: draft.supplierCode,
+        supplierName: resolveSupplierName(draft.supplierCode, '') },
+      qty: r.qty
+    }));
+    if (cartItems.length && !aiOrderSupplierSame(currentOrder.supplierCode, draft.supplierCode))
+      throw new Error('別の発注先のカートがあります。先に現在のカートを完了または破棄してください。');
+    if (cartItems.some(i => i.isHandwritten && draft.rows.some(r => r.code === i.code)))
+      throw new Error('同じ商品コードの手書き明細があります。カートを確認してください。');
+    if (cartItems.some(i => i.basisAnalysisId && i.basisAnalysisId !== draft.analysisId &&
+        draft.rows.some(r => r.code === i.code && r.qty > 0)))
+      throw new Error('既存カートに古い分析に基づく商品があります。カートを確認してください。');
+    if (cartItems.length && draft.rows.some(r => r.qty > 0 &&
+        mgIsSolo(mgGroupIdForProduct(draft.supplierCode, r.name, r.code))))
+      throw new Error('系列単独発注の商品は既存カートに追加できません。系列カードで確認してください。');
+    if (draft.rows.some(r => {
+      const old = cartItems.find(i => i.code === r.code);
+      const finalQty = mode === 'add' ? Number((old && old.qty) || 0) + r.qty : r.qty;
+      return finalQty > 0 && finalQty % Number(r.lot) !== 0;
+    })) throw new Error('既存カートと合算すると発注単位の倍数にならない商品があります。カートを確認してください。');
+    const delta = picked.map(x => {
+      const old = cartItems.find(i => i.code === x.p.code);
+      const oldQty = old ? old.qty : 0;
+      const next = mode === 'add' ? oldQty + x.qty : x.qty;
+      return x.p.name + ': ' + oldQty + ' → ' + next + '本';
+    });
+    if (!confirm((mode === 'add' ? '候補をカートへ追加します。' : '候補の対象商品だけ置き換えます。') +
+      '\n\n' + delta.join('\n') + '\n\n内容を確認して続けますか？')) return;
+    if (!cartItems.length) {
+      startOrderWithPicked(draft.supplierCode, picked, '発注条件の候補');
+      aiOrderDraft = null;
+      aiOrderRenderDraft();
+      return;
+    }
+    const freshItems = cartItemsFromProposalPicked(draft.supplierCode, picked);
+    if (mode === 'replace') {
+      const codes = new Set(draft.rows.map(r => r.code));
+      cartItems = cartItems.filter(i => !codes.has(i.code)).concat(freshItems);
+    } else {
+      freshItems.forEach(item => {
+        const current = cartItems.find(i => !i.isHandwritten && i.code === item.code);
+        if (current) { current.qty += item.qty; current.basisAnalysisId = draft.analysisId; }
+        else cartItems.push(item);
+      });
+    }
+    saveCart();
+    switchScreen('order');
+    updateInputHeader();
+    showStep('step-input');
+    renderItemList();
+    updateInventoryCartBtn();
+    aiOrderDraft = null;
+    aiOrderRenderDraft();
+    showToast('候補をカートへ反映しました。発注内容を確認してください。', 'success');
+  } catch(e) {
+    aiOrderSetMessage(e && e.message ? e.message : '候補を反映できませんでした。', 'error');
+  } finally {
+    aiOrderApplying = false;
+  }
 }
 /* === /MG SOLO ORDER === */
 
