@@ -1,6 +1,6 @@
 import {get,set,records,update,mergeReceipt,sanitizeLegacyQr} from './storage.js';
 import {buildWorkbook} from './export.js';
-const APP_VERSION='v0.6.1';
+const APP_VERSION='v0.7.0';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -39,9 +39,7 @@ function addSelectedProduct(group,offer,kind,code,quantity){
  const input=numberInput(quantity,297,`${product.product_name} ${kind==='paid'?'購入':'サービス'}数`);
  input.dataset.offer=offer.offer_id;input.dataset.kind=kind;input.dataset.code=code;
  input.addEventListener('change',()=>saveForm().catch(e=>message(errorText(e))));
- const remove=element('button','削除','secondary small-action');remove.type='button';remove.setAttribute('aria-label',`${product.product_name}を${kind==='paid'?'購入':'サービス'}から削除`);
- remove.onclick=()=>removeProduct(offer.offer_id,kind,code).catch(e=>message(errorText(e)));
- row.append(name,input,remove);group.append(row);
+ row.append(name,input);group.append(row);
 }
 function renderOffer(offer){
  const selected=selectedOffer(offer);const card=element('div',undefined,'offer-card');card.dataset.offerCard=offer.offer_id;
@@ -63,9 +61,9 @@ function renderOffer(offer){
   for(const kind of ['paid','gift']){
    const group=element('div',undefined,'product-group');group.append(element('h4',kind==='paid'?'購入する商品':'サービス品（0円）'));
    const choices=selected[kind]||{};
-   for(const code of offer.product_codes)if(Object.hasOwn(choices,code))addSelectedProduct(group,offer,kind,code,choices[code]);
-   const add=element('button',kind==='paid'?'＋ 購入商品を追加':'＋ サービス品を追加','secondary');add.type='button';add.onclick=()=>openPicker({mode:'product',offer_id:offer.offer_id,kind});
-   group.append(add);card.append(group);
+   // 複数商品を選べる条件は最初から全商品を並べ、未入力は0点として扱う。
+   for(const code of offer.product_codes)addSelectedProduct(group,offer,kind,code,choices[code]||0);
+   card.append(group);
   }
   const paid=Object.values(selected.paid||{}).reduce((n,x)=>n+Number(x||0),0);const gift=Object.values(selected.gift||{}).reduce((n,x)=>n+Number(x||0),0);
   card.append(element('p',`現在：購入 ${paid}／${selected.sets*offer.paid_per_set}点、サービス ${gift}／${selected.sets*offer.gift_per_set}点`,'selection-summary'));
@@ -80,7 +78,7 @@ function renderForm(){
  if(!$('offers').children.length)$('offers').append(element('p','まだ条件を選んでいません。「特売条件を追加」から始めてください。','empty-state'));
  const locked=draft.stage!=='draft';for(const x of [$('qr'),$('submit'),$('scan'),$('resolve'),$('demo'),$('add-offer'),...document.querySelectorAll('input[name=delivery]'),...$('offers').querySelectorAll('input,button')])x.disabled=locked;
  const status=$('submit-status');status.hidden=locked===false;status.className='';
- if(locked){if(draft.receipt?.state==='active'&&!draft.pending){$('submit').textContent='✓ 登録済み';status.className='success';status.textContent='登録済みです。次のお客様は「次のお客様」を押してください。';}
+ if(locked){if(draft.receipt?.state==='active'&&!draft.pending){$('submit').textContent='✓ 登録済み';status.className='success';status.textContent='登録が完了しました。次のお客様の入力欄へ切り替えています。';}
   else if(draft.receipt?.state==='cancelled'){ $('submit').textContent='取消済み';status.className='error';status.textContent='この注文は取消済みです。';}
   else{$('submit').textContent='送信・確認中…';status.className='pending';status.textContent=draft.error?`未送信・結果確認中：${draft.error}「未送信を再送・状態確認」を押してください。`:'注文を端末に保存しました。登録結果を確認中です。';}}
  else $('submit').textContent='この内容で登録する';
@@ -90,24 +88,22 @@ async function readForm(){const offers={};for(const i of $('offers').querySelect
 function updateSelectionSummaries(){for(const offer of info.catalog.offers){const selected=draft.form.offers[offer.offer_id];if(!selected||offer.product_codes.length===1)continue;const card=Array.from($('offers').querySelectorAll('.offer-card')).find(node=>node.dataset.offerCard===offer.offer_id);const summary=card?.querySelector('.selection-summary');if(!summary)continue;const paid=Object.values(selected.paid||{}).reduce((n,x)=>n+Number(x||0),0);const gift=Object.values(selected.gift||{}).reduce((n,x)=>n+Number(x||0),0);summary.textContent=`現在：購入 ${paid}／${selected.sets*offer.paid_per_set}点、サービス ${gift}／${selected.sets*offer.gift_per_set}点`;}}
 async function saveForm(){if(draft.stage!=='draft')return;const form=await readForm();draft=await update(draft.id,r=>({...r,form}));$('customer').textContent=form.customer||'';calculate();updateSelectionSummaries();}
 async function removeOffer(id){await saveForm();const current=draft.form.offers[id];if(current&&(current.sets>0||Object.values(current.paid||{}).some(Boolean)||Object.values(current.gift||{}).some(Boolean))&&!confirm('選択した条件と数量を外しますか？'))return;draft=await update(draft.id,r=>{const offers={...r.form.offers};delete offers[id];return {...r,form:{...r.form,offers}};});renderForm();}
-async function removeProduct(id,kind,code){await saveForm();if(draft.form.offers[id]?.[kind]?.[code]>0&&!confirm('この商品の数量を削除しますか？'))return;draft=await update(draft.id,r=>{const offers={...r.form.offers};const item={...offers[id],[kind]:{...offers[id][kind]}};delete item[kind][code];offers[id]=item;return {...r,form:{...r.form,offers}};});renderForm();}
-function openPicker(state){if(draft.stage!=='draft')return;pickerState=state;modalReturnFocus=document.activeElement;$('picker-title').textContent=state.mode==='offer'?'特売条件を追加':state.kind==='paid'?'購入商品を追加':'サービス品を追加';$('picker-search').value='';$('picker-modal').hidden=false;document.body.classList.add('modal-open');renderPicker();$('picker-search').focus();}
+function openPicker(state){if(draft.stage!=='draft')return;pickerState=state;modalReturnFocus=document.activeElement;$('picker-title').textContent='特売条件を追加';$('picker-search').value='';$('picker-modal').hidden=false;document.body.classList.add('modal-open');renderPicker();$('picker-search').focus();}
 function closePicker(){$('picker-modal').hidden=true;pickerState=null;document.body.classList.remove('modal-open');modalReturnFocus?.focus();}
 function renderPicker(){
  const state=pickerState;if(!state)return;const query=$('picker-search').value.trim().toLocaleLowerCase('ja-JP');let choices;
- if(state.mode==='offer')choices=info.catalog.offers.filter(o=>!draft.form.offers[o.offer_id]).map(o=>({key:o.offer_id,name:o.label,sub:`${o.paid_per_set}点購入 ＋ ${o.gift_per_set}点サービス`}));
- else{const offer=info.catalog.offers.find(o=>o.offer_id===state.offer_id);choices=offer.product_codes.filter(code=>!Object.hasOwn(draft.form.offers[state.offer_id]?.[state.kind]||{},code)).map(code=>{const p=info.catalog.products.find(item=>item.product_code===code);return p&&{key:code,name:p.product_name,sub:state.kind==='paid'?`税抜単価 ${yen(p.event_sale_price_yen)}`:'サービス品・0円'};}).filter(Boolean);}
+ choices=info.catalog.offers.filter(o=>!draft.form.offers[o.offer_id]).map(o=>({key:o.offer_id,name:o.label,sub:`${o.paid_per_set}点購入 ＋ ${o.gift_per_set}点サービス`}));
  const matches=choices.filter(c=>c.name.toLocaleLowerCase('ja-JP').includes(query));$('picker-results').replaceChildren();
  for(const choice of matches.slice(0,20)){const button=element('button',choice.name,'picker-result');button.type='button';button.append(element('small',choice.sub));button.onclick=()=>choosePicker(choice.key).catch(e=>message(errorText(e)));$('picker-results').append(button);}
  $('picker-count').textContent=matches.length>20?`${matches.length}件中20件を表示。名前で絞り込んでください。`:`${matches.length}件`;
  if(!matches.length)$('picker-results').append(element('p','選べる候補がありません。','muted'));
 }
-async function choosePicker(key){const state=pickerState;if(!state)return;await saveForm();draft=await update(draft.id,r=>{const offers={...r.form.offers};if(state.mode==='offer')offers[key]={sets:0,paid:{},gift:{}};else{const item={...offers[state.offer_id],[state.kind]:{...offers[state.offer_id][state.kind],[key]:0}};offers[state.offer_id]=item;}return {...r,form:{...r.form,offers}};});closePicker();renderForm();const target=state.mode==='offer'?Array.from($('offers').querySelectorAll('.offer-card')).find(node=>node.dataset.offerCard===key)?.querySelector('input[data-kind=sets]'):Array.from($('offers').querySelectorAll('input[data-code]')).find(i=>i.dataset.code===key&&i.dataset.kind===state.kind);target?.focus();}
+async function choosePicker(key){if(!pickerState)return;await saveForm();draft=await update(draft.id,r=>{const offers={...r.form.offers};offers[key]={sets:0,paid:{},gift:{}};return {...r,form:{...r.form,offers}};});closePicker();renderForm();const target=Array.from($('offers').querySelectorAll('.offer-card')).find(node=>node.dataset.offerCard===key)?.querySelector('input[data-kind=sets]');target?.focus();}
 function bundles(check=false){return info.catalog.offers.flatMap(o=>{const selected=draft.form.offers[o.offer_id];if(!selected?.sets){if(check&&selected&&[...Object.values(selected.paid),...Object.values(selected.gift)].some(x=>x!==0))throw Error(`${o.label}のセット数を指定してください。`);return [];}
  const n=selected.sets;if(check&&(!Number.isInteger(n)||n<1||n>99))throw Error('セット数は1〜99の整数で指定してください。');
  const value={offer_id:o.offer_id,sets:n};for(const k of ['paid','gift']){value[k]=o.product_codes.length===1?[{code:o.product_codes[0],qty:n*o[`${k}_per_set`]}]:Object.entries(selected[k]).filter(([,qty])=>qty!==0).map(([code,qty])=>({code,qty}));if(check&&(value[k].some(x=>!Number.isInteger(x.qty)||x.qty<1)||value[k].reduce((s,x)=>s+x.qty,0)!==n*o[`${k}_per_set`]))throw Error(`${o.label}：${k==='paid'?'購入':'サービス'}数は${n*o[`${k}_per_set`]}点にしてください。`);}return [value];});}
 function calculate(){const amount=bundles().reduce((sum,b)=>sum+b.paid.reduce((s,x)=>s+x.qty*info.catalog.products.find(p=>p.product_code===x.code).event_sale_price_yen,0),0);$('total').textContent=yen(amount);}
-async function activate(value){info=value;$('login').hidden=true;if(!officeMode)await set('maker-catalog',info);$('maker').textContent=info.catalog?.manufacturer_name||'メーカー未設定';$('workspace').hidden=info.role==='admin';$('admin').hidden=info.role!=='admin';$('ledger').hidden=info.role!=='admin';$('identity').hidden=info.role!=='admin';if(info.role==='admin')return;const id=await get('draft:'+scopeKey());draft=(await records()).find(x=>x.id===id);if(!draft)await fresh();else{if(draft.stage==='draft'&&draft.form.ui_version!==2){draft=await update(draft.id,r=>{const offers={};for(const [key,item] of Object.entries(r.form.offers||{})){const paid=Object.fromEntries(Object.entries(item.paid||{}).filter(([,qty])=>qty>0));const gift=Object.fromEntries(Object.entries(item.gift||{}).filter(([,qty])=>qty>0));if(item.sets>0||Object.keys(paid).length||Object.keys(gift).length)offers[key]={sets:item.sets||0,paid,gift};}return {...r,form:{...r.form,offers,delivery:'',delivery_confirmed:false,ui_version:2}};});}renderForm();}await renderOrders();}
+async function activate(value){info=value;$('login').hidden=true;if(!officeMode)await set('maker-catalog',info);$('maker').textContent=info.catalog?.manufacturer_name||'メーカー未設定';$('workspace').hidden=info.role==='admin';$('admin').hidden=info.role!=='admin';$('ledger').hidden=info.role!=='admin';$('identity').hidden=info.role!=='admin';if(info.role==='admin')return;const id=await get('draft:'+scopeKey());draft=(await records()).find(x=>x.id===id);if(!draft)await fresh();else{if(draft.stage==='draft'&&draft.form.ui_version!==2){draft=await update(draft.id,r=>{const offers={};for(const [key,item] of Object.entries(r.form.offers||{})){const paid=Object.fromEntries(Object.entries(item.paid||{}).filter(([,qty])=>qty>0));const gift=Object.fromEntries(Object.entries(item.gift||{}).filter(([,qty])=>qty>0));if(item.sets>0||Object.keys(paid).length||Object.keys(gift).length)offers[key]={sets:item.sets||0,paid,gift};}return {...r,form:{...r.form,offers,delivery:'',delivery_confirmed:false,ui_version:2}};});}if(draft.stage!=='draft'&&draft.receipt?.state==='active'&&!draft.pending)await fresh();else renderForm();}await renderOrders();}
 async function renderOrders(){
  if(!info)return;$('orders').replaceChildren();
  for(const r of (await records()).filter(r=>r.backend===location.origin&&JSON.stringify(r.scope)===scopeKey()&&(r.stage!=='draft'||r.id!==draft?.id)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt))){
@@ -123,14 +119,17 @@ async function renderOrders(){
   $('orders').append(node);
  }
 }
-async function pumpInner(){if(!info||!sessionStorage.getItem('booth-token')||!navigator.onLine)return;for(const entry of await records()){if(entry.backend!==location.origin||JSON.stringify(entry.scope)!==scopeKey()||entry.stage==='draft')continue;const latest=(await records()).find(x=>x.id===entry.id);try{const response=await api(latest.pending==='cancel'?'cancel':latest.pending==='submit'?'submit':'status',latest.pending==='submit'?latest.body:{request_id:latest.id});await update(latest.id,current=>({...mergeReceipt(current,response),error:null}));}catch(e){await update(latest.id,current=>({...current,error:errorText(e)}));}}if(draft&&draft.stage!=='draft'){const current=(await records()).find(r=>r.id===draft.id);if(current){draft=current;renderForm();}}await renderOrders();}
+async function pumpInner(){if(!info||!sessionStorage.getItem('booth-token')||!navigator.onLine)return;for(const entry of await records()){if(entry.backend!==location.origin||JSON.stringify(entry.scope)!==scopeKey()||entry.stage==='draft')continue;const latest=(await records()).find(x=>x.id===entry.id);try{const response=await api(latest.pending==='cancel'?'cancel':latest.pending==='submit'?'submit':'status',latest.pending==='submit'?latest.body:{request_id:latest.id});await update(latest.id,current=>({...mergeReceipt(current,response),error:null}));}catch(e){await update(latest.id,current=>({...current,error:errorText(e)}));}}if(draft&&draft.stage!=='draft'){const current=(await records()).find(r=>r.id===draft.id);if(current){draft=current;if(current.receipt?.state==='active'&&!current.pending){
+   // サーバー登録が確定した時だけ新しい入力欄を開く。前の注文は端末の注文一覧に残す。
+   await fresh();message('登録完了。次のお客様の名札QRを読み取ってください。前の注文は下の一覧から確認・取消できます。');$('message').scrollIntoView({block:'start'});$('scan').focus({preventScroll:true});
+  }else renderForm();}}await renderOrders();}
 async function pump(){if(pumping)return;pumping=true;try{if(navigator.locks)await navigator.locks.request('beaufes-booth-send',pumpInner);else await pumpInner();}finally{pumping=false;}}
 on('connect','click',async()=>{if(!officeMode||localDemo)sessionStorage.setItem('booth-token',$('token').value);const value=await api('catalog');if(!value.catalog)throw Error('このメーカーの商品が未登録です。');await activate(value);$('token').value='';message(officeMode?'事務画面に接続しました。':'接続できました。注文の選択を始められます。');if(!officeMode)await pump();});
 document.querySelectorAll('input[name=delivery]').forEach(radio=>radio.addEventListener('change',()=>saveForm().catch(e=>message(errorText(e)))));
 on('add-offer','click',()=>openPicker({mode:'offer'}));
 on('picker-search','input',renderPicker);
 on('picker-close','click',closePicker);
-on('resolve','click',async()=>{await saveForm();if(!draft.form.qr_hash)throw Error('名札QRを読み取ってください。');const customer=await api('resolve',{token_hash:draft.form.qr_hash});const label=`${customer.salon} ／ ${customer.name}${customer.customer_linked?'':'（得意先コードは事務確認）'}`;draft=await update(draft.id,r=>({...r,form:{...r.form,customer:label,resolved:true}}));$('customer').textContent=label;});
+on('resolve','click',async()=>{await saveForm();if(!draft.form.qr_hash)throw Error('名札QRを読み取ってください。');const customer=await api('resolve',{token_hash:draft.form.qr_hash});const label=`${customer.salon} ／ ${customer.name}${customer.customer_linked?'':'（得意先コードは事務確認）'}`;draft=await update(draft.id,r=>({...r,form:{...r.form,customer:label,resolved:true}}));$('customer').textContent=label;message('お客様を確認しました。商品と受け渡し方法を選んでください。');});
 on('demo','click',async()=>{if(draft.stage!=='draft')throw Error('「次のお客様」から新しい注文を開いてください。');$('qr').value='https://example.invalid/pass.html?t=demo-ticket';await saveForm();$('resolve').click();});
 on('new','click',async()=>{if(draft.stage==='draft'&&bundles().length&&!confirm('現在の未登録の選択を残して、新しい注文を開きますか？'))return;closeCamera();await saveForm();await fresh();await renderOrders();message('新しい注文を開きました。');});
 on('submit','click',async()=>{if(draft.stage!=='draft')return;await saveForm();if(!draft.form.resolved||!draft.form.qr_hash)throw Error('先に名札QRでお客様を確認してください。');const b=bundles(true);if(!b.length)throw Error('商品を1セット以上選択してください。');if(!draft.form.delivery_confirmed||!['later','takeaway'].includes(draft.form.delivery))throw Error('受け渡し方法を選んでください。');const body={request_id:draft.id,scope:info.scope,catalog_version:info.catalog.version,token_hash:draft.form.qr_hash,delivery:draft.form.delivery,bundles:b};
