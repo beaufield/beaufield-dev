@@ -1,6 +1,6 @@
 import {get,set,records,update,mergeReceipt,sanitizeLegacyQr,clearMakerConnection} from './storage.js';
 import {buildWorkbook} from './export.js';
-const APP_VERSION='v0.10.4';
+const APP_VERSION='v0.10.5';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -412,6 +412,16 @@ async function start(){
  const join=new URL(location.href).hash.match(/^#join=([-_A-Za-z0-9]{43,128})$/)?.[1];
  if(location.hash)history.replaceState(null,'',location.pathname+location.search);
  if(officeMode){$('login-title').textContent='事務画面';$('token-label').hidden=!localDemo;$('connect').textContent='社内ポータルのログインで接続';$('demo').hidden=true;if(!localDemo&&!portalSession()){const link=element('a','社内ポータルでログインする');link.href=PORTAL_URL;$('login').append(link);message('社内ポータルへログインしてから、この画面に戻ってください。');}else if(!localDemo){const value=await api('catalog');await activate(value);message('事務画面に接続しました。');}}else{const remembered=await get('maker-connection');makerToken=localDemo?(sessionStorage.getItem('booth-token')||(remembered?.device===deviceId()?remembered.token:null)):(remembered?.device===deviceId()?remembered.token:remembered===undefined?sessionStorage.getItem('booth-token'):null);if(makerToken)sessionStorage.setItem('booth-token',makerToken);else if(!localDemo)sessionStorage.removeItem('booth-token');const saved=await get('maker-catalog');if(saved){await activate(saved);message('注文画面を準備しています…');}if(join){await enroll(join);}else if(makerToken){try{const value=await api('catalog');if(!localDemo&&value.scope.device!==deviceId())throw Error('SCOPE_MISMATCH');connectionVerified=true;await activate(value);if(!localDemo)await set('maker-connection',{token:makerToken,device:deviceId()});message(readyMessage(value));await pump();}catch(e){showConnection();message(errorText(e));}}else if(saved){showConnection();message('メーカーQRを読み直すと、お客様検索・送信・共有履歴が使えます。未送信注文は端末に残っています。');}}
- if('serviceWorker'in navigator){await navigator.serviceWorker.register('./sw.js');await navigator.serviceWorker.ready;$('prepared').textContent='アプリ本体のオフライン準備ができました。商品情報は接続時に保存されます。';}
 }
+async function prepareShell(){
+ if(!('serviceWorker' in navigator))return;
+ try{
+  const registration=await navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'});
+  await registration.update();await navigator.serviceWorker.ready;
+  $('prepared').textContent='アプリ本体のオフライン準備ができました。商品情報は接続時に保存されます。';
+ }catch{
+  // オフラインでも保存済み画面と注文を利用できる。更新の失敗で注文処理を止めない。
+ }
+}
+void prepareShell();
 start().catch(e=>message(errorText(e)));
