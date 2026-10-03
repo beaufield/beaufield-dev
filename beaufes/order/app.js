@@ -1,6 +1,6 @@
-import {get,set,records,update,mergeReceipt,sanitizeLegacyQr} from './storage.js';
+import {get,set,records,update,mergeReceipt,sanitizeLegacyQr,clearMakerConnection} from './storage.js';
 import {buildWorkbook} from './export.js';
-const APP_VERSION='v0.10.0';
+const APP_VERSION='v0.10.1';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -17,7 +17,32 @@ const scopeKey=()=>JSON.stringify(info.scope);
 const message=text=>{$('message').textContent=text;};
 const errorText=e=>({EVENT_CLOSED:'受付は締められています。未送信注文は事務に連絡してください。',QR_NOT_FOUND:'この名札を照合できません。受付情報の同期を確認してください。',SESSION_INVALID:'メーカー接続が無効です。メーカーQRを読み直してください。未送信注文は端末に残っています。',SUBJECT_NOT_FOUND:'このお客様の最新情報を確認できません。もう一度検索するか受付に確認してください。',INVALID_CUSTOMER_CODE:'得意先コードを確認してください。',ORDER_NOT_FOUND:'この注文を確認できません。履歴を更新してください。',PORTAL_SESSION_INVALID:'社内ポータルへログインしてください。',OFFICE_ROLE_REQUIRED:'事務画面の管理者権限がありません。',PORTAL_UNAVAILABLE:'社内ポータルに接続できません。時間をおいて再試行してください。',INVALID_BUNDLE:'同期ファイルが不正です。3種類のデータを作り直してください。',STALE_MASTER_GENERATION:'得意先マスターより古い同期ファイルです。作り直してください。',OLD_GENERATION:'申込データより古い同期ファイルです。作り直してください。',IDEMPOTENCY_CONFLICT:'同じ注文番号で内容が異なります。再登録せず事務に連絡してください。',SET_QUANTITY_MISMATCH:'購入数とサービス数が条件に合っていません。',SCOPE_MISMATCH:'この端末の所属が変わっています。元の接続先で再送してください。'}[e.message]||`処理を完了できませんでした：${e.message}`);
 function on(id,event,fn){$(id).addEventListener(event,async e=>{try{await fn(e);}catch(error){const detail=errorText(error);message(detail);if(id==='submit'){const status=$('submit-status');status.hidden=false;status.className='error';status.textContent=detail;}}});}
-async function api(action,body={}){const token=officeMode&&!localDemo?portalSession()?.token:(officeMode||localDemo?sessionStorage.getItem('booth-token'):makerToken);if(!token)throw Error(officeMode?'PORTAL_SESSION_INVALID':'SESSION_INVALID');const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),action==='sync_bundle'?60000:12000);try{const response=await fetch(officeMode?OFFICE_URL:API_URL,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({action,body}),signal:controller.signal,cache:'no-store'});const data=await response.json();if(!response.ok){if(data.error==='SESSION_INVALID'&&!officeMode&&!localDemo&&makerToken===token){makerToken=null;connectionVerified=false;sessionStorage.removeItem('booth-token');await set('maker-connection',null);showConnection();}throw Error(data.error||'SERVER_ERROR');}return data;}finally{clearTimeout(timer);}}
+async function requestApi(action,body,token){
+ const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),action==='sync_bundle'?60000:12000);
+ try{const response=await fetch(officeMode?OFFICE_URL:API_URL,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({action,body}),signal:controller.signal,cache:'no-store'});return {ok:response.ok,data:await response.json()};}finally{clearTimeout(timer);}
+}
+async function recoverMakerConnection(failedToken){
+ // 再接続済みの同じ端末・同じメーカーに限り、サーバーで有効性を確認して復元する。
+ const saved=await get('maker-connection');if(!saved?.token||saved.device!==deviceId()||saved.token===failedToken)return false;
+ const checked=await requestApi('catalog',{},saved.token);if(!checked.ok||checked.data.role!=='manufacturer'||!checked.data.catalog)return false;
+ if(checked.data.scope?.device!==deviceId()||info&&['event','booth','device','epoch'].some(key=>checked.data.scope[key]!==info.scope[key]))throw Error('SCOPE_MISMATCH');
+ makerToken=saved.token;sessionStorage.setItem('booth-token',makerToken);connectionVerified=true;showConnection();return true;
+}
+async function invalidateMakerConnection(token){
+ if(makerToken===token){makerToken=null;connectionVerified=false;if(sessionStorage.getItem('booth-token')===token)sessionStorage.removeItem('booth-token');}
+ await clearMakerConnection(token);showConnection();
+}
+async function api(action,body={}){
+ const manufacturer=!officeMode&&!localDemo;
+ let token=officeMode&&!localDemo?portalSession()?.token:(officeMode||localDemo?sessionStorage.getItem('booth-token'):makerToken);
+ if(!token&&manufacturer&&await recoverMakerConnection(null))token=makerToken;
+ if(!token)throw Error(officeMode?'PORTAL_SESSION_INVALID':'SESSION_INVALID');
+ let result=await requestApi(action,body,token);
+ // DBが認証拒否した場合だけ1回再試行する。通信不明時の注文再送は従来の冪等処理に任せる。
+ if(!result.ok&&result.data.error==='SESSION_INVALID'&&manufacturer&&await recoverMakerConnection(token)){token=makerToken;result=await requestApi(action,body,token);}
+ if(!result.ok){if(result.data.error==='SESSION_INVALID'&&manufacturer)await invalidateMakerConnection(token);throw Error(result.data.error||'SERVER_ERROR');}
+ return result.data;
+}
 function tokenFromQr(value){try{const u=new URL(value);if(!['https:','http:'].includes(u.protocol)||!u.pathname.endsWith('/pass.html'))throw Error();const values=u.searchParams.getAll('t');if(values.length!==1||!values[0]||values[0].length>256)throw Error();return values[0];}catch{throw Error('名札QRのURLを読み取ってください。');}}
 async function digest(text){return [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(x=>x.toString(16).padStart(2,'0')).join('');}
 async function enroll(key){const response=await fetch(API_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'enroll',key,device_id:deviceId()}),cache:'no-store'});const data=await response.json();if(!response.ok)throw Error(data.error||'ENROLLMENT_INVALID');makerToken=data.token;sessionStorage.setItem('booth-token',data.token);const catalog=await api('catalog');if(!catalog.catalog)throw Error('このメーカーの商品が未登録です。');if(catalog.scope.device!==deviceId())throw Error('SCOPE_MISMATCH');connectionVerified=true;await set('maker-connection',{token:data.token,device:deviceId()});await activate(catalog);message('メーカー用QRで接続しました。');await pump();}
@@ -381,7 +406,7 @@ async function start(){
  await sanitizeLegacyQr();
  const join=new URL(location.href).hash.match(/^#join=([-_A-Za-z0-9]{43,128})$/)?.[1];
  if(location.hash)history.replaceState(null,'',location.pathname+location.search);
- if(officeMode){$('login-title').textContent='事務画面';$('token-label').hidden=!localDemo;$('connect').textContent='社内ポータルのログインで接続';$('demo').hidden=true;if(!localDemo&&!portalSession()){const link=element('a','社内ポータルでログインする');link.href=PORTAL_URL;$('login').append(link);message('社内ポータルへログインしてから、この画面に戻ってください。');}else if(!localDemo){const value=await api('catalog');await activate(value);message('事務画面に接続しました。');}}else{const remembered=await get('maker-connection');makerToken=sessionStorage.getItem('booth-token')||(remembered?.device===deviceId()?remembered.token:null);if(makerToken)sessionStorage.setItem('booth-token',makerToken);const saved=await get('maker-catalog');if(saved){await activate(saved);message('端末の商品情報を表示しています。接続を確認します。');}if(join){await enroll(join);}else if(makerToken){try{const value=await api('catalog');if(!localDemo&&value.scope.device!==deviceId())throw Error('SCOPE_MISMATCH');connectionVerified=true;await activate(value);if(!localDemo)await set('maker-connection',{token:makerToken,device:deviceId()});message('メーカー接続を復元しました。');await pump();}catch(e){showConnection();message(errorText(e));}}else if(saved){showConnection();message('メーカーQRを読み直すと、お客様検索・送信・共有履歴が使えます。未送信注文は端末に残っています。');}}
+ if(officeMode){$('login-title').textContent='事務画面';$('token-label').hidden=!localDemo;$('connect').textContent='社内ポータルのログインで接続';$('demo').hidden=true;if(!localDemo&&!portalSession()){const link=element('a','社内ポータルでログインする');link.href=PORTAL_URL;$('login').append(link);message('社内ポータルへログインしてから、この画面に戻ってください。');}else if(!localDemo){const value=await api('catalog');await activate(value);message('事務画面に接続しました。');}}else{const remembered=await get('maker-connection');makerToken=localDemo?(sessionStorage.getItem('booth-token')||(remembered?.device===deviceId()?remembered.token:null)):(remembered?.device===deviceId()?remembered.token:remembered===undefined?sessionStorage.getItem('booth-token'):null);if(makerToken)sessionStorage.setItem('booth-token',makerToken);else if(!localDemo)sessionStorage.removeItem('booth-token');const saved=await get('maker-catalog');if(saved){await activate(saved);message('端末の商品情報を表示しています。接続を確認します。');}if(join){await enroll(join);}else if(makerToken){try{const value=await api('catalog');if(!localDemo&&value.scope.device!==deviceId())throw Error('SCOPE_MISMATCH');connectionVerified=true;await activate(value);if(!localDemo)await set('maker-connection',{token:makerToken,device:deviceId()});message('メーカー接続を復元しました。');await pump();}catch(e){showConnection();message(errorText(e));}}else if(saved){showConnection();message('メーカーQRを読み直すと、お客様検索・送信・共有履歴が使えます。未送信注文は端末に残っています。');}}
  if('serviceWorker'in navigator){await navigator.serviceWorker.register('./sw.js');await navigator.serviceWorker.ready;$('prepared').textContent='アプリ本体のオフライン準備ができました。商品情報は接続時に保存されます。';}
 }
 start().catch(e=>message(errorText(e)));
