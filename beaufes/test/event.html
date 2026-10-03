@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="robots" content="noindex,nofollow">
   <!-- 静的LPの通信先と実行スクリプトを限定します。申込は既存フォームへのリンクです。 -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'sha256-3kHSQHDO45ZKkOrhETOdLU7QR0A+Aw2ERStjapmQDnA='; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'sha256-O2zDqeUD19WNodYg72Ji3ifb34oliI9NYJvgqoRZBEA='; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <link rel="canonical" href="https://beaufield.github.io/beaufield-dev/beaufes/event.html">
 
@@ -198,17 +198,6 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
   .program-fold[open] .reservation-badge{margin-left:3px;padding:3px 7px;font-size:9px;letter-spacing:.03em}
 }
 
-
-/* 実商品は公式写真のまま、背景と配置だけを整える。 */
-.official-scene{aspect-ratio:3/2;overflow:hidden;isolation:isolate;background:#f7f5ee url('../event-assets/scene-coastal-empty-products.webp') center/cover no-repeat}
-.official-scene:before{content:'';position:absolute;inset:0;background:linear-gradient(180deg,transparent 25%,#fff9 90%);pointer-events:none}
-.program-card-summary .official-scene .official-product{position:absolute;aspect-ratio:auto;object-fit:contain;max-width:none}
-.official-white-panel{position:absolute;left:14%;top:10%;width:72%;height:82%;background:#fff;border-radius:5px;box-shadow:0 8px 20px #334c5620;overflow:hidden}
-.official-wide-panel{left:12%;top:24%;width:76%;height:66%}
-.official-premb-crop{position:absolute;left:35%;top:6%;width:30%;height:88%;overflow:hidden;background:#fff;border-radius:5px;box-shadow:0 8px 20px #334c5620}
-.program-card-summary .official-scene .official-premb-photo{position:absolute;left:-50%;top:0;width:200%;height:auto;max-width:none;aspect-ratio:1;object-fit:initial}
-.official-hyumy-crop{position:absolute;left:6%;top:21%;width:39%;height:66%;overflow:hidden;border-radius:5px;box-shadow:0 8px 20px #334c5620}
-.program-card-summary .official-scene .official-hyumy-photo{position:absolute;left:0;top:0;width:200%;height:auto;max-width:none;aspect-ratio:1100/661;object-fit:initial}
 </style>
 </head>
 <body><div style="background:#b91c1c;color:white;padding:12px;text-align:center">確認用LP／今回の追加・修正は本番には未反映です。</div>
@@ -275,19 +264,19 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
           <div class="card-copy"><p class="card-hook">一点ものとの出会いを、楽しもう。</p><p class="card-description">古着ならではの風合いと、一点ものを選ぶ楽しさを届けるYOOK。気になるアイテムは、ぜひご試着を。着心地やシルエットを確かめながら、自分らしいスタイルを見つけてください。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>ビンテージ・古着</li><li>一点ものとの出会い</li><li>試着</li></ul></div>
         </details>
         <details class="discovery-card program-fold" id="brand-727">
-          <summary class="program-card-summary"><figure class="card-visual official-scene "><div class="official-white-panel"><img class="official-product" src="../event-assets/official-727-cleanser.png" width="1000" height="1000" loading="lazy" alt="727 セラポロジー クレンジングフォームADの公式商品写真" style="left:-6%;top:0;width:62%;height:100%"><img class="official-product" src="../event-assets/official-727-essence.png" width="1000" height="1000" loading="lazy" alt="727 セラポロジー エッセンスADの公式商品写真" style="right:-6%;top:0;width:62%;height:100%"></div></figure><div class="fold-heading"><p class="card-category">メーカーブース / 727</p><h4>727 美容抗体スキンケア</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
+          <summary class="program-card-summary"><figure class="card-visual"><img src="../event-assets/scene-727-official-integrated-v2.webp" width="1536" height="1024" loading="lazy" alt="727 セラポロジーの実商品を海辺のサロンに合わせた紹介画像"></figure><div class="fold-heading"><p class="card-category">メーカーブース / 727</p><h4>727 美容抗体スキンケア</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
           <div class="card-copy"><p class="card-hook">お肌のお悩みから、ケアを考える。</p><p class="card-description">727の美容抗体スキンケアをご紹介します。商品の特徴や毎日のお手入れへの取り入れ方を、メーカー担当者に相談できます。サロンでのスキンケア提案や、ホームケア選びのヒントを見つけてください。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>美容抗体スキンケア</li><li>商品の特徴</li><li>お手入れ相談</li></ul></div>
         </details>
         <details class="discovery-card program-fold" id="medix-cosmetics">
-          <summary class="program-card-summary"><figure class="card-visual official-scene "><img class="official-product" src="../event-assets/official-medix-eye.png" width="239" height="1321" loading="lazy" alt="ceruru.b セルル リペアアイセラムの公式商品写真" style="left:34%;top:7%;width:32%;height:85%"></figure><div class="fold-heading"><p class="card-category">メーカーブース / メディックスジャパン</p><h4>メディックスジャパン</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
+          <summary class="program-card-summary"><figure class="card-visual"><img src="../event-assets/scene-medix-official-integrated-v2.webp" width="1536" height="1024" loading="lazy" alt="セルル リペアアイセラムの実商品を海辺のサロンに合わせた紹介画像"></figure><div class="fold-heading"><p class="card-category">メーカーブース / メディックスジャパン</p><h4>メディックスジャパン</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
           <div class="card-copy"><p class="card-hook">目元から広がる、ホームケアの提案。</p><p class="card-description">ceruru.b for professionalのアイセラムなど、目元のお手入れやホームケアに取り入れたい化粧品をご紹介します。ハリ・ツヤ・うるおいを意識したケアの特徴や、日々の使い方を会場でご相談いただけます。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>ceruru.b for professional</li><li>アイセラム</li><li>目元・ホームケア</li></ul></div>
         </details>
         <details class="discovery-card program-fold" id="premb">
-          <summary class="program-card-summary"><figure class="card-visual official-scene "><div class="official-premb-crop"><img class="official-premb-photo" src="../event-assets/official-premb-mist.png" width="600" height="600" loading="lazy" alt="PREMB. ドクターセルボーテ ハリコシストレートミストアイロンの公式商品写真"></div></figure><div class="fold-heading"><p class="card-category">メーカーブース / PREMB.</p><h4>PREMB. ドクターセルボーテ</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
+          <summary class="program-card-summary"><figure class="card-visual"><img src="../event-assets/scene-premb-official-integrated-v2.webp" width="1536" height="1024" loading="lazy" alt="ドクターセルボーテの実商品を海辺のサロンに合わせた紹介画像"></figure><div class="fold-heading"><p class="card-category">メーカーブース / PREMB.</p><h4>PREMB. ドクターセルボーテ</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
           <div class="card-copy"><p class="card-hook">うねり・広がりに、毎日のケアから。</p><p class="card-description">くせやうねり、乾燥による広がりが気になる方へ。ドクターセルボーテのヘアケアをご紹介します。縮毛矯正や髪質改善メニュー後のお手入れも含め、髪の状態に合わせたホームケアを相談できます。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>くせ・うねりのケア</li><li>乾燥・広がり</li><li>施術後のホームケア</li></ul></div>
         </details>
         <details class="discovery-card program-fold" id="essence">
-          <summary class="program-card-summary"><figure class="card-visual official-scene "><img class="official-product" src="../event-assets/official-essence-oil01.jpg" width="2000" height="1191" loading="lazy" alt="SKINHAPTICS おまたオイルの公式商品写真" style="left:10%;top:14%;width:80%;height:74%;object-fit:cover;border-radius:5px;box-shadow:0 8px 20px #334c5620"></figure><div class="fold-heading"><p class="card-category">メーカーブース / 株式会社エッセンス</p><h4>エッセンス フェムケア</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
+          <summary class="program-card-summary"><figure class="card-visual"><img src="../event-assets/scene-essence-official-integrated-v2.webp" width="1536" height="1024" loading="lazy" alt="SKINHAPTICSの実商品を海辺のサロンに合わせた紹介画像"></figure><div class="fold-heading"><p class="card-category">メーカーブース / 株式会社エッセンス</p><h4>エッセンス フェムケア</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
           <div class="card-copy"><p class="card-hook">デリケートゾーンのケアから、自分をいたわる。</p><p class="card-description">おまたオイルをはじめ、デリケートゾーンのお手入れアイテムや、女性の毎日を支えるサプリメントをご紹介します。商品の特徴や日々のケアへの取り入れ方を、会場でご相談ください。11:30からのフェムケアセミナーと合わせて、新しい提案のヒントに。</p><p class="product-note"><a href="#femcare">11:30からのフェムケアセミナーを見る</a></p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>おまたオイル</li><li>デリケートゾーンケア</li><li>女性向けサプリメント</li></ul></div>
         </details>
         <details class="discovery-card program-fold" id="yspark">
@@ -315,7 +304,7 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
           <div class="card-copy"><p class="card-hook">薬剤施術の前後を、もっと丁寧に。</p><p class="card-description">カラーやパーマなどの薬剤施術を、除去・補修・保護の視点で支えるSENSEシリーズ。酸性水やre:free waterをはじめ、サロンワークに組み込みやすい処理剤の役割と使い分けを確認できます。</p><p class="points-label">会場で聞きたいこと</p><ul class="card-points"><li>前・中・後処理</li><li>ダメージケア</li><li>施術への組み込み方</li></ul></div>
         </details>
         <details class="discovery-card program-fold" id="pacific-products">
-          <summary class="program-card-summary"><figure class="card-visual official-scene "><div class="official-hyumy-crop"><img class="official-hyumy-photo" src="../event-assets/official-hyumy-pair.jpg" width="1100" height="661" loading="lazy" alt="hyumy ヘアソープとヘアマスクの公式商品写真"></div><img class="official-product" src="../event-assets/official-nei-oil.png" width="350" height="501" loading="lazy" alt="NEi ベースケアオイルの公式商品写真" style="left:48%;top:16%;width:24%;height:75%"><img class="official-product" src="../event-assets/official-nei-milk.png" width="356" height="501" loading="lazy" alt="NEi ベースケアミルクの公式商品写真" style="left:71%;top:16%;width:24%;height:75%"></figure><div class="fold-heading"><p class="card-category">メーカーブース / パシフィックプロダクツ</p><h4>ヒュミ・NEi</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
+          <summary class="program-card-summary"><figure class="card-visual"><img src="../event-assets/scene-pacific-official-integrated-v2.webp" width="1536" height="1024" loading="lazy" alt="hyumyとNEiの実商品を海辺のサロンに合わせた紹介画像"></figure><div class="fold-heading"><p class="card-category">メーカーブース / パシフィックプロダクツ</p><h4>ヒュミ・NEi</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
           <div class="card-copy"><p class="card-hook">仕上がりに合わせて、ヘアケアを選ぶ。</p><p class="card-description">質感やボリュームを考えたヒュミと、アウトバスケアのNEiをご紹介します。仕上がりや店販提案の違いを、商品を見比べながらご相談いただけます。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>ヒュミ</li><li>NEi</li><li>店販・ヘアケア提案</li></ul></div>
         </details>
         <details class="discovery-card program-fold" id="la-casta">
@@ -425,15 +414,15 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
           <div class="card-copy"><div class="booking-meta"><strong>体験時間 約30分</strong></div><p class="card-hook">かかとまで、なめらかな足元へ。</p><p class="card-description">かかとのガサつきや、硬くなった足裏の角質が気になる方へ。足裏の角質ケアを体験し、素足で過ごす季節にも取り入れたいお手入れのヒントを見つけませんか。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>足裏の角質ケア</li><li>かかとのお手入れ</li><li>ケアの流れ</li></ul></div>
         </details>
         <details class="discovery-card program-fold" id="shakti">
-          <summary class="program-card-summary"><figure class="card-visual official-scene "><div class="official-white-panel"><img class="official-product" src="../event-assets/official-shakti-mat.jpg" width="1500" height="1500" loading="lazy" alt="シャクティマットの公式商品写真" style="left:0;top:0;width:100%;height:100%"></div></figure><div class="fold-heading"><p class="card-category">体験ブース</p><h4>シャクティマット体験</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
+          <summary class="program-card-summary"><figure class="card-visual"><img src="../event-assets/scene-shakti-official-integrated-v2.webp" width="1536" height="1024" loading="lazy" alt="シャクティマットの実商品を海辺の休息空間に合わせた紹介画像"></figure><div class="fold-heading"><p class="card-category">体験ブース</p><h4>シャクティマット体験</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
           <div class="card-copy"><div class="booking-meta"><strong>体験時間 約20分</strong></div><p class="card-hook">忙しい毎日に、ひと休みの新習慣。</p><p class="card-description">細かな突起が特徴のシャクティマット。横になって刺激の感じ方や使い心地を確かめられる体験をご用意します。仕事の合間や一日の終わりに、自分をいたわる時間を考えるきっかけに。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>マットの刺激</li><li>横になって体験</li><li>日々のリラックスタイム</li></ul></div>
         </details>
         <details class="discovery-card program-fold" id="nose-ems">
-          <summary class="program-card-summary"><figure class="card-visual official-scene "><div class="official-white-panel"><img class="official-product" src="../event-assets/official-fornez-pro-product.jpg" width="800" height="800" loading="lazy" alt="LUXCEAR Fornez PRO 鼻専用EMS機器の公式商品写真" style="left:0;top:0;width:100%;height:100%"></div></figure><div class="fold-heading"><p class="card-category">体験ブース</p><h4>小鼻EMS体験</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
+          <summary class="program-card-summary"><figure class="card-visual"><img src="../event-assets/scene-fornez-pro-official-integrated-v2.webp" width="1536" height="1024" loading="lazy" alt="LUXCEAR Fornez PROの実機を海辺のサロンに合わせた紹介画像"></figure><div class="fold-heading"><p class="card-category">体験ブース</p><h4>小鼻EMS体験</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
           <div class="card-copy"><div class="booking-meta"><strong>体験時間 約20分</strong></div><p class="card-hook">鼻専用のケアを、実際に確かめる。</p><p class="card-description">鼻専用EMSと音波振動を組み合わせたケアを体験できます。装着感や刺激の感じ方、使い方を会場で確かめて、毎日のセルフケアに取り入れるイメージをつかんでみませんか。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>鼻専用EMS</li><li>音波振動</li><li>装着感と使い方</li></ul></div>
         </details>
         <details class="discovery-card program-fold" id="denba-health">
-          <summary class="program-card-summary"><figure class="card-visual official-scene "><div class="official-white-panel official-wide-panel"><img class="official-product" src="../event-assets/official-denba-standard-1.jpg" width="1070" height="650" loading="lazy" alt="DENBA Health Standardの公式商品写真" style="left:0;top:0;width:100%;height:100%"></div></figure><div class="fold-heading"><p class="card-category">体験ブース / DENBA</p><h4>DENBA Health体験</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
+          <summary class="program-card-summary"><figure class="card-visual"><img src="../event-assets/scene-denba-official-integrated-v2.webp" width="1536" height="1024" loading="lazy" alt="DENBA Healthの実機を海辺のサロンに合わせた紹介画像"></figure><div class="fold-heading"><p class="card-category">体験ブース / DENBA</p><h4>DENBA Health体験</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
           <div class="card-copy"><div class="booking-meta"><strong>体験時間 約30分</strong></div><p class="card-hook">横になって、休む時間のケアを体験。</p><p class="card-description">睡眠やストレッチなど、日常の休息時間に取り入れるDENBA Health。会場では横になって体験し、使い方や設置のイメージを確かめられます。ご自宅やサロンでの活用についてもご相談ください。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>横になって体験</li><li>休息・ストレッチ時の活用</li><li>使い方と設置</li></ul></div>
         </details>
       </div></section>
@@ -458,7 +447,7 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
   <aside class="mobile-cta" aria-label="来場申し込み"><span><strong>入場無料</strong><br>10/20 申込締切</span><a class="button" href="liff.html">LINEから申込<span aria-hidden="true">↗</span></a></aside>
   <script>
     // LPの版数はこの定数だけで管理します。
-    const APP_VERSION = '0.12.1';
+    const APP_VERSION = '0.12.2';
     document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
   </script>
 </body>
