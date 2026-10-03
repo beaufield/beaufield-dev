@@ -278,3 +278,10 @@ beaufes/_next_session_notebook.md
 project-dashboard/sync_transport.py
 project-dashboard/tests/
 project-dashboard/session_logs/
+# 横断点検 2026-10-04: ローカル専用の未公開成果物
+ai-batch/
+page-capture-pdf/
+beaufes/output/
+beaufes/outputs/
+beaufes/tmp/
+**/session_logs/

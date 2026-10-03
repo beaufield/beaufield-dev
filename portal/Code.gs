@@ -10,7 +10,7 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.13.0';
+const VERSION       = 'v1.13.1';
 // ポータル画面（GitHub Pages）のURL。旧HTML向けの更新案内タイルのリンク先に使う。
 const PORTAL_URL    = 'https://beaufield.github.io/beaufield-dev/';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
@@ -204,39 +204,63 @@ function _legacyUpdateNotice() {
 // 検証の詳細: portal/PLAN-stuck-spinner-fix.md
 const IDEMPOTENCY_TTL_SEC = 600;  // 10分。再送は数秒〜数十秒以内に来る
 
-function _withIdempotency(requestId, fn) {
+function _withIdempotency(requestId, fn, action, data) {
   const rid = String(requestId || '').trim();
-  // requestId が無い/不正なら従来どおり実行する（旧フロントとの後方互換）
-  if (!rid || !/^[A-Za-z0-9-]{8,100}$/.test(rid)) return fn();
-
-  const cache = CacheService.getScriptCache();
-  const key   = 'idem_portal_' + rid;
-
-  const cached = cache.get(key);
-  if (cached) {
-    try { const r = JSON.parse(cached); r.replayed = true; return r; } catch (e) {}
-  }
-
-  // 同じ requestId が同時に2本届いた場合に二重実行しないよう直列化する
+  if (rid && !/^[A-Za-z0-9-]{8,100}$/.test(rid)) return {success: false, error: 'INVALID_REQUEST'};
   const lock = LockService.getScriptLock();
-  let locked = false;
-  try { lock.waitLock(10000); locked = true; } catch (e) {}
-
+  try { lock.waitLock(10000); } catch (e) { return {success: false, error: 'BUSY'}; }
   try {
-    if (locked) {
-      const again = cache.get(key);  // ロック待ちの間に先行が終わっていないか
-      if (again) {
-        try { const r = JSON.parse(again); r.replayed = true; return r; } catch (e) {}
+    // 旧画面のキーなし操作もロックする。従来互換は保持するが、安全な再送は保証しない。
+    if (!rid) return fn();
+    const props = PropertiesService.getScriptProperties();
+    const prefix = 'portal_idem_v2_';
+    const digest = function(value) {
+      return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, value, Utilities.Charset.UTF_8)
+        .map(function(b) { return ('0' + ((b + 256) % 256).toString(16)).slice(-2); }).join('');
+    };
+    // キー、操作、利用者・セッション、内容を結び付ける。PINやトークンそのものは保存しない。
+    const canonical = function(value) {
+      if (Array.isArray(value)) return value.map(canonical);
+      if (value && typeof value === 'object') {
+        const sorted = {};
+        Object.keys(value).sort().forEach(function(k) { if (k !== 'requestId') sorted[k] = canonical(value[k]); });
+        return sorted;
+      }
+      return value;
+    };
+    const fingerprint = digest(JSON.stringify([action || '', canonical(data || {})]));
+    const key = prefix + digest(rid);
+    const now = Date.now();
+    const raw = props.getProperty(key);
+    if (raw) {
+      const entry = JSON.parse(raw);
+      if (entry.expiresAt > now) {
+        if (entry.fingerprint !== fingerprint) return {success: false, error: 'REQUEST_CONFLICT'};
+        if (entry.state !== 'done') return {success: false, error: 'RESULT_UNKNOWN'};
+        // ログアウト・利用停止後に、過去のログイン結果から失効トークンを復活させない。
+        if (action === 'login' && entry.result.success &&
+            !validateSession({token: entry.result.session_token}).ok) {
+          return {success: false, error: 'SESSION_INVALID'};
+        }
+        return Object.assign({}, entry.result, {replayed: true});
       }
     }
+    // 保存容量を制限する。処理中の記録を追い出して再実行を許可しない。
+    const all = props.getProperties(); let live = 0;
+    Object.keys(all).filter(function(k) { return k.indexOf(prefix) === 0; }).forEach(function(k) {
+      const entry = JSON.parse(all[k]);
+      if (entry.expiresAt <= now) props.deleteProperty(k); else live++;
+    });
+    if (live >= 256) return {success: false, error: 'BUSY'};
+    // 更新前に予約を永続保存。更新後に応答の保存が失敗した場合は、不明扱いで再更新を止める。
+    const entry = {fingerprint: fingerprint, state: 'pending', expiresAt: now + 86400000};
+    props.setProperty(key, JSON.stringify(entry));
     const result = fn();
-    // ⚠️ 成功・失敗どちらも記録する。失敗を記録しないと、再送で処理がやり直される。
-    //    PIN誤りの回数カウントが再送で二重に増えるのも防げる。
-    try { cache.put(key, JSON.stringify(result), IDEMPOTENCY_TTL_SEC); } catch (e) {}
+    entry.state = 'done'; entry.result = result;
+    entry.expiresAt = Date.now() + IDEMPOTENCY_TTL_SEC * 1000;
+    props.setProperty(key, JSON.stringify(entry));
     return result;
-  } finally {
-    if (locked) { try { lock.releaseLock(); } catch (e) {} }
-  }
+  } finally { lock.releaseLock(); }
 }
 
 function doPost(e) {
@@ -263,9 +287,9 @@ function doPost(e) {
   try {
     switch (action) {
       // 書き込みは冪等キーで包む。同じ requestId の再送は前回の結果を返すだけになる
-      case 'login':           return _json(_withIdempotency(data.requestId, function(){ return login(data); }));
-      case 'resetPin':        return _json(_withIdempotency(data.requestId, function(){ return resetPin(data); }));
-      case 'changePin':       return _json(_withIdempotency(data.requestId, function(){ return changePin(data); }));
+      case 'login':           return _json(_withIdempotency(data.requestId, function(){ return login(data); }, 'login', data));
+      case 'resetPin':        return _json(_withIdempotency(data.requestId, function(){ return resetPin(data); }, 'resetPin', data));
+      case 'changePin':       return _json(_withIdempotency(data.requestId, function(){ return changePin(data); }, 'changePin', data));
       case 'logout':          return _json(logout(data));
       case 'validateSession': return _json(validateSession(data));
       case 'getUserApps':     return _json(getUserApps(data.session_token || ''));
