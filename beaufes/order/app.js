@@ -1,6 +1,6 @@
 import {get,set,records,update,mergeReceipt,sanitizeLegacyQr} from './storage.js';
 import {buildWorkbook} from './export.js';
-const APP_VERSION='v0.8.0';
+const APP_VERSION='v0.9.0';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -123,7 +123,7 @@ function bundles(check=false){return info.catalog.offers.flatMap(o=>{const selec
  const n=selected.sets;if(check&&(!Number.isInteger(n)||n<1||n>99))throw Error('セット数は1〜99の整数で指定してください。');
  const value={offer_id:o.offer_id,sets:n};for(const k of ['paid','gift']){value[k]=o.product_codes.length===1?[{code:o.product_codes[0],qty:n*o[`${k}_per_set`]}]:Object.entries(selected[k]).filter(([,qty])=>qty!==0).map(([code,qty])=>({code,qty}));if(check&&(value[k].some(x=>!Number.isInteger(x.qty)||x.qty<1)||value[k].reduce((s,x)=>s+x.qty,0)!==n*o[`${k}_per_set`]))throw Error(`${o.label}：${k==='paid'?'購入':'サービス'}数は${n*o[`${k}_per_set`]}点にしてください。`);}return [value];});}
 function calculate(){const amount=bundles().reduce((sum,b)=>sum+b.paid.reduce((s,x)=>s+x.qty*info.catalog.products.find(p=>p.product_code===x.code).event_sale_price_yen,0),0);$('total').textContent=yen(amount);}
-async function activate(value){info=value;$('login').hidden=true;if(!officeMode)await set('maker-catalog',info);$('maker').textContent=info.catalog?.manufacturer_name||'メーカー未設定';$('workspace').hidden=info.role==='admin';$('admin').hidden=info.role!=='admin';$('ledger').hidden=info.role!=='admin';$('identity').hidden=info.role!=='admin';if(info.role==='admin')return;const id=await get('draft:'+scopeKey());draft=(await records()).find(x=>x.id===id);if(!draft)await fresh();else{if(draft.stage==='draft'&&draft.form.ui_version!==2){draft=await update(draft.id,r=>{const offers={};for(const [key,item] of Object.entries(r.form.offers||{})){const paid=Object.fromEntries(Object.entries(item.paid||{}).filter(([,qty])=>qty>0));const gift=Object.fromEntries(Object.entries(item.gift||{}).filter(([,qty])=>qty>0));if(item.sets>0||Object.keys(paid).length||Object.keys(gift).length)offers[key]={sets:item.sets||0,paid,gift};}return {...r,form:{...r.form,offers,delivery:'',delivery_confirmed:false,ui_version:2}};});}if(draft.stage!=='draft'&&draft.receipt?.state==='active'&&!draft.pending)await fresh();else renderForm();}await renderOrders();}
+async function activate(value){info=value;$('login').hidden=true;if(!officeMode)await set('maker-catalog',info);$('maker').textContent=info.catalog?.manufacturer_name||'メーカー未設定';$('maker-banner').hidden=info.role==='admin';$('workspace').hidden=info.role==='admin';$('admin').hidden=info.role!=='admin';$('ledger').hidden=info.role!=='admin';$('identity').hidden=info.role!=='admin';if(info.role==='admin')return;const id=await get('draft:'+scopeKey());draft=(await records()).find(x=>x.id===id);if(!draft)await fresh();else{if(draft.stage==='draft'&&draft.form.ui_version!==2){draft=await update(draft.id,r=>{const offers={};for(const [key,item] of Object.entries(r.form.offers||{})){const paid=Object.fromEntries(Object.entries(item.paid||{}).filter(([,qty])=>qty>0));const gift=Object.fromEntries(Object.entries(item.gift||{}).filter(([,qty])=>qty>0));if(item.sets>0||Object.keys(paid).length||Object.keys(gift).length)offers[key]={sets:item.sets||0,paid,gift};}return {...r,form:{...r.form,offers,delivery:'',delivery_confirmed:false,ui_version:2}};});}if(draft.stage!=='draft'&&draft.receipt?.state==='active'&&!draft.pending)await fresh();else renderForm();}await renderOrders();}
 function orderDetails(record){
  // 登録確定後はサーバーの確定明細を使用し、通信待ちは端末に保存した注文内容と明示する。
  let lines=Array.isArray(record.receipt?.lines)?record.receipt.lines:null;
@@ -134,10 +134,10 @@ function orderDetails(record){
    return product?{kind,product_name:product.product_name,qty:item.qty,unit_price_yen:kind==='gift'?0:product.event_sale_price_yen}:null;
   }).filter(Boolean)));
  }
- const details=element('details',undefined,'order-details');
+ const details=element('div',undefined,'order-details');
  const paid=(lines||[]).filter(line=>line.kind==='paid').reduce((sum,line)=>sum+Number(line.qty||0),0);
  const gift=(lines||[]).filter(line=>line.kind==='gift').reduce((sum,line)=>sum+Number(line.qty||0),0);
- details.append(element('summary',lines?.length?`商品明細を見る（購入${paid}点・サービス${gift}点）`:'商品明細を確認'));
+ details.append(element('h4',lines?.length?`商品明細（購入${paid}点・サービス${gift}点）`:'商品明細'));
  if(!lines?.length){details.append(element('p','商品明細を取得できません。事務担当者に確認してください。','error'));return details;}
  if(!confirmed)details.append(element('p','端末に保存した送信前の内容です。登録確定後に再確認してください。','muted'));
  for(const kind of ['paid','gift']){
@@ -149,19 +149,34 @@ function orderDetails(record){
  return details;
 }
 async function renderOrders(){
- if(!info)return;$('orders').replaceChildren();
- for(const r of (await records()).filter(r=>r.backend===location.origin&&JSON.stringify(r.scope)===scopeKey()&&(r.stage!=='draft'||r.id!==draft?.id)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt))){
-  const node=element('div',undefined,'order');
-  const state=r.stage==='draft'?'下書き':r.pending==='cancel'?'取消待ち':r.pending?'未送信・結果確認中':r.receipt?.state==='cancelled'?'取消済み':'登録済み';
-  node.append(element('strong',state),element('p',r.form.customer||'名札から照合'),element('p',`${r.receipt?.total_yen==null?'金額未確定':yen(r.receipt.total_yen)} ／ ${r.id}`,'muted'));
-   if(r.stage!=='draft')node.append(orderDetails(r));
-  if(r.error)node.append(element('p',r.error,'error'));
+ if(!info)return;
+ // 再送や取消で一覧が更新されても、確認中の行は開いた状態を維持する。
+ const opened=new Set(Array.from($('orders').querySelectorAll('details[open]')).map(node=>node.dataset.orderId));
+ $('orders').replaceChildren();
+ const list=(await records()).filter(r=>r.backend===location.origin&&JSON.stringify(r.scope)===scopeKey()&&(r.stage!=='draft'||r.id!==draft?.id)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+ $('order-count').textContent=`${list.length}件`;
+ if(!list.length)$('orders').append(element('p','この端末の注文はまだありません。','muted'));
+ for(const r of list){
+  const node=element('details',undefined,'order');node.dataset.orderId=r.id;node.open=opened.has(r.id);
+  const state=r.stage==='draft'?'下書き':r.pending==='cancel'?'取消待ち':r.pending?'未送信':r.receipt?.state==='cancelled'?'取消済み':'登録済み';
+  const statusClass=r.pending?'order-pending':r.receipt?.state==='cancelled'?'order-cancelled':r.stage==='draft'?'order-draft':'order-complete';
+  const summary=element('summary',undefined,'order-summary');
+  summary.append(element('span',state+(r.error?'・要確認':''),`order-state ${statusClass}`));
+  const date=new Date(r.createdAt);const time=element('time',Number.isNaN(date.getTime())?'':date.toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}),'order-time');if(!Number.isNaN(date.getTime()))time.dateTime=r.createdAt;
+  summary.append(time,element('strong',r.receipt?.total_yen==null?'金額未確定':yen(r.receipt.total_yen),'order-amount'));
+  const customer=element('span',r.form.customer||'名札から照合','order-customer');summary.append(customer);node.append(summary);
+  const body=element('div',undefined,'order-body');
+  body.append(element('p',r.form.customer||'名札から照合','order-customer-full'));
+  const delivery=r.body?.delivery||r.form.delivery;body.append(element('p',`受け渡し：${delivery==='later'?'後日納品':delivery==='takeaway'?'当日持ち帰り':'未選択'}`,'order-delivery'));
+  body.append(element('p',`注文番号 ${r.id}`,'muted order-reference'));
+  if(r.stage!=='draft')body.append(orderDetails(r));
+  if(r.error)body.append(element('p',r.error,'error'));
   if(r.stage==='draft'){
-   const resume=element('button','この下書きの続きを入力','secondary');resume.onclick=async()=>{try{await saveForm();draft=(await records()).find(x=>x.id===r.id);await set('draft:'+scopeKey(),draft.id);renderForm();await renderOrders();}catch(e){message(errorText(e));}};node.append(resume);
+   const resume=element('button','この下書きの続きを入力','secondary');resume.onclick=async()=>{try{await saveForm();draft=(await records()).find(x=>x.id===r.id);await set('draft:'+scopeKey(),draft.id);renderForm();await renderOrders();$('customer-section').scrollIntoView({block:'start'});}catch(e){message(errorText(e));}};body.append(resume);
   }else if(r.receipt?.state!=='cancelled'){
-   const cancel=element('button','この注文を取り消す','secondary');cancel.disabled=r.cancelRequested;cancel.onclick=async()=>{if(!confirm('この注文を取り消しますか？'))return;try{await update(r.id,current=>({...current,cancelRequested:true,pending:'cancel'}));await renderOrders();await pump();}catch(e){message(errorText(e));}};node.append(cancel);
+   const cancel=element('button','この注文を取り消す','secondary');cancel.disabled=r.cancelRequested;cancel.onclick=async()=>{if(!confirm('この注文を取り消しますか？'))return;try{await update(r.id,current=>({...current,cancelRequested:true,pending:'cancel'}));await renderOrders();await pump();}catch(e){message(errorText(e));}};body.append(cancel);
   }
-  $('orders').append(node);
+  node.append(body);$('orders').append(node);
  }
 }
 async function pumpInner(){if(!info||!sessionStorage.getItem('booth-token')||!navigator.onLine)return;for(const entry of await records()){if(entry.backend!==location.origin||JSON.stringify(entry.scope)!==scopeKey()||entry.stage==='draft')continue;const latest=(await records()).find(x=>x.id===entry.id);try{const response=await api(latest.pending==='cancel'?'cancel':latest.pending==='submit'?'submit':'status',latest.pending==='submit'?latest.body:{request_id:latest.id});await update(latest.id,current=>({...mergeReceipt(current,response),error:null}));}catch(e){await update(latest.id,current=>({...current,error:errorText(e)}));}}if(draft&&draft.stage!=='draft'){const current=(await records()).find(r=>r.id===draft.id);if(current){draft=current;if(current.receipt?.state==='active'&&!current.pending){
@@ -247,6 +262,8 @@ on('identity-search','click',async()=>{
 });
 on('export','click',async()=>{const batch_id=crypto.randomUUID();const data=await api('export',{batch_id});await set('last-export',data);const workbook=await buildWorkbook(window.ExcelJS,data);const blob=new Blob([await workbook.xlsx.writeBuffer()],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});const url=URL.createObjectURL(blob);const a=element('a');a.href=url;a.download=`ビューフェス注文_${batch_id}.xlsx`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);$('export-status').textContent=`${data.rows.length}件をExcelに出力しました。「入力候補」と「要確認」を分け、コードの先頭0を保持しています。`;});
 async function start(){
+ // 固定ヘッダーの実寸に合わせ、スクロール先がメーカー名の下へ隠れないようにする。
+ const header=$('app-header');const fitHeader=()=>document.documentElement.style.setProperty('--header-height',`${header.getBoundingClientRect().height+12}px`);new ResizeObserver(fitHeader).observe(header);fitHeader();
  $('version').textContent=APP_VERSION;if(!localDemo){$('demo').hidden=true;if(!officeMode){$('token-label').hidden=true;$('connect').hidden=true;$('login-title').textContent='メーカー用QRを読み取ってください';}}
  const network=()=>{$('network').textContent=navigator.onLine?'オンライン':'オフライン';};network();window.addEventListener('online',()=>{network();pump().catch(e=>message(errorText(e)));});window.addEventListener('offline',network);
  await sanitizeLegacyQr();
