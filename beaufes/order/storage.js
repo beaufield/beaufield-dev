@@ -10,6 +10,10 @@ let connection;
 export async function database(){if(connection)return connection;connection=await new Promise((resolve,reject)=>{const r=indexedDB.open('beaufes-booth-trial-v1',1);r.onupgradeneeded=()=>{r.result.createObjectStore('records',{keyPath:'id'});r.result.createObjectStore('settings');};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});return connection;}
 export async function get(key){const db=await database();return new Promise((resolve,reject)=>{const r=db.transaction('settings').objectStore('settings').get(key);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});}
 export async function set(key,value){const db=await database();return new Promise((resolve,reject)=>{const t=db.transaction('settings','readwrite');t.objectStore('settings').put(value,key);t.oncomplete=()=>resolve();t.onerror=()=>reject(t.error);});}
+export async function clearMakerConnection(token){
+ // 古いタブの失敗応答で、別タブが保存した新しい接続を消さない。
+ const db=await database();return new Promise((resolve,reject)=>{const t=db.transaction('settings','readwrite');const store=t.objectStore('settings');const request=store.get('maker-connection');request.onsuccess=()=>{if(request.result?.token===token)store.put(null,'maker-connection');};t.oncomplete=()=>resolve();t.onerror=()=>reject(t.error);});
+}
 export async function records(){const db=await database();return new Promise((resolve,reject)=>{const r=db.transaction('records').objectStore('records').getAll();r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});}
 export async function update(id, change){const db=await database();return new Promise((resolve,reject)=>{const t=db.transaction(['records','settings'],'readwrite');const store=t.objectStore('records');const request=store.get(id);let value;request.onsuccess=()=>{try{value=change(request.result);store.put(value);}catch(error){t.abort();reject(error);}};t.oncomplete=()=>resolve(value);t.onerror=()=>reject(t.error);});}
 export async function sanitizeLegacyQr(){
