@@ -19,11 +19,18 @@
   <div id="workspace" hidden>
     <section id="customer-section" class="customer-section" aria-labelledby="customer-title">
       <div class="row section-heading"><h2 id="customer-title"><span class="step-number" aria-hidden="true">1</span>お客様を選ぶ</h2><button id="new" class="secondary small-action">次のお客様</button></div>
-      <p class="section-description">名札のQRコードを読み取り、お客様を確認します。</p>
+      <p class="section-description">名札QRを読み取ります。読み取れない場合は得意先コード・名前で検索できます。</p>
+      <p id="connection-status" class="muted" role="status"></p>
       <p id="draft-id" class="muted"></p>
-      <label>名札のQRコード<input id="qr" placeholder="名札QRのURLを読取・貼り付け" autocomplete="off"></label>
-      <div class="row"><button id="scan" class="secondary">カメラで読み取る</button><button id="resolve">お客様を確認</button><button id="demo" class="secondary">試験用の名札</button></div>
-      <div id="customer"></div>
+      <button id="scan" class="camera-primary" type="button"><span aria-hidden="true">📷</span> 名札QRをカメラで読み取る</button>
+      <button id="demo" class="secondary" type="button">試験用の名札</button>
+      <details id="customer-search-panel" class="customer-search-panel"><summary>QRが読めないとき：コード・お客様名で検索</summary>
+        <fieldset class="search-mode"><legend>検索する情報</legend><div class="row"><label><input type="radio" name="customer-search-mode" value="code" checked> 得意先コード</label><label><input type="radio" name="customer-search-mode" value="name"> 名前・サロン名</label></div></fieldset>
+        <form id="customer-search-form"><label id="customer-query-label" for="customer-query">名札の得意先コード</label><input id="customer-query" type="search" autocomplete="off" maxlength="50" placeholder="名札に印字されたお客様番号"><button id="customer-search" type="submit">検索する</button></form>
+        <p id="customer-search-status" class="muted" role="status" aria-live="polite"></p><div id="customer-results"></div>
+      </details>
+      <div id="customer" role="status"></div>
+      <p id="customer-recent" class="muted" role="status"></p>
     </section>
     <section id="product-section" class="product-section" aria-labelledby="product-title">
       <div class="section-heading"><h2 id="product-title"><span class="step-number" aria-hidden="true">2</span>商品とサービス品を選ぶ</h2></div>
@@ -40,7 +47,8 @@
       <button id="submit" class="primary">この内容で登録する</button>
       <div id="submit-status" role="status" aria-live="polite" hidden></div>
     </section>
-    <section id="history-section" class="history-section" aria-labelledby="history-title"><div class="row section-heading"><h2 id="history-title">この端末の注文 <span id="order-count" class="count-badge"></span></h2><button id="retry" class="secondary small-action">未送信を再送・状態確認</button></div><p class="muted">行をタップすると商品明細・受け渡し方法・取消操作が開きます。「未送信」「取消待ち」は通信が戻った状態で再送してください。</p><div id="orders"></div></section>
+    <section id="history-section" class="history-section" aria-labelledby="history-title"><div class="row section-heading"><h2 id="history-title">この端末の未送信・下書き <span id="order-count" class="count-badge"></span></h2><button id="retry" class="secondary small-action">未送信を再送・状態確認</button></div><p class="muted">この端末に残っている注文です。未送信・取消待ちは通信が戻った状態で再送してください。</p><div id="orders"></div></section>
+    <section id="shared-history-section" class="history-section" aria-labelledby="shared-history-title"><div class="row section-heading"><h2 id="shared-history-title">メーカーの注文履歴</h2><button id="history-refresh" class="secondary small-action">更新する</button></div><p class="muted">同じメーカーの全端末で登録した注文です。行をタップすると商品明細が開きます。他の端末の注文は閲覧のみです。</p><p id="history-status" class="muted" role="status" aria-live="polite">まだ取得していません。</p><div id="shared-orders"></div><button id="history-more" class="secondary" type="button" hidden>以前の注文をもっと見る</button></section>
   </div>
   <section id="admin" hidden><h2>事務用の出力</h2><p>受付を締めた後、入力用Excelを出力できます。全端末の未送信がないことは、別途確認が必要です。</p><button id="close" class="secondary">試験受付を締める</button><button id="export">入力用Excelを作る</button><p>サービス品は数量付き・単価0円。売上日は空欄で出力します。得意先未対応・取消・入力済み等は要確認に分けます。</p><div id="export-status"></div></section>
   <section id="identity" hidden><h2>得意先コードの確認</h2><p>名札からの注文は得意先コードが未確定でも受け付けます。名称・電話・メールの一致は候補です。販売管理へ入力する前に確認してください。</p><div class="search"><label>得意先・申込の同期ファイル（bundle.json）<input id="identity-file" type="file" accept=".json,application/json"></label><button id="identity-sync" class="secondary">同期データを一括反映</button></div><p id="sync-status" class="muted">初回・更新時に、確認済みの完全スナップショットを選択します。</p><button id="identity-refresh" class="secondary">未確定のお客様を表示</button><div id="identity-list"></div><div class="search"><label>得意先マスターを検索<input id="identity-query" placeholder="名称またはコードを2文字以上" autocomplete="off"></label><button id="identity-search" class="secondary">検索</button></div><p id="identity-selected" class="muted">先にお客様を選択してください。</p><div id="identity-results"></div></section>
