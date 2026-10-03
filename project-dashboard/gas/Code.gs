@@ -12,7 +12,7 @@
  *   SYNC_TOKEN    … 同期スクリプト用の共有シークレット（ランダム長文字列）
  */
 
-const VERSION = '1.11.5';
+const VERSION = 'v1.11.6';
 const APP_NAME = 'project-dashboard';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 let _requestMetric = null;
@@ -475,13 +475,23 @@ function syncDataset_(p, dataset, columns, manualColumns, jsonColumns, testConte
     // 書込み前に順序を予約。失敗時は同一時刻・同一内容の再送を許可する。
     const state = {timestamp: timestamp, digest: digest, committed: false};
     props.setProperty(key, JSON.stringify(state));
+    // 連続する行をまとめ、手動列を避けたままSheetsへの往復を減らす。
+    // 欠測行はグループの境界として扱い、書き戻さない。
+    updates.sort((a, b) => a.row - b.row);
+    const groups = [];
     updates.forEach(update => {
+      const group = groups[groups.length - 1];
+      if (group && group[group.length - 1].row + 1 === update.row) group.push(update);
+      else groups.push([update]);
+    });
+    groups.forEach(group => {
       let start = 0;
       while (start < columns.length) {
         if (manualColumns.indexOf(columns[start]) >= 0) { start++; continue; }
         let end = start + 1;
         while (end < columns.length && manualColumns.indexOf(columns[end]) < 0) end++;
-        sh.getRange(update.row, start + 1, 1, end - start).setValues([update.values.slice(start, end)]);
+        sh.getRange(group[0].row, start + 1, group.length, end - start)
+          .setValues(group.map(update => update.values.slice(start, end)));
         start = end;
       }
     });

@@ -1,9 +1,8 @@
 // ============================================================
 // ビューフィールド 貸出管理アプリ — バックエンド
-// 更新日: 2026-04-25
 // ============================================================
 
-const VERSION  = 'GAS 1.12.0';
+const VERSION  = 'v1.12.1';
 const SHEET_ID      = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
 const AUTH_SHEET_ID = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID');
 // SHEET_ID / AUTH_SHEET_ID / LINEWORKS_WEBHOOK はスクリプトプロパティで管理
@@ -142,7 +141,7 @@ function doPost(e) {
     else if (action === 'getAllData')          result = getAllData();
     else if (action === 'saveLoan')            result = saveLoan(data);
     else if (action === 'registerDevice')      result = registerDevice(data);
-    else if (action === 'saveLoanTransaction') result = saveLoanTransaction(data);
+    else if (action === 'saveLoanTransaction') result = saveLoanTransaction(data, auth);
     else if (action === 'saveSalesRep')        result = saveSalesRep(data);
     else if (action === 'deleteSalesRep')      result = deleteSalesRep(data.id);
     else if (action === 'uploadImage')         result = uploadImage(data);
@@ -212,14 +211,92 @@ function registerDevice(data) {
 
 // ─── 貸出/返却トランザクション（saveDevice + saveLoan を1回で処理） ─
 // フロントエンドから1回のリクエストで完結させ、通信往復を削減する
-function saveLoanTransaction(data) {
-  saveDevice(data.device);
-  const loanResult = saveLoan(data.loan);
-  return { success: true, notifyText: loanResult.notifyText };
+function saveLoanTransaction(data, auth) {
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(10000); } catch (e) { return {success: false, error: 'BUSY'}; }
+  try {
+    if (!data || !data.device || !data.loan || !auth || !auth.valid) return {success: false, error: 'INVALID_REQUEST'};
+    const devSheet = ss.getSheetByName('DeviceMaster');
+    const devRows = devSheet.getDataRange().getValues();
+    const devHeaders = devRows[0].map(function(v) { return String(v).trim(); });
+    const idCol = devHeaders.indexOf('id');
+    const index = devRows.findIndex(function(row, i) { return i > 0 && String(row[idCol]) === String(data.device.id); });
+    if (idCol < 0 || index < 1 || String(data.loan.deviceId) !== String(data.device.id)) return {success: false, error: 'NOT_FOUND'};
+    const device = {};
+    devHeaders.forEach(function(h, i) {
+      const v = devRows[index][i];
+      device[h] = v instanceof Date ? Utilities.formatDate(v, 'Asia/Tokyo', 'yyyy-MM-dd') : v;
+    });
+    const loanSheet = ss.getSheetByName('LoanLog');
+    const loanRows = loanSheet.getDataRange().getValues();
+    const loanHeaders = loanRows[0].map(function(v) { return String(v).trim(); });
+    if (!loanHeaders.includes('id') || !loanHeaders.includes('deviceId') || !loanHeaders.includes('type')) return {success: false, error: 'SCHEMA_MISMATCH'};
+    const rid = String(data.requestId || '').trim();
+    if (rid && !/^[A-Za-z0-9-]{8,100}$/.test(rid)) return {success: false, error: 'INVALID_REQUEST'};
+    if (rid) {
+      const oldRow = loanRows.find(function(row, i) { return i > 0 && String(row[loanHeaders.indexOf('id')]) === rid; });
+      if (oldRow) {
+        const fields = ['deviceId','type','loanTo','salesRep','date','returnDueDate','notes'];
+        const same = fields.every(function(field) {
+          const col = loanHeaders.indexOf(field);
+          if (col < 0) return data.loan[field] == null || data.loan[field] === '';
+          const value = oldRow[col] instanceof Date ? Utilities.formatDate(oldRow[col], 'Asia/Tokyo', 'yyyy-MM-dd') : oldRow[col];
+          return String(value == null ? '' : value) === String(data.loan[field] == null ? '' : data.loan[field]);
+        });
+        if (!same) return {success: false, error: 'REQUEST_CONFLICT'};
+        const oldLoan = {}; loanHeaders.forEach(function(h, i) { oldLoan[h] = oldRow[i]; });
+        return {success: true, replayed: true, device: device, loan: oldLoan};
+      }
+    }
+    const type = data.loan.type;
+    const loan = Object.assign({}, data.loan, {id: rid || Utilities.getUuid(),
+      deviceId: device.id, labelId: device.labelId, deviceName: device.name, registeredBy: auth.name || auth.user_id});
+    if (!['貸出','返却'].includes(type) || !lendingDate_(loan.date)) return {success: false, error: 'INVALID_REQUEST'};
+    const changes = {updatedAt: Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd')};
+    if (type === '貸出') {
+      if (device.status !== '社内') return {success: false, error: 'STATE_CONFLICT'};
+      if (!String(loan.loanTo || '').trim() || !String(loan.salesRep || '').trim() ||
+          (loan.returnDueDate && !lendingDate_(loan.returnDueDate))) return {success: false, error: 'INVALID_REQUEST'};
+      changes.status = '貸出中'; changes.loanTo = String(loan.loanTo).trim(); changes.salesRep = String(loan.salesRep).trim();
+      changes.loanDate = loan.date; changes.returnDueDate = loan.returnDueDate || ''; changes.notes = String(loan.notes || '');
+      loan.loanTo = changes.loanTo; loan.salesRep = changes.salesRep;
+      if (data.device.imageUrl) {
+        if (!/^https:\/\//i.test(String(data.device.imageUrl))) return {success: false, error: 'INVALID_REQUEST'};
+        changes.imageUrl = String(data.device.imageUrl);
+      }
+    } else {
+      if (device.status !== '貸出中' || String(loan.loanTo || '') !== String(device.loanTo || '')) return {success: false, error: 'STATE_CONFLICT'};
+      changes.status = '社内'; changes.returnDate = loan.date;
+      changes.loanTo = ''; changes.returnDueDate = ''; changes.salesRep = '';
+    }
+    // 機器名・メーカー・分類・ラベル等のマスター項目は、クライアントから受け取っても変更しない。
+    const requests = Object.keys(changes).map(function(field) {
+      const col = devHeaders.indexOf(field);
+      if (col < 0) throw new Error('SCHEMA_MISMATCH');
+      return {updateCells: {range: {sheetId: devSheet.getSheetId(), startRowIndex: index,
+        endRowIndex: index + 1, startColumnIndex: col, endColumnIndex: col + 1},
+        rows: [{values: [lendingCell_(changes[field])]}], fields: 'userEnteredValue'}};
+    });
+    requests.push({appendCells: {sheetId: loanSheet.getSheetId(),
+      rows: [{values: loanHeaders.map(function(h) { return lendingCell_(loan[h]); })}], fields: 'userEnteredValue'}});
+    // マスターの貸出項目と履歴を、一つのSheets API batchUpdateで原子的に確定する。
+    // API・権限が未設定なら更新は行われない。配備前に隔離シートで接続条件を確認する。
+    const response = UrlFetchApp.fetch('https://sheets.googleapis.com/v4/spreadsheets/' + SHEET_ID + ':batchUpdate', {
+      method: 'post', contentType: 'application/json',
+      headers: {Authorization: 'Bearer ' + ScriptApp.getOAuthToken()},
+      payload: JSON.stringify({requests: requests}), muteHttpExceptions: true
+    });
+    if (response.getResponseCode() !== 200) return {success: false, error: 'WRITE_FAILED'};
+    const savedDevice = Object.assign({}, device, changes);
+    return {success: true, device: savedDevice, loan: loan, notifyText: lendingNotice_(loan)};
+  } finally { lock.releaseLock(); }
 }
 
 // ─── 商品マスタ保存 ──────────────────────────────────────────
 function saveDevice(device) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
   const sheet = ss.getSheetByName('DeviceMaster');
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
@@ -239,6 +316,8 @@ function saveDevice(device) {
     sheet.appendRow(rowData);
   }
   return { success: true, device };
+
+  } finally { lock.releaseLock(); }
 }
 
 // ─── 貸出ログ保存 ────────────────────────────────────────────
@@ -467,6 +546,9 @@ function assignLabel(data) {
 // DeviceMasterのreturnDueDateを更新し、LoanLogに延長記録を残す
 // LINE WORKS通知はnotifyTextとして返し、フロントから後追い送信する
 function extendDueDate(data) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
   const today = new Date().toISOString().split('T')[0];
 
   // DeviceMasterのreturnDueDateを直接更新
@@ -515,6 +597,8 @@ function extendDueDate(data) {
   ].join('\n');
 
   return { success: true, notifyText };
+
+  } finally { lock.releaseLock(); }
 }
 
 // ─── LINE WORKS通知の後追い送信（フロントから登録応答後に呼ばれる） ─
@@ -782,4 +866,25 @@ function _deleteAuthSessions_(authSs, userId) {
 // ─── テスト用関数（GASエディタから手動実行） ────────────────
 function testNotify() {
   sendLineWorksMessage('【テスト】LINE WORKS通知の動作確認です。');
+}
+
+
+function lendingDate_(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
+  const date = new Date(value + 'T00:00:00Z');
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+function lendingCell_(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return {userEnteredValue: {numberValue: value}};
+  if (typeof value === 'boolean') return {userEnteredValue: {boolValue: value}};
+  // stringValueを明示し、数式らしい入力も文字として保存する。
+  return {userEnteredValue: {stringValue: String(value == null ? '' : value)}};
+}
+function lendingNotice_(loan) {
+  if (loan.type === '貸出') return ['【貸出登録】','商品ID: ' + (loan.labelId || ''),
+    '商品名: ' + (loan.deviceName || ''),'貸出先: ' + (loan.loanTo || ''),
+    '返却予定日: ' + (loan.returnDueDate || '未設定'),'営業担当: ' + (loan.salesRep || ''),
+    '操作者: ' + (loan.registeredBy || '')].join('\n');
+  return ['【返却登録】','商品ID: ' + (loan.labelId || ''),'商品名: ' + (loan.deviceName || ''),
+    '返却日: ' + loan.date,'操作者: ' + (loan.registeredBy || '')].join('\n');
 }
