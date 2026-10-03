@@ -132,3 +132,21 @@ section{scroll-margin-top:12px}
 .order-details>h4:first-child{margin-top:0}
 .order-line{font-size:13px}
 @media(max-width:500px){header{padding:10px 12px;padding-top:calc(10px + env(safe-area-inset-top))}h1{font-size:18px}#maker{font-size:16px}.section-heading h2{font-size:17px}.section-heading{gap:8px}.history-section{padding:13px}.order-summary{padding:9px 10px;gap:4px 6px}.order-amount{font-size:13px}.order-time{font-size:10px}.order-state{font-size:10px}.row.section-heading #retry{width:100%;text-align:center;margin-top:0}.order-body{padding:10px}}
+
+/* 名札読取を主操作とし、検索は必要な時だけ展開する。 */
+.camera-primary{display:block;width:100%;min-height:60px;background:#076da0;color:#fff;font-weight:700;font-size:17px;border:2px solid #055b85;box-shadow:0 3px 0 #055b85;line-height:1.5;margin:12px 0 18px;padding:14px 10px}
+.customer-search-panel{background:#fff;border:1px solid #a7cfe4;border-radius:10px;padding:12px;margin:16px 0}
+.customer-search-panel>summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-size:14px;color:#185575;font-weight:700;line-height:1.5}
+.search-mode{border:0;padding:0;margin-top:14px;min-width:0}
+.search-mode legend{font-size:13px;color:#557181}
+.search-mode label{display:flex;align-items:center;gap:5px;margin:6px 0;font-size:14px}
+.search-mode input{width:auto;margin:0}
+#customer-query{width:100%}
+#customer-search-form>button{width:100%}
+.customer-result{background:#f3faff;border:1px solid #bbd9eb;border-radius:9px;padding:12px;margin:10px 0;overflow-wrap:anywhere}
+.customer-result strong{display:block;line-height:1.5}
+.customer-result p{margin:6px 0;font-size:13px}
+.customer-result button{width:100%}
+#customer-recent:not(:empty){background:#fff1cf;color:#714908;border-radius:8px;padding:10px;line-height:1.5}
+.history-error{color:#a32f24}
+.history-section .row.section-heading>button{min-height:44px}
