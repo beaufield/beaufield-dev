@@ -1,5 +1,5 @@
 // 画面の静的資産だけを保存し、注文・名札・API応答はキャッシュしない。
-const CACHE='beaufes-booth-shell-0.10.3';
+const CACHE='beaufes-booth-shell-0.10.4';
 const FILES=['./','./index.html','./app.js','./storage.js','./export.js','./style.css','./jsQR.js','./exceljs.min.js'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil((async()=>{for(const key of await caches.keys())if(key.startsWith('beaufes-booth-shell-')&&key!==CACHE)await caches.delete(key);await self.clients.claim();})()));
