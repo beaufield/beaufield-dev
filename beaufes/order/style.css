@@ -99,8 +99,9 @@ section{scroll-margin-top:12px}
 .section-heading h2{display:flex;align-items:center;gap:8px;font-size:18px;line-height:1.4;margin:0}
 .section-description{font-size:13px;margin:10px 0;color:#45697f}
 .step-number{display:inline-grid;place-items:center;width:27px;height:27px;flex-shrink:0;background:#168bbd;color:white;border-radius:7px;font-size:15px}
-.customer-section{background:#edf9ff;border-color:#9bd4ed;border-left:5px solid #199ed0}
-.customer-section #new{border:1px solid #b8d9ec;background:#fff}
+.customer-section{background:#fff;border-color:#9bd4ed;border-left:5px solid #199ed0}
+.customer-section #new{border:2px solid #0879b0;background:#dceefb;color:#174a68;font-weight:700}
+.customer-section #new:hover{background:#c6e7fa}
 .customer-section #customer{border:1px solid #a6d3e9;font-weight:700;line-height:1.6}
 #draft-id{overflow-wrap:anywhere;font-size:11px;margin:9px 0}
 .product-section{border-color:#bacde7;border-left:5px solid #4f75be}
@@ -135,8 +136,12 @@ section{scroll-margin-top:12px}
 
 /* 名札読取を主操作とし、検索は必要な時だけ展開する。 */
 .camera-primary{display:block;width:100%;min-height:60px;background:#076da0;color:#fff;font-weight:700;font-size:17px;border:2px solid #055b85;box-shadow:0 3px 0 #055b85;line-height:1.5;margin:12px 0 18px;padding:14px 10px}
-.customer-search-panel{background:#fff;border:1px solid #a7cfe4;border-radius:10px;padding:12px;margin:16px 0}
-.customer-search-panel>summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-size:14px;color:#185575;font-weight:700;line-height:1.5}
+.customer-search-panel{background:#e9f5ff;border:2px solid #5aa5cc;border-radius:10px;padding:12px;margin:16px 0}
+.customer-search-panel>summary{cursor:pointer;min-height:48px;display:flex;align-items:center;gap:10px;font-size:14px;color:#174a68;font-weight:700;line-height:1.5;list-style:none}
+.customer-search-panel>summary::-webkit-details-marker{display:none}
+.customer-search-panel>summary::before{content:'＋';font-size:22px;flex-shrink:0;color:#076da0}
+.customer-search-panel[open]>summary::before{content:'−'}
+.customer-search-panel>summary:focus-visible{outline:3px solid #e2a64b;outline-offset:4px;border-radius:4px}
 .search-mode{border:0;padding:0;margin-top:14px;min-width:0}
 .search-mode legend{font-size:13px;color:#557181}
 .search-mode label{display:flex;align-items:center;gap:5px;margin:6px 0;font-size:14px}
