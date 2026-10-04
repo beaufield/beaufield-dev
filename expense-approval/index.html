@@ -247,7 +247,7 @@
   <div id="success-view" class="card">
     <div class="icon">✅</div>
     <h2>申請が完了しました</h2>
-    <p>承認者に通知を送りました。<br>結果は LINE WORKS でお知らせします。</p>
+    <p>申請一覧で内容と承認状態を確認できます。<br>結果は LINE WORKS でお知らせします。</p>
     <button class="btn-back" onclick="resetForm()">もう一度申請する</button>
   </div>
 
@@ -352,7 +352,7 @@
 <script>
   const GAS_URL    = 'https://script.google.com/macros/s/AKfycbyi1oZ3MLdVflBnjkwzwTC9edeRRQM3TTqcw5zkMzpDZp9e5F1TwMH9ApyK_iuJDC1DDQ/exec';
   const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-  const APP_VERSION = 'v1.7.0';
+  const APP_VERSION = 'v1.7.1';
   document.getElementById('header-version').textContent = APP_VERSION;
   document.getElementById('footer-version').textContent = '経費事前申請 ' + APP_VERSION + ' | Beaufield';
 
@@ -374,6 +374,7 @@
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
     document.getElementById('use-date').value = tomorrow.toISOString().split('T')[0];
+    restorePendingExpense();
   };
 
   // ===== タブ切り替え =====
@@ -382,7 +383,7 @@
     document.getElementById('tab-list').classList.toggle('active', tab === 'list');
     if (tab === 'form') {
       document.getElementById('form-view').style.display    = formState === 'form'    ? '' : 'none';
-      document.getElementById('success-view').style.display = formState === 'success' ? '' : 'none';
+      document.getElementById('success-view').style.display = formState === 'success' ? 'block' : 'none';
       document.getElementById('list-view').style.display    = 'none';
     } else {
       document.getElementById('form-view').style.display    = 'none';
@@ -544,15 +545,16 @@
 
     fetch(GAS_URL + '?type=accounting', {
       method : 'POST',
-      mode   : 'no-cors',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body   : JSON.stringify({
         session_token   : session.token || '',
         request_id      : acctTargetId,
         confirmed_amount: Number(amount)
       })
     })
-    .then(() => {
+    .then(r => r.json())
+    .then(result => {
+      if (!result.ok) throw new Error(result.error || '更新できませんでした');
       closeAcctModal();
       listLoaded = false;
       loadRequestList();
@@ -567,47 +569,55 @@
   }
 
   // ===== フォーム送信 =====
-  function submitForm() {
-    const expenseType = document.getElementById('expense-type').value;
-    const purpose     = document.getElementById('purpose').value.trim();
-    const useDate     = document.getElementById('use-date').value;
-    const amount      = document.getElementById('amount').value;
-
-    if (!expenseType) { showError('経費種別を選択してください。'); return; }
-    if (!purpose)     { showError('使用目的を入力してください。'); return; }
-    if (!useDate)     { showError('使用予定日を入力してください。'); return; }
-    if (!amount || Number(amount) <= 0) { showError('予定金額を正しく入力してください。'); return; }
-
-    hideError();
-    const btn = document.getElementById('btn-submit');
-    btn.disabled    = true;
-    btn.textContent = '送信中...';
-
-    fetch(GAS_URL + '?type=form', {
-      method : 'POST',
-      mode   : 'no-cors',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body   : JSON.stringify({
-        session_token: session.token || '',
-        name         : session.name,
-        expense_type : expenseType,
-        purpose      : purpose,
-        use_date     : useDate,
-        amount       : Number(amount)
-      })
-    })
-    .then(() => {
-      formState  = 'success';
-      listLoaded = false;
-      document.getElementById('form-view').style.display    = 'none';
-      document.getElementById('success-view').style.display = '';
-    })
-    .catch(() => {
-      showError('通信エラーが発生しました。時間をおいて再度お試しください。');
-      btn.disabled    = false;
-      btn.textContent = '申請する';
-    });
+  async function submitForm() {
+  const payload = {
+    expense_type: document.getElementById('expense-type').value,
+    purpose: document.getElementById('purpose').value.trim(),
+    use_date: document.getElementById('use-date').value,
+    amount: Number(document.getElementById('amount').value)
+  };
+  if (!payload.expense_type || !payload.purpose || !payload.use_date || !Number.isFinite(payload.amount) || payload.amount <= 0) {
+    showError('経費種別・目的・予定日・正しい金額を入力してください。'); return;
   }
+  const storageKey = 'expense_pending_' + session.user_id;
+  let pending;
+  try { pending = JSON.parse(sessionStorage.getItem(storageKey) || 'null'); } catch (e) {}
+  if (pending && JSON.stringify(pending.payload) !== JSON.stringify(payload)) {
+    showError('前の申請の保存結果が未確認です。画面を開き直し、元の内容で「申請する」を押して確認してください。'); return;
+  }
+  if (!pending) {
+    const id = (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2));
+    pending = {id: id, payload: payload};
+    // 再読込後も同じキーで確認する。保存できない端末では送信を始めない。
+    try { sessionStorage.setItem(storageKey, JSON.stringify(pending)); }
+    catch (e) { showError('一時保存ができません。ブラウザーの保存設定を確認してください。'); return; }
+  }
+  const body = Object.assign({}, payload, {client_request_id: pending.id, session_token: session.token || ''});
+  const btn = document.getElementById('btn-submit');
+  btn.disabled = true; btn.textContent = '送信中...'; hideError();
+  try {
+    let result;
+    try { result = await expensePost_('form', body); }
+    catch (e) {
+      // 応答喪失時は再登録せず、同じ申請が保存されたか一度照会する。
+      const status = await expensePost_('status', body);
+      if (!status.ok || !status.found) throw new Error('保存結果を確認できません。「申請する」で同じ申請を再確認できます。');
+      result = {ok: true, requestId: status.requestId};
+    }
+    if (!result.ok) {
+      if (['INVALID_REQUEST','APPROVER_NOT_CONFIGURED'].includes(result.error)) sessionStorage.removeItem(storageKey);
+      throw new Error(result.error === 'BUSY' ? '他の処理中です。同じ内容で再度お試しください。' : result.error || '申請を保存できませんでした。');
+    }
+    sessionStorage.removeItem(storageKey);
+    formState = 'success'; listLoaded = false;
+    document.getElementById('form-view').style.display = 'none';
+    document.getElementById('success-view').style.display = 'block';
+    let info = document.getElementById('submission-result');
+    if (!info) { info = document.createElement('p'); info.id = 'submission-result'; document.getElementById('success-view').appendChild(info); }
+    info.textContent = '申請番号: ' + result.requestId + (result.notification_warning ? '（申請は保存済みですが通知に失敗しました。承認者へ確認してください。）' : '');
+  } catch (e) { showError(e.message || '保存結果を確認できません。'); }
+  finally { btn.disabled = false; btn.textContent = '申請する'; }
+}
 
   function resetForm() {
     document.getElementById('expense-type').value         = '';
@@ -632,6 +642,27 @@
       .replace(/&/g,'&amp;').replace(/</g,'&lt;')
       .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
+
+
+// 更新結果の本文を確認し、HTTP成功だけで保存成功にしない。
+async function expensePost_(type, body) {
+  const response = await fetch(GAS_URL + '?type=' + type, {
+    method: 'POST', headers: {'Content-Type': 'text/plain;charset=utf-8'}, body: JSON.stringify(body)
+  });
+  if (!response.ok) throw new Error('通信結果を確認できません。');
+  return response.json();
+}
+function restorePendingExpense() {
+  try {
+    const pending = JSON.parse(sessionStorage.getItem('expense_pending_' + session.user_id) || 'null');
+    if (!pending) return;
+    document.getElementById('expense-type').value = pending.payload.expense_type;
+    document.getElementById('purpose').value = pending.payload.purpose;
+    document.getElementById('use-date').value = pending.payload.use_date;
+    document.getElementById('amount').value = pending.payload.amount;
+    showError('前の申請の保存結果が未確認です。同じ内容で「申請する」を押すと重複せず確認できます。');
+  } catch (e) { showError('前の申請の一時保存を読み取れません。申請一覧で保存状況を確認してください。'); }
+}
 </script>
 
 </body>
