@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.31.1';
+const VERSION = 'v2.32.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -63,11 +63,11 @@ function doPost(e) {
     const noAuthActions = ['getVersion'];
     // AI用キーはプレビューとドラフト作成だけに限定する。
     // BCARTを変更するapply系は別キーを必要とし、漏えい時の被害範囲を分離する。
-    const claudeDraftActions = ['previewSuffixName', 'previewHanbaiEnd', 'previewSetDescription', 'previewProductFields', 'previewSetFields', 'previewProductSort', 'getDraftSupplierSummary', 'getDraftCandidates', 'getRegisteredExamples', 'saveDrafts', 'previewProductsByNo'];
+    const claudeDraftActions = ['previewLowPriceCampaign', 'previewSuffixName', 'previewHanbaiEnd', 'previewSetDescription', 'previewProductFields', 'previewSetFields', 'previewProductSort', 'getDraftSupplierSummary', 'getDraftCandidates', 'getRegisteredExamples', 'saveDrafts', 'previewProductsByNo'];
     const claudeApplyActions = ['applySuffixName', 'applyHanbaiEnd', 'applySetDescription', 'applyProductFields', 'applySetFields', 'applyProductSort'];
     // 明示した参照系以外はすべて更新系として扱う（未知のactionを誤って一般ユーザーへ開放しない）。
     const sessionReadOnlyActions = [
-      'loadData', 'getIgnoreList', 'searchProducts', 'getSpecials', 'getHistory',
+      'previewLowPriceCampaign', 'loadData', 'getIgnoreList', 'searchProducts', 'getSpecials', 'getHistory',
       'getCategories', 'getFeatures', 'getSpecialPriceData', 'getProductSetsForFeature',
       'searchProductSets', 'getSpecialPriceCurrent', 'getViewFilterCurrent', 'getMembers',
       'getGroupViewInfo',
@@ -183,6 +183,7 @@ function doPost(e) {
       case 'saveFeatureType':         return jsonResponse(saveFeatureType(params));
       case 'bulkSaveFeatureTypes':    return jsonResponse(bulkSaveFeatureTypes(params));
       // 機能E: Claudeチャット直接操作
+      case 'previewLowPriceCampaign': return jsonResponse(previewLowPriceCampaign(params));
       case 'previewProductsByNo':    return jsonResponse(previewProductsByNo(params));
       case 'previewSuffixName':      return jsonResponse(previewSuffixName(params));
       case 'applySuffixName':        return jsonResponse(applySuffixName(params));
@@ -5583,4 +5584,118 @@ function previewProductsByNo(params) {
     found: found,
     notFound: notFound
   };
+}
+
+// 税別1,000円以下のセットを持つ、特集3が空欄の商品を読む専用処理。
+// Bカート更新、シート操作、通知、認証情報の返却は行わない。
+function previewLowPriceCampaign(params) {
+  // この業務条件を固定し、任意APIへの中継にはしない。
+  if (params && ((params.maxPrice !== undefined && params.maxPrice !== 1000) ||
+      (params.featureId !== undefined && params.featureId !== 17))) {
+    return { ok: false, error: 'INVALID_CAMPAIGN_CONDITION' };
+  }
+  const featuresRes = bcartGetAll('/product_features');
+  if (!featuresRes.ok) return featuresRes;
+  const productsRes = bcartGetAll('/products');
+  if (!productsRes.ok) return productsRes;
+  const setsRes = bcartGetAll('/product_sets');
+  if (!setsRes.ok) return setsRes;
+  const features = featuresRes.data;
+  const products = productsRes.data;
+  const sets = setsRes.data;
+  if (![features, products, sets].every(Array.isArray)) {
+    return { ok: false, error: 'BCART_COLLECTION_INVALID' };
+  }
+
+  // 一括取得の重複や不正な親子IDを見逃して部分一覧を確定しない。
+  const validId = v => (typeof v === 'number' || typeof v === 'string') &&
+    /^[1-9]\d*$/.test(String(v)) && Number.isSafeInteger(Number(v));
+  const idsAreUnique = rows => rows.every(r => r && validId(r.id)) &&
+    new Set(rows.map(r => String(r.id))).size === rows.length;
+  if (![features, products, sets].every(idsAreUnique)) {
+    return { ok: false, error: 'BCART_ID_INVALID_OR_DUPLICATED' };
+  }
+  const featureMap = {};
+  features.forEach(f => { featureMap[String(f.id)] = f; });
+  const campaign = featureMap['17'];
+  if (!campaign || campaign.name !== '1000円以下の商品' || String(campaign.flag) !== '1') {
+    return { ok: false, error: 'CAMPAIGN_CHANGED' };
+  }
+  const productMap = {};
+  products.forEach(p => { productMap[String(p.id)] = p; });
+  const setsByProduct = {};
+  for (const s of sets) {
+    if (!validId(s.product_id) || !productMap[String(s.product_id)]) {
+      return { ok: false, error: 'BCART_PRODUCT_SET_PARENT_INVALID' };
+    }
+    const pid = String(s.product_id);
+    if (!setsByProduct[pid]) setsByProduct[pid] = [];
+    setsByProduct[pid].push(s);
+  }
+
+  const isEmptyFeature = v => v === null || v === '' || v === 0 || v === '0';
+  const numericPrice = v => {
+    if (typeof v === 'number') return Number.isFinite(v) && v >= 0 ? v : null;
+    if (typeof v !== 'string' || !/^\d+(\.\d+)?$/.test(v.trim())) return null;
+    const n = Number(v.trim());
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  const displayFeature = v => {
+    if (isEmptyFeature(v)) return { id: null, name: '' };
+    const f = featureMap[String(v)];
+    return { id: Number(v), name: f ? f.name : '', unresolved: !f };
+  };
+  const candidates = [];
+  const invalidPrices = [];
+  const summary = { products: products.length, productSets: sets.length, emptyFeature3: 0,
+    occupiedFeature3: 0, emptyWithoutEligibleSet: 0, eligibleSets: 0,
+    zeroPriceSets: 0, hiddenEligibleSets: 0, invalidPrices: 0, candidates: 0 };
+
+  for (const p of products) {
+    // フィールドが欠けた応答を「なし」に置き換えない。
+    if (![1, 2, 3].every(n => Object.prototype.hasOwnProperty.call(p, 'feature_id' + n)) ||
+        ![1, 2, 3].every(n => isEmptyFeature(p['feature_id' + n]) || validId(p['feature_id' + n]))) {
+      return { ok: false, error: 'BCART_FEATURE_FIELD_INVALID' };
+    }
+    if (!isEmptyFeature(p.feature_id3)) { summary.occupiedFeature3++; continue; }
+    summary.emptyFeature3++;
+    const eligibleSets = [];
+    for (const s of setsByProduct[String(p.id)] || []) {
+      const price = numericPrice(s.unit_price);
+      if (price === null) {
+        invalidPrices.push({ productId: Number(p.id), productName: p.name || '',
+          setId: Number(s.id), setName: s.name || '', productNo: String(s.product_no || ''),
+          reason: 'PRICE_INVALID' });
+        continue;
+      }
+      if (price > 1000) continue;
+      const warnings = [];
+      if (price === 0) { warnings.push('ZERO_PRICE'); summary.zeroPriceSets++; }
+      if (s.set_flag !== '表示') { warnings.push('SET_NOT_VISIBLE'); summary.hiddenEligibleSets++; }
+      if (Number(s.quantity) > 1) warnings.push('MULTIPLE_QUANTITY');
+      if (Number(s.min_order) > 1) warnings.push('MINIMUM_ORDER');
+      eligibleSets.push({ setId: Number(s.id), setName: s.name || '',
+        productNo: String(s.product_no || ''), unitPriceExTax: price,
+        quantity: s.quantity === undefined ? null : s.quantity,
+        unit: s.unit || '', minOrder: s.min_order === undefined ? null : s.min_order,
+        setFlag: s.set_flag || '', warnings: warnings });
+    }
+    if (!eligibleSets.length) { summary.emptyWithoutEligibleSet++; continue; }
+    const warnings = [];
+    if (p.flag !== '表示') warnings.push('PRODUCT_NOT_VISIBLE');
+    if ([p.feature_id1, p.feature_id2].some(v => String(v) === '17')) warnings.push('CAMPAIGN_IN_OTHER_SLOT');
+    if (p.hanbai_end) warnings.push('SALE_END_DATE_SET');
+    eligibleSets.sort((a, b) => a.unitPriceExTax - b.unitPriceExTax || a.setId - b.setId);
+    summary.eligibleSets += eligibleSets.length;
+    candidates.push({ productId: Number(p.id), productName: p.name || '', productFlag: p.flag || '',
+      hanbaiEnd: p.hanbai_end || null, features: [p.feature_id1, p.feature_id2, p.feature_id3].map(displayFeature),
+      eligibleSets: eligibleSets, warnings: warnings });
+  }
+  candidates.sort((a, b) => a.productId - b.productId);
+  summary.candidates = candidates.length;
+  summary.invalidPrices = invalidPrices.length;
+  return { ok: true, readOnly: true, criteria: { field: 'feature_id3', currentValue: 'empty',
+    priceField: 'product_sets.unit_price', priceBasis: 'standard_ex_tax', maxPrice: 1000, inclusive: true },
+    campaign: { id: 17, name: campaign.name, flag: campaign.flag },
+    summary: summary, candidates: candidates, invalidPrices: invalidPrices };
 }
