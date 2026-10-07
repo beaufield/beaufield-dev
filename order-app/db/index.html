@@ -1120,12 +1120,13 @@
   <div id="prop-urgent"></div>
   <div class="card ai-order-card" id="ai-order-card" style="display:none;padding:14px">
     <h3>今回の条件から発注候補を作る</h3>
-    <div class="ai-order-hint">ケース配分または通常提案への数日分の追加を試算します。文章の読取りは現在、定型表現のみ対応しています。候補を表示しても発注は保存されません。</div>
+    <div class="ai-order-hint">AI相談は実データを使って希望を理解し、候補を表示します（PCのAI接続を起動して利用）。下の手入力でも計算できます。候補の表示では発注は保存されません。</div>
     <label for="ai-order-supplier">発注先</label>
     <select id="ai-order-supplier"><option value="">発注先を選択</option></select>
     <label for="ai-order-request">今回の希望（任意）</label>
     <textarea id="ai-order-request" placeholder="例：プロCMCの1000と3000を各6ケース。1000は12本、3000は6本で1ケース"></textarea>
     <div class="ai-order-actions">
+      <button type="button" class="btn btn-primary" onclick="aiOrderConsultLive()">AIに相談する（実データ）</button>
       <button type="button" class="btn btn-outline btn-sm" onclick="aiOrderReadText()">文章から条件を読取る</button>
     </div>
     <label for="ai-order-mode">計算方法</label>
@@ -1446,7 +1447,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.77.1-db';
+const APP_VERSION    = 'v1.77.2-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -9517,6 +9518,71 @@ let aiOrderInitialized = false;
 let aiOrderInputVersion = 0;
 let aiOrderBuilding = false;
 let aiOrderApplying = false;
+/* AI_LIVE_BRIDGE_BEGIN: 認証済み読取値だけを本人PCの相談画面へ渡す。保存APIは呼ばない。 */
+async function aiOrderConsultLive() {
+  const supplierCode=document.getElementById('ai-order-supplier').value;
+  const supplier=masters.suppliers.find(s=>s.code===supplierCode);
+  if (!supplier || DATA_BACKEND!=='db') {aiOrderSetMessage('新画面で発注先を選んでください。','error');return;}
+  const request=document.getElementById('ai-order-request').value.trim();
+  if (request.length>3000) {aiOrderSetMessage('希望は3000文字以内で入力してください。','error');return;}
+  const nonce=crypto.randomUUID(),localOrigin='http://127.0.0.1:8793';
+  const popup=window.open(localOrigin+'/live?nonce='+encodeURIComponent(nonce),'_blank');
+  if (!popup) {aiOrderSetMessage('相談画面を開けません。ブラウザーのポップアップ設定を確認してください。','error');return;}
+  let snapshot=null,ready=false,done=false;
+  const send=()=>{if(snapshot && ready && !done) popup.postMessage({type:'order-ai-snapshot',nonce,snapshot,request},localOrigin);};
+  const cleanup=()=>{window.removeEventListener('message',receive);clearTimeout(timeout);};
+  const receive=event=>{
+    if(event.origin!==localOrigin || event.source!==popup || event.data?.nonce!==nonce) return;
+    if(event.data.type==='order-ai-ready') {ready=true;send();}
+    if(event.data.type==='order-ai-connected') {done=true;cleanup();aiOrderSetMessage('実データを接続しました。開いた相談画面で希望を送ってください。');}
+  };
+  window.addEventListener('message',receive);
+  const timeout=setTimeout(()=>{cleanup();if(!done) aiOrderSetMessage('PCの「AI発注試作を起動.cmd」を起動してから、もう一度このボタンを押してください。','warning');},60000);
+  aiOrderSetMessage('本番の商品・在庫・発注ルールを読み取っています…');
+  try {
+    if(!await loadProposals(true) || !productMaster.length || !proposalsData.analysisId) throw new Error('商品と分析データを読み込めません。');
+    const analysisId=proposalsData.analysisId,inputAt=proposalsData.analysisInputAt;
+    const analyzedMs=_analyzedAtMs();
+    if(analyzedMs===null || Date.now()-analyzedMs>36*3600000) throw new Error('朝の分析が36時間以上前です。分析を更新してから相談してください。');
+    const result=await gasGet({action:'getAiOrderMetrics',supplierCode,analysisId});
+    if(!result?.success || result.analysisId!==analysisId || proposalsData.analysisId!==analysisId ||
+       document.getElementById('ai-order-supplier').value!==supplierCode || proposalsData.analysisInputAt!==inputAt) throw new Error('分析又は発注先が変わりました。開き直してください。');
+    if(!Array.isArray(result.rows) || !result.rows.length) throw new Error('この発注先のAI用分析値がありません。');
+    const gcd=(a,b)=>b?gcd(b,a%b):a;
+    const rules=[],products=[];
+    const metrics=result.rows.map(row=>{
+      const master=productMaster.find(p=>p.code===row.code && aiOrderSupplierSame(p.supplierCD,supplierCode));
+      if(!master) throw new Error('分析にある商品を現在の商品マスターで照合できません。再取得してください。');
+      const cost=Number(master.purchasePrice);
+      if(master.purchasePrice===null || master.purchasePrice==='' || !Number.isFinite(cost) || cost<0 || Math.abs(cost-Number(row.unitCost))>0.001)
+        throw new Error('分析の単価と商品マスターが一致しません。更新を確認してください。');
+      const gid=row.groupId || mgGroupIdForProduct(supplierCode,row.name,row.code) || '';
+      const cfg=gid?mgConfigById(gid):null;
+      if(gid && !cfg) throw new Error('系列設定が見つかりません。提案を更新してください。');
+      const itemUnit=cfg?Number(mgUnitFor(cfg,row.name)):1;
+      const lot=Number(row.lot);
+      if(!Number.isInteger(lot) || lot<1 || !Number.isInteger(itemUnit) || itemUnit<1) throw new Error('商品の発注単位が不正です。');
+      if(cfg && !rules.some(g=>g.groupId===gid)) rules.push({groupId:gid,groupUnit:Number(cfg.groupUnit),
+        unsupported:mgIsCaseUnit(cfg) || mgSubUnitList(cfg).length>0,solo:mgIsSolo(gid)});
+      products.push({code:row.code,supplierCD:supplierCode,discontinued:String(master.discontinued||'')});
+      return {code:String(row.code),name:String(row.name),supplierCode,stock:Number(row.stock),onOrder:Number(row.onOrder),
+        recentDemandMonthly:Number(row.recentDemandMonthly),recommended:Number(row.recommended),lot:lot*itemUnit/gcd(lot,itemUnit),unitCost:cost,
+        excluded:!!row.excluded,eolFlagged:!!row.eolFlagged || master.discontinued==='廃番',groupId:gid,
+        minimumOrderEligible:minOrderCountsFor(supplierCode,row.code,row.name,gid)};
+    });
+    const unreflected=buildOrderedByCode({unreflectedOnly:true});
+    const blocked=new Set(Object.keys(unreflected));
+    (proposalsData.pendingOrders||[]).filter(r=>r.isDelayed).forEach(r=>blocked.add(r.code));
+    const setting=minOrderSetting(supplierCode);
+    snapshot={synthetic:false,source:'authenticated-order-app',analysisId,analyzedAt:String(result.analyzedAt),
+      analysisInputAt:String(result.analysisInputAt||inputAt||''),capturedAt:Date.now(),supplier:{code:supplierCode,name:String(supplier.name)},
+      metrics,products,blockedCodes:metrics.filter(r=>blocked.has(r.code)).map(r=>r.code),rules,
+      minimumOrder:{amount:setting?setting.amount:0,excludes:setting?setting.excludes:[]}};
+    send();
+  } catch(error) {cleanup();popup.close();aiOrderSetMessage(error.message || '実データを接続できません。','error');}
+}
+/* AI_LIVE_BRIDGE_END */
+
 function aiOrderInit() {
   const card = document.getElementById('ai-order-card');
   if (!card || DATA_BACKEND !== 'db') return;
