@@ -849,6 +849,13 @@
     .lot-settings-actions {display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;}
     #lot-settings-card input,#lot-settings-card select {font-size:16px;min-height:44px;}
     #lot-settings-card button {min-height:44px;}
+    .lot-settings-pagination {display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:10px;margin-top:12px;}
+    .lot-settings-pagination button {background:var(--primary);color:#fff;border:1px solid var(--primary);font-weight:600;}
+    .lot-settings-pagination button:disabled {background:#edf0f2;color:#68737a;border-color:#dce1e4;cursor:not-allowed;opacity:1;box-shadow:none;}
+    .lot-settings-pagination button:disabled:active {transform:none;}
+    #lot-settings-page {font-size:14px;font-weight:600;white-space:nowrap;}
+    #lot-settings-page-note {text-align:center;margin:8px 0 0;}
+    #lot-settings-results {scroll-margin-top:80px;}
 
 </style>
 </head>
@@ -1048,7 +1055,8 @@
     <button type="button" class="btn btn-outline" onclick="loadSettingsLots()">設定を更新</button>
     <div id="lot-settings-status" role="status" class="lot-settings-help">設定を読み込みます。</div>
     <div id="lot-settings-results"></div>
-    <div class="btn-row" style="margin-top:10px"><button id="lot-settings-prev" type="button" class="btn btn-secondary" onclick="lotSettingsMove(-1)">前へ</button><button id="lot-settings-next" type="button" class="btn btn-secondary" onclick="lotSettingsMove(1)">次へ</button></div>
+    <nav class="lot-settings-pagination" aria-label="商品のページ切替"><button id="lot-settings-prev" type="button" class="btn" onclick="lotSettingsMove(-1)" disabled>← 前へ</button><span id="lot-settings-page" role="status" aria-live="polite">— / —</span><button id="lot-settings-next" type="button" class="btn" onclick="lotSettingsMove(1)" disabled>次へ →</button></nav>
+    <p id="lot-settings-page-note" class="lot-settings-help">設定を読み込み中です。</p>
   </div>
 
   <div class="card">
@@ -1497,7 +1505,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.79.0-db';
+const APP_VERSION    = 'v1.79.1-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -6728,9 +6736,12 @@ function lotSettingsMatches() {
 function renderSettingsLots() {
   const wrap=document.getElementById('lot-settings-results');if(!wrap)return;
   const prev=document.getElementById('lot-settings-prev'),next=document.getElementById('lot-settings-next');
-  if(!lotSettingsReady) {wrap.innerHTML='';prev.disabled=true;next.disabled=true;return;}
+  const pageLabel=document.getElementById('lot-settings-page'),note=document.getElementById('lot-settings-page-note');
+  if(!lotSettingsReady) {wrap.innerHTML='';prev.disabled=true;next.disabled=true;pageLabel.textContent='— / —';note.textContent=lotSettingsLoading?'設定を読み込み中です。':'設定を更新してください。';return;}
   const matches=lotSettingsMatches(),pages=Math.max(1,Math.ceil(matches.length/40));
   lotSettingsPage=Math.max(1,Math.min(lotSettingsPage,pages));prev.disabled=lotSettingsPage===1;next.disabled=lotSettingsPage===pages;
+  pageLabel.textContent=matches.length?`${lotSettingsPage} / ${pages}`:'0 / 0';
+  note.textContent=!matches.length?'表示する商品はありません。':pages===1?'すべての商品を表示しています。':lotSettingsPage===pages?'最後のページです。':lotSettingsPage===1?'最初のページです。':'';
   const start=(lotSettingsPage-1)*40;
   document.getElementById('lot-settings-status').textContent=`${matches.length}件 / ${lotSettingsPage}ページ目（手動設定 ${lotSettingsRows.length}件）`+(productMaster.length?'':' 商品マスターを読み込んでから設定を更新してください。');
   wrap.innerHTML=matches.slice(start,start+40).map(({p,manual})=>{
@@ -6739,7 +6750,13 @@ function renderSettingsLots() {
     return `<div class="lot-settings-row"><div class="lot-settings-name">${escHtml(p.name)}</div><div class="lot-settings-meta">商品コード ${escHtml(p.code)} ／ ${escHtml(resolveSupplierName(p.supplierCD,''))}</div><div>${escHtml(label)}</div><div class="lot-settings-actions"><button type="button" class="btn btn-outline" ${orderAction('lotSettingsEdit',p.code)}>設定・変更</button>${manual?`<button type="button" class="btn btn-secondary" ${orderAction('lotSettingsRestore',p.code)}>自動推定に戻す</button>`:''}</div></div>`;
   }).join('')||'<div class="lot-settings-help">条件に合う商品はありません。</div>';
 }
-function lotSettingsMove(delta) {lotSettingsPage+=delta;renderSettingsLots();}
+function lotSettingsMove(delta) {
+  if(!lotSettingsReady || lotSettingsLoading)return;
+  const before=lotSettingsPage;
+  lotSettingsPage+=delta;renderSettingsLots();
+  // ページが変わったら新しい商品の先頭を見せ、押した結果をその場で確認できるようにする。
+  if(lotSettingsPage!==before)document.getElementById('lot-settings-results').scrollIntoView({block:'start',behavior:'auto'});
+}
 function lotSettingsEdit(code) {
   if(!lotSettingsReady || lotSettingsLoading) {showToast('設定を更新してから編集してください。','error');return;}
   const p=productMaster.find(r=>r.code===code);if(!p)return;
