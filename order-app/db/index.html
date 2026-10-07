@@ -1505,7 +1505,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.79.1-db';
+const APP_VERSION    = 'v1.80.0-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -9875,9 +9875,10 @@ async function aiMobileAsk(followup) {
       aiMobileLines('conditions',value.constraints);aiMobileLines('warnings',value.draft.warnings);aiMobileEl('rows').replaceChildren();
       value.draft.rows.filter(r=>r.qty>0).forEach(row=>{
         const card=document.createElement('div');card.className='ai-mobile-item';const name=document.createElement('span'),qty=document.createElement('strong');
-        name.textContent=row.name;qty.textContent=row.qty+'点 / 税抜 '+Number(row.amount).toLocaleString('ja-JP')+'円';card.append(name,qty);aiMobileEl('rows').appendChild(card);
+        const quantity=value.draft.mode==='case_order'?`${row.cases}ケース（${row.qty}個・1ケース${row.pack}個）`:row.qty+'点';
+        name.textContent=row.name;qty.textContent=quantity+' / 税抜 '+Number(row.amount).toLocaleString('ja-JP')+'円';card.append(name,qty);aiMobileEl('rows').appendChild(card);
       });
-      aiMobileEl('total').textContent='税抜合計 '+Number(value.draft.totalAmount).toLocaleString('ja-JP')+'円';aiMobileEl('result').hidden=false;
+      aiMobileEl('total').textContent=(value.draft.mode==='case_order'?`合計${value.draft.totalCases}ケース / `:'')+'税抜合計 '+Number(value.draft.totalAmount).toLocaleString('ja-JP')+'円';aiMobileEl('result').hidden=false;
     }
     aiMobileStatus(value.status==='proposed'?'候補ができました。追加の希望で変更できます。発注は保存されていません。':value.questions.length?'確認への回答を入力して続けてください。':value.message);
   } catch(e) {if(epoch===aiMobile.epoch) aiMobileStatus(e.message);}
