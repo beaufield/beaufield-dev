@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="robots" content="noindex,nofollow">
   <!-- 静的LPの通信先と実行スクリプトを限定します。申込は既存フォームへのリンクです。 -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'sha256-LULY2uTjRYDVcIAIC6MFLTJbC197lUMxBTOqnNE+rEE='; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'sha256-PIZ1mBkQjyIvfy6ozpJc1zZyMyzMfsbXVl0lSARXrUQ='; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <link rel="canonical" href="https://beaufield.github.io/beaufield-dev/beaufes/event.html">
 
@@ -198,6 +198,17 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
   .program-fold[open] .reservation-badge{margin-left:3px;padding:3px 7px;font-size:9px;letter-spacing:.03em}
 }
 
+
+/* サインドの主案内に、スマートミラーの展示を併記します。 */
+.fold-heading .mirror-exhibit{width:100%;font-size:11px;line-height:1.6;color:#79603b}
+.smartmirror-feature{display:grid;grid-template-columns:1fr 1.1fr;gap:28px;align-items:center;margin-top:30px;padding-top:28px;border-top:1px solid #dfcfb2}
+.smartmirror-feature figure img{width:100%;height:auto;border:1px solid #dfcfb2}
+.smartmirror-feature figcaption{margin-top:6px;font-size:10px;color:#607782}
+.smartmirror-feature h5{margin:0 0 12px;font:600 25px/1.5 'Yu Mincho',serif;color:#174c61}
+.smartmirror-feature .points-label{margin-top:17px}
+.smartmirror-condition{margin-top:16px;font-size:12px;line-height:1.9;color:#607782}
+@media(max-width:700px){.fold-heading .mirror-exhibit{font-size:10px}.smartmirror-feature{grid-template-columns:1fr;gap:20px;margin-top:24px;padding-top:24px}.smartmirror-feature h5{font-size:23px}}
+
 </style>
 </head>
 <body><div style="background:#b91c1c;color:white;padding:12px;text-align:center">確認用LP／今回の追加・修正は本番には未反映です。</div>
@@ -340,8 +351,13 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
           <div class="card-copy"><p class="card-hook">肌と目元に、話題性のある店販提案を。</p><p class="card-description">HARI美容発想のV3ファンデーションをはじめとするSPICAREと、まつ毛・目元ケアを展開するSoAddicted。商品の違いや使い方を確認し、カウンセリングと組み合わせた提案のヒントを持ち帰れます。</p><p class="points-label">展示予定</p><ul class="card-points"><li>SPICARE</li><li>V3ファンデーション</li><li>SoAddicted</li></ul></div>
         </details>
         <details class="discovery-card program-fold" id="beautymerit">
-          <summary class="program-card-summary"><figure class="card-visual"><img src="../event-assets/scene-beautymerit.webp" width="1200" height="800" loading="lazy" alt="ビューティメリットの予約管理画面をスマートフォンとパソコンに表示した紹介イメージ"></figure><div class="fold-heading"><p class="card-category">メーカーブース / サインド</p><h4>BeautyMerit〈ビューティメリット〉</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
-          <div class="card-copy"><p class="card-hook">予約の入口をまとめて、サロン運営をスマートに。</p><p class="card-description">複数の予約サイトをまとめて管理し、LINE・Google・Instagramなどからの予約導線や顧客管理にも対応するBeautyMerit。現在の予約運用を相談しながら、自店に合う活用イメージを確認できます。</p><p class="points-label">会場で相談できること</p><ul class="card-points"><li>予約一元管理</li><li>LINE・SNS予約</li><li>顧客管理</li></ul></div>
+          <summary class="program-card-summary"><figure class="card-visual"><img src="../event-assets/scene-beautymerit.webp" width="1200" height="800" loading="lazy" alt="ビューティメリットの予約管理画面をスマートフォンとパソコンに表示した紹介イメージ"></figure><div class="fold-heading"><p class="card-category">メーカーブース / サインド</p><h4>BeautyMerit〈ビューティメリット〉</h4><span class="mirror-exhibit">BM Smart Mirrorも展示</span><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
+          <div class="card-copy"><p class="card-hook">予約の入口をまとめて、サロン運営をスマートに。</p><p class="card-description">複数の予約サイトをまとめて管理し、LINE・Google・Instagramなどからの予約導線や顧客管理にも対応するBeautyMerit。現在の予約運用を相談しながら、自店に合う活用イメージを確認できます。</p><p class="points-label">会場で相談できること</p><ul class="card-points"><li>予約一元管理</li><li>LINE・SNS予約</li><li>顧客管理</li></ul>
+            <section class="smartmirror-feature" aria-labelledby="smartmirror-title" id="smartmirror">
+              <figure><img src="../event-assets/official-bm-smart-mirror.webp" width="1920" height="1008" loading="lazy" alt="サロンのセット面に設置されたBM Smart Mirror。鏡の上にキャンペーンのお知らせや動画を表示"><figcaption>BM Smart Mirror／メーカー提供資料より</figcaption></figure>
+              <div><p class="card-category">サインドブースで実機展示</p><h5 id="smartmirror-title">BM Smart Mirror<br>〈スマートミラー〉</h5><p class="card-hook">鏡から広がる、お客様とのコミュニケーション。</p><p class="card-description">BeautyMeritと連携する、美容室向けのスマートミラー。お客様のアプリからチェックインすると、予約・カルテ情報を鏡の画面で確認できます。動画・画像やテキストのお知らせも配信でき、施術中や待ち時間に店販商品・メニューを伝えるきっかけに。会場では実機をご覧いただきながら、サロンでの活用を相談できます。</p><p class="points-label">会場で確かめたいこと</p><ul class="card-points"><li>アプリでチェックイン</li><li>予約・カルテ情報の表示</li><li>動画・画像・お知らせ配信</li></ul><p class="smartmirror-condition">※導入にはBeautyMeritのご契約とインターネット回線が必要です。設置や費用などの詳細は、当日ブースでご相談ください。</p></div>
+            </section>
+          </div>
         </details>
 <details class="discovery-card program-fold" id="creates-preview">
           <summary class="program-card-summary"><figure class="card-visual"><img src="../event-assets/scene-creates-preview.webp" width="1200" height="800" loading="lazy" alt="クレイツのスタイリング機器を海辺のサロンに配した紹介イメージ"></figure><div class="fold-heading"><p class="card-category">メーカーブース / クレイツ</p><h4>CREATEs</h4><span class="fold-action"><span class="fold-action-text">タップして詳細を見る</span></span></div></summary>
@@ -447,7 +463,7 @@ body{background:#fffdf7;background-image:radial-gradient(ellipse at 100% 28%,#f1
   <aside class="mobile-cta" aria-label="来場申し込み"><span><strong>入場無料</strong><br>10/20 申込締切</span><a class="button" href="liff.html">LINEから申込<span aria-hidden="true">↗</span></a></aside>
   <script>
     // LPの版数はこの定数だけで管理します。
-    const APP_VERSION = '0.12.6';
+    const APP_VERSION = '0.13.0';
     document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
   </script>
 </body>
