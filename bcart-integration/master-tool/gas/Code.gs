@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.32.1';
+const VERSION = 'v2.32.2';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -5590,8 +5590,7 @@ function previewProductsByNo(params) {
 // Bカート更新、シート操作、通知、認証情報の返却は行わない。
 function previewLowPriceCampaign(params) {
   // この業務条件を固定し、任意APIへの中継にはしない。
-  if (params && ((params.maxPrice !== undefined && params.maxPrice !== 1000) ||
-      (params.featureId !== undefined && params.featureId !== 17))) {
+  if (params && params.maxPrice !== undefined && params.maxPrice !== 1000) {
     return { ok: false, error: 'INVALID_CAMPAIGN_CONDITION' };
   }
   const featuresRes = bcartGetAll('/product_features');
@@ -5617,12 +5616,17 @@ function previewLowPriceCampaign(params) {
   }
   const featureMap = {};
   features.forEach(f => { featureMap[String(f.id)] = f; });
-  const campaign = featureMap['17'];
+  const matchingCampaigns = features.filter(f => f.name === '1000円以下の商品');
+  const campaign = matchingCampaigns.length === 1 ? matchingCampaigns[0] : null;
   // 既存特集APIはflagを省略する場合がある。名前とIDは必ず一致させる。
   if (!campaign || campaign.name !== '1000円以下の商品' ||
       (campaign.flag !== undefined && String(campaign.flag) !== '1')) {
     return { ok: false, error: 'CAMPAIGN_CHANGED', campaign: campaign ?
       { id: campaign.id, name: campaign.name, flag: campaign.flag === undefined ? null : campaign.flag } : null };
+  }
+  const campaignId = Number(campaign.id);
+  if (params && params.featureId !== undefined && params.featureId !== campaignId) {
+    return { ok: false, error: 'INVALID_CAMPAIGN_CONDITION' };
   }
   const productMap = {};
   products.forEach(p => { productMap[String(p.id)] = p; });
@@ -5686,7 +5690,7 @@ function previewLowPriceCampaign(params) {
     if (!eligibleSets.length) { summary.emptyWithoutEligibleSet++; continue; }
     const warnings = [];
     if (p.flag !== '表示') warnings.push('PRODUCT_NOT_VISIBLE');
-    if ([p.feature_id1, p.feature_id2].some(v => String(v) === '17')) warnings.push('CAMPAIGN_IN_OTHER_SLOT');
+    if ([p.feature_id1, p.feature_id2].some(v => Number(v) === campaignId)) warnings.push('CAMPAIGN_IN_OTHER_SLOT');
     if (p.hanbai_end) warnings.push('SALE_END_DATE_SET');
     eligibleSets.sort((a, b) => a.unitPriceExTax - b.unitPriceExTax || a.setId - b.setId);
     summary.eligibleSets += eligibleSets.length;
@@ -5699,6 +5703,6 @@ function previewLowPriceCampaign(params) {
   summary.invalidPrices = invalidPrices.length;
   return { ok: true, readOnly: true, criteria: { field: 'feature_id3', currentValue: 'empty',
     priceField: 'product_sets.unit_price', priceBasis: 'standard_ex_tax', maxPrice: 1000, inclusive: true },
-    campaign: { id: 17, name: campaign.name, flag: campaign.flag === undefined ? null : campaign.flag },
+    campaign: { id: campaignId, name: campaign.name, flag: campaign.flag === undefined ? null : campaign.flag },
     summary: summary, candidates: candidates, invalidPrices: invalidPrices };
 }
