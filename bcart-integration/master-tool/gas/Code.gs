@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.32.0';
+const VERSION = 'v2.32.1';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -5618,8 +5618,11 @@ function previewLowPriceCampaign(params) {
   const featureMap = {};
   features.forEach(f => { featureMap[String(f.id)] = f; });
   const campaign = featureMap['17'];
-  if (!campaign || campaign.name !== '1000円以下の商品' || String(campaign.flag) !== '1') {
-    return { ok: false, error: 'CAMPAIGN_CHANGED' };
+  // 既存特集APIはflagを省略する場合がある。名前とIDは必ず一致させる。
+  if (!campaign || campaign.name !== '1000円以下の商品' ||
+      (campaign.flag !== undefined && String(campaign.flag) !== '1')) {
+    return { ok: false, error: 'CAMPAIGN_CHANGED', campaign: campaign ?
+      { id: campaign.id, name: campaign.name, flag: campaign.flag === undefined ? null : campaign.flag } : null };
   }
   const productMap = {};
   products.forEach(p => { productMap[String(p.id)] = p; });
@@ -5696,6 +5699,6 @@ function previewLowPriceCampaign(params) {
   summary.invalidPrices = invalidPrices.length;
   return { ok: true, readOnly: true, criteria: { field: 'feature_id3', currentValue: 'empty',
     priceField: 'product_sets.unit_price', priceBasis: 'standard_ex_tax', maxPrice: 1000, inclusive: true },
-    campaign: { id: 17, name: campaign.name, flag: campaign.flag },
+    campaign: { id: 17, name: campaign.name, flag: campaign.flag === undefined ? null : campaign.flag },
     summary: summary, candidates: candidates, invalidPrices: invalidPrices };
 }
