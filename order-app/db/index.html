@@ -827,7 +827,22 @@
     .kpi-detail       { display: none; padding: 0 8px 10px; font-size: 12px; color: var(--text-light); border-top: 1px solid var(--border); margin-top: 4px; padding-top: 8px; }
     .kpi-detail.open  { display: block; }
     .kpi-detail-row   { display: flex; justify-content: space-between; padding: 2px 0; }
-  </style>
+  #ai-mobile-modal {position:fixed;inset:0;z-index:1200;background:#0008;display:flex;align-items:center;justify-content:center;padding:12px;}
+#ai-mobile-modal[hidden] {display:none;}
+#ai-mobile-modal .ai-mobile-panel {width:min(680px,100%);max-height:calc(100dvh - 24px);overflow:auto;overscroll-behavior:contain;background:var(--bg,#fff);border-radius:12px;padding:16px;box-sizing:border-box;}
+#ai-mobile-modal .ai-mobile-header {display:flex;justify-content:space-between;gap:12px;align-items:center;}
+#ai-mobile-modal h3 {font-size:18px;margin:0;}
+#ai-mobile-modal label {display:block;font-weight:700;margin:12px 0 6px;}
+#ai-mobile-modal textarea {display:block;box-sizing:border-box;width:100%;font:inherit;font-size:16px;line-height:1.6;border:1px solid var(--border,#bbb);border-radius:8px;padding:10px;margin-bottom:12px;}
+#ai-mobile-modal button {min-height:44px;}
+#ai-mobile-modal p,#ai-mobile-modal li {line-height:1.6;overflow-wrap:anywhere;}
+#ai-mobile-modal .ai-mobile-user,#ai-mobile-modal .ai-mobile-assistant {white-space:pre-wrap;overflow-wrap:anywhere;border-radius:8px;padding:10px;margin:10px 0;font-size:14px;background:#eaf3ef;}
+#ai-mobile-modal .ai-mobile-assistant {background:#f3f5f4;}
+#ai-mobile-modal .ai-mobile-item {border-bottom:1px solid var(--border,#ddd);padding:10px 0;overflow-wrap:anywhere;}
+#ai-mobile-modal .ai-mobile-item strong {display:block;margin-top:5px;}
+@media(max-width:480px) {#ai-mobile-modal {padding:0;}#ai-mobile-modal .ai-mobile-panel {max-height:100dvh;min-height:100dvh;border-radius:0;padding:16px 12px;padding-bottom:max(16px,env(safe-area-inset-bottom));}#ai-mobile-modal #ai-mobile-ask,#ai-mobile-modal #ai-mobile-continue {width:100%;}}
+
+</style>
 </head>
 <body>
 
@@ -1120,13 +1135,13 @@
   <div id="prop-urgent"></div>
   <div class="card ai-order-card" id="ai-order-card" style="display:none;padding:14px">
     <h3>今回の条件から発注候補を作る</h3>
-    <div class="ai-order-hint">AI相談は実データを使って希望を理解し、候補を表示します（PCのAI接続を起動して利用）。下の手入力でも計算できます。候補の表示では発注は保存されません。</div>
+    <div class="ai-order-hint">AI相談は実データを使って希望を理解し、候補を表示します（処理担当PCのAI接続を起動して、スマホ・PCから利用）。下の手入力でも計算できます。候補の表示では発注は保存されません。</div>
     <label for="ai-order-supplier">発注先</label>
     <select id="ai-order-supplier"><option value="">発注先を選択</option></select>
     <label for="ai-order-request">今回の希望（任意）</label>
     <textarea id="ai-order-request" placeholder="例：プロCMCの1000と3000を各6ケース。1000は12本、3000は6本で1ケース"></textarea>
     <div class="ai-order-actions">
-      <button type="button" class="btn btn-primary" onclick="aiOrderConsultLive()">AIに相談する（実データ）</button>
+      <button type="button" class="btn btn-primary" onclick="aiOrderConsultMobile()">AIに相談する（スマホ・PC）</button>
       <button type="button" class="btn btn-outline btn-sm" onclick="aiOrderReadText()">文章から条件を読取る</button>
     </div>
     <label for="ai-order-mode">計算方法</label>
@@ -1443,11 +1458,26 @@
 <!-- ==============================
      JavaScript
 ============================== -->
+<div id="ai-mobile-modal" role="dialog" aria-modal="true" aria-labelledby="ai-mobile-title" hidden>
+  <div class="ai-mobile-panel">
+    <div class="ai-mobile-header"><h3 id="ai-mobile-title">AIに発注を相談</h3><button type="button" class="btn btn-outline" id="ai-mobile-close">閉じる</button></div>
+    <p id="ai-mobile-basis" class="ai-order-hint"></p>
+    <p class="ai-order-hint">実データで候補を作ります。発注は保存されません。AIの処理担当PCを起動して利用します。</p>
+    <label for="ai-mobile-request">今回の希望</label>
+    <textarea id="ai-mobile-request" maxlength="2000" rows="5"></textarea>
+    <button type="button" class="btn btn-primary" id="ai-mobile-ask">AIに相談する</button>
+    <p id="ai-mobile-status" role="status" aria-live="polite"></p>
+    <div id="ai-mobile-conversation"></div>
+    <div id="ai-mobile-result" hidden><h4>発注候補</h4><ul id="ai-mobile-conditions"></ul><div id="ai-mobile-rows"></div><p id="ai-mobile-total"></p><ul id="ai-mobile-warnings"></ul></div>
+    <div id="ai-mobile-followup" hidden><label for="ai-mobile-answer">追加の希望・確認への回答</label><textarea id="ai-mobile-answer" maxlength="2000" rows="3" placeholder="例：他の条件はそのままで、calmを最低6本にして"></textarea><button type="button" class="btn btn-primary" id="ai-mobile-continue">この条件で続ける</button></div>
+  </div>
+</div>
+
 <script>
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.77.2-db';
+const APP_VERSION    = 'v1.77.3-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -9582,6 +9612,174 @@ async function aiOrderConsultLive() {
   } catch(error) {cleanup();popup.close();aiOrderSetMessage(error.message || '実データを接続できません。','error');}
 }
 /* AI_LIVE_BRIDGE_END */
+
+async function aiOrderReadLiveSnapshot(supplierCode) {
+  const supplier=masters.suppliers.find(s=>s.code===supplierCode);
+  if(!supplier) throw new Error('発注先を確認してください。');
+    if(!await loadProposals(true) || !productMaster.length || !proposalsData.analysisId) throw new Error('商品と分析データを読み込めません。');
+    const analysisId=proposalsData.analysisId,inputAt=proposalsData.analysisInputAt;
+    const analyzedMs=_analyzedAtMs();
+    if(analyzedMs===null || Date.now()-analyzedMs>36*3600000) throw new Error('朝の分析が36時間以上前です。分析を更新してから相談してください。');
+    const result=await gasGet({action:'getAiOrderMetrics',supplierCode,analysisId});
+    if(!result?.success || result.analysisId!==analysisId || proposalsData.analysisId!==analysisId ||
+       document.getElementById('ai-order-supplier').value!==supplierCode || proposalsData.analysisInputAt!==inputAt) throw new Error('分析又は発注先が変わりました。開き直してください。');
+    if(!Array.isArray(result.rows) || !result.rows.length) throw new Error('この発注先のAI用分析値がありません。');
+    const gcd=(a,b)=>b?gcd(b,a%b):a;
+    const rules=[],products=[];
+    const metrics=result.rows.map(row=>{
+      const master=productMaster.find(p=>p.code===row.code && aiOrderSupplierSame(p.supplierCD,supplierCode));
+      if(!master) throw new Error('分析にある商品を現在の商品マスターで照合できません。再取得してください。');
+      const cost=Number(master.purchasePrice);
+      if(master.purchasePrice===null || master.purchasePrice==='' || !Number.isFinite(cost) || cost<0 || Math.abs(cost-Number(row.unitCost))>0.001)
+        throw new Error('分析の単価と商品マスターが一致しません。更新を確認してください。');
+      const gid=row.groupId || mgGroupIdForProduct(supplierCode,row.name,row.code) || '';
+      const cfg=gid?mgConfigById(gid):null;
+      if(gid && !cfg) throw new Error('系列設定が見つかりません。提案を更新してください。');
+      const itemUnit=cfg?Number(mgUnitFor(cfg,row.name)):1;
+      const lot=Number(row.lot);
+      if(!Number.isInteger(lot) || lot<1 || !Number.isInteger(itemUnit) || itemUnit<1) throw new Error('商品の発注単位が不正です。');
+      if(cfg && !rules.some(g=>g.groupId===gid)) rules.push({groupId:gid,groupUnit:Number(cfg.groupUnit),
+        unsupported:mgIsCaseUnit(cfg) || mgSubUnitList(cfg).length>0,solo:mgIsSolo(gid)});
+      products.push({code:row.code,supplierCD:supplierCode,discontinued:String(master.discontinued||'')});
+      return {code:String(row.code),name:String(row.name),supplierCode,stock:Number(row.stock),onOrder:Number(row.onOrder),
+        recentDemandMonthly:Number(row.recentDemandMonthly),recommended:Number(row.recommended),lot:lot*itemUnit/gcd(lot,itemUnit),unitCost:cost,
+        excluded:!!row.excluded,eolFlagged:!!row.eolFlagged || master.discontinued==='廃番',groupId:gid,
+        minimumOrderEligible:minOrderCountsFor(supplierCode,row.code,row.name,gid)};
+    });
+    const unreflected=buildOrderedByCode({unreflectedOnly:true});
+    const blocked=new Set(Object.keys(unreflected));
+    (proposalsData.pendingOrders||[]).filter(r=>r.isDelayed).forEach(r=>blocked.add(r.code));
+    const setting=minOrderSetting(supplierCode);
+    const snapshot={synthetic:false,source:'authenticated-order-app',analysisId,analyzedAt:String(result.analyzedAt),
+      analysisInputAt:String(result.analysisInputAt||inputAt||''),capturedAt:Date.now(),supplier:{code:supplierCode,name:String(supplier.name)},
+      metrics,products,blockedCodes:metrics.filter(r=>blocked.has(r.code)).map(r=>r.code),rules,
+      minimumOrder:{amount:setting?setting.amount:0,excludes:setting?setting.excludes:[]}};
+
+ return snapshot;
+}
+
+/* AI_MOBILE_BEGIN: 本番と同じ認証RPCで本人限定相談。発注保存は呼ばない。 */
+const aiMobile={epoch:0,history:[],supplier:null,jobId:null,busy:false,analysisId:null,previousFocus:null,scroll:''};
+const aiMobileEl=id=>document.getElementById('ai-mobile-'+id);
+function aiMobileStatus(text) {aiMobileEl('status').textContent=text;}
+function aiMobileBusy(value) {
+  aiMobile.busy=value;['ask','continue'].forEach(id=>{aiMobileEl(id).disabled=value;});
+  aiMobileEl('request').readOnly=value;
+}
+function aiMobileError(code) {
+  return ({AI_RUNNER_OFFLINE:'AIの処理担当PCが接続されていません。PCで「AIスマホ相談を起動.cmd」を起動し、スリープを解除してください。',
+    AI_BUSY:'前の相談を処理しています。しばらく待ってください。',FORBIDDEN:'このAI相談は設定された本人だけ利用できます。',
+    SESSION_INVALID:'ログインを更新してから開き直してください。',ANALYSIS_CHANGED:'分析が更新されました。相談を開き直してください。',
+    AI_RATE_LIMIT:'短時間の相談回数の上限です。時間をおいてください。',AI_JOB_EXPIRED:'相談の有効時間が切れました。開き直してください。',
+    AI_RUNNER_INTERRUPTED:'処理担当PCの接続が途切れました。PCの状態を確認してから、改めて相談してください。',
+    AI_CONSULT_FAILED:'今回の相談を完了できませんでした。希望を確認して、改めて相談してください。'})[code] || 'AI相談の接続を確認できません。';
+}
+function aiMobileLines(id,lines) {
+  const parent=aiMobileEl(id);parent.replaceChildren();
+  lines.forEach(text=>{const li=document.createElement('li');li.textContent=text;parent.appendChild(li);});
+}
+function aiMobileRenderConversation() {
+  const target=aiMobileEl('conversation');target.replaceChildren();
+  aiMobile.history.forEach(entry=>{const p=document.createElement('div');p.className='ai-mobile-'+entry.role;p.textContent=entry.text;target.appendChild(p);});
+}
+async function aiOrderConsultMobile() {
+  if(aiMobile.busy || !aiMobileEl('modal').hidden) return;
+  const code=document.getElementById('ai-order-supplier').value;
+  const supplier=masters.suppliers.find(s=>s.code===code);
+  if(!supplier || DATA_BACKEND!=='db') {aiOrderSetMessage('新画面で発注先を選んでください。','error');return;}
+  aiMobile.epoch++;aiMobile.supplier={code,name:supplier.name};aiMobile.analysisId=null;aiMobile.history=[];aiMobile.jobId=null;
+  aiMobile.previousFocus=document.activeElement;aiMobile.scroll=document.body.style.overflow;document.body.style.overflow='hidden';
+  aiMobileEl('request').value=document.getElementById('ai-order-request').value.trim().slice(0,2000);
+  aiMobileEl('result').hidden=aiMobileEl('followup').hidden=true;aiMobileRenderConversation();
+  aiMobileEl('basis').textContent=supplier.name+' / 在庫は朝の分析値を使用';
+  aiMobileEl('modal').hidden=false;aiMobileEl('close').focus();
+  const epoch=aiMobile.epoch;aiMobileBusy(true);aiMobileStatus('AIの接続を確認しています…');
+  try {
+    const state=await dbRpc('get_ai_order_relay_status',{});
+    if(epoch!==aiMobile.epoch) return;
+    if(!state?.success || !state.online) throw new Error(aiMobileError(state?.success?'AI_RUNNER_OFFLINE':state?.error));
+    aiMobileStatus('希望を入力して相談してください。');aiMobileEl('request').focus();
+  } catch(e) {if(epoch===aiMobile.epoch) aiMobileStatus(e.message);}
+  finally {if(epoch===aiMobile.epoch) aiMobileBusy(false);}
+}
+async function aiMobileClose() {
+  const jobId=aiMobile.jobId;aiMobile.epoch++;aiMobile.jobId=null;aiMobileBusy(false);
+  aiMobileEl('modal').hidden=true;document.body.style.overflow=aiMobile.scroll;aiMobile.previousFocus?.focus();
+  if(jobId) {try {await dbRpc('cancel_ai_order_consult',{requestId:jobId},{write:true});} catch {} }
+}
+function aiMobileAccept(response,request) {
+  if(!response || response.protocolVersion!=='agent-preview-1' || response.synthetic!==false || response.requestId!==request.requestId ||
+     response.inputRevision!==request.inputRevision || !['proposed','clarify','cannot'].includes(response.status) ||
+     typeof response.message!=='string' || !Array.isArray(response.questions) || !Array.isArray(response.constraints) ||
+     response.status==='proposed' && (!Array.isArray(response.draft?.rows) || !Array.isArray(response.draft?.warnings) || response.questions.length))
+    throw new Error('この相談への回答を確認できません。');
+  return response;
+}
+async function aiMobileAsk(followup) {
+  if(aiMobile.busy) return;
+  const wording=aiMobileEl(followup?'answer':'request').value.trim();
+  if(!wording || wording.length>2000 || followup && !aiMobile.history.length) {aiMobileStatus('希望または確認への回答を入力してください。');return;}
+  const history=followup?[...aiMobile.history,{role:'user',text:wording}]:[{role:'user',text:wording}];
+  const messages=history.filter(x=>x.role==='user').map(x=>x.text);
+  if(messages.length>12 || messages.join('').length>8000 || history.length>24 || history.reduce((n,x)=>n+x.text.length,0)>16000) {aiMobileStatus('会話が長くなりました。希望をまとめて、新しい相談を始めてください。');return;}
+  const epoch=aiMobile.epoch,request={protocolVersion:'1',requestId:crypto.randomUUID(),inputRevision:epoch,messages,suppliers:[aiMobile.supplier],selectedSupplierCode:aiMobile.supplier.code};
+  aiMobileBusy(true);aiMobileEl('result').hidden=aiMobileEl('followup').hidden=true;aiMobileStatus('実データを確認しています…');
+  try {
+    const snapshot=await aiOrderReadLiveSnapshot(aiMobile.supplier.code);
+    if(epoch!==aiMobile.epoch) return;
+    if(followup && aiMobile.analysisId!==snapshot.analysisId) throw new Error(aiMobileError('ANALYSIS_CHANGED'));
+    aiMobile.jobId=request.requestId;aiMobileStatus('AIが条件を確認し、候補を計算しています…');
+    let queued;
+    try {queued=await dbRpc('enqueue_ai_order_consult',{request,conversation:history,snapshot},{write:true});}
+    catch {queued=null;} // 通信切断でも新しいrequestIdで再送しない。同じ依頼の結果を照会する。
+    if(epoch!==aiMobile.epoch) {try {await dbRpc('cancel_ai_order_consult',{requestId:request.requestId},{write:true});} catch {} return;}
+    if(queued && !queued.success) throw new Error(aiMobileError(queued.error));
+    const until=Date.now()+210000;let value=null;
+    while(epoch===aiMobile.epoch && Date.now()<until) {
+      const status=await dbRpc('get_ai_order_consult_status',{requestId:request.requestId});
+      if(epoch!==aiMobile.epoch) return;
+      if(status?.success && status.state==='complete') {value=aiMobileAccept(status.result,request);break;}
+      if(status?.success && ['failed','cancelled'].includes(status.state)) throw new Error(aiMobileError(status.error));
+      if(status && !status.success && !['AI_JOB_NOT_FOUND','DB_ERROR'].includes(status.error)) throw new Error(aiMobileError(status.error));
+      await new Promise(resolve=>setTimeout(resolve,2500));
+    }
+    if(epoch!==aiMobile.epoch) return;
+    if(!value) throw new Error('回答を確認する時間が過ぎました。同じ依頼は自動再送していません。閉じてからPCの状態を確認してください。');
+    if(proposalsData.analysisId!==snapshot.analysisId || document.getElementById('ai-order-supplier').value!==snapshot.supplier.code) throw new Error(aiMobileError('ANALYSIS_CHANGED'));
+    aiMobile.history=[...history,{role:'assistant',text:[value.message,...value.questions].join('\n')}];aiMobile.analysisId=snapshot.analysisId;aiMobile.jobId=null;
+    aiMobileRenderConversation();aiMobileEl('answer').value='';aiMobileEl('followup').hidden=value.status!=='proposed' && !value.questions.length;
+    aiMobileEl('basis').textContent=snapshot.supplier.name+' / 在庫の基準 '+snapshot.analysisInputAt;
+    if(value.status==='proposed') {
+      aiMobileLines('conditions',value.constraints);aiMobileLines('warnings',value.draft.warnings);aiMobileEl('rows').replaceChildren();
+      value.draft.rows.filter(r=>r.qty>0).forEach(row=>{
+        const card=document.createElement('div');card.className='ai-mobile-item';const name=document.createElement('span'),qty=document.createElement('strong');
+        name.textContent=row.name;qty.textContent=row.qty+'点 / 税抜 '+Number(row.amount).toLocaleString('ja-JP')+'円';card.append(name,qty);aiMobileEl('rows').appendChild(card);
+      });
+      aiMobileEl('total').textContent='税抜合計 '+Number(value.draft.totalAmount).toLocaleString('ja-JP')+'円';aiMobileEl('result').hidden=false;
+    }
+    aiMobileStatus(value.status==='proposed'?'候補ができました。追加の希望で変更できます。発注は保存されていません。':value.questions.length?'確認への回答を入力して続けてください。':value.message);
+  } catch(e) {if(epoch===aiMobile.epoch) aiMobileStatus(e.message);}
+  finally {if(epoch===aiMobile.epoch) aiMobileBusy(false);}
+}
+aiMobileEl('close').addEventListener('click',aiMobileClose);
+aiMobileEl('ask').addEventListener('click',()=>aiMobileAsk(false));
+aiMobileEl('continue').addEventListener('click',()=>aiMobileAsk(true));
+aiMobileEl('request').addEventListener('input',()=>{
+  if(aiMobile.busy) return;
+  aiMobile.epoch++;aiMobile.history=[];aiMobile.analysisId=null;aiMobile.jobId=null;
+  aiMobileEl('result').hidden=aiMobileEl('followup').hidden=true;aiMobileRenderConversation();
+  aiMobileStatus('希望を変更しました。新しい相談を送ってください。');
+});
+aiMobileEl('modal').addEventListener('keydown',event=>{
+  if(event.key==='Escape') {event.preventDefault();aiMobileClose();}
+  if(event.key==='Tab') {
+    const focusable=[...aiMobileEl('modal').querySelectorAll('button,textarea')].filter(el=>!el.disabled && el.offsetParent!==null);
+    const first=focusable[0],last=focusable.at(-1);
+    if(event.shiftKey && document.activeElement===first) {event.preventDefault();last?.focus();}
+    else if(!event.shiftKey && document.activeElement===last) {event.preventDefault();first?.focus();}
+  }
+});
+/* AI_MOBILE_END */
 
 function aiOrderInit() {
   const card = document.getElementById('ai-order-card');
