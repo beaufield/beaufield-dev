@@ -842,6 +842,14 @@
 #ai-mobile-modal .ai-mobile-item strong {display:block;margin-top:5px;}
 @media(max-width:480px) {#ai-mobile-modal {padding:0;}#ai-mobile-modal .ai-mobile-panel {max-height:100dvh;min-height:100dvh;border-radius:0;padding:16px 12px;padding-bottom:max(16px,env(safe-area-inset-bottom));}#ai-mobile-modal #ai-mobile-ask,#ai-mobile-modal #ai-mobile-continue {width:100%;}}
 
+    .lot-settings-help {font-size:13px;color:var(--text-light);line-height:1.6;margin:10px 0;}
+    .lot-settings-row {border-top:1px solid var(--border);padding:12px 0;}
+    .lot-settings-name {font-size:14px;font-weight:600;overflow-wrap:anywhere;}
+    .lot-settings-meta {font-size:12px;color:var(--text-light);margin:5px 0;overflow-wrap:anywhere;}
+    .lot-settings-actions {display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;}
+    #lot-settings-card input,#lot-settings-card select {font-size:16px;min-height:44px;}
+    #lot-settings-card button {min-height:44px;}
+
 </style>
 </head>
 <body>
@@ -1031,6 +1039,18 @@
      設定画面
 ============================== -->
 <div class="screen" id="screen-settings">
+  <div class="card" id="lot-settings-card">
+    <div class="card-label">商品の最低発注数</div>
+    <p class="lot-settings-help">提案に出ていない商品も、商品マスターから検索して設定できます。商品ごとに、この数の倍数で発注します。O2などの「系列全体で合計10本」は別の条件です。自動推定に戻した結果は、次回の分析から反映されます。</p>
+    <div class="form-group"><label for="lot-settings-supplier">発注先</label><select id="lot-settings-supplier" onchange="lotSettingsPage=1;renderSettingsLots()"><option value="">すべて</option></select></div>
+    <div class="form-group"><label for="lot-settings-query">商品名・商品コード・JAN</label><input id="lot-settings-query" type="search" placeholder="例：アロマ、商品コード" oninput="lotSettingsPage=1;renderSettingsLots()"></div>
+    <div class="form-group"><label for="lot-settings-filter">表示する商品</label><select id="lot-settings-filter" onchange="lotSettingsPage=1;renderSettingsLots()"><option value="all">すべての商品</option><option value="manual">手動設定あり</option><option value="auto">手動設定なし（自動推定）</option></select></div>
+    <button type="button" class="btn btn-outline" onclick="loadSettingsLots()">設定を更新</button>
+    <div id="lot-settings-status" role="status" class="lot-settings-help">設定を読み込みます。</div>
+    <div id="lot-settings-results"></div>
+    <div class="btn-row" style="margin-top:10px"><button id="lot-settings-prev" type="button" class="btn btn-secondary" onclick="lotSettingsMove(-1)">前へ</button><button id="lot-settings-next" type="button" class="btn btn-secondary" onclick="lotSettingsMove(1)">次へ</button></div>
+  </div>
+
   <div class="card">
     <div class="card-label">発注先マスター</div>
     <div id="settings-suppliers"></div>
@@ -1477,7 +1497,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.77.3-db';
+const APP_VERSION    = 'v1.79.0-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -3207,13 +3227,13 @@ function _dbEmptyProposalsResult(live) {
 }
 function _dbAssembleProposals(live, staticData) {
   const hidden = new Set((live.effective && live.effective.hiddenCodes) || []);
-  const lotByCode = (live.effective && live.effective.lotByCode) || {};
+  const lotByCode = lotNormalizeMap((live.effective && live.effective.lotByCode) || {});
   const today = _dbJstToday();
   const proposals = (staticData.proposals || [])
     .filter(p => !hidden.has(p.code))
     .map(p => {
       let row = p;
-      if (Object.prototype.hasOwnProperty.call(lotByCode, p.code)) row = _dbApplyLot(row, lotByCode[p.code]);
+      if (Object.prototype.hasOwnProperty.call(lotByCode, lotCode(p.code))) row = _dbApplyLot(row, lotByCode[lotCode(p.code)]);
       if (row.shortSince) {
         const days = Math.round((new Date(today) - new Date(row.shortSince)) / 86400000);
         row = Object.assign({}, row, { stuckDays: days });
@@ -6655,7 +6675,93 @@ async function deleteOrderHistory(orderNo) {
 /* ===================================================
    設定画面
 =================================================== */
-function renderSettingsPage() { renderSettingsSuppliers(); }
+/* LOT_SETTINGS_BEGIN: 既存の認証・設定保存を使い、商品マスター全体から編集する。 */
+let lotSettingsRows=[],lotSettingsReady=false,lotSettingsLoading=false,lotSettingsPage=1;
+function lotCode(code) {const c=String(code??'').trim();return /^\d+$/.test(c)?c.padStart(6,'0'):c;}
+function lotFind(rows,code) {
+  const matches=(rows||[]).filter(r=>lotCode(r.code)===lotCode(code));
+  if(matches.length>1) throw new Error('同じ商品の設定が重複しています。設定を確認してください。');
+  return matches[0]||null;
+}
+function lotNormalizeMap(map) {
+  const result=Object.create(null);
+  for(const [code,lot] of Object.entries(map||{})) {
+    const key=lotCode(code);
+    if(Object.hasOwn(result,key) && result[key]!==lot) throw new Error('最低発注数の設定が重複しています。');
+    result[key]=lot;
+  }
+  return result;
+}
+function lotSettingsInit() {
+  const select=document.getElementById('lot-settings-supplier');if(!select)return;
+  const value=select.value;
+  select.innerHTML='<option value="">すべて</option>'+masters.suppliers.map(s=>`<option value="${escAttr(s.code)}">${escHtml(s.name)}</option>`).join('');
+  select.value=value;
+  if(!lotSettingsLoading) loadSettingsLots();
+}
+async function loadSettingsLots() {
+  if(lotSettingsLoading)return false;
+  lotSettingsLoading=true;lotSettingsReady=false;renderSettingsLots();
+  const status=document.getElementById('lot-settings-status');status.textContent='設定を読み込み中…';
+  try {
+    const data=DATA_BACKEND==='db'?await dbRpc('get_proposals_live',{}):await gasGet({action:'getOrderProposals'});
+    if(data?.success!==true || !Array.isArray(data.lotOverrides)) throw new Error(data?.error||'設定を読み込めません。');
+    // 0埋めの異なる設定は同じ商品として扱う。保存・解除にはDBの実コードを使い重複追加を防ぐ。
+    const seen=new Set();for(const r of data.lotOverrides) {
+      const key=lotCode(r.code);
+      if(!key || seen.has(key) || !Number.isInteger(r.lot) || r.lot<1) throw new Error('最低発注数の設定が重複または不正です。');
+      seen.add(key);
+    }
+    lotSettingsRows=data.lotOverrides;lotSettingsReady=true;return true;
+  } catch(e) {status.textContent='設定の読込に失敗しました。'+_gasErrorMessage(e)+' 「設定を更新」で再試行してください。';return false;}
+  finally {lotSettingsLoading=false;renderSettingsLots();}
+}
+function lotSettingsMatches() {
+  const supplier=document.getElementById('lot-settings-supplier').value;
+  const filter=document.getElementById('lot-settings-filter').value;
+  const normalize=s=>String(s??'').normalize('NFKC').toLowerCase();
+  const terms=normalize(document.getElementById('lot-settings-query').value).trim().split(/\s+/).filter(Boolean);
+  const lots=new Map(lotSettingsRows.map(r=>[lotCode(r.code),r]));
+  return productMaster.filter(p=>!supplier || aiOrderSupplierSame(p.supplierCD,supplier)).map(p=>({p,manual:lots.get(lotCode(p.code))})).filter(({p,manual})=>
+    (filter!=='manual'||!!manual) && (filter!=='auto'||!manual) && terms.every(t=>normalize([p.name,p.code,p.jan].join(' ')).includes(t) || /^\d+$/.test(t) && lotCode(p.code)===lotCode(t)));
+}
+function renderSettingsLots() {
+  const wrap=document.getElementById('lot-settings-results');if(!wrap)return;
+  const prev=document.getElementById('lot-settings-prev'),next=document.getElementById('lot-settings-next');
+  if(!lotSettingsReady) {wrap.innerHTML='';prev.disabled=true;next.disabled=true;return;}
+  const matches=lotSettingsMatches(),pages=Math.max(1,Math.ceil(matches.length/40));
+  lotSettingsPage=Math.max(1,Math.min(lotSettingsPage,pages));prev.disabled=lotSettingsPage===1;next.disabled=lotSettingsPage===pages;
+  const start=(lotSettingsPage-1)*40;
+  document.getElementById('lot-settings-status').textContent=`${matches.length}件 / ${lotSettingsPage}ページ目（手動設定 ${lotSettingsRows.length}件）`+(productMaster.length?'':' 商品マスターを読み込んでから設定を更新してください。');
+  wrap.innerHTML=matches.slice(start,start+40).map(({p,manual})=>{
+    const proposal=proposalsData.proposals.find(r=>lotCode(r.code)===lotCode(p.code));
+    const label=manual?`手動設定：${manual.lot}個単位`:proposal?`自動推定：${proposal.lot}個単位`:'自動推定（提案なし・現在値は未表示）';
+    return `<div class="lot-settings-row"><div class="lot-settings-name">${escHtml(p.name)}</div><div class="lot-settings-meta">商品コード ${escHtml(p.code)} ／ ${escHtml(resolveSupplierName(p.supplierCD,''))}</div><div>${escHtml(label)}</div><div class="lot-settings-actions"><button type="button" class="btn btn-outline" ${orderAction('lotSettingsEdit',p.code)}>設定・変更</button>${manual?`<button type="button" class="btn btn-secondary" ${orderAction('lotSettingsRestore',p.code)}>自動推定に戻す</button>`:''}</div></div>`;
+  }).join('')||'<div class="lot-settings-help">条件に合う商品はありません。</div>';
+}
+function lotSettingsMove(delta) {lotSettingsPage+=delta;renderSettingsLots();}
+function lotSettingsEdit(code) {
+  if(!lotSettingsReady || lotSettingsLoading) {showToast('設定を更新してから編集してください。','error');return;}
+  const p=productMaster.find(r=>r.code===code);if(!p)return;
+  const manual=lotFind(lotSettingsRows,code);
+  openLotModal(manual?manual.code:p.code,p.name);
+  document.getElementById('lot-modal-value').value=manual?manual.lot:'';
+  document.querySelectorAll('#lot-modal-chips .prop-qty-chip').forEach(c=>c.classList.toggle('active',Number(c.textContent)===manual?.lot));
+}
+async function lotSettingsRestore(code) {
+  if(!lotSettingsReady || lotSettingsLoading)return;
+  const manual=lotFind(lotSettingsRows,code);if(!manual)return;
+  await restoreLotOverride(manual.code);
+}
+function lotSettingsApplied(code,name,lot) {
+  const update=rows=>[...(rows||[]).filter(r=>lotCode(r.code)!==lotCode(code)),...(lot===null?[]:[{code,name,lot}])];
+  proposalsData.lotOverrides=update(proposalsData.lotOverrides);
+  if(lotSettingsReady) lotSettingsRows=update(lotSettingsRows);
+  renderLotOverrides();renderSettingsLots();
+}
+/* LOT_SETTINGS_END */
+
+function renderSettingsPage() { renderSettingsSuppliers();lotSettingsInit(); }
 
 function renderSettingsSuppliers() {
   const container = document.getElementById('settings-suppliers');
@@ -9328,8 +9434,10 @@ function renderLotOverrides() {
 const LOT_MODAL_CHIPS = [1, 3, 6, 10, 12, 24, 30, 48, 120];
 
 function openLotModal(code, name) {
-  const p = proposalsData.proposals.find(x => x.code === code);
-  const current = (p && p.lot > 1) ? p.lot : '';
+  const manual=lotFind(proposalsData.lotOverrides,code);
+  if(manual)code=manual.code;
+  const p=proposalsData.proposals.find(x=>lotCode(x.code)===lotCode(code));
+  const current=manual?manual.lot:(p && p.lot>1?p.lot:'');
   document.getElementById('lot-modal-code').value = code;
   document.getElementById('lot-modal-name').textContent = name;
   document.getElementById('lot-modal-value').value = current;
@@ -9350,19 +9458,15 @@ function setLotModalValue(btn, value) {
 async function saveLotModal() {
   const code = document.getElementById('lot-modal-code').value;
   const name = document.getElementById('lot-modal-name').textContent;
-  const lot  = parseInt(document.getElementById('lot-modal-value').value, 10);
-  if (!(lot > 0)) { showToast('1以上の整数を入力してください', 'error'); return; }
+  const lot  = Number(document.getElementById('lot-modal-value').value);
+  if (!Number.isInteger(lot) || lot<1 || lot>2147483647) { showToast('1以上の整数を入力してください', 'error'); return; }
   showLoading('最低発注数を保存中...');
   try {
     const res = await gasPost({ action: 'saveLotOverride', mode: 'add', code, name, lot });
     if (res.success) {
-      proposalsData.lotOverrides = proposalsData.lotOverrides.filter(x => x.code !== code);
-      proposalsData.lotOverrides.push({ code, name, lot });
-      const p = proposalsData.proposals.find(x => x.code === code);
-      if (p) {
-        p.lot = lot;
-        p.proposedQty = computeProposedQty(p);
-      }
+      lotSettingsApplied(code,name,lot);
+      const p=proposalsData.proposals.find(x=>lotCode(x.code)===lotCode(code));
+      if(p)Object.assign(p,_dbApplyLot(p,lot));
       closeModal('modal-lot');
       renderProposalList();
       showToast(`「${name}」の最低発注数を${lot}に設定しました`, 'success');
@@ -9381,8 +9485,7 @@ async function restoreLotOverride(code) {
   try {
     const res = await gasPost({ action: 'saveLotOverride', mode: 'delete', code });
     if (res.success) {
-      proposalsData.lotOverrides = proposalsData.lotOverrides.filter(x => x.code !== code);
-      renderLotOverrides();
+      lotSettingsApplied(code,'',null);
       showToast('最低発注数の設定を解除しました。次回の分析から自動推定に戻ります', 'success');
     } else {
       showToast('解除エラー: ' + (res.error || '不明'), 'error');
@@ -9590,7 +9693,8 @@ async function aiOrderConsultLive() {
       const cfg=gid?mgConfigById(gid):null;
       if(gid && !cfg) throw new Error('系列設定が見つかりません。提案を更新してください。');
       const itemUnit=cfg?Number(mgUnitFor(cfg,row.name)):1;
-      const lot=Number(row.lot);
+      const manualLot=lotFind(proposalsData.lotOverrides,row.code);
+      const lot=Number(manualLot?manualLot.lot:row.lot);
       if(!Number.isInteger(lot) || lot<1 || !Number.isInteger(itemUnit) || itemUnit<1) throw new Error('商品の発注単位が不正です。');
       if(cfg && !rules.some(g=>g.groupId===gid)) rules.push({groupId:gid,groupUnit:Number(cfg.groupUnit),
         unsupported:mgIsCaseUnit(cfg) || mgSubUnitList(cfg).length>0,solo:mgIsSolo(gid)});
@@ -9636,7 +9740,8 @@ async function aiOrderReadLiveSnapshot(supplierCode) {
       const cfg=gid?mgConfigById(gid):null;
       if(gid && !cfg) throw new Error('系列設定が見つかりません。提案を更新してください。');
       const itemUnit=cfg?Number(mgUnitFor(cfg,row.name)):1;
-      const lot=Number(row.lot);
+      const manualLot=lotFind(proposalsData.lotOverrides,row.code);
+      const lot=Number(manualLot?manualLot.lot:row.lot);
       if(!Number.isInteger(lot) || lot<1 || !Number.isInteger(itemUnit) || itemUnit<1) throw new Error('商品の発注単位が不正です。');
       if(cfg && !rules.some(g=>g.groupId===gid)) rules.push({groupId:gid,groupUnit:Number(cfg.groupUnit),
         unsupported:mgIsCaseUnit(cfg) || mgSubUnitList(cfg).length>0,solo:mgIsSolo(gid)});
@@ -10204,6 +10309,8 @@ const ORDER_ACTION_HANDLERS = Object.freeze({
   excludeProposal: a => excludeProposal(a[0], a[1]),
   markEol: a => markEol(a[0], a[1]),
   openLotModal: a => openLotModal(a[0], a[1]),
+  lotSettingsEdit: a => lotSettingsEdit(a[0]),
+  lotSettingsRestore: a => lotSettingsRestore(a[0]),
   jumpToSupplierGroup: a => jumpToSupplierGroup(a[0]),
   toggleProposalGroup: a => toggleProposalGroup(a[0]),
   startOrderFromProposals: a => startOrderFromProposals(a[0]),
