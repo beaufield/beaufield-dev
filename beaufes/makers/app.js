@@ -1,7 +1,7 @@
 // 業務データは社員認証後にだけ取得する。接続キーや価格をブラウザーの永続領域へ保存しない。
-const APP_VERSION='v0.2.0';
+const APP_VERSION='v0.2.1';
 const API_URL=document.querySelector('meta[name=directory-api]').content;
-const ORDER_URL='https://beaufield.github.io/beaufield-dev/beaufes/order/';
+const ORDER_URL='https://beaufield.github.io/beaufield-dev/beaufes/order/refresh.html';
 const $=id=>document.getElementById(id);
 const create=(tag,text)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=text;return el;};
 const yen=value=>value==null?'単価確認待ち':`${Number(value).toLocaleString('ja-JP')}円`;
