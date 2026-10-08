@@ -1,4 +1,6 @@
 // 注文データや認証は保持し、注文アプリの静的画面だけを再取得する。
+const join=new URL(location.href).hash.match(/^#join=([-_A-Za-z0-9]{43,128})$/)?.[1];
+if(location.hash)history.replaceState(null,'',location.pathname+location.search);
 const status=document.getElementById('update-status');const retry=document.getElementById('retry');
 async function fresh(url){
  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),15000);
@@ -29,6 +31,7 @@ async function refresh(){
   // 新しいURLのHTMLとscriptを使い、ブラウザー側の古いHTTPキャッシュも避ける。
   const target=new URL('index.html',location.href);target.searchParams.set('updated',stamp);
   if(new URLSearchParams(location.search).get('office')==='1')target.searchParams.set('office','1');
+  if(join)target.hash='join='+join;
   location.replace(target.href);
  }catch{
   status.textContent='更新できませんでした。インターネット接続を確認し、もう一度更新してください。保存済みの注文は残っています。';retry.hidden=false;
