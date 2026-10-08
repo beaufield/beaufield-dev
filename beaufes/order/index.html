@@ -8,13 +8,13 @@
   <link rel="stylesheet" href="style.css">
   <script src="jsQR.js" defer></script>
   <script src="exceljs.min.js" defer></script>
-  <script src="app.js?build=20261003b" type="module"></script>
+  <script src="app.js?build=20261008-pacific-confirmed" type="module"></script>
 </head>
 <body>
 <header id="app-header"><div class="header-top"><div><small>BEAU Fes 2026</small><h1>ブース注文 <span id="version"></span></h1></div><span id="network" class="network-badge"></span></div><div id="maker-banner" class="maker-banner" hidden><span class="maker-label">メーカー</span><strong id="maker"></strong></div></header>
 <main>
   <section id="login"><h2 id="login-title">端末を準備する</h2><label id="token-label">接続コード<input id="token" type="password" autocomplete="off" placeholder="開発用の試験コード"></label><button id="connect">接続する</button><p id="prepared"></p></section>
-  <p id="message" role="status" aria-live="polite"></p>
+  <p id="campaign-notice" class="campaign-notice"></p><p id="message" role="status" aria-live="polite"></p>
   <div id="workspace" hidden>
     <section id="customer-section" class="customer-section" aria-labelledby="customer-title">
       <div class="row section-heading"><h2 id="customer-title"><span class="step-number" aria-hidden="true">1</span>お客様を選ぶ</h2><button id="new" class="secondary small-action">次のお客様</button></div>
