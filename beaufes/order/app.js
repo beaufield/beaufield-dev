@@ -1,6 +1,6 @@
 import {get,set,records,update,mergeReceipt,sanitizeLegacyQr,clearMakerConnection} from './storage.js';
 import {buildWorkbook} from './export.js';
-const APP_VERSION='v0.10.6';
+const APP_VERSION='v0.11.1';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -68,6 +68,7 @@ function addSelectedProduct(group,offer,kind,code,quantity){
  name.append(element('small',kind==='paid'?yen(product.event_sale_price_yen):'サービス品・0円'));
  const input=numberInput(quantity,297,`${product.product_name} ${kind==='paid'?'購入':'サービス'}数`);
  input.dataset.offer=offer.offer_id;input.dataset.kind=kind;input.dataset.code=code;
+ if(kind==='gift'&&offer.gift_rule==='same_sku_groups'){input.readOnly=true;input.classList.add('gift-auto');input.setAttribute('aria-label',`${product.product_name} サービス数（自動計算）`);}
  input.addEventListener('input',()=>updateQuantityGuidance(offer,group.closest('.offer-card')));
  input.addEventListener('change',()=>saveForm().catch(e=>message(errorText(e))));
  row.append(name,input);group.append(row);
@@ -76,6 +77,8 @@ function renderOffer(offer){
  const selected=selectedOffer(offer);const card=element('div',undefined,'offer-card');card.dataset.offerCard=offer.offer_id;
  const head=element('div',undefined,'offer-head');const title=element('div');title.append(element('h3',offer.label),element('p',`${offer.paid_per_set}点購入 ＋ ${offer.gift_per_set}点サービス`,'muted'));
  const remove=element('button','条件を外す','secondary small-action');remove.type='button';remove.onclick=()=>removeOffer(offer.offer_id).catch(e=>message(errorText(e)));head.append(title,remove);card.append(head);
+ if(offer.description)card.append(element('p',offer.description,'muted'));
+ if(offer.customer_kind){const label=element('label',undefined,'eligibility');const checkbox=element('input');checkbox.type='checkbox';checkbox.dataset.eligibility=offer.offer_id;checkbox.checked=selected.eligibility===offer.customer_kind;checkbox.addEventListener('change',()=>saveForm().catch(e=>message(errorText(e))));label.append(checkbox,element('span',`${offer.brand==='nei'?'NEi':'hyumy'}の${offer.customer_kind==='new'?'新規':'既存取扱'}サロンであることを確認しました`));card.append(label);}
  const countRow=element('div',undefined,'set-row');countRow.append(element('span','セット数','set-label'));
  const count=numberInput(selected.sets,99,`${offer.label}のセット数`);count.dataset.offer=offer.offer_id;count.dataset.kind='sets';
  countRow.append(count);
@@ -94,7 +97,7 @@ function renderOffer(offer){
    const progress=element('p',undefined,'quantity-progress');progress.dataset.progressKind=kind;progress.setAttribute('role','status');group.append(progress);
    const choices=selected[kind]||{};
    // 複数商品を選べる条件は最初から全商品を並べ、未入力は0点として扱う。
-   for(const code of offer.product_codes)addSelectedProduct(group,offer,kind,code,choices[code]||0);
+   for(const code of (offer[`${kind}_codes`]||offer.product_codes))addSelectedProduct(group,offer,kind,code,choices[code]||0);
    card.append(group);
   }
   updateQuantityGuidance(offer,card);
@@ -115,9 +118,10 @@ function renderForm(){
  else $('submit').textContent='この内容で登録する';
  calculate();
 }
-async function readForm(){const offers={};for(const i of $('offers').querySelectorAll('input[data-offer]')){const o=offers[i.dataset.offer]||={sets:0,paid:{},gift:{}};if(i.dataset.kind==='sets')o.sets=i.value===''?0:Number(i.value);else o[i.dataset.kind][i.dataset.code]=i.value===''?0:Number(i.value);}const {qr:oldRawQr,...oldForm}=draft.form;const delivery=document.querySelector('input[name=delivery]:checked')?.value||'';return {...oldForm,delivery,delivery_confirmed:!!delivery,ui_version:2,offers};}
+async function readForm(){const offers={};for(const i of $('offers').querySelectorAll('input[data-offer]')){const o=offers[i.dataset.offer]||={sets:0,paid:{},gift:{}};if(i.dataset.kind==='sets')o.sets=i.value===''?0:Number(i.value);else o[i.dataset.kind][i.dataset.code]=i.value===''?0:Number(i.value);}for(const c of $('offers').querySelectorAll('input[data-eligibility]'))if(offers[c.dataset.eligibility])offers[c.dataset.eligibility].eligibility=c.checked?info.catalog.offers.find(o=>o.offer_id===c.dataset.eligibility).customer_kind:null;const {qr:oldRawQr,...oldForm}=draft.form;const delivery=document.querySelector('input[name=delivery]:checked')?.value||'';return {...oldForm,delivery,delivery_confirmed:!!delivery,ui_version:2,offers};}
 function updateQuantityGuidance(offer,card){
  if(!card)return;
+ if(offer.gift_rule==='same_sku_groups')for(const gift of card.querySelectorAll('input[data-kind=gift]')){const paid=card.querySelector(`input[data-kind=paid][data-code="${gift.dataset.code}"]`);const q=Number(paid?.value||0);gift.value=q>0&&Number.isInteger(q)&&q%3===0?String(q/3):'';}
  const setsInput=card.querySelector('input[data-kind=sets]');const sets=Number(setsInput?.value||0);
  for(const kind of ['paid','gift']){
   const progress=card.querySelector(`[data-progress-kind=${kind}]`);if(!progress)continue;
@@ -153,9 +157,10 @@ function renderPicker(){
 async function choosePicker(key){if(!pickerState)return;await saveForm();draft=await update(draft.id,r=>{const offers={...r.form.offers};offers[key]={sets:0,paid:{},gift:{}};return {...r,form:{...r.form,offers}};});closePicker();renderForm();const target=Array.from($('offers').querySelectorAll('.offer-card')).find(node=>node.dataset.offerCard===key)?.querySelector('input[data-kind=sets]');target?.focus();}
 function bundles(check=false){return info.catalog.offers.flatMap(o=>{const selected=draft.form.offers[o.offer_id];if(!selected?.sets){if(check&&selected&&[...Object.values(selected.paid),...Object.values(selected.gift)].some(x=>x!==0))throw Error(`${o.label}のセット数を指定してください。`);return [];}
  const n=selected.sets;if(check&&(!Number.isInteger(n)||n<1||n>99))throw Error('セット数は1〜99の整数で指定してください。');
- const value={offer_id:o.offer_id,sets:n};for(const k of ['paid','gift']){value[k]=o.product_codes.length===1?[{code:o.product_codes[0],qty:n*o[`${k}_per_set`]}]:Object.entries(selected[k]).filter(([,qty])=>qty!==0).map(([code,qty])=>({code,qty}));if(check&&(value[k].some(x=>!Number.isInteger(x.qty)||x.qty<1)||value[k].reduce((s,x)=>s+x.qty,0)!==n*o[`${k}_per_set`]))throw Error(`${o.label}：${k==='paid'?'購入':'サービス'}数は${n*o[`${k}_per_set`]}点にしてください。`);}return [value];});}
+ if(check&&o.ready===false)throw Error('hyumy新規企画の対象容量は確認中です。');if(check&&o.customer_kind&&selected.eligibility!==o.customer_kind)throw Error(`${o.label}：新規・既存の確認にチェックしてください。`);
+ const value={offer_id:o.offer_id,sets:n,...(o.customer_kind?{customer_kind:selected.eligibility}: {})};for(const k of ['paid','gift']){value[k]=o.product_codes.length===1?[{code:o.product_codes[0],qty:n*o[`${k}_per_set`]}]:Object.entries(selected[k]).filter(([,qty])=>qty!==0).map(([code,qty])=>({code,qty}));if(check&&(value[k].some(x=>!Number.isInteger(x.qty)||x.qty<1)||value[k].reduce((s,x)=>s+x.qty,0)!==n*o[`${k}_per_set`]))throw Error(`${o.label}：${k==='paid'?'購入':'サービス'}数は${n*o[`${k}_per_set`]}点にしてください。`);}if(check&&o.gift_rule==='same_sku_groups'&&value.paid.some(x=>x.qty%3!==0))throw Error('同じ商品・容量ごとに購入数を3の倍数にしてください。');if(check&&o.gift_rule==='pair_oil'&&o.paid_groups.some(g=>value.paid.filter(x=>g.includes(x.code)).reduce((s,x)=>s+x.qty,0)!==n))throw Error('シャンプーとトリートメントを各セット数と同じ本数にしてください。');return [value];});}
 function calculate(){const amount=bundles().reduce((sum,b)=>sum+b.paid.reduce((s,x)=>s+x.qty*info.catalog.products.find(p=>p.product_code===x.code).event_sale_price_yen,0),0);$('total').textContent=yen(amount);}
-async function activate(value){info=value;$('login').hidden=true;if(!officeMode)await set('maker-catalog',info);$('maker').textContent=info.catalog?.manufacturer_name||'メーカー未設定';$('maker-banner').hidden=info.role==='admin';$('workspace').hidden=info.role==='admin';$('admin').hidden=info.role!=='admin';$('ledger').hidden=info.role!=='admin';$('identity').hidden=info.role!=='admin';if(info.role==='admin')return;const id=await get('draft:'+scopeKey());draft=(await records()).find(x=>x.id===id);if(!draft)await fresh();else{if(draft.stage==='draft'&&draft.form.ui_version!==2){draft=await update(draft.id,r=>{const offers={};for(const [key,item] of Object.entries(r.form.offers||{})){const paid=Object.fromEntries(Object.entries(item.paid||{}).filter(([,qty])=>qty>0));const gift=Object.fromEntries(Object.entries(item.gift||{}).filter(([,qty])=>qty>0));if(item.sets>0||Object.keys(paid).length||Object.keys(gift).length)offers[key]={sets:item.sets||0,paid,gift};}return {...r,form:{...r.form,offers,delivery:'',delivery_confirmed:false,ui_version:2}};});}if(draft.stage!=='draft'&&draft.receipt?.state==='active'&&!draft.pending)await fresh();else renderForm();}await renderOrders();}
+async function activate(value){info=value;$('login').hidden=true;if(!officeMode)await set('maker-catalog',info);$('maker').textContent=info.catalog?.manufacturer_name||'メーカー未設定';$('campaign-notice').textContent=info.catalog?.notice||'';$('maker-banner').hidden=info.role==='admin';$('workspace').hidden=info.role==='admin';$('admin').hidden=info.role!=='admin';$('ledger').hidden=info.role!=='admin';$('identity').hidden=info.role!=='admin';if(info.role==='admin')return;const id=await get('draft:'+scopeKey());draft=(await records()).find(x=>x.id===id);if(!draft)await fresh();else{if(draft.stage==='draft'&&draft.form.ui_version!==2){draft=await update(draft.id,r=>{const offers={};for(const [key,item] of Object.entries(r.form.offers||{})){const paid=Object.fromEntries(Object.entries(item.paid||{}).filter(([,qty])=>qty>0));const gift=Object.fromEntries(Object.entries(item.gift||{}).filter(([,qty])=>qty>0));if(item.sets>0||Object.keys(paid).length||Object.keys(gift).length)offers[key]={sets:item.sets||0,paid,gift};}return {...r,form:{...r.form,offers,delivery:'',delivery_confirmed:false,ui_version:2}};});}if(draft.stage!=='draft'&&draft.receipt?.state==='active'&&!draft.pending)await fresh();else renderForm();}await renderOrders();}
 function orderDetails(record){
  // 登録確定後はサーバーの確定明細を使用し、通信待ちは端末に保存した注文内容と明示する。
  let lines=Array.isArray(record.receipt?.lines)?record.receipt.lines:null;

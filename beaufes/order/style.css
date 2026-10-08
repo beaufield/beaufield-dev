@@ -155,3 +155,5 @@ section{scroll-margin-top:12px}
 #customer-recent:not(:empty){background:#fff1cf;color:#714908;border-radius:8px;padding:10px;line-height:1.5}
 .history-error{color:#a32f24}
 .history-section .row.section-heading>button{min-height:44px}
+
+.candidate-banner,.campaign-notice{padding:14px;border-radius:12px;line-height:1.7;background:#fff5dd}.campaign-notice{background:#e8f5ff}.eligibility{display:flex;gap:10px;margin:12px 0;padding:12px;background:#fff5dd}.eligibility input{width:22px;height:22px;flex-shrink:0}.gift-auto{background:#eef7f3}

@@ -1,5 +1,5 @@
 // 画面だけを保存。注文・名札・API応答・認証情報はキャッシュしない。
-const CACHE='beaufes-booth-shell-0.10.6';
+const CACHE='beaufes-booth-shell-0.11.1';
 const FILES=['./','./index.html','./app.js','./storage.js','./export.js','./style.css','./jsQR.js','./exceljs.min.js'];
 self.addEventListener('install',event=>event.waitUntil((async()=>{
  const cache=await caches.open(CACHE);
