@@ -1,5 +1,5 @@
 // 業務データは社員認証後にだけ取得する。接続キーや価格をブラウザーの永続領域へ保存しない。
-const APP_VERSION='v0.1.1';
+const APP_VERSION='v0.2.0';
 const API_URL=document.querySelector('meta[name=directory-api]').content;
 const ORDER_URL='https://beaufield.github.io/beaufield-dev/beaufes/order/';
 const $=id=>document.getElementById(id);
@@ -21,12 +21,12 @@ async function api(action,body={}){
   return data;
  }finally{clearTimeout(timer);}
 }
-function orderState(){const maker=makers.find(m=>m.id===selected);$('order-qr').disabled=qrBusy||!maker?.order_ready;$('order-note').textContent=!maker?'メーカーを選ぶと、注文URL・QRの発行状況を確認できます。':maker.order_ready?'このメーカーの注文アプリへ接続するURLとQRを発行できます。':'注文アプリ準備中です。キャンペーン内容は確認できます。';}
+function orderState(){const maker=makers.find(m=>m.id===selected);$('direct-order').disabled=$('order-qr').disabled=qrBusy||!maker?.order_ready;for(const button of document.querySelectorAll('[data-open-maker]'))button.disabled=qrBusy||!makers.find(m=>m.id===button.dataset.openMaker)?.order_ready;$('order-note').textContent=!maker?'メーカーを選んで注文アプリへ進めます。メーカーへの案内用QRも発行できます。':maker.order_ready?'「注文アプリを開く」で直接入力画面へ進めます。メーカーへの案内にはQRを使えます。':'注文アプリ準備中です。キャンペーン内容は確認できます。';}
 async function load(){
  const seq=++detailsSequence;$('status').textContent='メーカー一覧を読み込んでいます…';
  const result=await api('list');if(seq!==detailsSequence)return;makers=result.makers;selected='';
  $('maker-select').replaceChildren();const placeholder=create('option','一覧から選んでください');placeholder.value='';$('maker-select').append(placeholder);$('makers').replaceChildren();$('makers').hidden=false;$('details').hidden=true;
- for(const maker of makers){const option=create('option',maker.name);option.value=maker.id;$('maker-select').append(option);const card=create('section');card.className='maker-card';card.append(create('h2',maker.name),create('p',`${maker.offer_count}企画`));const note=create('p',maker.order_ready?'注文アプリ接続可':'注文アプリ準備中');note.className='muted';card.append(note);const button=create('button','内容を見る');button.onclick=()=>choose(maker.id).catch(report);card.append(button);$('makers').append(card);}
+ for(const maker of makers){const option=create('option',maker.name);option.value=maker.id;$('maker-select').append(option);const card=create('section');card.className='maker-card';card.append(create('h2',maker.name),create('p',`${maker.offer_count}企画`));const note=create('p',maker.order_ready?'注文アプリ接続可':'注文アプリ準備中');note.className='muted';card.append(note);const direct=create('button','注文アプリを開く');direct.dataset.openMaker=maker.id;direct.disabled=!maker.order_ready;direct.onclick=()=>openOrder(maker.id).catch(report);card.append(direct);const button=create('button','キャンペーンを確認');button.className='secondary';button.onclick=()=>choose(maker.id).catch(report);card.append(button);$('makers').append(card);}
  $('gate').hidden=true;$('workspace').hidden=false;$('status').textContent=`${makers.length}社のキャンペーンを確認できます。`;orderState();
 }
 async function choose(id){
@@ -42,15 +42,25 @@ async function choose(id){
  $('status').textContent=`${detail.name}のキャンペーン内容です。`;
 }
 function randomKey(){return btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(48)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+// 直接リンクもQRも同じメーカー専用接続を使用する。通信再試行は同じキーで行う。
+async function prepareOrder(maker){
+ const entry=issued.get(maker.id)||{key:randomKey()};issued.set(maker.id,entry);
+ const result=await api('issue_order_qr',{maker_id:maker.id,key:entry.key});
+ if(result.registered!==true||result.maker_id!==maker.id)throw Error('DIRECTORY_UNAVAILABLE');
+ return ORDER_URL+'#join='+entry.key;
+}
+async function openOrder(id=selected){
+ const maker=makers.find(m=>m.id===id);if(!maker?.order_ready||qrBusy)return;
+ closeQr();selected=id;$('maker-select').value=id;const seq=++qrSequence;qrBusy=true;orderState();$('status').textContent='注文アプリへ接続しています…';
+ try{const url=await prepareOrder(maker);if(seq===qrSequence&&selected===maker.id)location.assign(url);}finally{qrBusy=false;orderState();}
+}
 async function showQr(){
  const maker=makers.find(m=>m.id===selected);if(!maker?.order_ready||qrBusy)return;
  const seq=++qrSequence;qrBusy=true;orderState();$('status').textContent='注文URL・QRを準備しています…';
- // 応答が不明な場合も同じキーで再試行し、二重にQRを発行しない。
- const entry=issued.get(maker.id)||{key:randomKey(),registered:false};issued.set(maker.id,entry);
  try{
-  await api('issue_order_qr',{maker_id:maker.id,key:entry.key});entry.registered=true;
+  const url=await prepareOrder(maker);
   if(seq!==qrSequence||selected!==maker.id)return;
-  const url=ORDER_URL+'#join='+entry.key;const qr=qrcode(0,'M');qr.addData(url);qr.make();
+  const qr=qrcode(0,'M');qr.addData(url);qr.make();
   $('qr-box').innerHTML=qr.createSvgTag({cellSize:5,margin:20,scalable:true});$('qr-box').querySelector('svg').setAttribute('aria-label',`${maker.name}の注文用QR`);
   currentQr={url,name:maker.name,qr};$('qr-name').textContent=`${maker.name}｜注文用QR`;$('order-url').value=url;$('open-order').href=url;$('qr-status').textContent='';$('qr-modal').showModal();$('status').textContent='メーカー担当者へ注文用QRをご案内できます。';
  }finally{qrBusy=false;orderState();}
@@ -65,6 +75,7 @@ async function saveQr(){
  const png=URL.createObjectURL(blob),a=create('a');a.href=png;a.download=`BEAUFes_${snapshot.name}_注文QR.png`;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(png),1000);
 }
 $('version').textContent=APP_VERSION;
+$('direct-order').onclick=()=>openOrder().catch(report);
 $('refresh').onclick=()=>{closeQr();load().catch(report);};$('maker-select').onchange=e=>choose(e.target.value).catch(report);$('back').onclick=()=>choose('').catch(report);$('order-qr').onclick=()=>showQr().catch(report);$('qr-close').onclick=closeQr;$('qr-modal').addEventListener('cancel',closeQr);
 $('copy-url').onclick=async()=>{if(!currentQr)return;try{await navigator.clipboard.writeText(currentQr.url);$('qr-status').textContent='注文URLをコピーしました。';}catch{$('order-url').focus();$('order-url').select();$('qr-status').textContent='URLを選択しました。コピー操作でお渡しください。';}};
 $('save-qr').onclick=()=>saveQr().catch(report);
