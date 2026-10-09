@@ -1123,6 +1123,13 @@
      在庫一覧画面
 ============================== -->
 <div class="screen" id="screen-inventory">
+  <details class="card" id="inventory-policy-card" style="padding:12px;margin:8px 0">
+    <summary style="font-weight:700;cursor:pointer">適正在庫の比較（試行中）</summary>
+    <p>重要商品の備え・入荷の確認・大ロットの負担を比較します。保存した比較データを選んでください。</p>
+    <label>比較データを開く <input type="file" accept=".json,application/json" onchange="inventoryPolicyOpen(this.files[0])"></label>
+    <p id="inventory-policy-status" role="status">比較する商品の表示だけを行います。</p>
+    <div id="inventory-policy-panel"></div>
+  </details>
   <div class="card" style="padding:12px 14px">
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
       <select id="inv-filter-supplier" onchange="renderInventoryList()" style="flex:1;min-width:120px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text)">
@@ -1505,7 +1512,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.80.0-db';
+const APP_VERSION    = 'v1.81.0-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -10443,6 +10450,122 @@ function getAuthSession() {
   } catch { return null; }
 }
 
+</script>
+<style>#inventory-policy-panel .scroll{overflow:auto}
+#inventory-policy-panel table{border-collapse:collapse;width:100%;font-size:14px}
+#inventory-policy-panel th,#inventory-policy-panel td{padding:10px;border-bottom:1px solid #d7e0e6;text-align:left;min-width:110px;vertical-align:top}
+#inventory-policy-panel small{display:block;color:#526879;font-size:12px;margin-top:5px}
+#inventory-policy-panel input,#inventory-policy-panel select,#inventory-policy-panel button{font:inherit;margin:4px;padding:8px;max-width:100%;box-sizing:border-box}
+#policy-summary{padding:14px;background:#e6eef5;border-radius:8px}
+@media(max-width:600px){
+  #inventory-policy-panel .scroll{overflow:visible}
+  #inventory-policy-panel thead{display:none}
+  #inventory-policy-panel table,#inventory-policy-panel tbody{display:block;width:100%}
+  #inventory-policy-panel tbody tr{display:block;background:white;border:1px solid #d7e0e6;border-radius:9px;padding:10px;margin:12px 0}
+  #inventory-policy-panel td{display:block;min-width:0;padding:8px 4px;border-bottom:1px solid #edf0f2;font-size:15px}
+  #inventory-policy-panel td:before{content:attr(data-label);display:block;font-size:12px;font-weight:700;color:#526879;margin-bottom:3px}
+  #inventory-policy-panel td:last-child{border-bottom:0}
+  #inventory-policy-panel label{display:block}
+}
+</style>
+<script>/* 適正在庫の比較。DOMのtextContentのみ使用し、保存・外部通信を行わない。 */
+(function(root){
+  'use strict';
+  const VERSION = '1.0.0';
+  function validate(data) {
+    if (!data || data.schemaVersion!==1 || data.policyVersion!==VERSION || data.mode!=='shadow' ||
+        typeof data.analysisInputId!=='string' || !/^input_[0-9a-f]{64}$/.test(data.analysisInputId) ||
+        !/^policy_[0-9a-f]{64}$/.test(data.policyRunId) || !Array.isArray(data.items) || data.items.length>20000 ||
+        new Set(data.items.map(r=>r.code)).size!==data.items.length ||
+        data.items.some(r=>!r || !/^\d{6}$/.test(r.code) || typeof r.name!=='string' || typeof r.state!=='string' ||
+          ![r.target,r.legacyTarget,r.stock,r.onOrder,r.horizonDays,r.unitCost].every(Number.isFinite) ||
+          r.target<0 || r.legacyTarget<0 || r.onOrder<0 || r.horizonDays<1 || r.unitCost<0 ||
+          !r.service || !Number.isFinite(r.service.samples) || !Array.isArray(r.tasks) ||
+          !r.tasks.every(x=>typeof x==='string') || !Array.isArray(r.eventIds) || !r.order ||
+          !['feasible','unknown','infeasible'].includes(r.order.status) || typeof r.order.reason!=='string'))
+      throw Error('対応する比較データではありません');
+    return data;
+  }
+  function mount(host,data,context={}) {
+    validate(data);
+    if(context.inputId && context.inputId!==data.analysisInputId)throw Error('公開分析と比較データの入力世代が一致しません');
+    if(context.analysisId && data.analysisId && context.analysisId!==data.analysisId)throw Error('公開分析と比較データの分析世代が一致しません。保存した比較画面で確認してください。');
+    host.replaceChildren();
+    const el=(tag,text)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;return e;};
+    const summary=el('div');summary.id='policy-summary';
+    const latest=el('p',`比較 v${VERSION} ｜ 基準日 ${data.asOf} ｜ ${data.items.length.toLocaleString()}商品`);
+    summary.append(latest,el('p','数量カバー率は過去の標本内の値です。到着予定・契約数量・重要度を確認してから適用します。'));
+    if(data.inputNote)summary.append(el('p',data.inputNote));
+    if (context.analysisId && data.analysisId===context.analysisId)summary.append(el('small','公開分析と比較データの分析世代が一致しています。表示値はその分析時点の保存値です。'));
+    else summary.append(el('small','ローカル保存した入力の比較です。現在公開中の分析との一致は確認していません。'));
+    const search=el('input');search.placeholder='商品名・コード・仕入先';search.setAttribute('aria-label','商品検索');
+    const state=el('select');state.setAttribute('aria-label','状態');
+    for(const s of ['すべて',...new Set(data.items.map(r=>r.state))]){const o=el('option',s);o.value=s;state.append(o);}
+    const critical=el('input');critical.type='checkbox';critical.id='policy-critical';
+    const label=el('label','カラー・パーマ等の重要候補');label.prepend(critical);
+    const count=el('p');const wrap=el('div');wrap.className='scroll';
+    const table=el('table'),head=el('thead'),tr=el('tr'),body=el('tbody');
+    for(const x of ['商品 / 仕入先','在庫 / 未入荷','通常基準 → 比較目標','判断 / 必要な確認','契約・標本'])tr.append(el('th',x));
+    head.append(tr);table.append(head,body);wrap.append(table);
+    const more=el('button','さらに100件表示');more.type='button';
+    host.append(summary,search,state,label,count,wrap,more);
+    let limit=100;
+    const n=v=>Number(v).toLocaleString('ja-JP',{maximumFractionDigits:1});
+    function draw(){
+      const q=search.value.normalize('NFKC').trim().toLowerCase();
+      const rows=data.items.filter(r=>(!critical.checked||r.priorityCandidate)&&
+        (state.value==='すべて'||r.state===state.value)&&`${r.code} ${r.name} ${r.supplier}`.normalize('NFKC').toLowerCase().includes(q));
+      rows.sort((a,b)=>b.priorityCandidate-a.priorityCandidate || (a.stock-a.target)-(b.stock-b.target));
+      count.textContent=`${rows.length.toLocaleString()}件（表示${Math.min(limit,rows.length)}件）`;
+      body.replaceChildren();
+      for(const r of rows.slice(0,limit)){
+        const line=el('tr'),a=el('td',`${r.code} ${r.name}`);a.append(el('small',r.supplier));
+        const b=el('td',`${n(r.stock)} / ${n(r.onOrder)}`);
+        b.append(el('small',r.stockSource==='physical-confirmed'?'現物確認済':'帳簿在庫・現物未確認'));
+        const c=el('td',`${n(r.legacyTarget)} → ${n(r.target)}`);c.append(el('small',`保護期間 ${r.horizonDays}日 / 目標原価差 ${n((r.target-r.legacyTarget)*r.unitCost)}円`));
+        const d=el('td',r.state);d.append(el('small',[r.order.reason,...r.tasks].filter(Boolean).join(' / ')));
+        if(r.latestOrderInDaysEstimate!==null)d.append(el('small',`平均需要による期限目安 ${r.latestOrderInDaysEstimate}日（保証ではない）`));
+        const e=el('td',`登録単位 ${n(r.registeredLotReference)}（参考）`);
+        e.append(el('small',`窓 ${r.service.samples} / 正需要窓 ${r.service.positiveSamples} / 非重複窓の上限 ${r.nonOverlappingWindowCount}`));
+        if(r.service.targetEmpiricalBeta!==null)e.append(el('small',`比較目標の標本内数量カバー ${(r.service.targetEmpiricalBeta*100).toFixed(2)}%（将来の保証ではない）`));
+        if(r.eventIds.length)e.append(el('small','価格イベントを通常需要から分離'));
+        [a,b,c,d,e].forEach((cell,i)=>{cell.dataset.label=['商品 / 仕入先','在庫 / 未入荷','通常基準 → 比較目標','判断 / 必要な確認','契約・標本'][i];});
+        line.append(a,b,c,d,e);body.append(line);
+      }
+      more.hidden=rows.length<=limit;
+    }
+    for(const ctrl of [search,state,critical])ctrl.addEventListener('input',()=>{limit=100;draw();});
+    more.addEventListener('click',()=>{limit+=100;draw();});draw();return {data};
+  }
+  root.InventoryPolicyComparison={VERSION,validate,mount};
+  if(typeof module!=='undefined')module.exports=root.InventoryPolicyComparison;
+})(typeof window!=='undefined'?window:globalThis);
+
+/* 比較データの読込。計算・注文保存・設定更新は行わない。 */
+let inventoryPolicyEpoch = 0;
+async function inventoryPolicyOpen(file) {
+  const epoch = ++inventoryPolicyEpoch;
+  const status = document.getElementById('inventory-policy-status');
+  const host = document.getElementById('inventory-policy-panel');
+  host.replaceChildren();
+  if (!file) { status.textContent='比較データを選択してください。'; return; }
+  try {
+    if (file.size>15000000) throw Error('比較データが大きすぎます');
+    const data = InventoryPolicyComparison.validate(JSON.parse(await file.text()));
+    if(epoch!==inventoryPolicyEpoch)return;
+    status.textContent='公開分析を確認しています。';
+    if(!await loadProposals(true))throw Error('公開分析を確認できません。保存した比較画面から確認してください。');
+    if(epoch!==inventoryPolicyEpoch)return;
+    const analysisId=proposalsData.analysisId || null;
+    InventoryPolicyComparison.mount(host,data,{analysisId});
+    status.textContent = data.analysisId && analysisId===data.analysisId
+      ? '公開分析と同じ世代の比較です。発注保存や基準の適用は行いません。'
+      : '保存時点の比較です。現在の在庫・公開基準への適用は行いません。';
+  } catch(error) {
+    if(epoch!==inventoryPolicyEpoch)return;
+    host.replaceChildren();status.textContent=error.message || '比較データを開けません。';
+  }
+}
 </script>
 </body>
 </html>
