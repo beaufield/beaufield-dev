@@ -1368,7 +1368,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = 'v2.17.1';
+const APP_VERSION = 'v2.17.2';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
 const BCART_ADMIN_BASE = 'https://beaufieldec.i16.bcart.jp/admin/products';
 
@@ -4268,11 +4268,13 @@ function openSpApplyPreview() {
       }
 
       // 変更後セル: グループ各会員の状態を判定
+      // 会社名・氏名はBモール会員が自分で入力する外部の値。下でHTML文字列に連結するため必ずエスケープして返す
+      // （2026-10-09 セキュリティレビューN1: 未エスケープだと会社名に仕込んだスクリプトが社員の画面で動く）
       const getMemberName = mid => {
         const m = allMembers.find(m => m.id === String(mid));
-        if (m && (m.comp_name || m.name)) return m.comp_name || m.name;
+        if (m && (m.comp_name || m.name)) return esc(m.comp_name || m.name);
         const v = (spViewInfo && spViewInfo.memberMap) ? spViewInfo.memberMap[String(mid)] : null;
-        return (v && v.name) ? v.name : 'ID:' + mid;
+        return esc((v && v.name) ? v.name : 'ID:' + mid);
       };
       const newMids     = memberIds.filter(mid => idPriceMap[String(mid)] === undefined);
       const changedMids = memberIds.filter(mid => idPriceMap[String(mid)] !== undefined && idPriceMap[String(mid)] != d.unit_price);
