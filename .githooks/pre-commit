@@ -15,7 +15,10 @@
 BLOCKED_EXT='\.(pdf|PDF|csv|CSV|xlsx|XLSX|xlsm|XLSM|xls|XLS|tsv|TSV|docx|DOCX|doc|DOC)$'
 
 # 拒否対象のファイル名（内部ドキュメント・機密設定）
-BLOCKED_FILES='(^|/)CLAUDE\.md$|(^|/)AGENTS\.md$|(^|/)SPEC\.md$|(^|/)HANDOVER\.md$'
+# 2026-10-09 追加（セキュリティレビューN3）: 引継ぎ資料とその履歴・名前にPRIVATEを含むもの・
+#   秘密設定（.env / .dev.vars / clasp認証 / config.json）・wranglerのアカウント情報・SQL。
+#   .gitignore は `git add -f` で飛び越えられるため、ここでも止める。
+BLOCKED_FILES='(^|/)CLAUDE\.md$|(^|/)AGENTS\.md$|(^|/)SPEC\.md$|(^|/)HANDOVER\.md$|(^|/)_handoff[^/]*\.md$|PRIVATE|(^|/)\.env($|\.)|(^|/)\.dev\.vars$|(^|/)\.clasprc\.json$|(^|/)config\.json$|(^|/)\.wrangler/|\.sql$'
 
 # ステージされている追加・変更ファイルから対象を抽出
 staged=$(git diff --cached --name-only --diff-filter=ACM)
@@ -37,6 +40,9 @@ if [ -n "$violations" ]; then
     echo "  - PDF/CSV/Excel: 業務情報（価格・取引先・顧客等）を含むため"
     echo "  - SPEC.md: システム構成・認証方式・エンドポイント設計を含む内部仕様書"
     echo "  - CLAUDE.md: 経営・組織情報を含む内部設定ファイル"
+    echo "  - _handoff*.md: GAS URL・シートID・作業状況を含む引継ぎ資料"
+    echo "  - *PRIVATE* / .env / .dev.vars / config.json / .clasprc.json / .wrangler/: 非公開資料・秘密設定"
+    echo "  - *.sql: DB構造・権限設計（価格原稿などのデータを含むことがある）"
     echo ""
     echo "対処方法:"
     echo "  1. ステージから取り除く:"

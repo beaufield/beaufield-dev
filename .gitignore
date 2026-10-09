@@ -285,3 +285,67 @@ beaufes/output/
 beaufes/outputs/
 beaufes/tmp/
 **/session_logs/
+
+# ============================================
+# 2026-10-09 セキュリティレビューN3: 公開に使わない種類・作業フォルダを一括で除外
+# ============================================
+# 背景: 上の「危ないものを1つずつ書き足す」方式は新しい作業フォルダに追いつけず、
+#   2026-10-09時点で `git add -A` すると公開されていない1,420件（Bカート価格候補JSON・
+#   引継ぎ履歴・議事録・検証データ等）がPublicリポジトリへ載る状態に戻っていた。
+# 方針: GitHub Pagesで配信するのは HTML / JS / CSS / GAS(.gs) / 画像 だけ。
+#   それ以外の種類は原則として新規追加させない。
+# ⚠️ ここで除外しても、既に公開済み（追跡中）のファイルには影響しない（更新は今までどおりコミットできる）。
+# ⚠️ 本当に公開が必要な新ファイルだけ `git add -f <パス>` で個別に追加する（Takashi確認のうえ）。
+
+# 公開しない種類（文書・データ・設定・中間生成物）
+*.md
+*.json
+*.jsonl
+*.sql
+*.log
+*.txt
+*.map
+*.gz
+*.zip
+*.bak
+*.bak-*
+*.bak.*
+*.orig
+*.before
+*.tmp
+*.cmd
+*.ps1
+*.mjs
+*.cjs
+*.cts
+*.ts
+*.pyc
+*.typed
+
+# ローカル専用ツール・テスト（GitHub不要。AGENTS.md「GitHubにアップするのはPagesで必要なコードのみ」）
+*.py
+**/tools/
+**/tests/
+**/test-results/
+
+# 作業・検証・生成物のフォルダ
+**/.scratchpad/
+**/artifacts/
+**/verification/
+**/evidence/
+**/tmp/
+**/output/
+**/outputs/
+**/node_modules/
+**/.wrangler/
+**/dist/
+bcart-integration/work/
+order-app/gas-test/
+order-app/gas-release/
+order-app/inventory-policy/
+order-app/tools/device_test/local/
+beaufes/議事録/
+beaufes/広報制作/
+beaufes/docs/
+beaufes/cloud_bot/
+enneagram-app/研修/
