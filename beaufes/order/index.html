@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="style.css">
   <script src="jsQR.js" defer></script>
   <script src="exceljs.min.js" defer></script>
-  <script src="app.js?build=20261008-manufacturers-release" type="module"></script>
+  <script src="app.js?build=20261009-order-remarks" type="module"></script>
 </head>
 <body>
 <header id="app-header"><div class="header-top"><div><small>BEAU Fes 2026</small><h1>ブース注文 <span id="version"></span></h1></div><span id="network" class="network-badge"></span></div><div id="maker-banner" class="maker-banner" hidden><span class="maker-label">メーカー</span><strong id="maker"></strong></div></header>
@@ -42,6 +42,9 @@
           <label class="delivery-choice"><input type="radio" name="delivery" value="takeaway"><span>当日持ち帰り</span></label>
         </div>
       </fieldset>
+      <label class="remarks-field" for="remarks">備考・コメント <span class="muted">任意</span></label>
+      <textarea id="remarks" rows="3" aria-describedby="remarks-help remarks-count" placeholder="納品時の連絡事項などを入力してください"></textarea>
+      <div class="remarks-help"><span id="remarks-help" class="muted">注文内容と一緒に送信されます。</span><span id="remarks-count" class="muted">0 / 1,000文字</span></div>
       <div class="total">税抜合計 <strong id="total">0円</strong></div>
       <button id="submit" class="primary">この内容で登録する</button>
       <div id="submit-status" role="status" aria-live="polite" hidden></div>

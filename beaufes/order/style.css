@@ -11,9 +11,9 @@ main{max-width:940px;padding:20px;margin:auto}
 section{background:white;border:1px solid #cfe3ef;border-radius:14px;padding:22px;margin:18px 0}
 .notice{background:#fff1cf;padding:14px;border-radius:8px}
 label{display:block;margin:12px 0}
-input,select{font:inherit;border:1px solid #9fbdce;border-radius:7px;padding:12px;max-width:100%;background:white}
+input,select,textarea{font:inherit;border:1px solid #9fbdce;border-radius:7px;padding:12px;max-width:100%;background:white}
 label>input,label>select{display:block;width:100%;margin-top:8px}
-input:focus-visible,button:focus-visible{outline:3px solid #e2a64b;outline-offset:2px}
+input:focus-visible,textarea:focus-visible,button:focus-visible{outline:3px solid #e2a64b;outline-offset:2px}
 button{font:inherit;border:0;border-radius:8px;background:#0879b0;color:white;padding:13px 17px;cursor:pointer;margin:5px 0;min-height:44px}
 button:disabled{opacity:.55;cursor:default}
 .secondary{background:#e5f3fb;color:#174a68}
@@ -157,3 +157,9 @@ section{scroll-margin-top:12px}
 .history-section .row.section-heading>button{min-height:44px}
 
 .candidate-banner,.campaign-notice{padding:14px;border-radius:12px;line-height:1.7;background:#fff5dd}.campaign-notice{background:#e8f5ff}.eligibility{display:flex;gap:10px;margin:12px 0;padding:12px;background:#fff5dd}.eligibility input{width:22px;height:22px;flex-shrink:0}.gift-auto{background:#eef7f3}
+
+/* 注文備考は改行を維持し、長文も画面幅に収める。 */
+#remarks{display:block;width:100%;resize:vertical;min-height:100px}
+.remarks-field{font-weight:700;margin-bottom:8px}
+.remarks-help{display:flex;justify-content:space-between;gap:10px;margin-top:6px}
+.order-remarks{white-space:pre-wrap;overflow-wrap:anywhere;background:#f0f8fd;padding:10px;border-radius:7px}
