@@ -10,14 +10,25 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.13.1';
+const VERSION       = 'v1.14.0';
 // ポータル画面（GitHub Pages）のURL。旧HTML向けの更新案内タイルのリンク先に使う。
 const PORTAL_URL    = 'https://beaufield.github.io/beaufield-dev/';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
 
-// ロックアウト設定
-const MAX_ATTEMPTS = 5;
-const LOCK_MINUTES = 10;
+// ロックアウト設定（PIN総当たり対策・2026-10-09 セキュリティレビューH1）
+// 誤入力が MAX_ATTEMPTS 回たまるごとにロックし、ロックのたびに時間を延ばす。
+// 失敗回数はロック明けでも戻さず、ログインに成功したとき（または管理者のPINリセット時）だけ0に戻す。
+// 旧方式（5回で10分・ロック明けに0から再開）では1日で全社員のうち誰かのPINが当たる確率が約5割あった。
+const MAX_ATTEMPTS       = 5;
+const LOCK_STEPS_MINUTES = [10, 60, 1440]; // 1回目10分 → 2回目60分 → 3回目以降は毎回24時間
+
+// 全ユーザー合計の失敗回数がこの時間内にこの回数へ達したら管理者へ通知する（総当たりの早期発見用）
+const GLOBAL_FAIL_ALERT_COUNT = 30;
+const GLOBAL_FAIL_WINDOW_SEC  = 3600;
+
+// 通知先: スクリプトプロパティ LOGIN_ALERT_WEBHOOK（LINE WORKS Incoming Webhook のURL）。
+// 未設定なら通知はせずログに残すだけ（ログイン処理には影響しない）。
+// ⚠️ 全社員向けの通知枠は使わないこと（管理者だけが見る枠を設定する）。
 
 // セッション有効期間。共有端末でのトークン残存を抑えつつ、頻繁な再ログインを避けるため7日とする。
 const SESSION_HOURS = 24 * 7;
@@ -333,14 +344,14 @@ function login(data) {
   // ── ロックアウトチェック ──────────────────────────────────
   const props    = PropertiesService.getScriptProperties();
   const lockKey  = 'lockout_' + user_id;
-  const lockData = JSON.parse(props.getProperty(lockKey) || '{"count":0,"until":0}');
+  const lockData = _readLockData(props, lockKey);
   const now      = Date.now();
 
   if (lockData.until > now) {
-    const remaining = Math.ceil((lockData.until - now) / 60000);
     return {
       success: false,
-      message: 'PINの誤入力が' + MAX_ATTEMPTS + '回に達しました。' + remaining + '分後に再試行してください。'
+      message: 'PINの誤入力が続いたためロックしています。' + _formatWait(lockData.until - now) +
+               '後に再試行してください。急ぎの場合は管理者にPINリセットを依頼してください。'
     };
   }
   // ─────────────────────────────────────────────────────────
@@ -353,7 +364,7 @@ function login(data) {
     const row = rows[i];
     if (String(row[0]) === user_id && (row[3] === true || row[3] === 'TRUE')) {
       if (String(row[2]).padStart(4, '0') === pinStr) {
-        // ログイン成功 → ロックカウントをリセット
+        // ログイン成功 → 失敗回数をリセット（段階ロックの段階も最初に戻る）
         props.deleteProperty(lockKey);
 
         // ── セッショントークン発行 ────────────────────────────
@@ -373,24 +384,120 @@ function login(data) {
           is_admin:      isAdmin
         };
       } else {
-        // PIN不一致 → 失敗カウントを記録
-        lockData.count = (lockData.count || 0) + 1;
-        if (lockData.count >= MAX_ATTEMPTS) {
-          lockData.until = now + LOCK_MINUTES * 60 * 1000;
-          lockData.count = 0;
+        // PIN不一致 → 失敗回数を記録（ロック明けでも0に戻さない）
+        _countGlobalFailure();
+        lockData.fails = lockData.fails + 1;
+        if (lockData.fails % MAX_ATTEMPTS === 0) {
+          const lockMinutes = _lockMinutesFor(lockData.fails);
+          lockData.until = now + lockMinutes * 60 * 1000;
           props.setProperty(lockKey, JSON.stringify(lockData));
+          _sendLoginAlert(
+            '🔒 ポータル: PIN誤入力によるロック\n' +
+            '対象: ' + String(row[1]) + '（' + String(row[0]) + '）\n' +
+            '連続失敗: ' + lockData.fails + '回 → ' + _formatWait(lockMinutes * 60 * 1000) + 'ロック\n' +
+            '本人の入力ミスでなければ、総当たり攻撃の可能性があります。'
+          );
           return {
             success: false,
-            message: 'PINの誤入力が' + MAX_ATTEMPTS + '回に達しました。' + LOCK_MINUTES + '分間ロックされます。'
+            message: 'PINの誤入力が続いたため' + _formatWait(lockMinutes * 60 * 1000) + 'ロックします。' +
+                     '急ぎの場合は管理者にPINリセットを依頼してください。'
           };
         }
         props.setProperty(lockKey, JSON.stringify(lockData));
-        const left = MAX_ATTEMPTS - lockData.count;
-        return { success: false, message: 'PINが正しくありません（残り' + left + '回）' };
+        const left = MAX_ATTEMPTS - (lockData.fails % MAX_ATTEMPTS);
+        return { success: false, message: 'PINが正しくありません（あと' + left + '回でロック）' };
       }
     }
   }
+  // 存在しない・無効化済みのuser_idへの試行も、全体の失敗回数には数える
+  _countGlobalFailure();
   return { success: false, message: 'ユーザーが見つかりません' };
+}
+
+// ============================================================
+// ロックアウト補助（v1.14.0〜 段階ロック）
+// ============================================================
+
+// ロック情報を読む。形式: { fails: 最後の成功以降の失敗回数, until: ロック解除時刻(ms) }
+// 旧形式 { count, until } も読める（count をそのまま fails として引き継ぐ）。
+// 壊れた値でログインできなくなる事故を避けるため、読めなければ初期値に戻す。
+function _readLockData(props, lockKey) {
+  try {
+    const raw = JSON.parse(props.getProperty(lockKey) || '{}');
+    const fails = Number(raw.fails !== undefined ? raw.fails : raw.count) || 0;
+    const until = Number(raw.until) || 0;
+    return { fails: Math.max(0, Math.floor(fails)), until: until };
+  } catch (e) {
+    Logger.log('_readLockData: 壊れたロック情報を初期化します key=' + lockKey);
+    return { fails: 0, until: 0 };
+  }
+}
+
+// 何回目のロックかに応じたロック時間（分）。5回目=1段目、10回目=2段目、15回目以降=最終段
+function _lockMinutesFor(fails) {
+  const stage = Math.floor(fails / MAX_ATTEMPTS); // 1, 2, 3, ...
+  const idx = Math.min(stage, LOCK_STEPS_MINUTES.length) - 1;
+  return LOCK_STEPS_MINUTES[Math.max(0, idx)];
+}
+
+// 残り時間を画面表示用の文字列にする（60分未満は「N分」、それ以上は「約N時間」）
+function _formatWait(ms) {
+  const minutes = Math.max(1, Math.ceil(ms / 60000));
+  if (minutes < 60) return minutes + '分';
+  return '約' + Math.ceil(minutes / 60) + '時間';
+}
+
+// 全ユーザー合計の失敗回数を1時間単位で数え、閾値に達した時点で1回だけ通知する。
+// 呼び出し元の login は _withIdempotency のスクリプトロック内で動くため、加算は直列化されている。
+// CacheService は消えることがあるが、用途は「気づくための通知」なので数え漏れは許容する。
+function _countGlobalFailure() {
+  try {
+    const cache = CacheService.getScriptCache();
+    const key = 'login_fail_h_' + Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyyMMddHH');
+    const count = (Number(cache.get(key)) || 0) + 1;
+    cache.put(key, String(count), GLOBAL_FAIL_WINDOW_SEC + 600);
+    if (count === GLOBAL_FAIL_ALERT_COUNT) {
+      _sendLoginAlert(
+        '⚠️ ポータル: ログイン失敗が多発しています\n' +
+        'この1時間（' + Utilities.formatDate(new Date(), 'Asia/Tokyo', 'M/d H') + '時台）の失敗が' +
+        GLOBAL_FAIL_ALERT_COUNT + '回に達しました（全ユーザー合計）。\n' +
+        '総当たり攻撃の可能性があります。'
+      );
+    }
+  } catch (e) {
+    Logger.log('_countGlobalFailure error: ' + e);
+  }
+}
+
+// GASエディタから手動で1回だけ実行する（v1.14.0の反映時）。
+// 目的: ①UrlFetchApp（外部通信）の権限をこのプロジェクトで承認する ②通知先と文面を確かめる。
+// 送り先は LOGIN_ALERT_WEBHOOK（管理者個別の枠）。⚠️ 全社員向けの枠が設定されていないことを確認してから実行する。
+// 関数名の末尾に _ を付けない（付けるとエディタの実行メニューに出ない）。
+function testLoginAlert() {
+  if (!_PROPS.getProperty('LOGIN_ALERT_WEBHOOK')) {
+    Logger.log('LOGIN_ALERT_WEBHOOK が未設定です。通知は送られません。');
+    return;
+  }
+  _sendLoginAlert('🧪 ポータル: ログイン監視通知のテストです（' + VERSION + '）。\nこのメッセージが届けば通知の設定は完了です。');
+  Logger.log('テスト通知を送信しました。LINE WORKSで届いたか確認してください。');
+}
+
+// 管理者向けのLINE WORKS通知。失敗してもログイン処理には影響させない。
+// ⚠️ PINやセッショントークンは本文に入れないこと。
+function _sendLoginAlert(text) {
+  Logger.log('login alert: ' + text);
+  const url = _PROPS.getProperty('LOGIN_ALERT_WEBHOOK');
+  if (!url) return;
+  try {
+    UrlFetchApp.fetch(url, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({ body: { text: text } }),
+      muteHttpExceptions: true
+    });
+  } catch (e) {
+    Logger.log('_sendLoginAlert error: ' + e);
+  }
 }
 
 // ============================================================
