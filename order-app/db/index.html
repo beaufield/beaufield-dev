@@ -1233,6 +1233,7 @@
       <button class="btn btn-outline btn-sm" id="prop-ordered-toggle" onclick="toggleHideOrdered()" style="flex:1">✅ 発注済みを隠す</button>
     </div>
   </div>
+  <div id="prop-supply-monitor" role="status" style="font-size:13px;line-height:1.5;margin:10px 0"></div>
   <div id="prop-list">
     <div class="empty-state">
       <div class="spinner"></div>
@@ -1315,6 +1316,7 @@
       <div class="qty-last-order" id="qty-last-order"></div>
     </div>
 
+    <div id="qty-supply-note" role="status" style="font-size:13px;line-height:1.5;margin-bottom:10px"></div>
     <div class="qty-grid">
       <button class="qty-btn selected" onclick="selectQty(this,1)">1</button>
       <button class="qty-btn" onclick="selectQty(this,2)">2</button>
@@ -1512,7 +1514,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.81.0-db';
+const APP_VERSION    = 'v1.81.1-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -3241,11 +3243,11 @@ function _dbEmptyProposalsResult(live) {
     groupStatus: [], analysisId: null, analyzedAt: '', analysisInputAt: '', inputSeq: null }, live);
 }
 function _dbAssembleProposals(live, staticData) {
-  const hidden = new Set((live.effective && live.effective.hiddenCodes) || []);
+  const hidden = new Set(((live.effective && live.effective.hiddenCodes) || []).map(lotCode));
   const lotByCode = lotNormalizeMap((live.effective && live.effective.lotByCode) || {});
   const today = _dbJstToday();
   const proposals = (staticData.proposals || [])
-    .filter(p => !hidden.has(p.code))
+    .filter(p => !hidden.has(lotCode(p.code)))
     .map(p => {
       let row = p;
       if (Object.prototype.hasOwnProperty.call(lotByCode, lotCode(p.code))) row = _dbApplyLot(row, lotByCode[lotCode(p.code)]);
@@ -3265,7 +3267,7 @@ function _dbAssembleProposals(live, staticData) {
     analyzedAt: staticData.analyzedAt, analysisInputAt: staticData.analysisInputAt,
     inputSeq: staticData.inputSeq, analysisId: live.analysisId,
     exclusions: live.exclusions, eol: live.eol, excessAcks: live.excessAcks, deadAcks: live.deadAcks,
-    pendingOrders: live.pendingOrders, lotOverrides: live.lotOverrides
+    pendingOrders: (live.pendingOrders || []).map(x => Object.assign({}, x, {code: lotCode(x.code)})), lotOverrides: live.lotOverrides
   };
 }
 dbAdapter.getOrderProposals = async function() {
@@ -4080,19 +4082,12 @@ function openQtyModal(product, isHandwritten) {
     reorderEl.className = 'qty-reorder';
   }
 
-  // 推奨発注数バッジ: 適正在庫 - 在庫数 > 0 のときのみ表示
+  // 数量は公開分析・未入荷・最低発注数を確認してから表示する。
+  ++qtySupplyEpoch;
   const recEl = document.getElementById('qty-recommended');
   recEl.classList.remove('show');
   delete recEl.dataset.recommended;
-  if (hasReorder && hasStock) {
-    const stockNum2 = parseFloat(product.stock) || 0;
-    const recommended = Math.round(product.reorderPoint - stockNum2);
-    if (recommended > 0) {
-      recEl.textContent = `📋 推奨発注数: ${recommended}`;
-      recEl.dataset.recommended = recommended;
-      recEl.classList.add('show');
-    }
-  }
+  document.getElementById('qty-supply-note').textContent = '';
 
   let hasLastOrder = false;
   if (!isHandwritten) {
@@ -4122,6 +4117,7 @@ function openQtyModal(product, isHandwritten) {
   buildUnitOptions(product.unit || '');
   resetQtyButtons();
   openModal('modal-qty');
+  if (hasReorder && hasStock) refreshQtySupply(product);
 }
 
 function applyRecommendedQty() {
@@ -4741,11 +4737,11 @@ function _forgetOrderedLocal(orderNo) {
 // これをやらないと、入荷して在庫に載った商品が最大30日間まるごと提案タブから消える
 // （2026-08-27 ナプラ85件が提案から見えなくなった不具合の原因）
 function _reconcileOrderedLocal() {
-  const serverLines = new Set((proposalsData.pendingOrders || []).map(x => x.orderNo + '|' + x.code));
+  const serverLines = new Set((proposalsData.pendingOrders || []).map(x => x.orderNo + '|' + lotCode(x.code)));
   const graceLimit = Date.now() - ORDERED_LOCAL_GRACE_MS;
   const rows = _readOrderedLocal();
   // 保存直後（猶予内）の記録だけは、サーバーがまだ発注を拾えていない可能性があるので残す
-  const alive = rows.filter(r => serverLines.has(r.orderNo + '|' + r.code) || r.savedAt > graceLimit);
+  const alive = rows.filter(r => serverLines.has(r.orderNo + '|' + lotCode(r.code)) || r.savedAt > graceLimit);
   if (alive.length !== rows.length) _writeOrderedLocal(alive);
 }
 /* === /ORDERED CACHE === */
@@ -7430,7 +7426,8 @@ const PROP_URGENT_MIN_MONTHLY   = 0.5; // 「要対応」条件①: 在庫<=0で
 function buildDelayedByCode() {
   const map = {};
   (proposalsData.pendingOrders || []).forEach(x => {
-    if (x.isDelayed && !map[x.code]) map[x.code] = x;
+    const code = lotCode(x.code);
+    if (x.isDelayed && !map[code]) map[code] = x;
   });
   return map;
 }
@@ -7472,6 +7469,7 @@ function _registeredAtMs(value) {
 }
 
 function _isServerOrderReflected(order) {
+  if (typeof order?.inAnalysis === 'boolean') return order.inAnalysis;
   const analyzedMs = _analyzedAtMs();
   if (analyzedMs === null) return false; // 分析時点が不明なら安全側で「未反映」として保護する
   const registeredMs = _registeredAtMs(order && order.registeredAt);
@@ -7489,7 +7487,7 @@ function _pendingCodesWithoutRegisteredAt() {
   const codes = new Set();
   if (_analyzedAtMs() === null) return codes; // 分析日時が不明なときは全件が未反映扱いで、原因が別
   (proposalsData.pendingOrders || []).forEach(x => {
-    if (x && x.code && _registeredAtMs(x.registeredAt) === null) codes.add(String(x.code));
+    if (x && x.code && _registeredAtMs(x.registeredAt) === null) codes.add(lotCode(x.code));
   });
   return codes;
 }
@@ -7513,6 +7511,8 @@ function buildOrderedByCode(opts) {
   const analyzedMs  = unreflectedOnly ? _analyzedAtMs()   : null;
   const map = {};
   const put = (code, qty, orderDate, orderNo, isDelayed) => {
+    code = lotCode(code);
+    qty = Number(qty) || 0;
     if (!code) return;
     const cur = map[code];
     if (!cur) { map[code] = { qty, orderDate, orderNo, isDelayed: !!isDelayed }; return; }
@@ -7527,9 +7527,9 @@ function buildOrderedByCode(opts) {
   // ローカル記録は pendingOrders と重複しうるので、同じ明細（発注No＋商品コード）は二重計上しない。
   // ⚠️ 発注No単位で突き合わせてはいけない（v1.66.0）。1明細でも入荷済みになると発注Noごと
   //    「サーバーに無い」判定になり、その発注の全商品がローカル記録だけで隠れ続ける
-  const seenLines = new Set((proposalsData.pendingOrders || []).map(x => x.orderNo + '|' + x.code));
+  const seenLines = new Set((proposalsData.pendingOrders || []).map(x => x.orderNo + '|' + lotCode(x.code)));
   _readOrderedLocal().forEach(r => {
-    if (seenLines.has(r.orderNo + '|' + r.code)) return;
+    if (seenLines.has(r.orderNo + '|' + lotCode(r.code))) return;
     // ローカル記録は発注日を過去日に変更できる（[isOrderDateAllowed] 参照）ので、
     // 前後判定には発注日ではなく「保存した時刻」を使う。これなら過去日で登録した発注も
     // 「分析より後に立てた発注＝未反映」と正しく扱える
@@ -7593,7 +7593,7 @@ function renderPropItem(p, code, delayedByCode, orderedByCode) {
   const itemKey = code + '|' + p.code;
   // 参考行＝提案対象外だが在庫が推奨を下回った商品。チェックOFF・グレー表示で
   // 金額合計には入らないが、拾いたい時はチェックすれば通常どおり発注へ送れる
-  const refBadge = p.refOnly && !p.groupId ? '<span class="prop-badge ref">📎 参考</span>' : '';
+  const refBadge = p.refOnly && !p.groupId ? `<span class="prop-badge ref">${p.pendingCovered ? '📦 入荷確認' : '📎 参考'}</span>` : '';
   const concBadge = renderConcBadge(p);
   // 提案滞留バッジ（v1.58.0）: 何日連続で不足のままかを表示。14日以上は橙、30日以上は赤
   const stuckDays = p.stuckDays || 0;
@@ -7678,7 +7678,7 @@ function renderUrgentItemCard(p, delayedByCode) {
   const stuckBadge = stuckDays >= PROP_STUCK_BADGE_MIN_DAYS
     ? `<span class="prop-badge ${stuckDays >= 30 ? 'stuck-long' : 'stuck'}">⏳ 滞留${stuckDays}日</span>` : '';
   const outBadge = stock <= 0 ? '<span class="prop-badge out">🔴 欠品中</span>' : '';
-  const refBadge = p.refOnly ? '<span class="prop-badge ref">📎 参考</span>' : '';
+  const refBadge = p.refOnly ? `<span class="prop-badge ref">${p.pendingCovered ? '📦 入荷確認' : '📎 参考'}</span>` : '';
   const supplierName = resolveSupplierName(p.supplierCode, p.supplierName);
   const note = p.aiNote || p.note || '';
   const delayed = (delayedByCode || {})[p.code];
@@ -7741,10 +7741,11 @@ function renderProposalUrgent() {
     const delayed = !!delayedByCode[p.code];
     // 発注済み（仕入未計上）は要対応から外す。ただし③入荷遅延は「発注したのに届いていない」
     // という気づくべき情報なので、発注済みでも掲載を続ける（v1.62.0）
-    if (orderedByCode[p.code] && !delayed) return;
+    const pendingNeedsReview = proposalPendingNeedsReview(p);
+    if (orderedByCode[p.code] && !delayed && !pendingNeedsReview) return;
     const cond1 = stock <= 0 && recentDemand >= PROP_URGENT_MIN_MONTHLY;
     const cond2 = stuckDays >= PROP_STUCK_URGENT_DAYS && shortQty > 0;
-    if (!cond1 && !cond2 && !delayed) return;
+    if (!cond1 && !cond2 && !delayed && !pendingNeedsReview) return;
     const key = (p.supplierCode || '') + '|' + p.code;
     if (seen.has(key)) return;
     seen.add(key);
@@ -7762,7 +7763,7 @@ function renderProposalUrgent() {
         <span class="prop-group-count">${items.length}件</span>
       </div>
       <div class="prop-group-body">
-        <div class="prop-urgent-sub">在庫切れ・14日以上未処理・入荷遅延のいずれかに該当する商品を、仕入先をまたいで金額が大きい順に表示しています。ここでは編集できません。「発注へ移動」で該当仕入先のカードを開いて操作してください</div>
+        <div class="prop-urgent-sub">在庫切れ・14日以上未処理・入荷遅延・未入荷残の不整合のいずれかに該当する商品を、仕入先をまたいで金額が大きい順に表示しています。ここでは編集できません。「発注へ移動」で該当仕入先のカードを開いて操作してください</div>
         <div class="prop-urgent-body">${rows}</div>
       </div>
     </div>`;
@@ -8118,6 +8119,7 @@ function renderProposalList() {
   document.querySelectorAll('#prop-list .prop-mg').forEach(updatePropMgTotal);
   document.querySelectorAll('#prop-list .prop-group').forEach(updatePropMinOrder);
   renderProposalUrgent();
+  renderPendingCoverageSummary();
   renderPendingOrders();
   renderProposalExcess();
   renderProposalExclusions();
@@ -10566,6 +10568,80 @@ async function inventoryPolicyOpen(file) {
     host.replaceChildren();status.textContent=error.message || '比較データを開けません。';
   }
 }
+</script>
+<script>/* 分析の未入荷残と新しい注文を区別し、追加発注を勝手に増やさない。 */
+const ProposalSupply = (() => {
+  const code = value => { const s=String(value??'').trim(); return /^\d+$/.test(s)?s.padStart(6,'0'):s; };
+  const ms = value => {
+    if(/[zZ]$|[+-]\d{2}:\d{2}$/.test(String(value||''))) { const n=Date.parse(value); return Number.isFinite(n)?n:null; }
+    const m=String(value||'').match(/^(\d{4})[-/](\d{2})[-/](\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    return m?Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4].padStart(2,'0')}:${m[5]}:${m[6]||'00'}+09:00`):null;
+  };
+  function decide(product,data,local=[]) {
+    const c=code(product.code), unknown={kind:'unknown',label:'推奨数未確認',qty:null,note:'入荷・提案の確認ができていません。基準との差だけで追加発注を決めないでください。'};
+    if(data?.success!==true || !data.analysisId)return unknown;
+    const p=(data.proposals||[]).find(r=>code(r.code)===c);
+    const hidden=rows=>(rows||[]).some(r=>code(typeof r==='object'?r.code:r)===c);
+    if(hidden(data.exclusions)||hidden(data.eol))return {kind:'excluded',label:'除外・終売を確認',qty:null,note:'手動の除外・終売が設定されています。'};
+    const pending=(data.pendingOrders||[]).filter(r=>code(r.code)===c&&Number(r.qty)>0);
+    const analysisMs=ms(data.analysisInputAt||data.analyzedAt);
+    const newPending=pending.some(r=>r.inAnalysis===false || typeof r.inAnalysis!=='boolean' && (ms(r.registeredAt)===null || analysisMs===null || ms(r.registeredAt)>analysisMs));
+    const lines=new Set(pending.map(r=>r.orderNo+'|'+c));
+    const localNew=local.some(r=>code(r.code)===c&&!lines.has(r.orderNo+'|'+c) && (analysisMs===null || r.savedAt>analysisMs));
+    const delayed=pending.some(r=>r.isDelayed===true);
+    const target=p?Number(p.recommended):Number(product.reorderPoint);
+    const stock=p?Number(p.stock):Number(product.stock);
+    const modelPending=p?Number(p.onOrder||0):null;
+    const detail={code:c,target,stock,modelPending,records:pending.length};
+    if(delayed)return {...detail,kind:'delayed',label:'入荷遅延を確認',qty:null,note:`過去の注文に入荷遅延があります。届いているか・欠品かを確認してください。追加注文を自動では勧めません。`};
+    if(newPending||localNew)return {...detail,kind:'ordered',label:'発注済みを確認',qty:null,note:'分析後の注文があるため、追加発注の前に既存注文を確認してください。'};
+    if(p?.groupId)return {...detail,kind:'series',label:'系列の条件確認',qty:null,note:'系列全体の数量・最低条件で判断します。商品の基準との差だけでは発注数を出しません。'};
+    if(p && Number(product.stock)!==stock)return {...detail,kind:'stock_changed',label:'在庫更新を確認',qty:null,note:`分析時点の在庫${stock}と表示在庫が異なります。在庫更新・分析時点を確認してから数量を決めてください。`};
+    if(p?.pendingCovered || p && stock<target && modelPending>0 && stock+modelPending>=target) {
+      if(!pending.length)return {...detail,kind:'pending_unknown',label:'未入荷情報を確認',qty:null,note:`分析で未入荷${modelPending}を加算していますが、現在の注文状態を確認できません。受領・取消・在庫更新を確認してください。`};
+      if(modelPending>pending.reduce((s,r)=>s+Number(r.qty),0))return {...detail,kind:'pending_unknown',label:'未入荷残を確認',qty:null,note:`分析の未入荷残${modelPending}が現在表示される注文数量より多くなっています。古い注文が入荷待ち一覧の表示期間外になった可能性もあります。過去注文の受領・取消・在庫更新を確認してください。`};
+      return {...detail,kind:'pending',label:'入荷待ちで補う想定',qty:0,note:`分析時点：帳簿在庫${stock}＋未入荷残${modelPending}、基準${target}。追加提案は0です。注文記録の数量には一部計上済み分が含まれ得るため、その合計を在庫へ足しません。`};
+    }
+    if(p&&Number.isSafeInteger(p.proposedQty)&&p.proposedQty>0)return {...detail,kind:p.refOnly?'reference':'proposal',qty:p.proposedQty,
+      label:(p.refOnly?'確認用数量: ':'推奨発注数: ')+p.proposedQty,
+      note:`${p.refOnly?'参考商品です。自動選択されません。':'公開分析と最低発注数に基づく数量です。'} 最低発注数${p.lot}。分析 ${data.analyzedAt}`};
+    if(Number.isFinite(stock)&&Number.isFinite(target)&&stock>=target)return {...detail,kind:'sufficient',label:'基準以上',qty:0,note:'帳簿在庫は基準以上です。'};
+    return {...unknown,...detail,note:'在庫は基準未満ですが、公開分析に個別の提案行がありません。除外・系列条件・分析更新を確認してください。'};
+  }
+  return {code,decide};
+})();
+let qtySupplyEpoch=0;
+async function refreshQtySupply(product) {
+  const epoch=++qtySupplyEpoch,rec=document.getElementById('qty-recommended'),note=document.getElementById('qty-supply-note');
+  rec.textContent='入荷・提案を確認中';rec.classList.add('show');delete rec.dataset.recommended;note.textContent='';
+  try {
+    // 読取だけ。提案画面の選択・系列配分・カートを再初期化しない。
+    const data=await gasGet({action:'getOrderProposals'});
+    if(epoch!==qtySupplyEpoch || !document.getElementById('modal-qty').classList.contains('open') || ProposalSupply.code(pendingProduct?.code)!==ProposalSupply.code(product.code))return;
+    const decision=ProposalSupply.decide(product,data,_readOrderedLocal());
+    rec.textContent=decision.label;note.textContent=decision.note;
+    if(decision.qty>0)rec.dataset.recommended=decision.qty;
+    if(Number.isFinite(decision.target)) {
+      const el=document.getElementById('qty-reorder');el.textContent=`${decision.stock<decision.target?'⚠️ ':''}適正在庫: ${decision.target}`;
+      el.className=`qty-reorder show ${decision.stock<decision.target?'warning':'normal'}`;
+    }
+  } catch(error) {
+    if(epoch!==qtySupplyEpoch || !document.getElementById('modal-qty').classList.contains('open') || ProposalSupply.code(pendingProduct?.code)!==ProposalSupply.code(product.code))return;
+    rec.textContent='推奨数未確認';note.textContent='入荷・提案を取得できません。確認後に数量を決めてください。';delete rec.dataset.recommended;
+  }
+}
+function proposalPendingNeedsReview(p) {
+  return !!p.pendingCovered && ProposalSupply.decide({code:p.code,stock:p.stock,reorderPoint:p.recommended},
+    {success:true,...proposalsData},_readOrderedLocal()).kind==='pending_unknown';
+}
+function renderPendingCoverageSummary() {
+  const el=document.getElementById('prop-supply-monitor');if(!el)return;
+  const rows=(proposalsData.proposals||[]).filter(p=>p.pendingCovered);
+  if(!rows.length){el.replaceChildren();return;}
+  const kinds=rows.map(p=>ProposalSupply.decide({code:p.code,stock:p.stock,reorderPoint:p.recommended},{success:true,...proposalsData},_readOrderedLocal()).kind);
+  el.textContent=`📦 基準未満・入荷確認 ${rows.length}品（入荷遅延${kinds.filter(k=>k==='delayed').length}品／状態未確認${kinds.filter(k=>k==='pending_unknown').length}品）。未入荷を加算して追加提案を抑止した商品も参考行に表示しています。到着を確認してから追加手配を判断してください。`;
+}
+if(typeof module!=='undefined')module.exports=ProposalSupply;
 </script>
 </body>
 </html>
