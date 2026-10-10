@@ -385,7 +385,7 @@
   .modalCard .ghostBtn { background: #fff; color: #10617c; border: 1px solid #10617c; }
 </style>
 <link rel="stylesheet" href="../lib/booking-v1.3.2.css">
-<script src="../lib/booking-v1.4.5.js"></script>
+<script src="../lib/booking-v1.4.6.js"></script>
 <script src="../lib/gas-relay-v1.0.0.js"></script>
 </head>
 <body>
@@ -642,7 +642,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.14.3';
+const APP_VERSION = '0.14.4';
 const GAS_URL = 'TEST_ENV_NO_GAS';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
@@ -2859,7 +2859,8 @@ function mockAdminBookingSnapshot(data) {
 // 🆕 v0.11.0 予約者一覧のポップアップ。表示は サロン名・氏名・担当営業・予約日時 のみ（電話番号は出さない）。
 function openBookingReservers(session, data) {
   const info = bookingReserversFor(session, data);
-  const isSeminar = String(session.session_id || '').startsWith('S');
+  // スパルーチェ等のSP枠をセミナー扱いしない。
+  const isSeminar = /^S\d+$/.test(String(session.session_id || '')) || String(session.slot || '').startsWith('セミナー');
   el('rvTitle').textContent = bookingProgramName(session);
   const meta = (isSeminar ? (session.slot || 'セミナー') + ' ・ ' : '') + bookingTimeLabel(session);
   el('rvMeta').textContent = info.direct.length
