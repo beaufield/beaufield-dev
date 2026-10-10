@@ -24,7 +24,9 @@ const _PROPS          = PropertiesService.getScriptProperties();
 const SPREADSHEET_ID  = _PROPS.getProperty('SPREADSHEET_ID');
 const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
-const VERSION         = 'v1.39.25';
+const DB_URL          = _PROPS.getProperty('DB_URL');          // §8: SupabaseプロジェクトURL（例 https://xxxx.supabase.co）
+const DB_SECRET_KEY   = _PROPS.getProperty('DB_SECRET_KEY');   // §8: service_role相当のsecret key（apikeyヘッダーにのみ使う）
+const VERSION         = 'v1.40.1';
 const APP_NAME        = 'order-app';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 let _requestMetric = null;
@@ -81,6 +83,7 @@ const ORDER_TEMPLATES = {
   'grandex':           '54.pdf',
   'chiyoda':           '48.pdf',
   'alpenrose':         '57.pdf',
+  'pacific_v1':        '58-v1.pdf',
   'melos':             '2.pdf',
   'melos_2025':        'メロス発注書2025年価格改定後.pdf',
   'adelans':           '82.pdf',
@@ -109,7 +112,12 @@ function validateSession(token, appName) {
     : 'sess_' + appName + '_v1_' + token.slice(-32);
   const cached   = cache.get(cacheKey);
   if (cached !== null) {
-    try { return JSON.parse(cached); } catch(e) {}
+    // §8 G1: expiresAt を持つ新形式のキャッシュだけを有効とする。
+    // 期限の無い旧形式のキャッシュ（expiresAtが無い/数値でない）は無効としてシートを読み直す
+    try {
+      const c = JSON.parse(cached);
+      if (typeof c.expiresAt === 'number' && c.expiresAt > Date.now()) return c;
+    } catch(e) {}
   }
 
   try {
@@ -164,7 +172,8 @@ function validateSession(token, appName) {
           user_id: rowUserId,
           name: String(userRow[1] || rowUserId),
           is_admin: userRow[5] === true || userRow[5] === 'TRUE',
-          role: role
+          role: role,
+          expiresAt: rowExpires // §8 G1: issueDbToken がJWTのexpの上限に使う（元セッションより長くしない）
         };
         cache.put(cacheKey, JSON.stringify(r), CACHE_TTL_SESSION);
         return r;
@@ -179,6 +188,745 @@ function validateSession(token, appName) {
   const r = { valid: false };
   cache.put(cacheKey, JSON.stringify(r), 60);
   return r;
+}
+
+// ============================================================
+// §8 G2: Supabase用の通行証（JWT）を発行する
+// ============================================================
+const DB_JWT_TTL_SEC = 8 * 60 * 60; // 8時間（§17既定値。元セッション期限が先ならそちら）
+
+// GAS・Python・試験スクリプトで同じ式を使う（Supabase移行_設計プラン.md §8 G2）
+function uuidFromUserId_(userId) {
+  const b = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, 'beaufield-user:' + userId, Utilities.Charset.UTF_8)
+            .slice(0, 16).map(x => (x + 256) % 256);
+  b[6] = (b[6] & 0x0f) | 0x50;               // version 5 風
+  b[8] = (b[8] & 0x3f) | 0x80;               // variant
+  const h = b.map(x => x.toString(16).padStart(2, '0')).join('');
+  return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20);
+}
+function b64url_(bytesOrString) {
+  return Utilities.base64EncodeWebSafe(bytesOrString).replace(/=+$/, '');
+}
+// スクリプトプロパティの入力欄は1行しか入力できないため、PEM形式の秘密鍵を貼り付けると
+// 内部の改行が失われることがある。改行の有無にかかわらず正しいPEM形式に組み直す
+function _normalizePemKey_(raw) {
+  if (!raw) return raw;
+  const m = raw.match(/-----BEGIN ([A-Z ]+)-----/);
+  const label = m ? m[1] : 'PRIVATE KEY';
+  const body = raw
+    .replace(/-----BEGIN [A-Z ]+-----/, '')
+    .replace(/-----END [A-Z ]+-----/, '')
+    .replace(/[\r\n\s]/g, '');
+  const lines = [];
+  for (let i = 0; i < body.length; i += 64) lines.push(body.slice(i, i + 64));
+  return '-----BEGIN ' + label + '-----\n' + lines.join('\n') + '\n-----END ' + label + '-----\n';
+}
+// auth = validateSession() の戻り値（expiresAt必須）。app は 'order-app' か 'stock-report'
+function issueDbJwt_(auth, app, sessionExpiresAt) {
+  const now = Math.floor(Date.now() / 1000);
+  const exp = Math.min(Math.floor(sessionExpiresAt / 1000), now + DB_JWT_TTL_SEC);
+  const header  = { alg: 'RS256', typ: 'JWT', kid: _PROPS.getProperty('DB_JWT_KID') };
+  const payload = { iss: 'beaufield-order-gas', aud: 'authenticated', role: 'authenticated',
+                    sub: uuidFromUserId_(auth.user_id), app: app, user_id: auth.user_id, iat: now, exp: exp };
+  const input = b64url_(JSON.stringify(header)) + '.' + b64url_(JSON.stringify(payload));
+  const pem = _normalizePemKey_(_PROPS.getProperty('DB_JWT_PRIVATE_KEY'));
+  const sig = Utilities.computeRsaSha256Signature(input, pem);
+  return { token: input + '.' + b64url_(sig), exp: exp };
+}
+
+// ============================================================
+// §3-5 G7: 試験用GASでだけ意味を持つ検査。DB関連の関数の先頭で呼ぶ
+// ============================================================
+function assertTestEnv_() {
+  const env = _PROPS.getProperty('ENV');
+  if (env !== 'test' && env !== 'prod') {
+    throw new Error('ENV スクリプトプロパティが test/prod のどちらでもありません（現在の値: ' + env + '）。停止します。');
+  }
+  if (env === 'test') {
+    const prodSpreadsheetGuard = _PROPS.getProperty('PROD_SPREADSHEET_ID_GUARD');
+    const prodAuthGuard        = _PROPS.getProperty('PROD_AUTH_SHEET_ID_GUARD');
+    if (prodSpreadsheetGuard && SPREADSHEET_ID === prodSpreadsheetGuard) {
+      throw new Error('試験用GASのSPREADSHEET_IDが本番と同じです。停止します。');
+    }
+    if (prodAuthGuard && AUTH_SHEET_ID === prodAuthGuard) {
+      throw new Error('試験用GASのAUTH_SHEET_IDが本番と同じです。停止します。');
+    }
+    if (_PROPS.getProperty('LINEWORKS_WEBHOOK')) {
+      throw new Error('試験用GASにLINEWORKS_WEBHOOKが設定されています。全社員への誤通知を防ぐため停止します。');
+    }
+  }
+}
+
+// ============================================================
+// §8: Supabase の管理用（service_role）RPCを呼ぶ共通関数
+// ============================================================
+function callDbAdmin_(name, p) {
+  const res = UrlFetchApp.fetch(DB_URL + '/rest/v1/rpc/' + name, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { apikey: DB_SECRET_KEY }, // secret keyはapikeyにだけ入れる（JWTではないのでAuthorizationには入れない）
+    payload: JSON.stringify({ p: p }),
+    muteHttpExceptions: true
+  });
+  const code = res.getResponseCode();
+  if (code !== 200) {
+    Logger.log('callDbAdmin_ ' + name + ' HTTP ' + code + ': ' + res.getContentText().slice(0, 200));
+    return { success: false, error: 'DB_HTTP_' + code, detail: res.getContentText().slice(0, 300) };
+  }
+  return JSON.parse(res.getContentText());
+}
+
+// ============================================================
+// §8 G3: 同期トリガー（5分おき）— 利用者・設定をSupabaseへ反映する
+// ============================================================
+function syncToDb_() {
+  assertTestEnv_();
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) return; // 前回の同期がまだ動いている
+  try {
+    const generation = Date.now(); // 読み取りを始める直前の時刻。users・configで同じ値を使う
+
+    // ---- users・user_app_roles ----
+    let users;
+    try {
+      const authSs   = SpreadsheetApp.openById(AUTH_SHEET_ID);
+      const usersSh  = authSs.getSheetByName('users');
+      const rolesSh  = authSs.getSheetByName('user_app_roles');
+      if (!usersSh || !rolesSh) throw new Error('users/user_app_rolesシートが見つかりません');
+
+      const rolesByUser = {}; // user_id -> { 'order-app': role, 'stock-report': role }
+      rolesSh.getDataRange().getValues().slice(1).forEach(r => {
+        const uid = String(r[0] || '').trim();
+        const app = String(r[1] || '').trim();
+        const role = String(r[2] || '').trim().toLowerCase();
+        if (!uid || !app) return;
+        if (!rolesByUser[uid]) rolesByUser[uid] = {};
+        rolesByUser[uid][app] = role;
+      });
+
+      users = usersSh.getDataRange().getValues().slice(1)
+        .filter(r => String(r[0] || '').trim() !== '')
+        .map(r => {
+          const userId = String(r[0]).trim();
+          const roles = rolesByUser[userId] || {};
+          return {
+            userId:    userId,
+            userUuid:  uuidFromUserId_(userId),
+            name:      String(r[1] || '').trim(),
+            active:    r[3] === true || r[3] === 'TRUE',
+            isAdmin:   r[5] === true || r[5] === 'TRUE',
+            orderRole: roles['order-app'] || 'none',
+            stockRole: roles['stock-report'] || 'none'
+          };
+        });
+      if (users.length === 0) throw new Error('usersが0行です');
+    } catch (e) {
+      Logger.log('syncToDb_ users読み取り失敗のため送信を中止: ' + e);
+      users = null;
+    }
+    if (users) {
+      const r = callDbAdmin_('sync_users', { generation: generation, users: users });
+      if (!r || r.success !== true) Logger.log('sync_users失敗: ' + JSON.stringify(r));
+    }
+
+    // ---- 発注グループ設定・発注先マスターのリード/サイクル ----
+    let orderGroups, supplierLeadCycle;
+    try {
+      orderGroups = readOrderGroups_().map(g => Object.assign({}, g, { sheetRow: 0 }));
+      const suppData = getSheet(SHEET_SUPPLIERS).getDataRange().getValues();
+      supplierLeadCycle = suppData.slice(1)
+        .filter(r => r[0] !== '' && r[0] !== null)
+        .map(r => ({
+          code: String(r[0]).trim(),
+          leadTimeDays: parseFloat(r[5]) > 0 ? parseFloat(r[5]) : null,
+          orderCycleDays: parseFloat(r[6]) > 0 ? parseFloat(r[6]) : null
+        }));
+    } catch (e) {
+      Logger.log('syncToDb_ 設定読み取り失敗のため送信を中止: ' + e);
+      orderGroups = null;
+    }
+    if (orderGroups) {
+      const r = callDbAdmin_('sync_config', { generation: generation, orderGroups: orderGroups, supplierLeadCycle: supplierLeadCycle });
+      if (!r || r.success !== true) Logger.log('sync_config失敗: ' + JSON.stringify(r));
+    }
+  } catch (e) {
+    Logger.log('syncToDb_ 失敗: ' + e);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// エディタで1回実行するトリガー作成関数（既存の同名トリガーは消してから作る）
+function setDbSyncTrigger() {
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'syncToDb_')
+    .forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('syncToDb_').timeBased().everyMinutes(5).create();
+}
+
+// ============================================================
+// §12-3 / G5: 写し copyChangesToSheets_（15分おき）
+// 人が見る用・切り戻しの足場。分析も在庫レポートもこの写しは読まない
+// ============================================================
+function setDbSheetCopyTrigger() {
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'copyChangesToSheets_')
+    .forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('copyChangesToSheets_').timeBased().everyMinutes(15).create();
+}
+
+// ============================================================
+// §13-3: 影運用（S2）の毎晩の取り込み。トリガーは毎日 2:00〜3:00 に migrateToDbNightly_ を1回動かす
+// 切替（S3）の手順2でこのトリガーを削除する。念のため writer が shadow でない間は何もしない
+// ============================================================
+function setDbMigrateTrigger() {
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'migrateToDbNightly_')
+    .forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('migrateToDbNightly_').timeBased().everyDays(1).atHour(2).create();
+}
+function deleteDbMigrateTrigger() {
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'migrateToDbNightly_')
+    .forEach(t => ScriptApp.deleteTrigger(t));
+}
+function migrateToDbNightly_() {
+  assertTestEnv_();
+  const w = callDbAdmin_('get_writer', {});
+  if (!w || w.success !== true || w.writer !== 'shadow') {
+    Logger.log('migrateToDbNightly_ スキップ: writer=' + (w && w.writer) + '（shadow のときだけ取り込む）');
+    return;
+  }
+  const r = migrateToDb();
+  Logger.log('migrateToDbNightly_ success=' + (r && r.success) + ' mismatch=' + JSON.stringify(r && r.mismatch) + ' elapsedMs=' + (r && r.elapsedMs));
+}
+
+// 単一キー(商品コード)の設定/確認済みシートへ current を反映する共通ヘルパー。
+// headerRow: [キー列名, 名前列, 中間列（理由/ロット/数量など・null可）, 担当者列, 日時列]
+// midKey: current内の中間列に対応するキー名（'reason'|'lot'|null）
+function upsertOrDeleteSimpleSheetRow_(ss, sheetName, headerRow, code, current, midKey, byKey) {
+  let sh = ss.getSheetByName(sheetName);
+  if (!current || current.active !== true) {
+    if (!sh || sh.getLastRow() < 2) return;
+    deleteExactRows_(sh, 1, code);
+    return;
+  }
+  if (!sh) { sh = ss.insertSheet(sheetName); sh.appendRow(headerRow); }
+  const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+  const mid = midKey ? (current[midKey] != null ? current[midKey] : '') : undefined;
+  const row = mid !== undefined
+    ? [code, current.name || '', mid, current[byKey] || '', now]
+    : [code, current.name || '', current[byKey] || '', now];
+  const rows = sh.getLastRow() < 2 ? [] : sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues();
+  let found = -1;
+  for (let i = 0; i < rows.length; i++) { if (String(rows[i][0]).trim() === code) { found = i + 2; break; } }
+  if (found !== -1) sh.getRange(found, 1, 1, row.length).setValues([row]);
+  else sh.appendRow(row);
+}
+
+function copyChangesToSheets_() {
+  assertTestEnv_();
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return; // 前回の写しがまだ動いている
+  try {
+    const seqProp = 'DB_SHEET_COPY_SEQ';
+    let afterSeq = parseInt(_PROPS.getProperty(seqProp), 10);
+    if (!(afterSeq >= 0)) afterSeq = 0;
+
+    const res = callDbAdmin_('get_changes_since', { afterSeq: afterSeq, limit: 200 });
+    if (!res || res.success !== true) { Logger.log('copyChangesToSheets_ get_changes_since失敗: ' + JSON.stringify(res)); return; }
+    const changes = res.changes || [];
+    if (changes.length === 0) return;
+
+    const ss = getSS();
+    const histSh = getSheet(SHEET_HISTORY);
+    const itemsSh = getSheet(SHEET_ITEMS);
+    ensureOrderHistorySchema_(histSh);
+
+    changes.forEach(function(ch) {
+      const cur = ch.current;
+      if (ch.kind === 'create' || ch.kind === 'revise' || ch.kind === 'delete') {
+        const orderNo = ch.entityKey;
+        if (cur && cur.status === 'active') {
+          // DBの明細は JAN のキーが jan（GASの明細は janCode）。読み替えないとシートのJANが空になり、requestHash も本来の値と食い違う
+          const items = (cur.items || []).map(function(it) {
+            return normalizeOrderItem_(Object.assign({}, it, { janCode: it.janCode !== undefined ? it.janCode : it.jan }));
+          });
+          const requestHash = sha256Hex_(canonicalOrderPayload_({
+            date: cur.orderDate, supplierCode: cur.supplierCode, supplierName: cur.supplierName,
+            fax: cur.fax, staff: cur.staff, outputType: cur.outputType, revisionBaseOrderNo: cur.revisionBaseOrderNo
+          }, cur.userId, items));
+          const rows = findExactRows_(histSh, 1, orderNo);
+          const histRow = rows.length ? rows[0] : histSh.getLastRow() + 1;
+          histSh.getRange(histRow, 1, 1, 14).setValues([[
+            orderNo, cur.orderDate, cur.supplierCode, cur.supplierName, cur.fax, cur.staff,
+            cur.itemCount, cur.outputType, cur.createdAt, cur.userId, cur.requestId, requestHash,
+            cur.revisionBaseOrderNo, 'COMPLETE'
+          ]]);
+          deleteExactRows_(itemsSh, 1, orderNo);
+          if (items.length > 0) {
+            const itemRows = items.map(function(item) {
+              return [orderNo, item.janCode, item.code, item.name, item.qty, item.unit, item.memo,
+                item.isHandwritten ? 'TRUE' : 'FALSE', cur.createdAt];
+            });
+            itemsSh.getRange(itemsSh.getLastRow() + 1, 1, itemRows.length, 9).setValues(itemRows);
+          }
+        } else {
+          deleteExactRows_(histSh, 1, orderNo);
+          deleteExactRows_(itemsSh, 1, orderNo);
+        }
+        if (ch.kind === 'revise' && ch.detail && ch.detail.baseOrderNo) {
+          deleteExactRows_(histSh, 1, ch.detail.baseOrderNo);
+          deleteExactRows_(itemsSh, 1, ch.detail.baseOrderNo);
+        }
+      } else if (ch.kind === 'setting') {
+        if (ch.entity === 'proposal_exclusion') {
+          upsertOrDeleteSimpleSheetRow_(ss, SHEET_PROPOSAL_EXCL, ['商品コード','商品名','理由','登録者','登録日時'], ch.entityKey, cur, 'reason', 'addedBy');
+        } else if (ch.entity === 'eol_flag') {
+          upsertOrDeleteSimpleSheetRow_(ss, SHEET_EOL, ['商品コード','商品名','理由','登録者','登録日時'], ch.entityKey, cur, 'reason', 'addedBy');
+        } else if (ch.entity === 'lot_override') {
+          upsertOrDeleteSimpleSheetRow_(ss, SHEET_LOT_OVERRIDE, ['商品コード','商品名','最低発注数','登録者','登録日時'], ch.entityKey, cur, 'lot', 'addedBy');
+        } else if (ch.entity === 'excess_ack') {
+          upsertOrDeleteSimpleSheetRow_(ss, SHEET_EXCESS_ACK, ['商品コード','商品名','理由','確認者','確認日時'], ch.entityKey, cur, 'reason', 'ackedBy');
+        } else if (ch.entity === 'dead_ack') {
+          upsertOrDeleteSimpleSheetRow_(ss, SHEET_DEAD_ACK, ['商品コード','商品名','理由','確認者','確認日時'], ch.entityKey, cur, 'reason', 'ackedBy');
+        }
+      } else if (ch.kind === 'received') {
+        let sh = ss.getSheetByName(SHEET_RECEIVED);
+        const parts = String(ch.entityKey).split('|');
+        const orderNo = parts[0], code = parts[1];
+        if (!cur || cur.active !== true) {
+          if (sh && sh.getLastRow() > 1) {
+            const data = sh.getDataRange().getValues();
+            for (let i = data.length - 1; i >= 1; i--) {
+              if (String(data[i][0]).trim() === orderNo && String(data[i][1]).trim() === code) sh.deleteRow(i + 1);
+            }
+          }
+        } else {
+          if (!sh) { sh = ss.insertSheet(SHEET_RECEIVED); sh.appendRow(RECEIVED_HEADERS); }
+          const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+          const data = sh.getLastRow() < 2 ? [] : sh.getDataRange().getValues();
+          let found = -1;
+          for (let i = 1; i < data.length; i++) {
+            if (String(data[i][0]).trim() === orderNo && String(data[i][1]).trim() === code) { found = i + 1; break; }
+          }
+          const row = [orderNo, code, cur.name || '', cur.qty || 0, cur.ackedBy || '', now];
+          if (found !== -1) sh.getRange(found, 1, 1, row.length).setValues([row]);
+          else sh.appendRow(row);
+        }
+      } else if (ch.kind === 'supplier') {
+        const sh = getSheet(SHEET_SUPPLIERS);
+        const code = ch.entityKey;
+        const data = sh.getDataRange().getValues();
+        let found = -1;
+        for (let i = 1; i < data.length; i++) { if (String(data[i][0]).trim() === code) { found = i + 1; break; } }
+        if (!cur || cur.active !== true) {
+          if (found !== -1) sh.deleteRow(found);
+        } else {
+          const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+          if (found !== -1) {
+            // F・G(リードタイム・サイクル)はシート直接入力の列なのでここでは触らない
+            sh.getRange(found, 1, 1, 5).setValues([[code, cur.name || '', cur.fax || '', now, cur.outputMethods || '']]);
+            sh.getRange(found, 8, 1, 1).setValue(cur.note || '');
+            sh.getRange(found, 9, 1, 1).setNumberFormat('@').setValue(cur.deadline || '');
+            sh.getRange(found, 10, 1, 1).setValue(cur.minOrderAmount || 0);
+            sh.getRange(found, 11, 1, 1).setNumberFormat('@').setValue(cur.minOrderExcludes || '');
+          } else {
+            sh.appendRow([code, cur.name || '', cur.fax || '', now, cur.outputMethods || '', '', '', cur.note || '', '', cur.minOrderAmount || 0, cur.minOrderExcludes || '']);
+            const newRow = sh.getLastRow();
+            sh.getRange(newRow, 9, 1, 1).setNumberFormat('@').setValue(cur.deadline || '');
+            sh.getRange(newRow, 11, 1, 1).setNumberFormat('@').setValue(cur.minOrderExcludes || '');
+          }
+        }
+      }
+      // config・import・writer は写しの対象外（§12-2）
+    });
+
+    SpreadsheetApp.flush();
+    _PROPS.setProperty(seqProp, String(res.lastSeq));
+  } catch (e) {
+    Logger.log('copyChangesToSheets_ 失敗（次回同じseqからやり直し）: ' + e);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ============================================================
+// §8 G6: 旧書き込みの停止（LEGACY_WRITER）
+// ============================================================
+// 'open'（未設定含む）ならtrue、'closed'ならfalse
+function isLegacyWriterOpen_() {
+  return _PROPS.getProperty('LEGACY_WRITER') !== 'closed';
+}
+function legacyWriterClosedResponse_() {
+  return { success: false, error: 'MOVED_TO_DB', message: '新しい発注アプリに移行しました。画面を再読み込みしてください' };
+}
+// エディタで実行。どちらもスクリプトロックを取ってからプロパティを書く
+// （ロックが取れた時点で、実行中だった旧書き込みはすべて終わっている）
+function closeLegacyWriter() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    _PROPS.setProperty('LEGACY_WRITER', 'closed');
+    Logger.log('LEGACY_WRITER を closed にしました: ' + new Date());
+  } finally {
+    lock.releaseLock();
+  }
+}
+function openLegacyWriter() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    _PROPS.setProperty('LEGACY_WRITER', 'open');
+    Logger.log('LEGACY_WRITER を open にしました: ' + new Date());
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ============================================================
+// §8 G8: 切り戻し用 - 提案シートへ「今効いている設定」を当て直す（エディタで実行）
+// ============================================================
+function reapplyEffectiveToProposals_(analysisId) {
+  assertTestEnv_();
+  const writerRes = callDbAdmin_('get_writer', {});
+  if (!writerRes || writerRes.writer !== 'closed') {
+    throw new Error('writerがclosedではないため停止します（現在値: ' + (writerRes && writerRes.writer) + '）');
+  }
+  const exp = callDbAdmin_('get_analysis_export', { analysisId: analysisId });
+  if (!exp || exp.success !== true) {
+    throw new Error('get_analysis_exportに失敗しました: ' + JSON.stringify(exp));
+  }
+  const hiddenCodes = (exp.effective && exp.effective.hiddenCodes) || [];
+  const lotByCode = (exp.effective && exp.effective.lotByCode) || {};
+
+  const ss = getSS();
+  const prSh = ss.getSheetByName(SHEET_PROPOSALS);
+  let deletedRows = 0, lotRows = 0;
+  if (prSh && prSh.getLastRow() > 1) {
+    // 1回読んで、隠す商品の行番号を求め、後ろから削除する（商品ごとにシート全体を読み直さない。
+    // 旧実装は隠す商品・ロット設定ごとに全体を読み直し、数百回で6分の実行時間を超えた）
+    const hidden = {};
+    hiddenCodes.forEach(function(c) { hidden[String(c).trim()] = true; });
+    const codes = prSh.getRange(2, 1, prSh.getLastRow() - 1, 1).getValues();
+    for (let i = codes.length - 1; i >= 0; i--) {
+      if (hidden[String(codes[i][0]).trim()]) { prSh.deleteRow(i + 2); deletedRows++; }
+    }
+    // 提案数量(I)・最低発注数(J)・提案金額(R)を、今効いているロットで当て直す（applyLotToProposal_ と同じ計算。列ごとに1回で書く）
+    if (prSh.getLastRow() > 1 && Object.keys(lotByCode).length > 0) {
+      const n = prSh.getLastRow() - 1;
+      const data = prSh.getRange(2, 1, n, 21).getValues();
+      const ij = [];
+      const rr = [];
+      data.forEach(function(row) {
+        let qty = row[8], lotVal = row[9], amount = row[17];
+        const lot = Number(lotByCode[String(row[0]).trim()]);
+        if (lot > 0) {
+          lotRows++;
+          lotVal = lot;
+          if (String(row[20] || '').trim() === '') {   // U列=グループID があるときは J列(最低発注数)だけ更新
+            const stock = parseFloat(row[5]) || 0, onOrder = parseFloat(row[6]) || 0, recommended = parseFloat(row[7]) || 0;
+            const unitCost = parseFloat(row[16]) || 0;
+            const shortage = recommended - (stock + onOrder);
+            qty = shortage > 0 ? Math.ceil(shortage / lot) * lot : 0;
+            amount = Math.round(unitCost * qty);
+          }
+        }
+        ij.push([qty, lotVal]);
+        rr.push([amount]);
+      });
+      prSh.getRange(2, 9, n, 2).setValues(ij);
+      prSh.getRange(2, 18, n, 1).setValues(rr);
+    }
+  }
+  Logger.log('reapplyEffectiveToProposals_ 完了: hiddenRowsDeleted=' + deletedRows + ' lotRowsApplied=' + lotRows);
+  return { hiddenCodes: hiddenCodes.length, lotCodes: Object.keys(lotByCode).length, deletedRows: deletedRows, lotRows: lotRows };
+}
+
+// ============================================================
+// §13-2: 旧シート→DBの取り込み migrateToDb()（S2の毎晩2:00・S3の最終取り込み）
+// staging に全件を送り、import_finish が1トランザクションで範囲ごと置換する。同じデータなら何度実行しても同じ結果
+// ============================================================
+const MIGRATE_BATCH_ROWS = 500;
+
+function migrateCellStr_(v, fmt) {
+  if (v instanceof Date) return Utilities.formatDate(v, 'Asia/Tokyo', fmt || 'yyyy-MM-dd HH:mm:ss');
+  return String(v === null || v === undefined ? '' : v).trim();
+}
+function migrateDate_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, 'Asia/Tokyo', 'yyyy-MM-dd');
+  const m = String(v || '').match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+  return m ? m[1] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[3]).slice(-2) : '';
+}
+// 登録日時。読めなければ null（DBでは発注日の0時として扱う）
+function migrateTimestamp_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, 'Asia/Tokyo', "yyyy-MM-dd'T'HH:mm:ss") + '+09:00';
+  const m = String(v || '').match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return null;
+  return m[1] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[3]).slice(-2) + 'T' + ('0' + m[4]).slice(-2) + ':' + m[5] + ':' + (m[6] || '00') + '+09:00';
+}
+function migrateList_(v) {
+  return String(v || '').split(',').map(function(x) { return x.trim(); }).filter(Boolean);
+}
+
+function migrateToDb() {
+  assertTestEnv_();
+  const started = Date.now();
+  const ss = getSS();
+  const read = function(name) {
+    const sh = ss.getSheetByName(name);
+    if (!sh || sh.getLastRow() < 2) return [];
+    return sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues();
+  };
+  const str = migrateCellStr_;
+
+  // ---- 発注履歴（saveState が '' か 'COMPLETE' の行だけ。getOrders と同じ判定） ----
+  const orders = [];
+  const included = {};
+  const seenRequestIds = {};
+  const report = { skippedPending: 0, skippedNoDate: 0, duplicateRequestIds: [], duplicateOrderNos: [] };
+  read(SHEET_HISTORY).forEach(function(r, i) {
+    const orderNo = str(r[0]);
+    if (!orderNo) return;
+    const state = str(r[13]);
+    if (state !== '' && state !== 'COMPLETE') { report.skippedPending++; return; }
+    const date = migrateDate_(r[1]);
+    if (!date) { report.skippedNoDate++; return; }
+    if (included[orderNo]) { report.duplicateOrderNos.push(orderNo); return; }
+    let requestId = str(r[10]);
+    const requestHash = str(r[11]);
+    // 過去データで同じ requestId が2行ある場合、2行目以降は照会の対象から外す（DBの一意制約で取り込み全体が止まるのを防ぐ）
+    if (requestId && seenRequestIds[requestId]) { report.duplicateRequestIds.push(orderNo); requestId = ''; }
+    if (requestId) seenRequestIds[requestId] = true;
+    included[orderNo] = true;
+    orders.push({
+      key: orderNo, order_no: orderNo, order_date: date,
+      supplier_code: str(r[2]), supplier_name: str(r[3]), fax: str(r[4]), staff: str(r[5]),
+      item_count: Number(r[6]) || 0, output_type: str(r[7]),
+      created_at: migrateTimestamp_(r[8]), created_by: str(r[9]),
+      request_id: requestId || ('legacy-' + orderNo),
+      request_hash: requestId && requestHash ? requestHash : 'legacy',
+      request_hash_kind: requestId && requestHash ? 'gas-v1' : 'legacy-none',
+      revision_base_order_no: str(r[12]), sheet_row: i + 2
+    });
+  });
+
+  // ---- 発注明細（取り込む発注の明細だけ。シートでの並び順が lineNo。JAN・コードが数値型セルだったかを送る） ----
+  const items = [];
+  const lineNo = {};
+  read(SHEET_ITEMS).forEach(function(r) {
+    const orderNo = str(r[0]);
+    if (!included[orderNo]) return;
+    lineNo[orderNo] = (lineNo[orderNo] || 0) + 1;
+    items.push({
+      key: orderNo + '#' + lineNo[orderNo], orderNo: orderNo, lineNo: lineNo[orderNo],
+      jan: str(r[1]), code: str(r[2]), name: str(r[3]),
+      qty: (typeof r[4] === 'number') ? r[4] : str(r[4]), unit: str(r[5]), memo: str(r[6]),
+      isHandwritten: r[7] === true || str(r[7]).toUpperCase() === 'TRUE',
+      janNumeric: typeof r[1] === 'number', codeNumeric: typeof r[2] === 'number'
+    });
+  });
+
+  // ---- 設定・受領・発注先 ----
+  const codeRows = function(name) { return read(name).filter(function(r) { return str(r[0]); }); };
+  const setting = function(r) { return { key: str(r[0]), code: str(r[0]), name: str(r[1]), reason: str(r[2]), addedBy: str(r[3]) }; };
+  const ack = function(r) { return { key: str(r[0]), code: str(r[0]), name: str(r[1]), reason: str(r[2]), ackedBy: str(r[3]) }; };
+  const kinds = {
+    order: orders,
+    order_item: items,
+    proposal_exclusion: codeRows(SHEET_PROPOSAL_EXCL).map(setting),
+    eol_flag: codeRows(SHEET_EOL).map(setting),
+    lot_override: codeRows(SHEET_LOT_OVERRIDE).map(function(r) {
+      return { key: str(r[0]), code: str(r[0]), name: str(r[1]), lot: Math.max(1, parseInt(r[2], 10) || 1), addedBy: str(r[3]) };
+    }),
+    excess_ack: codeRows(SHEET_EXCESS_ACK).map(ack),
+    dead_ack: codeRows(SHEET_DEAD_ACK).map(ack),
+    received_mark: read(SHEET_RECEIVED).filter(function(r) { return str(r[0]) && str(r[1]); }).map(function(r) {
+      return { key: str(r[0]) + '|' + str(r[1]), orderNo: str(r[0]), code: str(r[1]), name: str(r[2]),
+        qty: (typeof r[3] === 'number') ? r[3] : str(r[3]), ackedBy: str(r[4]) };
+    }),
+    supplier: read(SHEET_SUPPLIERS).map(function(r, i) { return { r: r, row: i + 2 }; })
+      .filter(function(x) { return str(x.r[0]); }).map(function(x) {
+        const r = x.r;
+        return { key: str(r[0]), code: str(r[0]), name: str(r[1]), fax: str(r[2]), outputMethods: migrateList_(r[4]),
+          note: str(r[7]), deadline: cellToStr(r[8], 'HH:mm').trim(),
+          minOrderAmount: parseFloat(String(r[9] || '').replace(/[,，¥\s]/g, '')) || 0,
+          minOrderExcludes: migrateList_(r[10]), sheetRow: x.row };
+      })
+  };
+  // 同じキーが2行あると staging で1行に畳まれ件数が合わなくなるので、先に1行へ寄せる（後の行を採用）
+  const expected = {};
+  Object.keys(kinds).forEach(function(kind) {
+    const byKey = {};
+    kinds[kind].forEach(function(row) { byKey[row.key] = row; });
+    const dup = kinds[kind].length - Object.keys(byKey).length;
+    if (dup > 0) report['duplicateKeys_' + kind] = dup;
+    kinds[kind] = Object.keys(byKey).map(function(k) { return byKey[k]; });
+    expected[kind] = kinds[kind].length;
+  });
+
+  const batchId = 'migrate-' + Utilities.getUuid();
+  const begin = callDbAdmin_('import_begin', { batchId: batchId });
+  if (!begin || begin.success !== true) {
+    Logger.log('migrateToDb import_begin 失敗: ' + JSON.stringify(begin));
+    return { success: false, step: 'import_begin', detail: begin };
+  }
+  const kindList = Object.keys(kinds);
+  for (let k = 0; k < kindList.length; k++) {
+    const kind = kindList[k];
+    const rows = kinds[kind];
+    for (let i = 0; i < rows.length; i += MIGRATE_BATCH_ROWS) {
+      const put = callDbAdmin_('import_put', { batchId: batchId, kind: kind, rows: rows.slice(i, i + MIGRATE_BATCH_ROWS) });
+      if (!put || put.success !== true) {
+        Logger.log('migrateToDb import_put 失敗: ' + kind + ' ' + i + ' ' + JSON.stringify(put));
+        return { success: false, step: 'import_put', kind: kind, at: i, detail: put };
+      }
+    }
+  }
+  const fin = callDbAdmin_('import_finish', { batchId: batchId, expected: expected });
+  if (!fin || fin.success !== true) {
+    Logger.log('migrateToDb import_finish 失敗: ' + JSON.stringify(fin));
+    return { success: false, step: 'import_finish', detail: fin, expected: expected };
+  }
+
+  // §13-2 手順4: DB側の件数とシート側の件数を並べてログに出す
+  const counts = callDbAdmin_('get_counts', {});
+  const compare = counts && counts.success ? {
+    orders: [expected.order, counts.orders], orderItems: [expected.order_item, counts.orderItems],
+    proposalExclusions: [expected.proposal_exclusion, counts.proposalExclusions],
+    eolFlags: [expected.eol_flag, counts.eolFlags], lotOverrides: [expected.lot_override, counts.lotOverrides],
+    suppliers: [expected.supplier, counts.suppliers]
+  } : null;
+  const mismatch = compare ? Object.keys(compare).filter(function(k) { return compare[k][0] !== compare[k][1]; }) : ['get_counts'];
+  const result = { success: mismatch.length === 0, batchId: batchId, expected: expected, finish: fin.counts,
+    compare: compare, mismatch: mismatch, report: report, elapsedMs: Date.now() - started };
+  Logger.log('migrateToDb: ' + JSON.stringify(result));
+  return result;
+}
+
+// ============================================================
+// §13-4 手順7 / §13-5 手順4: verifyDbAgainstSheets_() — シートとDBの内容照合（読み取りのみ）
+// 差が1件でもあれば success:false。切替・切り戻しはこの結果がOKでなければ進めない
+// ============================================================
+function verifyDbAgainstSheets_() {
+  assertTestEnv_();
+  const str = function(v) { return String(v === null || v === undefined ? '' : v).trim(); };
+  const num = function(v) { const n = (typeof v === 'number') ? v : parseFloat(String(v).replace(/,/g, '')); return isFinite(n) ? n : 0; };
+  const diffs = [];
+  const note = function(kind, key, field, sheetVal, dbVal) {
+    if (diffs.length < 50) diffs.push({ kind: kind, key: key, field: field, sheet: sheetVal, db: dbVal });
+  };
+  let diffTotal = 0;
+  const diff = function(kind, key, field, a, b) { diffTotal++; note(kind, key, field, a, b); };
+
+  // ---- 発注（シートは saveState が '' か COMPLETE の行だけ。migrateToDb と同じ判定） ----
+  const histSh = getSheet(SHEET_HISTORY);
+  const itemsSh = getSheet(SHEET_ITEMS);
+  const hist = histSh.getLastRow() < 2 ? [] : histSh.getRange(2, 1, histSh.getLastRow() - 1, 14).getValues();
+  const itemRows = itemsSh.getLastRow() < 2 ? [] : itemsSh.getRange(2, 1, itemsSh.getLastRow() - 1, 9).getValues();
+  const sheetItems = {};
+  itemRows.forEach(function(r) {
+    const no = str(r[0]);
+    if (!no) return;
+    (sheetItems[no] = sheetItems[no] || []).push({ jan: str(r[1]), code: str(r[2]), name: str(r[3]), qty: num(r[4]),
+      unit: str(r[5]), memo: str(r[6]), isHandwritten: r[7] === true || str(r[7]).toUpperCase() === 'TRUE' });
+  });
+  const sheetOrders = {};
+  hist.forEach(function(r) {
+    const no = str(r[0]);
+    const state = str(r[13]);
+    if (!no || (state !== '' && state !== 'COMPLETE')) return;
+    sheetOrders[no] = { date: (r[1] instanceof Date) ? Utilities.formatDate(r[1], 'Asia/Tokyo', 'yyyy-MM-dd') : migrateDate_(r[1]),
+      supplierCode: str(r[2]), staff: str(r[5]), itemCount: num(r[6]), requestId: str(r[10]) || ('legacy-' + no), fax: str(r[4]),
+      revisionBaseOrderNo: str(r[12]) };
+  });
+
+  const dbOrders = {};
+  let after = '';
+  for (let guard = 0; guard < 200; guard++) {
+    const res = callDbAdmin_('get_verify_export', { kind: 'orders', after: after, limit: 300 });
+    if (!res || res.success !== true) return { success: false, step: 'get_verify_export(orders)', detail: res };
+    const list = res.orders || [];
+    list.forEach(function(o) { dbOrders[o.orderNo] = o; });
+    if (list.length < 300) break;
+    after = list[list.length - 1].orderNo;
+  }
+
+  const sheetNos = Object.keys(sheetOrders), dbNos = Object.keys(dbOrders);
+  sheetNos.forEach(function(no) { if (!dbOrders[no]) diff('order', no, 'missingInDb', true, false); });
+  dbNos.forEach(function(no) { if (!sheetOrders[no]) diff('order', no, 'missingInSheet', false, true); });
+  let itemsCompared = 0;
+  sheetNos.forEach(function(no) {
+    const s = sheetOrders[no], d = dbOrders[no];
+    if (!d) return;
+    if (s.date !== d.date) diff('order', no, 'date', s.date, d.date);
+    if (s.supplierCode !== d.supplierCode) diff('order', no, 'supplierCode', s.supplierCode, d.supplierCode);
+    if (s.staff !== d.staff) diff('order', no, 'staff', s.staff, d.staff);
+    if (s.itemCount !== d.itemCount) diff('order', no, 'itemCount', s.itemCount, d.itemCount);
+    if (s.requestId !== d.requestId) diff('order', no, 'requestId', s.requestId, d.requestId);
+    if (s.fax !== d.fax) diff('order', no, 'fax', s.fax, d.fax);
+    const si = sheetItems[no] || [], di = d.items || [];
+    if (si.length !== di.length) { diff('order', no, 'itemLines', si.length, di.length); return; }
+    for (let i = 0; i < si.length; i++) {
+      itemsCompared++;
+      ['code', 'unit', 'memo', 'jan', 'name'].forEach(function(f) {
+        if (si[i][f] !== str(di[i][f])) diff('item', no + '#' + (i + 1), f, si[i][f], str(di[i][f]));
+      });
+      if (si[i].qty !== num(di[i].qty)) diff('item', no + '#' + (i + 1), 'qty', si[i].qty, num(di[i].qty));
+      if (si[i].isHandwritten !== (di[i].isHandwritten === true)) diff('item', no + '#' + (i + 1), 'isHandwritten', si[i].isHandwritten, di[i].isHandwritten);
+    }
+  });
+
+  // ---- 設定・受領・発注先（集合として一致するか） ----
+  const set = callDbAdmin_('get_verify_export', { kind: 'settings' });
+  if (!set || set.success !== true) return { success: false, step: 'get_verify_export(settings)', detail: set };
+  const ss = getSS();
+  const col = function(name, c) {
+    const sh = ss.getSheetByName(name);
+    if (!sh || sh.getLastRow() < 2) return [];
+    return sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(c, 1)).getValues().map(function(r) { return r; });
+  };
+  const codes = function(name) { return col(name, 1).map(function(r) { return str(r[0]); }).filter(Boolean).sort(); };
+  const cmpList = function(kind, sheetList, dbList) {
+    const a = sheetList.slice().sort(), b = (dbList || []).slice().sort();
+    const sa = {}, sb = {};
+    a.forEach(function(x) { sa[x] = true; }); b.forEach(function(x) { sb[x] = true; });
+    Object.keys(sa).forEach(function(x) { if (!sb[x]) diff(kind, x, 'missingInDb', true, false); });
+    Object.keys(sb).forEach(function(x) { if (!sa[x]) diff(kind, x, 'missingInSheet', false, true); });
+  };
+  cmpList('proposal_exclusion', codes(SHEET_PROPOSAL_EXCL), set.proposalExclusions);
+  cmpList('eol_flag', codes(SHEET_EOL), set.eolFlags);
+  cmpList('excess_ack', codes(SHEET_EXCESS_ACK), set.excessAcks);
+  cmpList('dead_ack', codes(SHEET_DEAD_ACK), set.deadAcks);
+  cmpList('received_mark', col(SHEET_RECEIVED, 2).filter(function(r) { return str(r[0]) && str(r[1]); })
+    .map(function(r) { return str(r[0]) + '|' + str(r[1]); }), set.receivedMarks);
+  const lotSheet = {};
+  col(SHEET_LOT_OVERRIDE, 3).forEach(function(r) { if (str(r[0])) lotSheet[str(r[0])] = Math.max(1, parseInt(r[2], 10) || 1); });
+  const lotDb = set.lotOverrides || {};
+  Object.keys(lotSheet).forEach(function(c) { if (lotDb[c] === undefined) diff('lot_override', c, 'missingInDb', lotSheet[c], null); else if (Number(lotDb[c]) !== lotSheet[c]) diff('lot_override', c, 'lot', lotSheet[c], lotDb[c]); });
+  Object.keys(lotDb).forEach(function(c) { if (lotSheet[c] === undefined) diff('lot_override', c, 'missingInSheet', null, lotDb[c]); });
+
+  const supSheet = {};
+  col(SHEET_SUPPLIERS, 11).forEach(function(r) {
+    if (!str(r[0])) return;
+    supSheet[str(r[0])] = { name: str(r[1]), fax: str(r[2]), outputMethods: migrateList_(r[4]).join(','), note: str(r[7]),
+      deadline: cellToStr(r[8], 'HH:mm').trim(), minOrderAmount: parseFloat(String(r[9] || '').replace(/[,，¥\s]/g, '')) || 0,
+      minOrderExcludes: migrateList_(r[10]).join(',') };
+  });
+  const supDb = {};
+  (set.suppliers || []).forEach(function(s) { supDb[s.code] = s; });
+  Object.keys(supSheet).forEach(function(c) {
+    const a = supSheet[c], b = supDb[c];
+    if (!b) { diff('supplier', c, 'missingInDb', true, false); return; }
+    ['name', 'fax', 'outputMethods', 'note', 'deadline', 'minOrderExcludes'].forEach(function(f) { if (a[f] !== str(b[f])) diff('supplier', c, f, a[f], b[f]); });
+    if (a.minOrderAmount !== num(b.minOrderAmount)) diff('supplier', c, 'minOrderAmount', a.minOrderAmount, b.minOrderAmount);
+  });
+  Object.keys(supDb).forEach(function(c) { if (!supSheet[c]) diff('supplier', c, 'missingInSheet', false, true); });
+
+  const result = { success: diffTotal === 0, diffTotal: diffTotal, diffs: diffs,
+    counts: { sheetOrders: sheetNos.length, dbOrders: dbNos.length, itemsCompared: itemsCompared, suppliers: Object.keys(supSheet).length } };
+  Logger.log('verifyDbAgainstSheets_: ' + JSON.stringify(result));
+  return result;
 }
 
 // ============================================================
@@ -229,7 +977,7 @@ function doPost(e) {
   }
 
   // APIキー認証アクション（Pythonスクリプト用・セッション不要）
-  const API_KEY_ACTIONS = ['updateReorderPoints', 'getReorderConfig', 'updateOrderProposals', 'updateProposalExplanations', 'updateReceiptMatches', 'testNotify'];
+  const API_KEY_ACTIONS = ['updateReorderPoints', 'getReorderConfig', 'updateOrderProposals', 'updateProposalExplanations', 'updateReceiptMatches', 'testNotify', 'getProposalsForCompare'];
   if (API_KEY_ACTIONS.indexOf(action) !== -1) {
     const apiKey = p.api_key || '';
     if (!apiKey || apiKey !== _PROPS.getProperty('REORDER_API_KEY')) {
@@ -243,6 +991,7 @@ function doPost(e) {
         case 'updateProposalExplanations': return jsonResponse(updateProposalExplanations(p));
         case 'updateReceiptMatches':       return jsonResponse(updateReceiptMatches(p));
         case 'testNotify':                 return jsonResponse(testNotify());
+        case 'getProposalsForCompare':     return jsonResponse(getProposalsForCompare_());
       }
     } catch(err) {
       Logger.log(action + ' error: ' + err);
@@ -266,6 +1015,34 @@ function doPost(e) {
       return jsonResponse(getStockReportData());
     } catch(err) {
       Logger.log('getStockReport error: ' + err);
+      return jsonResponse({ success: false, error: 'INTERNAL_ERROR' });
+    }
+  }
+
+  // issueDbToken: Supabase用の通行証(JWT)を発行する（§8 G2）。
+  // app_name が order-app と stock-report のどちらでもありうるため、
+  // getStockReport と同じ位置（固定 'order-app' 検証より前）で特別扱いする
+  if (action === 'issueDbToken') {
+    const dbApp = (p.app === 'stock-report') ? 'stock-report' : 'order-app';
+    const dbAuth = validateSession(p.session_token || '', dbApp);
+    if (!dbAuth.valid) {
+      if (dbAuth.transient) {
+        return jsonResponse({ success: false, error: 'AUTH_UNAVAILABLE', message: '認証確認に失敗しました。もう一度お試しください。' });
+      }
+      return jsonResponse({ success: false, error: 'SESSION_INVALID', message: '認証が必要です。ポータルからログインし直してください。' });
+    }
+    // expiresAt（G1でキャッシュ/シートから持たせた値）が数値でなければ発行しない
+    if (typeof dbAuth.expiresAt !== 'number') {
+      return jsonResponse({ success: false, error: 'AUTH_UNAVAILABLE', message: '認証確認に失敗しました。もう一度お試しください。' });
+    }
+    try {
+      const issued = issueDbJwt_(dbAuth, dbApp, dbAuth.expiresAt);
+      return jsonResponse({
+        success: true, token: issued.token, exp: issued.exp,
+        userUuid: uuidFromUserId_(dbAuth.user_id), userId: dbAuth.user_id
+      });
+    } catch(err) {
+      Logger.log('issueDbToken error: ' + err);
       return jsonResponse({ success: false, error: 'INTERNAL_ERROR' });
     }
   }
@@ -670,6 +1447,81 @@ function updateProductMasterFromDrive() {
   const updatedAt = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
   PropertiesService.getScriptProperties().setProperty('PM_UPDATED_AT', updatedAt);
   Logger.log('✅ 商品マスター更新完了: ' + (rows.length - 1) + '件 (' + updatedAt + ')');
+
+  return ingestProductRowsToDb_(rows); // §8 G4: シート書き込みはそのまま残し、DBへも取り込む（失敗してもここでは投げない）
+}
+
+// §8 G4: getProductMasterと完全に同じ列の読み方でDB送信用の行を作る（共通化）
+// rows は parseCSVText の戻り値（[0]=ヘッダー行）
+function buildProductRowsForDb_(rows) {
+  const headers = rows[0].map(h => String(h).trim());
+  const colMap = {
+    code:            findColIdxGAS(headers, 'コード'),
+    name:            findColIdxGAS(headers, '商品名'),
+    kana:            findColIdxGAS(headers, 'かな'),
+    unit:            findColIdxGAS(headers, '単位名'),
+    supplierCD:      findColIdxGAS(headers, '仕入先CD'),
+    supplierName:    findColIdxGAS(headers, '仕入先名'),
+    makerCode:       findColIdxGAS(headers, '相手商品CD'),
+    jan:             findColIdxGAS(headers, 'JANCD'),
+    purchasePrice:   findColIdxGAS(headers, '仕入単価'),
+    discontinued:    findColIdxGAS(headers, '廃番'),
+    stockManagement: findColIdxGAS(headers, '在庫有無'),
+    lastSaleDate:    findColIdxGAS(headers, '最終売上日'),
+    stock:           findColIdxGAS(headers, '在庫数'),
+    shelfMain:       findColIdxGAS(headers, '棚番１(本)'),
+    shelfSub:        findColIdxGAS(headers, '棚番１(枝)')
+  };
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r    = rows[i];
+    const name = colMap.name !== -1 ? String(r[colMap.name] || '').trim() : '';
+    if (!name) continue;
+    const shelfMainRaw = colMap.shelfMain !== -1 ? String(r[colMap.shelfMain] || '').trim() : '';
+    const shelfSubRaw  = colMap.shelfSub  !== -1 ? String(r[colMap.shelfSub]  || '').trim() : '';
+    const shelfNo      = shelfMainRaw ? (shelfMainRaw + shelfSubRaw) : '';
+    out.push({
+      code:            colMap.code !== -1            ? String(r[colMap.code]            || '').trim() : '',
+      name:            name,
+      kana:            colMap.kana !== -1            ? String(r[colMap.kana]            || '').trim() : '',
+      unit:            colMap.unit !== -1            ? String(r[colMap.unit]            || '').trim() : '',
+      supplierCd:      colMap.supplierCD !== -1      ? String(r[colMap.supplierCD]      || '').trim() : '',
+      supplierName:    colMap.supplierName !== -1    ? String(r[colMap.supplierName]    || '').trim() : '',
+      makerCode:       colMap.makerCode !== -1       ? String(r[colMap.makerCode]       || '').trim() : '',
+      jan:             colMap.jan !== -1             ? String(r[colMap.jan]             || '').trim() : '',
+      purchasePrice:   colMap.purchasePrice !== -1   ? (parseFloat(String(r[colMap.purchasePrice] || '0').replace(/,/g, '')) || 0) : 0,
+      discontinued:    colMap.discontinued !== -1    ? String(r[colMap.discontinued]    || '').trim() : '',
+      stockManagement: colMap.stockManagement !== -1 ? String(r[colMap.stockManagement] || '').trim() : '',
+      lastSaleDate:    colMap.lastSaleDate !== -1    ? String(r[colMap.lastSaleDate]    || '').trim() : '',
+      stock:           colMap.stock !== -1           ? String(r[colMap.stock]           || '').trim() : '',
+      shelfNo:         shelfNo
+    });
+  }
+  return out;
+}
+
+// §8 G4: staging方式でSupabaseへ商品マスターを取り込む。失敗しても例外は投げない
+// （画面は前の版を使い続ける。building のまま残っても翌日のbeginで failed になる）
+function ingestProductRowsToDb_(csvRows) {
+  try {
+    assertTestEnv_();
+    const dbRows = buildProductRowsForDb_(csvRows);
+    const begin = callDbAdmin_('begin_product_ingest', { source: 'drive' });
+    if (!begin || begin.success !== true) { Logger.log('ingestProductRowsToDb_ begin失敗: ' + JSON.stringify(begin)); return { ok: false, step: 'begin', detail: begin }; }
+    const version = begin.version;
+    for (let i = 0; i < dbRows.length; i += 1000) {
+      const batch = dbRows.slice(i, i + 1000);
+      const put = callDbAdmin_('put_products', { version: version, rows: batch });
+      if (!put || put.success !== true) { Logger.log('ingestProductRowsToDb_ put失敗(' + i + '件目〜): ' + JSON.stringify(put)); return { ok: false, step: 'put@' + i, detail: put }; }
+    }
+    const fin = callDbAdmin_('finish_product_ingest', { version: version, expectedCount: dbRows.length });
+    if (!fin || fin.success !== true) { Logger.log('ingestProductRowsToDb_ finish失敗: ' + JSON.stringify(fin)); return { ok: false, step: 'finish', detail: fin }; }
+    Logger.log('ingestProductRowsToDb_ 完了: version=' + version + ' published=' + fin.published + ' count=' + dbRows.length);
+    return { ok: true, version: version, published: fin.published, count: dbRows.length };
+  } catch (e) {
+    Logger.log('ingestProductRowsToDb_ 失敗: ' + e);
+    return { ok: false, step: 'exception', detail: String(e).slice(0, 300) };
+  }
 }
 
 // ============================================================
@@ -716,6 +1568,8 @@ function updateProductMaster(base64Data) {
 
   const updatedAt = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
   PropertiesService.getScriptProperties().setProperty('PM_UPDATED_AT', updatedAt);
+
+  ingestProductRowsToDb_(rows); // §8 G4: Drive経由と同じ取り込み処理に揃える
 
   return { success: true, rows: rows.length - 1, updatedAt };
 }
@@ -1043,7 +1897,11 @@ function saveOrder(p, user_id) {
         return { success: true, orderNo, requestId, itemCount: Number(existing[6]), alreadyComplete: true };
       }
       // 移行前行またはPENDINGは、存在確認だけで済ませず同じorderNoへ全明細を書き直す。
+      // §8 G6: 確定済み再送の判定の「後」で確認する（確定済みの発注は閉じた後も前回の結果を返す）
+      if (!isLegacyWriterOpen_()) return legacyWriterClosedResponse_();
     } else {
+      // §8 G6: 新規保存はここで確認する
+      if (!isLegacyWriterOpen_()) return legacyWriterClosedResponse_();
       orderNo = generateOrderNo(date);
       if (!orderNo || revisionBaseOrderNo === orderNo) {
         return { success: false, error: 'ORDER_STATE_INVALID', message: '発注Noまたは修正元の状態が不正です' };
@@ -1119,6 +1977,7 @@ function deleteOrder(p, user_id) {
   try { lock.waitLock(10000); }
   catch(e) { return { success: false, error: 'LOCK_BUSY', message: '現在別の保存処理が実行中です' }; }
   try {
+    if (!isLegacyWriterOpen_()) return legacyWriterClosedResponse_(); // §8 G6: ロック取得の直後に確認する
     const histSh = getSheet(SHEET_HISTORY);
     const itemsSh = getSheet(SHEET_ITEMS);
     ensureOrderHistorySchema_(histSh);
@@ -1178,6 +2037,11 @@ function generateOrderNo(dateStr) {
 // ============================================================
 function saveSupplier(p, user_id) {
   if (!getIsAdmin(user_id)) return { success: false, error: 'FORBIDDEN', message: '管理者権限が必要です' };
+  const lock = LockService.getScriptLock(); // §8 G6: 今までロックなしだったため新規に取る
+  try { lock.waitLock(10000); }
+  catch(e) { return { success: false, error: 'LOCK_BUSY', message: '現在別の保存処理が実行中です' }; }
+  try {
+  if (!isLegacyWriterOpen_()) return legacyWriterClosedResponse_();
   const mode          = p.mode          || '';
   const code          = String(p.code          || '').trim();
   const name          = String(p.name          || '').trim();
@@ -1231,6 +2095,9 @@ function saveSupplier(p, user_id) {
     return { success: false, error: 'コード「' + code + '」が見つかりません' };
   } else {
     return { success: false, error: '不明なmode: ' + mode };
+  }
+  } finally {
+    lock.releaseLock();
   }
 }
 
@@ -2470,9 +3337,23 @@ function getOrderProposals() {
            pendingOrders, kpi, lotOverrides, groupStatus, orderGroups };
 }
 
+// §13-3 影運用の比較用（APIキー・読み取り専用・v1.40.0）。画面が getOrderProposals で読むのと同じ組み立てのうち、
+// 比較に使う部分だけを返す（tools/compare_db_vs_gas.py が DB の get_compare_snapshot と突き合わせる）。書き込みはしない
+function getProposalsForCompare_() {
+  const r = getOrderProposals();
+  return { success: true, analyzedAt: r.analyzedAt, proposals: r.proposals, groupStatus: r.groupStatus,
+           kpi: r.kpi, pendingOrders: r.pendingOrders,
+           counts: { excess: (r.excess || []).length, dead: (r.dead || []).length } };
+}
+
 // POST(セッション): 過剰在庫の確認済み登録/解除
 // リクエスト: { action:'saveExcessAck', mode:'add'|'delete', code, name, reason }
 function saveExcessAck(p, user_id) {
+  const lock = LockService.getScriptLock(); // §8 G6: 今までロックなしだったため新規に取る
+  try { lock.waitLock(10000); }
+  catch(e) { return { success: false, error: 'LOCK_BUSY', message: '現在別の保存処理が実行中です' }; }
+  try {
+  if (!isLegacyWriterOpen_()) return legacyWriterClosedResponse_();
   const mode   = p.mode || '';
   const code   = String(p.code   || '').trim();
   const name   = String(p.name   || '').trim();
@@ -2506,11 +3387,19 @@ function saveExcessAck(p, user_id) {
     return { success: true, notFound: true };
   }
   return { success: false, error: '不明なmode: ' + mode };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // POST(セッション): 死蔵在庫の確認済み登録/解除（Phase E, v1.10.0〜）
 // リクエスト: { action:'saveDeadAck', mode:'add'|'delete', code, name, reason }
 function saveDeadAck(p, user_id) {
+  const lock = LockService.getScriptLock(); // §8 G6: 今までロックなしだったため新規に取る
+  try { lock.waitLock(10000); }
+  catch(e) { return { success: false, error: 'LOCK_BUSY', message: '現在別の保存処理が実行中です' }; }
+  try {
+  if (!isLegacyWriterOpen_()) return legacyWriterClosedResponse_();
   const mode   = p.mode || '';
   const code   = String(p.code   || '').trim();
   const name   = String(p.name   || '').trim();
@@ -2544,6 +3433,9 @@ function saveDeadAck(p, user_id) {
     return { success: true, notFound: true };
   }
   return { success: false, error: '不明なmode: ' + mode };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // POST(セッション): 入荷済みの手動登録/解除（Phase F, v1.24.0〜）
@@ -2551,6 +3443,11 @@ function saveDeadAck(p, user_id) {
 // 登録すると getReorderConfig の recentOrders / buildPendingOrders の両方から除外される
 // リクエスト: { action:'saveReceived', mode:'add'|'delete', orderNo, code, name, qty }
 function saveReceived(p, user_id) {
+  const lock = LockService.getScriptLock(); // §8 G6: 今までロックなしだったため新規に取る
+  try { lock.waitLock(10000); }
+  catch(e) { return { success: false, error: 'LOCK_BUSY', message: '現在別の保存処理が実行中です' }; }
+  try {
+  if (!isLegacyWriterOpen_()) return legacyWriterClosedResponse_();
   const mode    = p.mode    || '';
   const orderNo = String(p.orderNo || '').trim();
   const code    = String(p.code    || '').trim();
@@ -2585,11 +3482,19 @@ function saveReceived(p, user_id) {
     return { success: true, notFound: true };
   }
   return { success: false, error: '不明なmode: ' + mode };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // POST(セッション): 提案除外の登録/解除
 // リクエスト: { action:'saveProposalExclusion', mode:'add'|'delete', code, name, reason }
 function saveProposalExclusion(p, user_id) {
+  const lock = LockService.getScriptLock(); // §8 G6: 今までロックなしだったため新規に取る
+  try { lock.waitLock(10000); }
+  catch(e) { return { success: false, error: 'LOCK_BUSY', message: '現在別の保存処理が実行中です' }; }
+  try {
+  if (!isLegacyWriterOpen_()) return legacyWriterClosedResponse_();
   const mode   = p.mode || '';
   const code   = String(p.code   || '').trim();
   const name   = String(p.name   || '').trim();
@@ -2637,11 +3542,19 @@ function saveProposalExclusion(p, user_id) {
     return { success: true, notFound: true };
   }
   return { success: false, error: '不明なmode: ' + mode };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // POST(セッション): 終売フラグの登録/解除（在庫はあるが再発注できない商品用。除外設定とは別枠）
 // リクエスト: { action:'saveEolFlag', mode:'add'|'delete', code, name, reason }
 function saveEolFlag(p, user_id) {
+  const lock = LockService.getScriptLock(); // §8 G6: 今までロックなしだったため新規に取る
+  try { lock.waitLock(10000); }
+  catch(e) { return { success: false, error: 'LOCK_BUSY', message: '現在別の保存処理が実行中です' }; }
+  try {
+  if (!isLegacyWriterOpen_()) return legacyWriterClosedResponse_();
   const mode   = p.mode   || '';
   const code   = String(p.code   || '').trim();
   const name   = String(p.name   || '').trim();
@@ -2683,6 +3596,9 @@ function saveEolFlag(p, user_id) {
     return { success: true, notFound: true };
   }
   return { success: false, error: '不明なmode: ' + mode };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // POST(セッション): 手動の最低発注数の登録/解除
@@ -2691,6 +3607,11 @@ function saveEolFlag(p, user_id) {
 // （次回のanalyze_demand.py実行を待たずに画面へ反映するため。実行後は分析結果で上書きされる）
 // リクエスト: { action:'saveLotOverride', mode:'add'|'delete', code, name, lot }
 function saveLotOverride(p, user_id) {
+  const lock = LockService.getScriptLock(); // §8 G6: 今までロックなしだったため新規に取る
+  try { lock.waitLock(10000); }
+  catch(e) { return { success: false, error: 'LOCK_BUSY', message: '現在別の保存処理が実行中です' }; }
+  try {
+  if (!isLegacyWriterOpen_()) return legacyWriterClosedResponse_();
   const mode = p.mode || '';
   const code = String(p.code || '').trim();
   const name = String(p.name || '').trim();
@@ -2731,6 +3652,9 @@ function saveLotOverride(p, user_id) {
     return { success: true, notFound: true };
   }
   return { success: false, error: '不明なmode: ' + mode };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // ヘルパー: 「発注提案」シートに該当商品の行があれば、最低発注数と提案数量・提案金額を

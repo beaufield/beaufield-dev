@@ -1017,6 +1017,7 @@
       <button id="btn-text"        class="btn btn-secondary" onclick="outputText()"       style="margin-bottom:8px;display:none">💬 テキスト出力</button>
       <button id="btn-grandex-pdf"  class="btn btn-secondary" onclick="outputGrandexPDF()"  style="margin-bottom:8px;display:none">📋 グランデックス発注書 出力</button>
       <button id="btn-chiyoda-pdf"    class="btn btn-secondary" onclick="outputChiyodaPDF()"    style="margin-bottom:8px;display:none">📋 千代田化学発注書 出力</button>
+      <button id="btn-pacific-pdf" class="btn btn-secondary" onclick="outputPacificPDF()" style="margin-bottom:8px;display:none">📋 パシフィックプロダクツ発注書 出力</button>
       <button id="btn-alpenrose-pdf"  class="btn btn-secondary" onclick="outputAlpenrosePDF()"  style="margin-bottom:8px;display:none">📋 アルペンローゼ発注書 出力</button>
       <button id="btn-melos-pdf"      class="btn btn-secondary" onclick="outputMelosPDF()"      style="margin-bottom:8px;display:none">📋 メロス発注書 出力</button>
       <button id="btn-aderans-pdf"    class="btn btn-secondary" onclick="outputAderansPDF()"    style="margin-bottom:8px;display:none">📋 アデランス発注書 出力</button>
@@ -1526,7 +1527,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.82.0-db';
+const APP_VERSION    = 'v1.83.0-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -2356,7 +2357,7 @@ window.addEventListener('beforeunload', () => {
 =================================================== */
 const TEMPLATE_BUCKET = 'order-templates';
 // 本番GASの ORDER_TEMPLATES と同じファイル名（Driveと同じ名前のままアップロードする）
-const TEMPLATE_FILES = { grandex: '54.pdf', chiyoda: '48.pdf', alpenrose: '57.pdf', melos: '2.pdf', adelans: '82.pdf' };
+const TEMPLATE_FILES = { grandex: '54.pdf', chiyoda: '48.pdf', alpenrose: '57.pdf', pacific_v1: '58-v1.pdf', melos: '2.pdf', adelans: '82.pdf' };
 const TEMPLATE_STORAGE_TIMEOUT_MS = 20000;
 
 async function _fetchTemplateFromGas(makerKey) {
@@ -4574,6 +4575,9 @@ function applyOutputButtons() {
   show('btn-chiyoda-pdf', methods.includes('メーカーPDF') &&
                           currentOrder.supplierCode === CHIYODA_SUPPLIER_CODE);
 
+  show('btn-pacific-pdf', (methods.includes('PDF') || methods.includes('メーカーPDF')) &&
+    PacificOrderForm.supplier(currentOrder.supplierCode) === '58');
+
   // アルペンローゼ：メーカーPDF対象の発注先の場合に表示
   show('btn-alpenrose-pdf', methods.includes('メーカーPDF') &&
                             currentOrder.supplierCode === ALPENROSE_SUPPLIER_CODE);
@@ -6204,6 +6208,8 @@ function buildHistReOutputBtns(orderNo, supplierCode) {
     btns.push(`<button class="btn btn-secondary btn-sm" ${orderAction('reOutputText', orderNo)}>💬 テキスト再出力</button>`);
   if (methods.includes('メーカーPDF') && supplierCode === GRANDEX_SUPPLIER_CODE)
     btns.push(`<button class="btn btn-secondary btn-sm" ${orderAction('reOutputGrandexPDF', orderNo)}>📋 グランデックス再出力</button>`);
+  if ((methods.includes('PDF') || methods.includes('メーカーPDF')) && PacificOrderForm.supplier(supplierCode) === '58')
+    btns.push(`<button class="btn btn-secondary btn-sm" ${orderAction('reOutputPacificPDF', orderNo)}>📋 パシフィックプロダクツ再出力</button>`);
   if (methods.includes('メーカーPDF') && supplierCode === ALPENROSE_SUPPLIER_CODE)
     btns.push(`<button class="btn btn-secondary btn-sm" ${orderAction('reOutputAlpenrosePDF', orderNo)}>📋 アルペンローゼ再出力</button>`);
   if (methods.includes('メーカーPDF') && supplierCode === MELOS_SUPPLIER_CODE)
@@ -10344,6 +10350,7 @@ const ORDER_ACTION_HANDLERS = Object.freeze({
   reOutputText: a => reOutputText(a[0]),
   reOutputGrandexPDF: a => reOutputGrandexPDF(a[0]),
   reOutputAlpenrosePDF: a => reOutputAlpenrosePDF(a[0]),
+  reOutputPacificPDF: a => reOutputPacificPDF(a[0]),
   reOutputMelosPDF: a => reOutputMelosPDF(a[0]),
   reOutputAderansPDF: a => reOutputAderansPDF(a[0]),
   copyOrderFromHistory: a => copyOrderFromHistory(a[0]),
@@ -10958,5 +10965,500 @@ function propAdjustmentUnitError(supplierName,selected,metrics) {
 
 </script>
 <!-- PROP_ADJUST_EMBED_END -->
+<!-- PACIFIC_FORM_EMBED_BEGIN -->
+<script>
+/* パシフィック専用帳票。検証済み識別子と座標だけを持ち、業務PDFは埋め込まない。 */
+(function(root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.PacificOrderForm = api;
+})(typeof globalThis === 'object' ? globalThis : this, function() {
+  'use strict';
+  const TEMPLATE_KEY = 'pacific_v1';
+  const TEMPLATE_SHA256 = '9e2f3b5243312389f362214b87393d181a8a8d88ffc0eaae07f95f4a11c05fbf';
+  const WIDTH = 595.2, HEIGHT = 841.68;
+  const ROWS = [
+  {
+    "code": "004611",
+    "jan": "4976561714112",
+    "makerCodes": [
+      "1411"
+    ],
+    "formCode": "1411",
+    "unit": "個",
+    "x0": 212.93,
+    "x1": 293.57,
+    "y": 618.16
+  },
+  {
+    "code": "012152",
+    "jan": "4976561743228",
+    "makerCodes": [
+      "4322"
+    ],
+    "formCode": "4322",
+    "unit": "個",
+    "x0": 212.93,
+    "x1": 293.57,
+    "y": 598.24
+  },
+  {
+    "code": "004612",
+    "jan": "4976561714150",
+    "makerCodes": [
+      "1415"
+    ],
+    "formCode": "1415",
+    "unit": "個",
+    "x0": 212.93,
+    "x1": 293.57,
+    "y": 578.32
+  },
+  {
+    "code": "012083",
+    "jan": "4976561743235",
+    "makerCodes": [
+      "4323"
+    ],
+    "formCode": "4323",
+    "unit": "本",
+    "x0": 212.93,
+    "x1": 293.57,
+    "y": 558.38
+  },
+  {
+    "code": "004619",
+    "jan": "4976561714211",
+    "makerCodes": [
+      "1421"
+    ],
+    "formCode": "1421",
+    "unit": "個",
+    "x0": 212.93,
+    "x1": 293.57,
+    "y": 538.45
+  },
+  {
+    "code": "004639",
+    "jan": "4976561714259",
+    "makerCodes": [
+      "1425"
+    ],
+    "formCode": "1425",
+    "unit": "個",
+    "x0": 212.93,
+    "x1": 293.57,
+    "y": 498.61
+  },
+  {
+    "code": "007935",
+    "jan": "4976561725101",
+    "makerCodes": [
+      "2510"
+    ],
+    "formCode": "2510",
+    "unit": "本",
+    "x0": 212.93,
+    "x1": 293.57,
+    "y": 453.55
+  },
+  {
+    "code": "007936",
+    "jan": "4976561725118",
+    "makerCodes": [
+      "2511"
+    ],
+    "formCode": "2511",
+    "unit": "本",
+    "x0": 212.93,
+    "x1": 293.57,
+    "y": 430.15
+  },
+  {
+    "code": "007942",
+    "jan": "4976561725125",
+    "makerCodes": [
+      "2512"
+    ],
+    "formCode": "2512",
+    "unit": "本",
+    "x0": 212.93,
+    "x1": 293.57,
+    "y": 406.74
+  },
+  {
+    "code": "007943",
+    "jan": "4976561725132",
+    "makerCodes": [
+      "2513"
+    ],
+    "formCode": "2513",
+    "unit": "本",
+    "x0": 212.93,
+    "x1": 293.57,
+    "y": 383.33
+  },
+  {
+    "code": "007959",
+    "jan": "4976561725149",
+    "makerCodes": [
+      "2514"
+    ],
+    "formCode": "2818",
+    "unit": "本",
+    "x0": 212.93,
+    "x1": 293.57,
+    "y": 242.9
+  },
+  {
+    "code": "007960",
+    "jan": "4976561725156",
+    "makerCodes": [
+      "2515"
+    ],
+    "formCode": "2819",
+    "unit": "本",
+    "x0": 212.93,
+    "x1": 293.57,
+    "y": 219.68
+  },
+  {
+    "code": "012063",
+    "jan": "4976561747318",
+    "makerCodes": [
+      "4731"
+    ],
+    "formCode": "4731",
+    "unit": "本",
+    "x0": 481.42,
+    "x1": 556.2,
+    "y": 618.16
+  },
+  {
+    "code": "012064",
+    "jan": "4976561747325",
+    "makerCodes": [
+      "4732"
+    ],
+    "formCode": "4732",
+    "unit": "本",
+    "x0": 481.42,
+    "x1": 556.2,
+    "y": 598.24
+  },
+  {
+    "code": "012065",
+    "jan": "4976561747332",
+    "makerCodes": [
+      "4733"
+    ],
+    "formCode": "4733",
+    "unit": "本",
+    "x0": 481.42,
+    "x1": 556.2,
+    "y": 578.32
+  },
+  {
+    "code": "012066",
+    "jan": "4976561747349",
+    "makerCodes": [
+      "4734"
+    ],
+    "formCode": "4734",
+    "unit": "本",
+    "x0": 481.42,
+    "x1": 556.2,
+    "y": 558.38
+  },
+  {
+    "code": "012067",
+    "jan": "4976561747356",
+    "makerCodes": [
+      "4735"
+    ],
+    "formCode": "4735",
+    "unit": "本",
+    "x0": 481.42,
+    "x1": 556.2,
+    "y": 538.45
+  },
+  {
+    "code": "012068",
+    "jan": "4976561747363",
+    "makerCodes": [
+      "4736"
+    ],
+    "formCode": "4736",
+    "unit": "本",
+    "x0": 481.42,
+    "x1": 556.2,
+    "y": 518.53
+  },
+  {
+    "code": "012069",
+    "jan": "4976561747370",
+    "makerCodes": [
+      "4737"
+    ],
+    "formCode": "4737",
+    "unit": "本",
+    "x0": 481.42,
+    "x1": 556.2,
+    "y": 498.61
+  },
+  {
+    "code": "012070",
+    "jan": "4976561747387",
+    "makerCodes": [
+      "4738"
+    ],
+    "formCode": "4738",
+    "unit": "本",
+    "x0": 481.42,
+    "x1": 556.2,
+    "y": 476.95
+  },
+  {
+    "code": "012071",
+    "jan": "4976561747394",
+    "makerCodes": [
+      "4739"
+    ],
+    "formCode": "4739",
+    "unit": "本",
+    "x0": 481.42,
+    "x1": 556.2,
+    "y": 453.55
+  },
+  {
+    "code": "012072",
+    "jan": "4976561747400",
+    "makerCodes": [
+      "4740"
+    ],
+    "formCode": "4740",
+    "unit": "本",
+    "x0": 481.42,
+    "x1": 556.2,
+    "y": 430.15
+  },
+  {
+    "code": "012073",
+    "jan": "4976561747417",
+    "makerCodes": [
+      "4741"
+    ],
+    "formCode": "4741",
+    "unit": "本",
+    "x0": 481.42,
+    "x1": 556.2,
+    "y": 406.74
+  },
+  {
+    "code": "012074",
+    "jan": "4976561747424",
+    "makerCodes": [
+      "4742"
+    ],
+    "formCode": "4742",
+    "unit": "本",
+    "x0": 481.42,
+    "x1": 556.2,
+    "y": 383.33
+  },
+  {
+    "code": "012075",
+    "jan": "4976561747431",
+    "makerCodes": [
+      "4743"
+    ],
+    "formCode": "4743",
+    "unit": "ｾｯﾄ",
+    "x0": 477,
+    "x1": 546,
+    "y": 146
+  },
+  {
+    "code": "012076",
+    "jan": "4976561747448",
+    "makerCodes": [
+      "4744"
+    ],
+    "formCode": "4744",
+    "unit": "ｾｯﾄ",
+    "x0": 477,
+    "x1": 546,
+    "y": 124
+  },
+  {
+    "code": "012077",
+    "jan": "4976561747455",
+    "makerCodes": [
+      "4745"
+    ],
+    "formCode": "4745",
+    "unit": "ｾｯﾄ",
+    "x0": 477,
+    "x1": 546,
+    "y": 102
+  }
+];
+  const EXCLUDED = Object.freeze({
+    '004613': 'メーカー廃盤のため対象外です',
+    '004614': 'メーカー廃盤のため対象外です',
+    '007944': 'メーカー廃盤のため対象外です',
+    '004620': 'ヘアセラム150mlは取扱対象外です',
+    '012500': 'NEIは別の発注フォームで扱います',
+    '012501': 'NEIは別の発注フォームで扱います',
+    '012502': 'NEIは別の発注フォームで扱います',
+    '012503': 'NEIは別の発注フォームで扱います'
+  });
+  ROWS.forEach(Object.freeze);
+  Object.freeze(ROWS);
+  const byCode = new Map(ROWS.map(r => [r.code, r]));
+  const byJan = new Map(ROWS.map(r => [r.jan, r]));
+  function code(v) {
+    const s = String(v == null ? '' : v).trim();
+    return /^\d{1,6}$/.test(s) ? s.padStart(6, '0') : s;
+  }
+  function supplier(v) { return String(v == null ? '' : v).trim().replace(/^0+(?=\d)/, ''); }
+  function unit(v) { return String(v || '').normalize('NFKC').trim(); }
+  function date(v) {
+    const m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(String(v || ''));
+    if (!m) throw Error('発注日が不正です');
+    const y = +m[1], mo = +m[2], d = +m[3], x = new Date(Date.UTC(y, mo - 1, d));
+    if (y < 2000 || y > 2099 || x.getUTCFullYear() !== y || x.getUTCMonth() !== mo - 1 || x.getUTCDate() !== d)
+      throw Error('発注日が不正です');
+    return `${m[1]}-${m[2]}-${m[3]}`;
+  }
+  function plan(items, supplierCode, orderDate) {
+    if (supplier(supplierCode) !== '58') throw Error('パシフィックプロダクツ（58）の発注だけに対応しています');
+    if (!Array.isArray(items) || !items.length) throw Error('商品がありません');
+    const totals = new Map();
+    let inputTotal = 0;
+    for (const item of items) {
+      if (!item || item.isHandwritten) throw Error('手書き商品はこの専用帳票へ記載できません。通常のPDFで出力してください');
+      const cd = code(item.code), jan = String(item.janCode ?? item.jan ?? '').trim();
+      if (EXCLUDED[cd]) throw Error(`${item.name || cd}: ${EXCLUDED[cd]}。発注内容を確認してください`);
+      const a = byCode.get(cd), b = jan ? byJan.get(jan) : null;
+      if (cd && !a || jan && !b || a && b && a !== b) throw Error(`${item.name || cd || jan}: 商品コードとJANが帳票の対応表に一致しません`);
+      const row = a || b;
+      if (!row) throw Error(`${item.name || cd}: 専用帳票の対象外です。通常のPDFで全明細を出力してください`);
+      if (item.supplierCD && supplier(item.supplierCD) !== '58') throw Error('商品マスターの仕入先が58ではありません。最新マスターを確認してください');
+      if (item.makerCode && !row.makerCodes.includes(supplier(item.makerCode))) throw Error('メーカー商品コードが対応表と一致しません');
+      if (unit(item.unit) !== unit(row.unit)) throw Error(`${item.name || row.code}: 数量の単位が対応表と一致しません`);
+      if (String(item.memo || '').trim()) throw Error('備考がある商品は通常のPDFで出力してください。専用帳票では備考を省略しません');
+      const raw = item.qty;
+      if (typeof raw !== 'number' && (typeof raw !== 'string' || !/^\d+$/.test(raw.trim()))) throw Error('数量が不正です');
+      const qty = Number(raw);
+      if (!Number.isSafeInteger(qty) || qty < 1 || qty > 999999) throw Error('数量は1～999999の整数で入力してください');
+      const next = (totals.get(row.code)?.qty || 0) + qty;
+      if (!Number.isSafeInteger(next) || next > 999999) throw Error('同一商品の合計数量が上限を超えています');
+      totals.set(row.code, { row, qty: next }); inputTotal += qty;
+    }
+    const lines = [...totals.values()];
+    if (lines.reduce((s, x) => s + x.qty, 0) !== inputTotal) throw Error('数量の照合に失敗しました');
+    return Object.freeze({ date: date(orderDate), lines, inputTotal, itemCount: items.length });
+  }
+  async function prepare(PDFLib, bytes, drawingPlan, digest) {
+    const hash = await digest(bytes);
+    if (hash !== TEMPLATE_SHA256) throw Error('専用帳票の版が一致しません。テンプレートの配信を確認してください');
+    const doc = await PDFLib.PDFDocument.load(bytes);
+    const pages = doc.getPages();
+    if (pages.length !== 1 || Math.abs(pages[0].getWidth() - WIDTH) > .05 || Math.abs(pages[0].getHeight() - HEIGHT) > .05)
+      throw Error('専用帳票のページ構成が一致しません');
+    const page = pages[0], font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+    for (const { row, qty } of drawingPlan.lines) {
+      const text = String(qty), size = 10, w = font.widthOfTextAtSize(text, size);
+      if (w > row.x1 - row.x0 - 10) throw Error('数量が発注数欄に収まりません');
+      page.drawText(text, { x: row.x1 - 8 - w, y: row.y, size, font, color: PDFLib.rgb(0, 0, .55) });
+    }
+    // 受注日・NOはメーカー用の元欄を保持し、アプリの発注日は追加欄へ明示する。
+    page.drawText(drawingPlan.date, { x: 105, y: 78, size: 9, font, color: PDFLib.rgb(0, 0, 0) });
+    return await doc.save();
+  }
+  return Object.freeze({ TEMPLATE_KEY, TEMPLATE_SHA256, WIDTH, HEIGHT, ROWS, EXCLUDED, code, supplier, date, plan, prepare });
+});
+
+// 保存と配布を分離し、保存済み発注は履歴から何度でも出し直せる。
+let pacificOutputBusy = false;
+function pacificFingerprint() {
+  return JSON.stringify({ supplierCode: currentOrder.supplierCode, date: currentOrder.date,
+    staff: currentOrder.staff, fax: currentOrder.fax, items: cartItems,
+    user: currentUser && currentUser.user_id });
+}
+async function pacificDigest(bytes) {
+  const hash = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, '0')).join('');
+}
+async function pacificPrepare(items, info) {
+  const drawing = PacificOrderForm.plan(items, info.supplierCode, info.date);
+  const bytes = await fetchTemplateAsArrayBuffer('pacific_v1');
+  return PacificOrderForm.prepare(PDFLib, bytes, drawing, pacificDigest);
+}
+function pacificPendingMatches(items) {
+  // UNKNOWN等の固定payloadがある場合は別のカート内容でその結果を流用しない。
+  const pending = _readOrderOutbox().find(x => x.requestId === orderRequestId);
+  if (!pending) return;
+  const saved = JSON.parse(pending.params.items);
+  const fields = ['code','name','qty','unit','memo','isHandwritten'];
+  const shape = rows => JSON.stringify(rows.map(r => [String(r.janCode ?? r.jan ?? ''),
+    ...fields.map(k => k === 'isHandwritten' ? r[k] === true : String(r[k] ?? ''))]));
+  if (pending.params.supplierCode !== currentOrder.supplierCode || pending.params.date !== currentOrder.date ||
+      shape(saved) !== shape(items)) throw Error('未確定発注と現在の商品が異なります。未確定を再確認してください');
+}
+async function outputPacificPDF() {
+  if (pacificOutputBusy) return;
+  pacificOutputBusy = true;
+  let confirmedNo = '';
+  const fingerprint = pacificFingerprint();
+  const items = JSON.parse(JSON.stringify(cartItems)), info = { ...currentOrder };
+  showLoading('パシフィックプロダクツ発注書を生成中...');
+  try {
+    pacificPendingMatches(items);
+    const bytes = await pacificPrepare(items, info);
+    if (fingerprint !== pacificFingerprint()) throw Error('作成中に発注内容が変わりました。内容を確認して出力し直してください');
+    pacificPendingMatches(items);
+    confirmedNo = await _saveBeforeExternalOutput('メーカー発注書');
+    if (!confirmedNo) throw Error('保存確定番号を確認できません');
+    if (fingerprint !== pacificFingerprint() || _isOrderKnownInactive(confirmedNo))
+      throw Error('保存後に内容または状態が変わりました。履歴から最新の発注書を再出力してください');
+    downloadBlob(new Blob([bytes], { type: 'application/pdf' }),
+      `パシフィックプロダクツ発注書_${PacificOrderForm.date(info.date).replace(/-/g, '')}_${confirmedNo}.pdf`);
+    // 後片付けの失敗で「保存失敗」と見せて二重登録を促さない。
+    try { _finishExternalOutput(); } catch(e) { /* 確定番号は既存保存フローに保持済み */ }
+    showToast('パシフィックプロダクツ発注書を出力しました', 'success');
+  } catch(e) {
+    showToast(confirmedNo ? `発注${confirmedNo}は保存済みです。履歴から再出力してください。${e.message}`
+      : '発注書は出力していません: ' + e.message, 'error');
+  } finally { pacificOutputBusy = false; hideLoading(); }
+}
+async function reOutputPacificPDF(orderNo) {
+  if (pacificOutputBusy) return;
+  pacificOutputBusy = true;
+  showLoading('パシフィックプロダクツ発注書を再出力中...');
+  try {
+    const info = getHistoryOrderInfo(orderNo);
+    if (!info || DATA_BACKEND !== 'db') throw Error('発注履歴を確認できません');
+    const user = currentUser && currentUser.user_id;
+    const first = await _confirmHistoryOrderActive(orderNo);
+    if (!first.ok) throw Error('発注の最新状態を確認できません。履歴を更新してください');
+    const signature = JSON.stringify(first.items);
+    const infoSignature = JSON.stringify(info);
+    const bytes = await pacificPrepare(first.items, info);
+    // 雛形取得中の削除・修正・明細変更も、配布の直前にもう一度止める。
+    const last = await _confirmHistoryOrderActive(orderNo);
+    if (!last.ok || JSON.stringify(last.items) !== signature ||
+        JSON.stringify(getHistoryOrderInfo(orderNo)) !== infoSignature ||
+        user !== (currentUser && currentUser.user_id)) throw Error('発注の内容または状態が変わりました。履歴を更新して再出力してください');
+    downloadBlob(new Blob([bytes], { type: 'application/pdf' }),
+      `パシフィックプロダクツ発注書_${PacificOrderForm.date(info.date).replace(/-/g, '')}_${orderNo}.pdf`);
+    showToast('パシフィックプロダクツ発注書を再出力しました', 'success');
+  } catch(e) { showToast('再出力していません: ' + e.message, 'error'); }
+  finally { pacificOutputBusy = false; hideLoading(); }
+}
+
+</script>
+<!-- PACIFIC_FORM_EMBED_END -->
 </body>
 </html>
