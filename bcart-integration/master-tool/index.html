@@ -1015,7 +1015,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <div id="spPreviewInfo" style="margin-bottom:12px;font-size:13px;color:#6b7280;"></div>
     <div style="flex:1;overflow-y:auto;max-height:400px;border:1px solid #e5e7eb;border-radius:6px;">
       <table class="sp-preview-table" id="spPreviewTable">
-        <thead><tr><th>商品セット名</th><th>現在の特別価格（変更前）</th><th>設定後（変更後）</th></tr></thead>
+        <thead><tr><th>商品・会員</th><th>現在の特別価格（変更前）</th><th>反映後の価格・適用理由</th></tr></thead>
         <tbody id="spPreviewBody"></tbody>
       </table>
     </div>
@@ -1374,7 +1374,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = 'v2.19.0';
+const APP_VERSION = 'v2.20.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
 const BCART_ADMIN_BASE = 'https://beaufieldec.i16.bcart.jp/admin/products';
 
@@ -1419,6 +1419,8 @@ let memberShownIds = [];
 let spVfFeatureSets = [];
 let spPendingVfItems = [];
 let spPendingApplyItems = [];
+let spPendingInitialize = false;
+let spPendingGroupId = null;
 
 // 機能C: 既存商品へのセット追加
 let addSetDiff = null;
@@ -2578,7 +2580,7 @@ const RETRYABLE_READ_ACTIONS = new Set([
   'loadData', 'getIgnoreList', 'searchProducts', 'getSpecials', 'getHistory',
   'getCategories', 'getFeatures', 'getSpecialPriceData', 'getProductSetsForFeature',
   'searchProductSets', 'getSpecialPriceCurrent', 'getViewFilterCurrent', 'getMembers',
-  'getGroupViewInfo', 'auditSpecialPrices', 'getAuditExclusions', 'auditSalesVsBcart',
+  'getGroupViewInfo', 'getGroupPricePreview', 'auditSpecialPrices', 'getAuditExclusions', 'auditSalesVsBcart',
   'getProductsForDescription', 'getSimilarProducts', 'getFeatureList', 'getDrafts'
 ]);
 const RESPONSE_ARRAY_KEYS = {
@@ -3536,7 +3538,7 @@ function renderSpSettings() {
       '<span class="sp-section-title">💎 特別価格の設定</span>' +
       '<span class="sp-section-tag sp-section-tag-price">価格</span>' +
       '</div>';
-    html += '<div class="sp-section-desc">このグループの会員が見る<strong>販売価格</strong>を決めます。BCARTの <code>special_price</code> を書き換えます。</div>';
+    html += '<div class="sp-section-desc">複数グループに所属する会員は<strong>最も安いグループ価格</strong>を適用します。個別特価は優先します。各グループの条件は独立して保持します。</div>';
     html += '<div style="margin-bottom:20px;">';
     html += '<div class="sp-subhead">アプリ内保存済みの特別価格</div>';
     if (details.length === 0) {
@@ -4179,155 +4181,54 @@ function saveSpToApp() {
 }
 
 // プレビューモーダルを開く
-function openSpApplyPreview() {
+function openSpApplyPreview(initialize) {
   if (!spSelectedGroupId) return;
-  const details = (spData.details || []).filter(d => d.group_id === spSelectedGroupId);
-  if (details.length === 0) { showToast('反映する特別価格がありません', true); return; }
-  const selGroup = (spData.groups || []).find(g => g.group_id === spSelectedGroupId);
-  const memberIds = selGroup ? String(selGroup.member_ids || '').split(',').map(s => s.trim()).filter(s => s) : [];
-
-  // ② この反映で会員がどう変わるかを先に見せる
-  const pend = (spViewInfo && spViewInfo.pendingMemberIds) || [];
-  const stale = (spViewInfo && spViewInfo.staleMemberIds) || [];
-  let memberDelta = '';
-  if (pend.length > 0) {
-    memberDelta += '<div style="margin-top:6px;color:#047857;font-size:12px;">' +
-      '＋ 新たに特価が入る会員 ' + pend.length + '名: ' + pend.map(id => esc(spMemberLabel(id))).join('、') + '</div>';
-  }
-  if (stale.length > 0) {
-    memberDelta += '<div style="margin-top:4px;color:#dc2626;font-size:12px;">' +
-      '− 特価を削除する会員 ' + stale.length + '名（グループから外れた分）: ' +
-      stale.map(id => esc(spMemberLabel(id))).join('、') + '</div>';
-  }
-
-  // ローディング状態でモーダルを開く
-  document.getElementById('spPreviewInfo').innerHTML =
-    '<strong>' + esc(selGroup ? selGroup.group_name : '') + '</strong>' +
-    '　会員: ' + memberIds.length + '名　→　' + details.length + '件　' +
-    '<span style="color:#9ca3af;">BCARTから現在値を取得中...</span>' + memberDelta;
-  document.getElementById('spPreviewBody').innerHTML =
-    '<tr><td colspan="4" style="text-align:center;padding:24px;color:#9ca3af;">読み込み中...</td></tr>';
-  document.getElementById('spApplyConfirmBtn').disabled = true;
+  const groupId = spSelectedGroupId;
+  const selGroup = (spData.groups || []).find(g => g.group_id === groupId);
+  const title = document.getElementById('spPreviewInfo');
+  const body = document.getElementById('spPreviewBody');
+  const button = document.getElementById('spApplyConfirmBtn');
+  spPendingApplyItems = []; spPendingGroupId = null; spPendingInitialize = false;
+  title.textContent = '会員ごとの適用価格を確認中…';
+  body.innerHTML = '<tr><td colspan="3">読み込み中…</td></tr>';
+  button.disabled = true;
+  button.textContent = '✅ BCARTに反映する';
   document.getElementById('spApplyPreviewModal').classList.add('open');
-
-  const productSetIds = details.map(d => d.product_set_id);
-  gasPost({ action: 'getSpecialPriceCurrent', product_set_ids: productSetIds, member_ids: memberIds }, function(res) {
+  gasPost({ action: 'getGroupPricePreview', group_id: groupId, initialize: initialize === true }, function(res) {
+    if (groupId !== spSelectedGroupId) { closeModal('spApplyPreviewModal'); return; }
     if (!res.ok) {
-      closeModal('spApplyPreviewModal');
-      showToast('プレビュー取得エラー: ' + res.error, true);
+      title.textContent = res.error || 'プレビュー取得に失敗しました';
+      body.innerHTML = '<tr><td colspan="3">' + (res.initializationRequired
+        ? '旧設定には反映済みの価格情報が不足しています。対象商品の全グループ・個別特価を確認して初期状態を作ります。<br><button class="btn btn-primary btn-sm" onclick="openSpApplyPreview(true)">初回の全条件を確認</button>'
+        : res.recoveryRequired ? '<button class="btn btn-gray btn-sm" onclick="recoverSpOperation()">前回の結果を確認</button>' : '') + '</td></tr>';
       return;
     }
-    const curMap = {};
-    (res.results || []).forEach(r => { curMap[String(r.product_set_id)] = r; });
+    title.innerHTML = '<strong>' + esc(selGroup ? selGroup.group_name : '') + '</strong>　会員 ' + res.memberCount + '名<br>' + esc(res.rule) +
+      (initialize === true ? '<div class="warn-bar">初回のみ、対象商品に保存されている他グループ・個別特価の未反映条件も含めて確認・反映します。</div>' : '') +
+      ((res.unresolvedCodes || []).length ? '<div>未登録の得意先コード ' + res.unresolvedCodes.length + '件は保留します。</div>' : '');
+    const priceLabel = value => value === null ? '特価なし（通常価格）' : '¥' + Number(value).toLocaleString();
+    body.innerHTML = (res.results || []).map(item => {
+      const initial = (item.initialSources || []).map(s => esc(s.label) + '：¥' + Number(s.price).toLocaleString() + ' / ' + s.memberCount + '名').join('<br>');
+      const rows = (item.rows || []).map(row => {
+        const label = spMemberLabel(row.member_id);
+        return '<tr><td>' + esc(label) + '</td><td>' + priceLabel(row.before) + '</td><td><strong>' + priceLabel(row.after) + '</strong><br><small>' + esc(row.reason) + '</small></td></tr>';
+      }).join('');
+      return '<tr><td colspan="3"><strong>' + esc(item.product_set_name) + '</strong> [' + esc(item.product_no) + ']' +
+        (initial ? '<div style="font-size:12px;">初回確認する条件：<br>' + initial + '</div>' : '') + '</td></tr>' +
+        (rows || '<tr><td colspan="3">適用会員なし。前回の条件があれば解除します。</td></tr>');
+    }).join('');
+    spPendingApplyItems = (res.results || []).map(item => ({ product_set_id: item.product_set_id, product_no: item.product_no,
+      product_set_name: item.product_set_name, unit_price: item.unit_price, preview_token: item.token }));
+    spPendingGroupId = groupId; spPendingInitialize = initialize === true;
+    button.textContent = initialize === true ? '確認した全条件で初回反映する' : '✅ BCARTに反映する';
+    button.disabled = !spPendingApplyItems.length;
+  });
+}
 
-    const previewCodes = selGroup ? String(selGroup.customer_codes || '').split(',').map(s => s.trim()).filter(s => s) : [];
-    document.getElementById('spPreviewInfo').innerHTML =
-      '<strong>' + esc(selGroup ? selGroup.group_name : '') + '</strong>' +
-      '　会員: ' + memberIds.length + '名' +
-      (previewCodes.length > 0 ? '＋得意先コード' + previewCodes.length + '件（反映時に会員へ自動解決・未登録分は保留）' : '') +
-      '　→　' + details.length + '件の商品に特別価格を適用します';
-
-    let tbodyHtml = '';
-    details.forEach(d => {
-      const cur = curMap[String(d.product_set_id)] || {};
-      const allSp = cur.all_special || {};
-      const allEntries = Object.entries(allSp);
-
-      // キーがカンマ区切りの場合も含め、個別IDに展開して価格マップを作成
-      // 例: { "10004,10008,10010": { unit_price: 2500 } } → 各IDを2500にマップ
-      const idPriceMap = {}; // { "10004": 2500, "10008": 2500, ... }
-      const idVdMap    = {}; // { "10004": volume_discount, ... }
-      allEntries.forEach(([key, val]) => {
-        key.split(',').map(s => s.trim()).filter(s => s).forEach(id => {
-          idPriceMap[id] = val.unit_price;
-          if (val.volume_discount && Object.keys(val.volume_discount).length > 0) {
-            idVdMap[id] = val.volume_discount;
-          }
-        });
-      });
-      const coveredIds = Object.keys(idPriceMap);
-
-      // 変更前セル: 個別IDに展開した上で価格別グループ表示
-      let beforeHtml;
-      if (coveredIds.length === 0) {
-        beforeHtml = '<span style="color:#9ca3af;font-size:11px;">未設定</span>';
-      } else {
-        const byPrice = {};
-        coveredIds.forEach(id => {
-          const p = idPriceMap[id];
-          if (!byPrice[p]) byPrice[p] = [];
-          byPrice[p].push(id);
-        });
-        beforeHtml = Object.entries(byPrice).map(([price, ids]) =>
-          '<div style="font-size:11px;color:#6b7280;">¥' + Number(price).toLocaleString() +
-          ': ' + ids.slice(0, 4).join(', ') + (ids.length > 4 ? ' 他' + (ids.length - 4) + '名' : '') +
-          ' <span style="color:#9ca3af;">（' + ids.length + '名）</span></div>'
-        ).join('');
-        // 数量割引があれば1件分だけ追記
-        const vdEntry = Object.values(idVdMap)[0];
-        if (vdEntry) {
-          beforeHtml += '<div style="font-size:10px;color:#9ca3af;margin-top:2px;">' +
-            Object.entries(vdEntry).sort((a, b) => Number(a[0]) - Number(b[0]))
-              .map(([qty, price]) => qty + 'セット:¥' + Number(price).toLocaleString()).join(' / ') +
-            '</div>';
-        }
-      }
-
-      // 変更後セル: グループ各会員の状態を判定
-      // 会社名・氏名はBモール会員が自分で入力する外部の値。下でHTML文字列に連結するため必ずエスケープして返す
-      // （2026-10-09 セキュリティレビューN1: 未エスケープだと会社名に仕込んだスクリプトが社員の画面で動く）
-      const getMemberName = mid => {
-        const m = allMembers.find(m => m.id === String(mid));
-        if (m && (m.comp_name || m.name)) return esc(m.comp_name || m.name);
-        const v = (spViewInfo && spViewInfo.memberMap) ? spViewInfo.memberMap[String(mid)] : null;
-        return esc((v && v.name) ? v.name : 'ID:' + mid);
-      };
-      const newMids     = memberIds.filter(mid => idPriceMap[String(mid)] === undefined);
-      const changedMids = memberIds.filter(mid => idPriceMap[String(mid)] !== undefined && idPriceMap[String(mid)] != d.unit_price);
-      const sameMids    = memberIds.filter(mid => idPriceMap[String(mid)] !== undefined && idPriceMap[String(mid)] == d.unit_price);
-
-      // カンマ区切りキーにグループ会員IDが含まれる場合、同キーの非グループ会員も除外される
-      const removedNonGroupIds = [];
-      allEntries.forEach(([key]) => {
-        if (key.indexOf(',') === -1) return;
-        const ids = key.split(',').map(s => s.trim()).filter(s => s);
-        if (ids.some(id => memberIds.includes(id))) {
-          ids.filter(id => !memberIds.includes(id)).forEach(id => {
-            if (!removedNonGroupIds.includes(id)) removedNonGroupIds.push(id);
-          });
-        }
-      });
-
-      const isChanged = newMids.length > 0 || changedMids.length > 0 || removedNonGroupIds.length > 0;
-
-      let afterHtml = '<div style="font-weight:700;color:#059669;font-size:12px;">¥' + Number(d.unit_price).toLocaleString() + '</div>';
-      if (newMids.length > 0) {
-        afterHtml += '<div style="font-size:10px;color:#059669;margin-top:2px;">新規: ' +
-          newMids.map(getMemberName).join('、') + '</div>';
-      }
-      if (changedMids.length > 0) {
-        afterHtml += '<div style="font-size:10px;color:#d97706;margin-top:2px;">変更: ' +
-          changedMids.map(mid => getMemberName(mid) + '(¥' + Number(idPriceMap[String(mid)]).toLocaleString() + '→¥' + Number(d.unit_price).toLocaleString() + ')').join('、') + '</div>';
-      }
-      if (sameMids.length > 0) {
-        afterHtml += '<div style="font-size:10px;color:#9ca3af;margin-top:2px;">変更なし: ' + sameMids.length + '名</div>';
-      }
-      if (removedNonGroupIds.length > 0) {
-        afterHtml += '<div style="font-size:10px;color:#dc2626;margin-top:2px;">除外: ' +
-          removedNonGroupIds.map(getMemberName).join('、') + '</div>';
-      }
-
-      tbodyHtml += '<tr' + (!isChanged ? ' style="opacity:0.6;"' : '') + '>' +
-        '<td style="font-size:12px;">' + esc(d.product_set_name) +
-          '<div style="font-size:10px;font-family:monospace;color:#9ca3af;margin-top:2px;">[' + esc(d.product_no) + ']</div></td>' +
-        '<td>' + beforeHtml + '</td>' +
-        '<td>' + afterHtml + '</td>' +
-        '</tr>';
-    });
-
-    document.getElementById('spPreviewBody').innerHTML = tbodyHtml;
-    spPendingApplyItems = details.map(d => ({ product_set_id: d.product_set_id, product_no: d.product_no, product_set_name: d.product_set_name, unit_price: d.unit_price }));
-    document.getElementById('spApplyConfirmBtn').disabled = false;
+function recoverSpOperation() {
+  gasPost({ action: 'recoverSpecialPriceOperation' }, function(res) {
+    if (!res.ok) { showToast(res.error, true); return; }
+    showToast(res.message); closeModal('spApplyPreviewModal'); loadSpecialPriceData();
   });
 }
 
@@ -4335,7 +4236,9 @@ function openSpApplyPreview() {
 async function executeBcartApply() {
   if (spPendingApplyItems.length === 0) return;
   const items = spPendingApplyItems.slice();
-  const groupId = spSelectedGroupId;
+  const groupId = spPendingGroupId;
+  const initialize = spPendingInitialize;
+  if (!groupId) return;
   const btn = document.getElementById('spApplyConfirmBtn');
   btn.textContent = '反映中...';
   btn.disabled = true;
@@ -4354,7 +4257,8 @@ async function executeBcartApply() {
     updateProgressOverlay(done + chunk.length, items.length, spApplyChunkLabel(chunk));
     try {
       const res = await gasPostAsync({
-        action: 'applyGroupPrices', group_id: groupId, items: chunk,
+        action: 'applyGroupPrices', group_id: groupId, items: chunk, initialize: initialize,
+        preview_tokens: Object.fromEntries(chunk.map(it => [String(it.product_set_id), it.preview_token])),
         is_final: isLast, prior_success: success, prior_fail: fail
       });
       if (!res.ok) {
@@ -4368,9 +4272,11 @@ async function executeBcartApply() {
       removedPrice += res.removedPriceCount || 0;
       if (res.unresolvedCodes && res.unresolvedCodes.length) unresolved = res.unresolvedCodes;
       (res.errors || []).forEach(e => failedItems.push({ code: '', name: '', error: e }));
+      if (res.failCount || res.recoveryRequired) break;
     } catch (e) {
       fail += chunk.length;
       chunk.forEach(it => failedItems.push({ code: it.product_no, name: it.product_set_name, error: e.message || '' }));
+      break;
     }
     done += chunk.length;
   }
@@ -4379,12 +4285,14 @@ async function executeBcartApply() {
   btn.disabled = false;
 
   let msg = fail > 0 ? success + '件成功、' + fail + '件失敗' : items.length + '件をBCARTに反映しました';
+  const notAttempted = Math.max(0, items.length - success - fail);
+  if (notAttempted > 0) msg += '（残り' + notAttempted + '件は未実行）';
   if (removedPrice > 0) msg += '（グループから外れた会員の特価 ' + removedPrice + '件を削除）';
   if (unresolved.length > 0) {
     msg += '（未登録の得意先コード ' + unresolved.length + '件は保留: ' +
       unresolved.slice(0, 5).join(', ') + (unresolved.length > 5 ? ' 他' : '') + '）';
   }
-  spPendingApplyItems = [];
+  spPendingApplyItems = []; spPendingGroupId = null; spPendingInitialize = false;
   finishProgressOverlay(msg, fail > 0, failedItems, function() { loadSpecialPriceData(); });
 }
 
@@ -4620,7 +4528,7 @@ function confirmMemberSelect() {
     const names = removed.map(id => memberLabelFor(id)).join('、');
     if (!confirm(removed.length + '名をこのグループから外します。\n\n' + names +
       '\n\n※ この操作ではBCARTは変わりません。\n' +
-      '　外した会員のBCART側の特別価格は、次に「BCARTに反映する」を押したときに削除されます\n' +
+      '　外した会員の価格は、次に「BCARTに反映する」を押したときに残る条件から再計算されます\n' +
       '　（このアプリが反映した記録のある会員のみ）。\nよろしいですか？')) return;
   }
 
@@ -4659,7 +4567,7 @@ function confirmMemberSelect() {
 }
 
 function deleteSpDetail(detailId, productNo) {
-  if (!confirm('「' + productNo + '」の特別価格設定を削除します。\nBCARTからも該当グループの会員IDのspecial_priceが削除されます。\nよろしいですか？')) return;
+  if (!confirm('「' + productNo + '」の特別価格設定を削除します。\n残るグループ・個別特価からBCARTの価格を再計算します。\nよろしいですか？')) return;
   gasPost({ action: 'deleteSpecialPriceDetail', detail_id: detailId }, function(res) {
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
     showToast('削除しました');
@@ -4725,7 +4633,7 @@ function deleteGroup(groupId, name) {
     '会員: ' + memberIds.length + '名\n' +
     '特別価格設定: ' + spCount + '件\n' +
     '例外表示設定: ' + vfCount + '件\n\n' +
-    '関連する特別価格・例外表示設定はBCARTからも削除されます。\n' +
+    '残るグループ・個別特価の価格を維持し、不要になった条件を解除します。\n' +
     'この操作は取り消せません。よろしいですか？';
   if (!confirm(confirmMsg)) return;
   gasPost({ action: 'deleteCustomerGroup', group_id: groupId }, function(res) {
