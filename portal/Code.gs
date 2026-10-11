@@ -10,7 +10,7 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.14.0';
+const VERSION       = 'v1.14.1';
 // ポータル画面（GitHub Pages）のURL。旧HTML向けの更新案内タイルのリンク先に使う。
 const PORTAL_URL    = 'https://beaufield.github.io/beaufield-dev/';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
@@ -267,6 +267,14 @@ function _withIdempotency(requestId, fn, action, data) {
     const entry = {fingerprint: fingerprint, state: 'pending', expiresAt: now + 86400000};
     props.setProperty(key, JSON.stringify(entry));
     const result = fn();
+    // 失敗（PIN誤り・存在しないユーザー・権限なし等）は記録を残さない（v1.14.1・M1対策）。
+    // 残すと、でたらめな requestId を256回送るだけで台帳が埋まり、全員のログインが BUSY になる。
+    // login / resetPin / changePin はいずれも失敗時は書き込み前に返るため、再送で再実行しても
+    // 二重更新にはならない（ログイン失敗の再送は失敗回数を1回多く数えうるが、許容する）。
+    if (!result || result.success !== true) {
+      props.deleteProperty(key);
+      return result;
+    }
     entry.state = 'done'; entry.result = result;
     entry.expiresAt = Date.now() + IDEMPOTENCY_TTL_SEC * 1000;
     props.setProperty(key, JSON.stringify(entry));
