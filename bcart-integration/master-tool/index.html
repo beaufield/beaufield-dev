@@ -640,6 +640,12 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
           <span id="draftCount" style="font-size:12px;color:#6b7280;"></span>
         </div>
       </div>
+      <div id="draftBulkToolbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+        <label style="display:flex;gap:6px;align-items:center;font-size:13px;"><input type="checkbox" id="draftSelectAll" onchange="toggleAllDraftSelection(this.checked)">表示中の下書きをすべて選択</label>
+        <span id="draftSelectedCount" style="font-size:13px;">0件選択</span>
+        <button id="draftBulkApproveBtn" class="btn btn-success" onclick="approveSelectedDrafts()" disabled>✅ 選択した商品をまとめて登録（非表示）</button>
+      </div>
+      <div id="draftBulkResult" role="status" style="display:none;margin-bottom:12px;padding:12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;"></div>
       <div id="draftList">
         <div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>
       </div>
@@ -1368,7 +1374,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = 'v2.17.2';
+const APP_VERSION = 'v2.18.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
 const BCART_ADMIN_BASE = 'https://beaufieldec.i16.bcart.jp/admin/products';
 
@@ -6185,7 +6191,53 @@ let draftLoadGeneration = 0;
 let draftCategoriesLoaded = false;
 let draftFeaturesLoaded = false;
 let draftDisplayedKey = '';
+let draftRegistrationBusy = false;
+const draftSelectedIds = new Set();
+// 一部登録・通信結果不明は端末に記録し、再読込後も重複登録を防ぐ。
+const DRAFT_REVIEW_KEY = 'bf_bcart_draft_review_v1';
+let draftRegistrationReview = {};
+try { draftRegistrationReview = JSON.parse(localStorage.getItem(DRAFT_REVIEW_KEY) || '{}') || {}; } catch (_) {}
+function draftNeedsReview(id) { return Object.prototype.hasOwnProperty.call(draftRegistrationReview, id); }
+function markDraftNeedsReview(id, message) {
+  draftRegistrationReview[id] = String(message || '登録結果を確認してください');
+  draftSelectedIds.delete(id);
+  try { localStorage.setItem(DRAFT_REVIEW_KEY, JSON.stringify(draftRegistrationReview)); } catch (_) {}
+}
+function acknowledgeDraftReview(id) {
+  if (draftRegistrationBusy) return;
+  if (!confirm('Bカート管理画面で登録結果を確認し、このドラフトを再登録しても重複しないことを確認しましたか？\n一部登録済みの場合は、既存商品とセットを先に整理してください。')) return;
+  delete draftRegistrationReview[id];
+  try { localStorage.setItem(DRAFT_REVIEW_KEY, JSON.stringify(draftRegistrationReview)); } catch (_) {}
+  loadDrafts();
+}
+function draftCanSelect(d) { return d.status === '下書き' && !draftNeedsReview(d.draftId); }
+function updateDraftSelectionControls() {
+  const eligible = draftList.filter(draftCanSelect);
+  const count = eligible.filter(function(d) { return draftSelectedIds.has(d.draftId); }).length;
+  document.getElementById('draftBulkToolbar').style.display = eligible.length ? 'flex' : 'none';
+  document.getElementById('draftSelectedCount').textContent = count + '件選択';
+  const all = document.getElementById('draftSelectAll');
+  all.checked = eligible.length > 0 && count === eligible.length;
+  all.indeterminate = count > 0 && count < eligible.length;
+  all.disabled = draftRegistrationBusy;
+  document.getElementById('draftBulkApproveBtn').disabled = draftRegistrationBusy || count === 0;
+}
+function toggleDraftSelection(id, checked) {
+  if (draftRegistrationBusy || !draftList.some(function(d) { return d.draftId === id && draftCanSelect(d); })) return;
+  if (checked) draftSelectedIds.add(id); else draftSelectedIds.delete(id);
+  updateDraftSelectionControls();
+}
+function toggleAllDraftSelection(checked) {
+  if (draftRegistrationBusy) return;
+  draftList.filter(draftCanSelect).forEach(function(d) {
+    if (checked) draftSelectedIds.add(d.draftId); else draftSelectedIds.delete(d.draftId);
+    const checkbox = document.getElementById('draft-select-' + d.draftId);
+    if (checkbox) checkbox.checked = checked;
+  });
+  updateDraftSelectionControls();
+}
 function loadDrafts(onDone) {
+  if (draftRegistrationBusy) return;
   const generation = ++draftLoadGeneration;
   const status = document.getElementById('draftStatusFilter').value;
   const supplierCd = document.getElementById('draftSupplierFilter').value;
@@ -6213,6 +6265,7 @@ function loadDrafts(onDone) {
     gasPostAsync({ action: 'getDrafts', status: status, supplierCd: supplierCd }).then(function(res) {
       if (generation !== draftLoadGeneration) return;
       if (!res.ok) { showLoadFailure('ドラフト取得エラー: ' + res.error); return; }
+      if (draftDisplayedKey !== requestKey) draftSelectedIds.clear();
       draftList = res.drafts;
       draftDisplayedKey = requestKey;
       document.getElementById('draftCount').textContent = draftList.length + '件';
@@ -6343,6 +6396,9 @@ function draftTaxOptions(selected) {
 
 function renderDraftList(drafts) {
   const el = document.getElementById('draftList');
+  const eligibleIds = new Set((drafts || []).filter(draftCanSelect).map(function(d) { return d.draftId; }));
+  Array.from(draftSelectedIds).forEach(function(id) { if (!eligibleIds.has(id)) draftSelectedIds.delete(id); });
+  updateDraftSelectionControls();
   if (!drafts || !drafts.length) {
     el.innerHTML = '<div style="padding:24px;text-align:center;color:#6b7280;background:#fff;border-radius:8px;border:1px solid #e5e7eb;">該当するドラフトはありません</div>';
     return;
@@ -6410,6 +6466,7 @@ function draftCardHtml(d) {
 
   return '<div class="draft-card" id="draft-card-' + d.draftId + '">' +
     '<div class="draft-card-header">' +
+      (isDraft ? '<input type="checkbox" id="draft-select-' + escAttr(d.draftId) + '" aria-label="' + escAttr(d.productName + 'を一括登録の対象に選択') + '" onchange="toggleDraftSelection(\'' + jsArg(d.draftId) + '\',this.checked)"' + (draftSelectedIds.has(d.draftId) ? ' checked' : '') + (draftNeedsReview(d.draftId) ? ' disabled' : '') + '>' : '') +
       draftTypeLabel(d) +
       '<span class="' + confBadgeClass(d.confidence) + '">確信度: ' + esc(d.confidence || '') + '</span>' +
       '<span style="font-size:11px;color:#9ca3af;">' + esc(d.draftId) + ' ／ ' + esc(d.supplierName || '') + '</span>' +
@@ -6425,6 +6482,7 @@ function draftCardHtml(d) {
       (d.status !== '下書き' ? ' disabled' : '') + '>' + esc(d.description || '') + '</textarea>' +
     '<div class="draft-reasoning">💡 判定根拠: ' + esc(d.reasoning || '') + '</div>' +
     refs +
+    (draftNeedsReview(d.draftId) ? '<div style="color:#b45309;font-size:13px;margin:8px 0;">⚠️ ' + esc(draftRegistrationReview[d.draftId]) + ' <button class="btn btn-gray btn-sm" onclick="acknowledgeDraftReview(\'' + jsArg(d.draftId) + '\')">確認後に登録対象へ戻す</button></div>' : '') +
     '<div class="draft-card-actions">' + actions + '</div>' +
   '</div>';
 }
@@ -6466,6 +6524,7 @@ function collectDraftFormPayload(draftId) {
 }
 
 function saveDraftOnly(draftId, btn) {
+  if (draftRegistrationBusy) return;
   btn.disabled = true;
   showBusyOverlay('保存中...');
   const payload = collectDraftFormPayload(draftId);
@@ -6478,6 +6537,8 @@ function saveDraftOnly(draftId, btn) {
 }
 
 function approveDraftOne(draftId, btn) {
+  if (draftRegistrationBusy) return;
+  if (draftNeedsReview(draftId)) { showToast('登録結果を確認してから登録対象へ戻してください', true); return; }
   const original = draftList.find(function(d) { return d.draftId === draftId; });
   const payload = collectDraftFormPayload(draftId);
   if (!payload.productName || !payload.productName.trim()) { showToast('商品名を入力してください', true); return; }
@@ -6512,6 +6573,79 @@ function approveDraftOne(draftId, btn) {
       if (e.code === 'RESULT_UNKNOWN') btn.textContent = '結果を確認してください';
       else { btn.disabled = false; btn.textContent = '✅ 承認して登録（非表示）'; }
     });
+}
+
+
+// 選択時点の編集内容を固定し、既存の保存・承認APIを順番に実行する。
+// 書込は並列実行・自動再送をしない。一部登録や結果不明なら残りを止める。
+async function approveSelectedDrafts() {
+  if (draftRegistrationBusy) return;
+  const selected = draftList.filter(function(d) { return draftCanSelect(d) && draftSelectedIds.has(d.draftId); });
+  if (!selected.length) { showToast('登録する商品を選択してください', true); return; }
+  const jobs = selected.map(function(d) { return { draft: d, payload: collectDraftFormPayload(d.draftId) }; });
+  for (const job of jobs) {
+    const p = job.payload;
+    const error = !p.productName || !p.productName.trim() ? '商品名を入力してください' :
+      job.draft.draftType !== 'add_to_existing' && !p.categoryId ? 'カテゴリーを選択してください' :
+      !p.sets.length ? 'セットがありません' :
+      p.sets.some(function(s) { return !String(s.code || '').trim() || !String(s.setName || '').trim(); }) ? 'コード・セット名を入力してください' : '';
+    if (error) { showToast((p.productName || job.draft.draftId) + ': ' + error, true); return; }
+  }
+  const names = jobs.slice(0, 10).map(function(j) { return '・' + j.payload.productName; }).join('\n');
+  if (!confirm('選択した' + jobs.length + '商品を非表示状態でBカートに登録します。\n画面の編集内容も保存します。\n\n' + names + (jobs.length > 10 ? '\nほか' + (jobs.length - 10) + '商品' : '') + '\n\nよろしいですか？')) return;
+
+  draftRegistrationBusy = true;
+  ++draftLoadGeneration; // 処理前に開始した一覧取得の応答で編集欄が上書きされるのを防ぐ
+  // 既存の無効状態も記憶する。処理中の絞り込みや追加クリックを防ぐ。
+  const controls = Array.from(document.querySelectorAll('#tab-draft input, #tab-draft select, #tab-draft textarea, #tab-draft button'));
+  const previousDisabled = controls.map(function(el) { return el.disabled; });
+  controls.forEach(function(el) { el.disabled = true; });
+  showProgressOverlay(jobs.length, 'Bカートに商品を登録中（非表示）');
+  let completed = 0, succeeded = 0, stopped = false;
+  const failures = [], warnings = [];
+  for (const job of jobs) {
+    let phase = '保存';
+    updateProgressOverlay(completed, jobs.length, (completed + 1) + '件目を登録中: ' + job.payload.productName);
+    try {
+      const saved = await gasPostAsync(Object.assign({ action: 'updateDraft', draftId: job.draft.draftId }, job.payload));
+      if (!saved.ok) throw Object.assign(new Error('ドラフト保存失敗: ' + (saved.message || saved.error)), { code: saved.error });
+      phase = '登録';
+      const res = await gasPostAsync({ action: 'approveDraft', draftId: job.draft.draftId });
+      if (!res.ok || res.partial) {
+        const message = res.partial ? (res.message || '一部のセットが登録に失敗しました') + '（商品ID: ' + res.productId + '）' : (res.message || res.error || '登録失敗');
+        // 登録APIを呼んだ後の失敗は、作成済み親・セットの有無を確認するまで保留する。
+        markDraftNeedsReview(job.draft.draftId, message + '。再登録前にBカート管理画面で確認してください。');
+        throw Object.assign(new Error(message), { code: 'REGISTRATION_REVIEW' });
+      }
+      succeeded++;
+      draftSelectedIds.delete(job.draft.draftId);
+      if (res.notes && res.notes.length) warnings.push({ code: job.draft.draftId, name: job.payload.productName, error: res.notes.join('；') });
+      if (res.descriptionApplied === false) warnings.push({ code: job.draft.draftId, name: job.payload.productName, error: '登録済みですが説明文の反映に失敗しました。Bカート管理画面で確認してください。' });
+    } catch (e) {
+      failures.push({ code: job.draft.draftId, name: job.payload.productName, error: e.message });
+      if (phase === '登録' || e.code === 'RESULT_UNKNOWN') {
+        markDraftNeedsReview(job.draft.draftId, e.message + '。再登録前に結果を確認してください。');
+      }
+      // 明確な保存エラーを含め、失敗した時点で停止して状況を一覧に残す。
+      stopped = true;
+    }
+    completed++;
+    updateProgressOverlay(completed, jobs.length, job.payload.productName);
+    if (stopped) break;
+  }
+  const pending = jobs.length - completed;
+  const message = '登録成功 ' + succeeded + ' / ' + jobs.length + '商品' + (failures.length ? '・確認が必要 ' + failures.length + '商品' : '') + (pending ? '・未処理 ' + pending + '商品' : '') + (warnings.length ? '・注記あり' : '');
+  const result = document.getElementById('draftBulkResult');
+  result.style.display = 'block';
+  result.innerHTML = '<strong>' + esc(message) + '</strong>' +
+    (pending ? '<div>残りは登録していません。選択状態を残しています。</div>' : '') +
+    failures.concat(warnings).map(function(f) { return '<div style="margin-top:6px;">' + esc(f.name) + ': ' + esc(f.error) + '</div>'; }).join('');
+  finishProgressOverlay(message, failures.length > 0, failures.concat(warnings), function() {
+    draftRegistrationBusy = false;
+    controls.forEach(function(el, i) { if (el.isConnected) el.disabled = previousDisabled[i]; });
+    updateDraftSelectionControls();
+    loadDrafts();
+  });
 }
 
 function openDraftRejectModal(draftId, productName) {
