@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.33.0';
+const VERSION = 'v2.33.1';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -5794,6 +5794,11 @@ function previewLowPriceCampaign(params) {
 
 // 商品別設定は公開対象外のGASファイルへ保持する。認証情報は含めない。
 // 既存の限定対象を再設定するためのAPIや画面は追加しない。
+function bridgeReadScope_() {
+  if (typeof BMALL_BRIDGE_READ_SCOPE_DATA_ === 'undefined') throw new Error('BRIDGE_READ_TARGET_CONFIG_MISSING');
+  return BMALL_BRIDGE_READ_SCOPE_DATA_;
+}
+
 function bridgeFixedScope_() {
   if (typeof BMALL_BRIDGE_FIXED_SCOPE_DATA_ === 'undefined') throw new Error('BRIDGE_TARGET_CONFIG_MISSING');
   return BMALL_BRIDGE_FIXED_SCOPE_DATA_;
@@ -5851,16 +5856,16 @@ function handleDraftBridge_(params) {
     switch (params.action) {
       case 'getBridgeDraftCandidates': {
         bridgeExact_(params, ['action', 'apiKey', 'codes', 'supplierCd']);
-        if (bridgeStable_(params.codes) !== bridgeStable_([bridgeFixedScope_().code]) || params.supplierCd !== bridgeFixedScope_().supplierCd) bridgeFail_('TARGET_MISMATCH');
-        const result = getDraftCandidates({ codes: [bridgeFixedScope_().code], supplierCd: bridgeFixedScope_().supplierCd });
+        if (bridgeStable_(params.codes) !== bridgeStable_([bridgeReadScope_().code]) || params.supplierCd !== bridgeReadScope_().supplierCd) bridgeFail_('TARGET_MISMATCH');
+        const result = getDraftCandidates({ codes: [bridgeReadScope_().code], supplierCd: bridgeReadScope_().supplierCd });
         if (!result || result.ok !== true || !Array.isArray(result.candidates)) bridgeFail_('READ_FAILED');
-        const candidates = result.candidates.filter(c => String(c.code) === bridgeFixedScope_().code && String(c.supplierCd) === bridgeFixedScope_().supplierCd);
+        const candidates = result.candidates.filter(c => String(c.code) === bridgeReadScope_().code && String(c.supplierCd) === bridgeReadScope_().supplierCd);
         return { ok: true, total: candidates.length, candidates: candidates };
       }
       case 'getBridgeRegisteredExamples': {
         bridgeExact_(params, ['action', 'apiKey', 'supplierCd', 'maxProducts']);
-        if (params.supplierCd !== bridgeFixedScope_().supplierCd || params.maxProducts !== 80) bridgeFail_('TARGET_MISMATCH');
-        const result = getRegisteredExamples({ supplierCd: bridgeFixedScope_().supplierCd, maxProducts: 80 });
+        if (params.supplierCd !== bridgeReadScope_().supplierCd || params.maxProducts !== 80) bridgeFail_('TARGET_MISMATCH');
+        const result = getRegisteredExamples({ supplierCd: bridgeReadScope_().supplierCd, maxProducts: 80 });
         if (!result || result.ok !== true || !Array.isArray(result.examples) || !Array.isArray(result.categories)) bridgeFail_('READ_FAILED');
         // Legacy fallback scans unrelated suppliers. The dedicated bridge never exposes that fallback.
         if (result.fallback === true) bridgeFail_('NO_SUPPLIER_EXAMPLES');
