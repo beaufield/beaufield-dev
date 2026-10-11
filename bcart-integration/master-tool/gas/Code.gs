@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.33.1';
+const VERSION = 'v2.34.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -73,7 +73,7 @@ function doPost(e) {
       'previewLowPriceCampaign', 'loadData', 'getIgnoreList', 'searchProducts', 'getSpecials', 'getHistory',
       'getCategories', 'getFeatures', 'getSpecialPriceData', 'getProductSetsForFeature',
       'searchProductSets', 'getSpecialPriceCurrent', 'getViewFilterCurrent', 'getMembers',
-      'getGroupViewInfo',
+      'getGroupViewInfo', 'getGroupPricePreview',
       'auditSpecialPrices', 'getAuditExclusions', 'auditSalesVsBcart',
       'getProductsForDescription', 'getSimilarProducts', 'getFeatureList',
       'previewSuffixName', 'previewHanbaiEnd', 'previewSetDescription',
@@ -104,6 +104,19 @@ function doPost(e) {
       }
     }
     params._userName = userName;
+    // 特価の読取り→再計算→書込みを直列化し、未確定の処理がある間は変更を止める。
+    const specialMutations = {
+      saveCustomerGroup: saveCustomerGroup, addCustomerCodesToGroup: addCustomerCodesToGroup,
+      saveSpecialPriceDetails: saveSpecialPriceDetails, saveIndividualPrices: saveIndividualPrices,
+      applyGroupPrices: applyGroupPrices, applyIndividualPrices: applyIndividualPrices,
+      deleteSpecialPriceDetail: deleteSpecialPriceDetail, deleteIndividualPrice: deleteIndividualPrice,
+      deleteCustomerGroup: deleteCustomerGroup, adoptUnmanagedPrices: adoptUnmanagedPrices,
+      recoverSpecialPriceOperation: recoverSpecialPriceOperation
+    };
+    if (Object.prototype.hasOwnProperty.call(specialMutations, action)) {
+      return jsonResponse(spWithLock_(() => specialMutations[action](params), action === 'recoverSpecialPriceOperation'));
+    }
+
 
     switch (action) {
       case 'getVersion':           return jsonResponse({ ok: true, version: VERSION });
@@ -146,6 +159,7 @@ function doPost(e) {
       case 'bulkRegisterProduct':  return jsonResponse(bulkRegisterProduct(params));
       // 機能B: 特別価格管理
       case 'getSpecialPriceData':       return jsonResponse(getSpecialPriceData());
+      case 'getGroupPricePreview': return jsonResponse(getGroupPricePreview(params));
       case 'getGroupViewInfo':          return jsonResponse(getGroupViewInfo(params));
       case 'saveCustomerGroup':         return jsonResponse(saveCustomerGroup(params));
       case 'addCustomerCodesToGroup':   return jsonResponse(addCustomerCodesToGroup(params));
@@ -2790,6 +2804,467 @@ function ensureSpGroupCodesHeader(sheet) {
   }
 }
 
+// 特価の反映済み条件を保持する。保存だけの変更は他グループの反映へ混入させない。
+// 個別特価は既存の整合チェックと同じく優先し、グループ間は最安値を使う。
+const SP_SNAPSHOT_HEADERS_ = ['applied_member_ids', 'applied_unit_price', 'applied_snapshot_version'];
+const SP_PENDING_KEY_ = 'SP_PRICE_PENDING_V1';
+
+function spIds_(value) {
+  const ids = [...new Set(String(value || '').split(',').map(x => x.trim()).filter(Boolean))];
+  if (ids.some(x => !/^[1-9]\d*$/.test(x))) throw new Error('会員IDが不正です');
+  return ids.sort((a, b) => Number(a) - Number(b));
+}
+
+function spPrice_(value) {
+  if (value === '' || value === null || value === undefined || !Number.isFinite(Number(value)) || Number(value) <= 0) {
+    throw new Error('特別価格は0より大きい数値で指定してください');
+  }
+  return Number(value);
+}
+
+function spStable_(value) {
+  if (Array.isArray(value)) return value.map(spStable_);
+  if (value && typeof value === 'object') {
+    const result = {};
+    Object.keys(value).sort().forEach(key => { result[key] = spStable_(value[key]); });
+    return result;
+  }
+  return value;
+}
+
+function spHash_(value) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, JSON.stringify(spStable_(value)))
+    .map(x => ('0' + ((x + 256) % 256).toString(16)).slice(-2)).join('');
+}
+
+// カンマ区切りの会員を展開しても価格・数量割引等の全項目を保持する。
+function spExpand_(raw) {
+  const result = {};
+  Object.keys(raw || {}).forEach(key => {
+    const value = raw[key];
+    if (!value || typeof value !== 'object') throw new Error('BCARTの特別価格形式が不正です');
+    spPrice_(value.unit_price);
+    spIds_(key).forEach(id => {
+      if (result[id] && spHash_(result[id]) !== spHash_(value)) throw new Error('BCARTに同一会員の異なる価格が重複しています。管理画面で確認してください');
+      result[id] = JSON.parse(JSON.stringify(value));
+    });
+  });
+  return result;
+}
+
+// 追加3列は通常の読取りでは作らない。書込み前に既存列と競合しないか確認する。
+function spSnapshotSchema_(sheetName, write) {
+  const sheet = getOrCreateSheet(sheetName);
+  const start = sheetName === SHEET_SP_DETAILS ? 9 : 12;
+  const max = sheet.getMaxColumns();
+  if (max < start + 2) {
+    if (!write) return { sheet: sheet, start: start, exists: false };
+    sheet.insertColumnsAfter(max, start + 2 - max);
+  }
+  const headers = sheet.getRange(1, start, 1, 3).getValues()[0];
+  const present = headers.every((v, i) => String(v) === SP_SNAPSHOT_HEADERS_[i]);
+  if (!present) {
+    if (headers.some(v => String(v || '') !== '')) throw new Error('特価反映状態の追加列が既存列と競合しています');
+    if (sheet.getLastRow() > 1 && sheet.getRange(2, start, sheet.getLastRow() - 1, 3).getValues().some(r => r.some(v => v !== '' && v !== null))) {
+      throw new Error('特価反映状態の追加列に既存データがあります');
+    }
+    if (write) sheet.getRange(1, start, 1, 3).setValues([SP_SNAPSHOT_HEADERS_]);
+  }
+  return { sheet: sheet, start: start, exists: present || write };
+}
+
+function spReadModel_() {
+  const groups = {};
+  const groupRows = getOrCreateSheet(SHEET_SP_GROUPS).getDataRange().getValues();
+  groupRows.slice(1).forEach(row => {
+    if (!row[0]) return;
+    const id = String(row[0]);
+    if (groups[id]) throw new Error('導入サロングループIDが重複しています');
+    const codes = String(row[6] || '').split(',').map(x => x.trim()).filter(Boolean);
+    const resolved = resolveCustomerCodes(codes);
+    if (!resolved.ok) throw new Error('会員情報を取得できないため反映を停止しました');
+    if (codes.length) {
+      const customers = fetchCustomersCached();
+      codes.forEach(code => {
+        if (customers.members.filter(m => String(m.ext_id || '') === code).length > 1) throw new Error('得意先コードに複数会員が該当しています');
+      });
+    }
+    groups[id] = { id: id, name: String(row[1] || ''), members: spIds_(spIds_(row[2]).concat(resolved.memberIds).join(',')),
+      appliedMembers: spIds_(row[8]), unresolved: resolved.unresolved };
+  });
+  const sources = [];
+  [SHEET_SP_DETAILS, SHEET_SP_INDIVIDUAL].forEach(sheetName => {
+    const schema = spSnapshotSchema_(sheetName, false);
+    const rows = schema.sheet.getDataRange().getValues();
+    rows.slice(1).forEach((row, index) => {
+      if (!row[0]) return;
+      const group = sheetName === SHEET_SP_DETAILS ? groups[String(row[1])] : null;
+      if (sheetName === SHEET_SP_DETAILS && !group) throw new Error('特価明細の所属グループが見つかりません');
+      const ready = schema.exists && String(row[schema.start + 1] || '') === 'v1';
+      if (schema.exists && row[schema.start + 1] && !ready) throw new Error('未対応の特価反映状態です');
+      const members = ready ? spIds_(row[schema.start - 1]) : [];
+      const price = members.length ? spPrice_(row[schema.start]) : null;
+      if (ready && !members.length && row[schema.start] !== '' && row[schema.start] !== null && row[schema.start] !== undefined) throw new Error('反映済み会員と価格が一致しません');
+      const setId = String(row[group ? 2 : 4] || '');
+      if (!/^[1-9]\d*$/.test(setId)) throw new Error('商品セットIDが不正です');
+      let currentMembers = group ? group.members : spIds_(row[2]);
+      let unresolved = group ? group.unresolved : [];
+      if (!group && !currentMembers.length && row[1]) {
+        const resolved = resolveCustomerCodes([String(row[1])]);
+        if (!resolved.ok) throw new Error('会員情報を取得できないため反映を停止しました');
+        currentMembers = spIds_(resolved.memberIds.join(','));
+        unresolved = resolved.unresolved;
+      }
+      sources.push({ key: (group ? 'G:' : 'I:') + String(row[0]), id: String(row[0]), sheetName: sheetName,
+        rowIdx: index + 2, setId: setId, groupId: group ? group.id : '', type: group ? 'group' : 'individual',
+        label: group ? group.name : '個別特価', productNo: String(row[group ? 3 : 5] || ''), name: String(row[group ? 4 : 6] || ''),
+        currentMembers: currentMembers, currentPrice: row[group ? 5 : 7], unresolved: unresolved,
+        ready: ready, members: members, price: price, legacyMembers: group ? group.appliedMembers : spIds_(row[2]) });
+    });
+  });
+  const keys = new Set();
+  const groupSets = new Set();
+  sources.forEach(s => {
+    if (keys.has(s.key)) throw new Error('特価明細IDが重複しています');
+    keys.add(s.key);
+    if (s.type === 'group') {
+      const pair = s.groupId + '|' + s.setId;
+      if (groupSets.has(pair)) throw new Error('同じグループ・商品の特価明細が重複しています');
+      groupSets.add(pair);
+    }
+  });
+  return { groups: groups, sources: sources };
+}
+
+function spSelectPrice_(sources, memberId) {
+  const candidates = sources.filter(s => s.members.includes(memberId));
+  const individual = candidates.filter(s => s.type === 'individual');
+  const pool = individual.length ? individual : candidates;
+  if (!pool.length) return null;
+  if (individual.length && new Set(individual.map(s => s.price)).size > 1) throw new Error('同一会員・商品に異なる個別特価が重複しています');
+  const price = Math.min(...pool.map(s => s.price));
+  return { price: price, reason: (individual.length ? '個別特価を優先' : 'グループの最安値') + '：' +
+    pool.filter(s => s.price === price).map(s => s.label).sort().join(' / ') };
+}
+
+// 新規保存は「未反映」を明示する。旧行は初回確認まで推測で移行しない。
+function spMarkNewSource_(sheetName, rowIdx) {
+  const schema = spSnapshotSchema_(sheetName, true);
+  schema.sheet.getRange(rowIdx, schema.start, 1, 3).setValues([['', '', 'v1']]);
+}
+
+function spAuditExpected_(model) {
+  const expected = {};
+  const current = model.sources.map(s => Object.assign({}, s, { members: s.currentMembers,
+    price: s.currentMembers.length ? spPrice_(s.currentPrice) : null }));
+  [...new Set(current.map(s => s.setId))].forEach(setId => {
+    const sources = current.filter(s => s.setId === setId);
+    expected[setId] = {};
+    [...new Set(sources.flatMap(s => s.members))].forEach(mid => {
+      const decision = spSelectPrice_(sources, mid);
+      const source = sources.find(s => s.members.includes(mid) && s.price === decision.price &&
+        (decision.reason.startsWith('個別') ? s.type === 'individual' : s.type === 'group'));
+      expected[setId][mid] = { price: decision.price, source: decision.reason, sourceType: source.type, groupId: source.groupId };
+    });
+  });
+  return expected;
+}
+
+function deleteCustomerGroup(params) {
+  const model = spReadModel_();
+  const group = model.groups[String(params.group_id)];
+  if (!group) return { ok: false, error: '対象が見つかりません' };
+  const sources = model.sources.filter(s => s.groupId === group.id);
+  spDeleteSources_(sources.map(s => s.key));
+  // 例外表示は他グループが必要とする会員を残す。取得失敗時は原本の削除を止める。
+  const vfSheet = getOrCreateSheet(SHEET_VF_DETAILS);
+  const vfRows = vfSheet.getDataRange().getValues();
+  const own = vfRows.slice(1).map((r, i) => ({ row: i + 2, values: r })).filter(e => String(e.values[1]) === group.id);
+  const members = [...new Set(group.members.concat(group.appliedMembers))];
+  for (const entry of own) {
+    const setId = String(entry.values[2]);
+    const peers = vfRows.slice(1).filter(r => String(r[2]) === setId && String(r[1]) !== group.id);
+    const keep = new Set(peers.flatMap(r => {
+      const peer = model.groups[String(r[1])];
+      return peer ? peer.members.concat(peer.appliedMembers) : [];
+    }));
+    const current = bcartGet('/product_sets/' + setId);
+    if (!current.ok || !current.data) throw new Error('例外表示を取得できないためグループ削除を停止しました');
+    const ids = String(current.data.visible_customer_id || '').split(',').map(x => x.trim()).filter(Boolean)
+      .filter(id => !members.includes(id) || keep.has(id));
+    const patch = { visible_customer_id: ids.join(',') };
+    if (!ids.length) patch.view_group_filter = '';
+    const result = bcartPatch('/product_sets/' + setId, patch);
+    if (!result.ok) throw new Error('例外表示の更新に失敗しました。グループを保持しています');
+  }
+  own.sort((a,b) => b.row - a.row).forEach(e => vfSheet.deleteRow(e.row));
+  const detailSheet = getOrCreateSheet(SHEET_SP_DETAILS);
+  sources.sort((a,b) => b.rowIdx - a.rowIdx).forEach(s => detailSheet.deleteRow(s.rowIdx));
+  const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
+  const rows = groupSheet.getDataRange().getValues();
+  const index = rows.findIndex((r,i) => i > 0 && String(r[0]) === group.id);
+  if (index < 1) throw new Error('削除対象のグループが変わりました');
+  groupSheet.deleteRow(index + 1);
+  addHistory({ userName: params._userName, code: '', name: group.name, type: '顧客グループ削除', before: '', after: '他グループ・個別特価を保持', result: '成功' });
+  return { ok: true };
+}
+
+function spPlanSet_(model, set, changes, initialize) {
+  const old = model.sources.filter(s => s.setId === String(set.id));
+  if (!initialize && old.some(s => !s.ready)) throw new Error('SP_INITIALIZE_REQUIRED: 初回設定の確認が必要です');
+  const after = old.map(s => {
+    const change = changes[s.key];
+    if (change === 'remove') return Object.assign({}, s, { members: [], price: null, ready: true });
+    if (change === 'apply' || (initialize && !s.ready)) {
+      return Object.assign({}, s, { members: s.currentMembers, price: s.currentMembers.length ? spPrice_(s.currentPrice) : null, ready: true });
+    }
+    return s;
+  });
+  const actual = spExpand_(set.special_price);
+  const proposed = JSON.parse(JSON.stringify(actual));
+  const touched = [...new Set(old.flatMap(s => s.members.concat(initialize && !s.ready ? s.legacyMembers : [])).concat(after.flatMap(s => s.members)))].sort((a, b) => Number(a) - Number(b));
+  const rows = [];
+  touched.forEach(mid => {
+    const decision = spSelectPrice_(after, mid);
+    const before = actual[mid] ? Number(actual[mid].unit_price) : null;
+    if (decision) proposed[mid] = Object.assign({}, proposed[mid] || {}, { unit_price: decision.price });
+    else delete proposed[mid];
+    rows.push({ member_id: mid, before: before, after: decision ? decision.price : null,
+      reason: decision ? decision.reason : '適用条件なし（通常価格へ戻す）', changed: before !== (decision ? decision.price : null) });
+  });
+  const writes = after.filter(s => changes[s.key] || (initialize && old.some(before => before.key === s.key && !before.ready))).map(s => ({
+    key: s.key, id: s.id, sheetName: s.sheetName, setId: s.setId, members: s.members, price: s.price,
+    appliedAt: changes[s.key] === 'remove' ? '' : new Date().toLocaleString('ja-JP'),
+    currentHash: spHash_({ members: s.currentMembers, price: s.currentPrice, groupId: s.groupId })
+  }));
+  const signature = { sources: old.map(s => ({ key: s.key, ready: s.ready, members: s.members, price: s.price,
+    currentMembers: s.currentMembers, currentPrice: s.currentPrice, legacyMembers: s.ready ? [] : s.legacyMembers })).sort((a,b) => a.key.localeCompare(b.key)),
+    actual: actual, changes: changes, initialize: !!initialize };
+  return { setId: String(set.id), name: set.name || (old[0] && old[0].name) || '', productNo: set.product_no || '',
+    rows: rows, proposed: proposed, writes: writes, token: spHash_(signature), beforeHash: spHash_(actual), afterHash: spHash_(proposed),
+    initialSources: initialize ? old.filter(s => !s.ready).map(s => ({ label: s.label, price: s.currentPrice, memberCount: s.currentMembers.length })) : [] };
+}
+
+function spApplySnapshotWrites_(writes) {
+  // 先にすべての行を検証する。失敗時は復旧記録を残して後続の特価更新を止める。
+  const model = spReadModel_();
+  const entries = writes.map(w => {
+    const s = model.sources.find(s => s.key === w.key && s.setId === w.setId);
+    if (!s || spHash_({ members: s.currentMembers, price: s.currentPrice, groupId: s.groupId }) !== w.currentHash) {
+      throw new Error('特価マスターが処理中に変更されました。復旧前に確認してください');
+    }
+    return { source: s, write: w, schema: spSnapshotSchema_(w.sheetName, true) };
+  });
+  entries.forEach(e => {
+    e.schema.sheet.getRange(e.source.rowIdx, e.schema.start, 1, 3).setValues([[e.write.members.join(','), e.write.price === null ? '' : e.write.price, 'v1']]);
+    // 当該保存内容を反映したときだけ未反映バッジを消す。
+    e.schema.sheet.getRange(e.source.rowIdx, e.source.type === 'group' ? 8 : 10).setValue(e.write.appliedAt);
+    if (e.source.type === 'individual' && e.write.members.length) e.schema.sheet.getRange(e.source.rowIdx, 3).setValue(e.write.members[0]);
+  });
+  SpreadsheetApp.flush();
+}
+
+function spRefreshGroupMarkers_() {
+  const model = spReadModel_();
+  Object.keys(model.groups).forEach(gid => {
+    const g = model.groups[gid];
+    const list = model.sources.filter(s => s.groupId === gid);
+    if (list.length && list.every(s => s.ready && spHash_(s.members) === spHash_(g.members) && s.price === Number(s.currentPrice))) {
+      writeAppliedMemberIds_(gid, g.members);
+    }
+  });
+}
+
+function spApplyPlan_(plan, approvedToken) {
+  if (!approvedToken || approvedToken !== plan.token) throw new Error('設定またはBCART価格がプレビュー後に変わりました。再度確認してください');
+  // リモート更新前に復旧に必要な反映状態だけを端末外のScriptPropertiesへ保存する。
+  const props = PropertiesService.getScriptProperties();
+  const journal = { setId: plan.setId, beforeHash: plan.beforeHash, afterHash: plan.afterHash, writes: plan.writes };
+  const encoded = JSON.stringify(journal);
+  if (Utilities.newBlob(encoded).getBytes().length > 8000) throw new Error('反映条件が多いため安全な復旧記録の上限を超えています。反映していません');
+  props.setProperty(SP_PENDING_KEY_, encoded);
+  if (plan.beforeHash !== plan.afterHash) {
+    const result = bcartPatch('/product_sets/' + plan.setId, { special_price: plan.proposed });
+    if (!result.ok) throw new Error('BCART更新結果を確認できません。復旧確認後に再操作してください');
+  }
+  const check = bcartGet('/product_sets/' + plan.setId);
+  if (!check.ok || !check.data || spHash_(spExpand_(check.data.special_price)) !== plan.afterHash) {
+    throw new Error('BCART再読の価格が一致しません。復旧確認が必要です');
+  }
+  spApplySnapshotWrites_(plan.writes);
+  props.deleteProperty(SP_PENDING_KEY_);
+  return plan.rows.filter(r => r.before !== null && r.after === null).length;
+}
+
+function spWithLock_(callback, recovery) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) return { ok: false, error: '別の特価処理が実行中です。少し待って再操作してください' };
+  try {
+    if (!recovery && PropertiesService.getScriptProperties().getProperty(SP_PENDING_KEY_)) {
+      return { ok: false, recoveryRequired: true, error: 'SP_RECOVERY_REQUIRED: 前回の結果が未確定です。「前回の結果を確認」を実行してください' };
+    }
+    return callback();
+  } catch (e) {
+    return { ok: false, recoveryRequired: !!PropertiesService.getScriptProperties().getProperty(SP_PENDING_KEY_), error: e.message };
+  } finally { lock.releaseLock(); }
+}
+
+function recoverSpecialPriceOperation(params) {
+  const props = PropertiesService.getScriptProperties();
+  const raw = props.getProperty(SP_PENDING_KEY_);
+  if (!raw) return { ok: true, recovered: false, message: '未確定の処理はありません' };
+  const journal = JSON.parse(raw);
+  const current = bcartGet('/product_sets/' + journal.setId);
+  if (!current.ok || !current.data) return { ok: false, error: 'BCARTを取得できません。復旧記録を保持しています' };
+  const hash = spHash_(spExpand_(current.data.special_price));
+  if (hash === journal.afterHash) {
+    spApplySnapshotWrites_(journal.writes);
+    props.deleteProperty(SP_PENDING_KEY_);
+    spRefreshGroupMarkers_();
+    addHistory({ userName: params._userName, code: '', name: journal.setId, type: '特価反映の復旧確認', before: '', after: 'BCART再読一致・反映状態を確定', result: '成功' });
+    return { ok: true, recovered: true, message: 'BCART再読が一致したため、前回の反映状態を確定しました' };
+  }
+  if (hash === journal.beforeHash) {
+    props.deleteProperty(SP_PENDING_KEY_);
+    return { ok: true, recovered: false, message: 'BCARTは変更前のままです。プレビューから反映し直してください' };
+  }
+  return { ok: false, error: 'BCARTが変更前・変更後のどちらとも一致しません。復旧記録を保持しています。管理者の確認が必要です' };
+}
+
+function spGroupTargets_(model, groupId, items) {
+  const group = model.groups[String(groupId)];
+  if (!group) throw new Error('指定されたグループが見つかりません');
+  const list = model.sources.filter(s => s.groupId === group.id);
+  if (!list.length) throw new Error('反映する特別価格がありません');
+  if (!items) return list;
+  if (!Array.isArray(items) || !items.length) throw new Error('反映対象がありません');
+  const ids = new Set();
+  return items.map(item => {
+    const id = String(item.product_set_id);
+    const source = list.find(s => s.setId === id);
+    if (!source || ids.has(id)) throw new Error('グループにない商品、または重複した商品が指定されています');
+    ids.add(id);
+    if (item.unit_price !== undefined && spPrice_(item.unit_price) !== spPrice_(source.currentPrice)) throw new Error('保存価格が変わりました。再度プレビューしてください');
+    return source;
+  });
+}
+
+function getGroupPricePreview(params) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) return { ok: false, error: '別の特価処理が実行中です' };
+  try {
+    if (PropertiesService.getScriptProperties().getProperty(SP_PENDING_KEY_)) return { ok: false, recoveryRequired: true, error: '前回の結果を確認してからプレビューしてください' };
+    const model = spReadModel_();
+    const targets = spGroupTargets_(model, params.group_id);
+    const group = model.groups[String(params.group_id)];
+    const sets = bcartGetSetsByIds_(targets.map(s => s.setId));
+    if (!sets.ok) return sets;
+    const initialize = params.initialize === true;
+    const results = targets.map(s => {
+      const set = sets.data.find(x => String(x.id) === s.setId);
+      if (!set) throw new Error('商品セットが見つかりません');
+      const changes = {}; changes[s.key] = 'apply';
+      const plan = spPlanSet_(model, set, changes, initialize);
+      return { product_set_id: s.setId, product_no: s.productNo, product_set_name: s.name, unit_price: spPrice_(s.currentPrice),
+        rows: plan.rows, token: plan.token, initialSources: plan.initialSources };
+    });
+    return { ok: true, results: results, initialize: initialize, memberCount: group.members.length, unresolvedCodes: group.unresolved,
+      rule: 'グループ間は最安値。個別特価は優先。保存のみの他グループ変更は未反映のまま保持。' };
+  } catch (e) { return { ok: false, initializationRequired: e.message.includes('SP_INITIALIZE_REQUIRED'), error: e.message }; }
+  finally { lock.releaseLock(); }
+}
+
+function applyGroupPrices(params) {
+  const model = spReadModel_();
+  const targets = spGroupTargets_(model, params.group_id, params.items);
+  const group = model.groups[String(params.group_id)];
+  let successCount = 0, failCount = 0, removedPriceCount = 0;
+  const errors = [];
+  for (const source of targets) {
+    try {
+      const current = bcartGet('/product_sets/' + source.setId);
+      if (!current.ok || !current.data) throw new Error('BCART価格を取得できません');
+      const changes = {}; changes[source.key] = 'apply';
+      const plan = spPlanSet_(spReadModel_(), current.data, changes, params.initialize === true);
+      removedPriceCount += spApplyPlan_(plan, (params.preview_tokens || {})[source.setId]);
+      successCount++;
+    } catch (e) {
+      failCount = targets.length - successCount;
+      errors.push(source.productNo + ': ' + e.message);
+      break;
+    }
+  }
+  if (!PropertiesService.getScriptProperties().getProperty(SP_PENDING_KEY_)) spRefreshGroupMarkers_();
+  if (isFinalChunk_(params) || failCount) addHistory({ userName: params._userName, code: '', name: group.name,
+    type: params.initialize === true ? '特価の初回条件反映' : '特別価格適用', before: '',
+    after: '成功: ' + (Number(params.prior_success || 0) + successCount) + '件 / 失敗: ' + (Number(params.prior_fail || 0) + failCount) + '件', result: failCount ? '一部失敗' : '成功' });
+  return { ok: true, successCount: successCount, failCount: failCount, errors: errors, removedPriceCount: removedPriceCount,
+    memberCount: group.members.length, unresolvedCodes: group.unresolved, recoveryRequired: !!PropertiesService.getScriptProperties().getProperty(SP_PENDING_KEY_), appliedRecorded: !failCount };
+}
+
+function spDeleteSources_(keys) {
+  let model = spReadModel_();
+  const targets = model.sources.filter(s => keys.includes(s.key));
+  const setIds = [...new Set(targets.map(s => s.setId))];
+  // 全セットの初期状態を先に確認し、旧データ未確認のまま途中削除しない。
+  setIds.forEach(id => { if (model.sources.some(s => s.setId === id && !s.ready)) throw new Error('初回設定の確認後に削除してください'); });
+  for (const setId of setIds) {
+    model = spReadModel_();
+    const result = bcartGet('/product_sets/' + setId);
+    if (!result.ok || !result.data) throw new Error('BCART価格を取得できないため削除を停止しました');
+    const changes = {};
+    targets.filter(s => s.setId === setId).forEach(s => { changes[s.key] = 'remove'; });
+    const plan = spPlanSet_(model, result.data, changes, false);
+    spApplyPlan_(plan, plan.token);
+  }
+  return targets;
+}
+
+function deleteSpecialPriceDetail(params) {
+  const model = spReadModel_();
+  const source = model.sources.find(s => s.key === 'G:' + String(params.detail_id));
+  if (!source) return { ok: false, error: '対象が見つかりません' };
+  spDeleteSources_([source.key]);
+  getOrCreateSheet(SHEET_SP_DETAILS).deleteRow(source.rowIdx);
+  addHistory({ userName: params._userName, code: source.productNo, name: source.name, type: '特別価格削除', before: '', after: '残る条件から価格を再計算', result: '成功' });
+  return { ok: true };
+}
+
+function deleteIndividualPrice(params) {
+  const source = spReadModel_().sources.find(s => s.key === 'I:' + String(params.detail_id));
+  if (!source) return { ok: false, error: '対象が見つかりません' };
+  spDeleteSources_([source.key]);
+  getOrCreateSheet(SHEET_SP_INDIVIDUAL).deleteRow(source.rowIdx);
+  addHistory({ userName: params._userName, code: source.productNo, name: source.name, type: '個別特価削除', before: '', after: '残るグループ価格へ戻す', result: '成功' });
+  return { ok: true };
+}
+
+function applyIndividualPrices(params) {
+  const model = spReadModel_();
+  const ids = params.detail_ids && params.detail_ids.length ? params.detail_ids.map(String) : null;
+  const targets = model.sources.filter(s => s.type === 'individual' && (!ids || ids.includes(s.id)));
+  if (ids && ids.some(id => !targets.some(s => s.id === id))) throw new Error('個別特価の対象が見つかりません');
+  const pending = targets.filter(s => !s.currentMembers.length).flatMap(s => s.unresolved);
+  const active = targets.filter(s => s.currentMembers.length);
+  let successCount = 0, failCount = 0;
+  const errors = [];
+  const setIds = [...new Set(active.map(s => s.setId))];
+  for (const setId of setIds) {
+    const list = active.filter(s => s.setId === setId);
+    try {
+      const current = bcartGet('/product_sets/' + setId);
+      if (!current.ok || !current.data) throw new Error('BCART価格を取得できません');
+      const changes = {}; list.forEach(s => { changes[s.key] = 'apply'; });
+      const plan = spPlanSet_(spReadModel_(), current.data, changes, false);
+      spApplyPlan_(plan, plan.token);
+      successCount += list.length;
+    } catch (e) { failCount = active.length - successCount; errors.push(e.message); break; }
+  }
+  addHistory({ userName: params._userName, code: '', name: '個別特価', type: '個別特価適用', before: '', after: '成功: ' + successCount + '件 / 失敗: ' + failCount + '件', result: failCount ? '一部失敗' : '成功' });
+  return { ok: true, successCount: successCount, failCount: failCount, errors: errors, resolvedNow: 0, skippedPending: [...new Set(pending)] };
+}
+
+
 // ===================== 分割反映（v2.29.0）=====================
 // 画面に進捗（n / 全件）を出すため、クライアントが items をチャンクに分けて
 // applyGroupPrices / applyViewFilters を複数回呼ぶ。
@@ -2946,77 +3421,7 @@ function addCustomerCodesToGroup(params) {
   return { ok: true, group_id: newId, group_name: params.group_name, added: codes.length };
 }
 
-function deleteCustomerGroup(params) {
-  const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
-  const groupRows = groupSheet.getDataRange().getValues();
-  let groupRowIdx = -1;
-  for (let i = 1; i < groupRows.length; i++) {
-    if (String(groupRows[i][0]) === params.group_id) {
-      groupRowIdx = i + 1;
-      break;
-    }
-  }
-  const memberIds = getGroupEffectiveMembers(params.group_id).memberIds;
 
-  const detailSheet = getOrCreateSheet(SHEET_SP_DETAILS);
-  const detailRows = detailSheet.getDataRange().getValues();
-  const detailRowsToDelete = [];
-  const productSetIds = [];
-  for (let i = 1; i < detailRows.length; i++) {
-    if (String(detailRows[i][1]) === params.group_id) {
-      detailRowsToDelete.push(i + 1);
-      productSetIds.push(detailRows[i][2]);
-    }
-  }
-
-  if (memberIds.length > 0 && productSetIds.length > 0) {
-    const allSets = bcartGetAll('/product_sets');
-    if (allSets.ok) {
-      productSetIds.forEach(setId => {
-        const bcartSet = allSets.data.find(s => s.id == setId);
-        if (!bcartSet) return;
-        const newSp = Object.assign({}, bcartSet.special_price || {});
-        memberIds.forEach(mid => { delete newSp[String(mid)]; });
-        bcartPatch('/product_sets/' + setId, { special_price: newSp });
-        Utilities.sleep(100);
-      });
-    }
-  }
-
-  // 例外表示設定のクリーンアップ
-  const vfSheet = getOrCreateSheet(SHEET_VF_DETAILS);
-  const vfRows = vfSheet.getDataRange().getValues();
-  const vfRowsToDelete = [];
-  for (let i = 1; i < vfRows.length; i++) {
-    if (String(vfRows[i][1]) === params.group_id) {
-      vfRowsToDelete.push({ rowIdx: i + 1, setId: vfRows[i][2] });
-    }
-  }
-  if (memberIds.length > 0 && vfRowsToDelete.length > 0) {
-    vfRowsToDelete.forEach(entry => {
-      const res = bcartGet('/product_sets/' + entry.setId);
-      if (res.ok && res.data) {
-        let ids = String(res.data.visible_customer_id || '').split(',').map(s => s.trim()).filter(s => s);
-        ids = ids.filter(id => !memberIds.includes(id));
-        const patch = { visible_customer_id: ids.join(',') };
-        if (ids.length === 0) patch.view_group_filter = '';
-        bcartPatch('/product_sets/' + entry.setId, patch);
-        Utilities.sleep(100);
-      }
-    });
-  }
-  vfRowsToDelete.sort((a, b) => b.rowIdx - a.rowIdx).forEach(entry => vfSheet.deleteRow(entry.rowIdx));
-
-  detailRowsToDelete.sort((a, b) => b - a).forEach(rowIdx => detailSheet.deleteRow(rowIdx));
-  if (groupRowIdx > 0) groupSheet.deleteRow(groupRowIdx);
-
-  addHistory({
-    userName: params._userName,
-    code: '', name: params.group_id,
-    type: '顧客グループ削除', before: '', after: '', result: '成功'
-  });
-  return { ok: true };
-}
 
 function getProductSetsForFeature(params) {
   const featureId = String(params.featureId);
@@ -3056,6 +3461,15 @@ function getProductSetsForFeature(params) {
 
 // ③ アプリ保存時にapplied_atをクリア（未反映状態にする）
 function saveSpecialPriceDetails(params) {
+  if (!findGroupRowValues(params.group_id)) throw new Error('指定されたグループが見つかりません');
+  if (!Array.isArray(params.items) || !params.items.length) throw new Error('保存する特価がありません');
+  const uniqueSetIds = new Set();
+  params.items.forEach(item => {
+    const id = String(item.product_set_id || '');
+    if (!/^[1-9]\d*$/.test(id) || uniqueSetIds.has(id)) throw new Error('商品セットIDが不正または重複しています');
+    uniqueSetIds.add(id); spPrice_(item.unit_price);
+  });
+  spSnapshotSchema_(SHEET_SP_DETAILS, true);
   const detailSheet = getOrCreateSheet(SHEET_SP_DETAILS);
   let detailRows = detailSheet.getDataRange().getValues();
 
@@ -3076,6 +3490,7 @@ function saveSpecialPriceDetails(params) {
       const newId = 'D' + new Date().getTime().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 5);
       const newRow = [newId, params.group_id, item.product_set_id, item.product_no || '', item.product_set_name || '', item.unit_price, new Date().toLocaleString('ja-JP'), ''];  // ③ applied_at空で追加
       detailSheet.appendRow(newRow);
+      spMarkNewSource_(SHEET_SP_DETAILS, detailSheet.getLastRow());
       detailRows.push(newRow);
     }
     Utilities.sleep(50);
@@ -3092,155 +3507,9 @@ function saveSpecialPriceDetails(params) {
 }
 
 // ③ BCART反映時にapplied_atを記録
-function applyGroupPrices(params) {
-  const eff = getGroupEffectiveMembers(params.group_id);
-  const memberIds = eff.memberIds;
-  if (memberIds.length === 0) {
-    if (eff.unresolvedCodes.length > 0) {
-      return { ok: false, error: '有効な会員がいません（未登録の得意先コード: ' + eff.unresolvedCodes.join(', ') + '）' };
-    }
-    return { ok: false, error: 'グループの会員ID・得意先コードが設定されていません' };
-  }
 
-  const detailSheet = getOrCreateSheet(SHEET_SP_DETAILS);
-  let detailRows = detailSheet.getDataRange().getValues();
 
-  // v2.28.0: 全件取得(数千件)をやめ、反映対象の商品セットだけをidsで取る
-  const targetSetIds = (params.items || []).map(it => String(it.product_set_id));
-  const setsRes = bcartGetSetsByIds_(targetSetIds);
-  if (!setsRes.ok) return setsRes;
-  const setMap = {};
-  setsRes.data.forEach(s => { setMap[s.id] = s; });
 
-  // v2.28.0: 「前回このグループで反映した会員」のうち、いまグループにいない会員は
-  // BCARTに特価が残り続けてしまうので、この反映のついでに消す。
-  // ⚠️ グループ外の会員を無条件に消すと個別特価や他グループの設定まで壊すため、
-  //    消すのは applied_member_ids に載っている＝このグループが自分で書いた会員に限定する。
-  const appliedBefore = readAppliedMemberIds_(params.group_id);
-  const removedMemberIds = appliedBefore.filter(id => memberIds.indexOf(id) < 0);
-
-  let successCount = 0, failCount = 0, removedPriceCount = 0;
-  const errors = [];
-
-  params.items.forEach(item => {
-    const bcartSet = setMap[item.product_set_id];
-    if (!bcartSet) {
-      failCount++;
-      errors.push('setId ' + item.product_set_id + ': 商品セットが見つかりません');
-      return;
-    }
-
-    const newSp = Object.assign({}, bcartSet.special_price || {});
-    Object.keys(newSp).forEach(key => {
-      if (key.indexOf(',') !== -1) {
-        const ids = key.split(',').map(s => s.trim()).filter(s => s);
-        if (ids.some(id => memberIds.includes(id))) {
-          delete newSp[key];
-        }
-      }
-    });
-    // グループから外した会員の特価を削除（このグループが書いた分だけ）
-    removedMemberIds.forEach(mid => {
-      if (newSp[String(mid)] !== undefined) { delete newSp[String(mid)]; removedPriceCount++; }
-    });
-    memberIds.forEach(mid => { newSp[String(mid)] = { unit_price: item.unit_price }; });
-
-    const res = bcartPatch('/product_sets/' + item.product_set_id, { special_price: newSp });
-    if (res.ok) {
-      successCount++;
-      const nowStr = new Date().toLocaleString('ja-JP');
-      let found = false;
-      for (let i = 1; i < detailRows.length; i++) {
-        if (String(detailRows[i][1]) === params.group_id && detailRows[i][2] == item.product_set_id) {
-          detailSheet.getRange(i + 1, 5).setValue(item.product_set_name || '');
-          detailSheet.getRange(i + 1, 6).setValue(item.unit_price);
-          detailSheet.getRange(i + 1, 7).setValue(nowStr);
-          detailSheet.getRange(i + 1, 8).setValue(nowStr);  // ③ applied_atに反映時刻を記録
-          detailRows[i][5] = item.unit_price;
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        const newId = 'D' + new Date().getTime().toString(36).toUpperCase();
-        const newRow = [newId, params.group_id, item.product_set_id, item.product_no || '', item.product_set_name || '', item.unit_price, nowStr, nowStr];
-        detailSheet.appendRow(newRow);
-        detailRows.push(newRow);
-      }
-    } else {
-      failCount++;
-      errors.push('setId ' + item.product_set_id + ': ' + res.error);
-    }
-    Utilities.sleep(150);
-  });
-
-  // 分割反映の途中（is_final=false）では確定処理をしない。
-  // 履歴を1操作1行に保ち、applied_member_idsを最後まで動かさないため
-  // （動かすと2チャンク目以降で removedMemberIds が空になり、後始末が漏れる）。
-  let appliedRecorded = false;
-  if (isFinalChunk_(params)) {
-    // 分割時はクライアントが積み上げた合計を受け取る。単発時は今回の件数がそのまま合計
-    const totalSuccess = Number(params.prior_success || 0) + successCount;
-    const totalFail    = Number(params.prior_fail || 0) + failCount;
-
-    // 全件成功したときだけ「この会員構成で反映済み」と記録する。
-    // 一部失敗のまま記録すると、未反映の警告が消えて漏れに気づけなくなる。
-    // クライアント申告の集計に加え、シート側にも未反映が残っていないことを確かめる。
-    if (totalFail === 0 && totalSuccess > 0 && !hasUnappliedDetails_(params.group_id)) {
-      appliedRecorded = writeAppliedMemberIds_(params.group_id, memberIds.map(String));
-    }
-
-    addHistory({
-      userName: params._userName,
-      code: '', name: params.group_id,
-      type: '特別価格適用',
-      before: '',
-      after: '成功: ' + totalSuccess + '件 / 失敗: ' + totalFail + '件'
-        + (removedPriceCount > 0 ? ' / 外した会員の特価削除: ' + removedPriceCount + '件' : '')
-        + (eff.unresolvedCodes.length > 0 ? ' / 未登録保留: ' + eff.unresolvedCodes.length + '件' : ''),
-      result: totalFail > 0 ? '一部失敗' : '成功'
-    });
-  }
-
-  return {
-    ok: true, successCount: successCount, failCount: failCount, errors: errors,
-    memberCount: memberIds.length, unresolvedCodes: eff.unresolvedCodes,
-    removedMemberIds: removedMemberIds, removedPriceCount: removedPriceCount,
-    appliedRecorded: appliedRecorded
-  };
-}
-
-function deleteSpecialPriceDetail(params) {
-  const memberIds = getGroupEffectiveMembers(params.group_id).memberIds;
-
-  if (memberIds.length > 0 && params.product_set_id) {
-    const allSets = bcartGetAll('/product_sets');
-    if (allSets.ok) {
-      const bcartSet = allSets.data.find(s => s.id == params.product_set_id);
-      if (bcartSet) {
-        const newSp = Object.assign({}, bcartSet.special_price || {});
-        memberIds.forEach(mid => { delete newSp[String(mid)]; });
-        bcartPatch('/product_sets/' + params.product_set_id, { special_price: newSp });
-      }
-    }
-  }
-
-  const detailSheet = getOrCreateSheet(SHEET_SP_DETAILS);
-  const detailRows = detailSheet.getDataRange().getValues();
-  for (let i = 1; i < detailRows.length; i++) {
-    if (String(detailRows[i][0]) === params.detail_id) {
-      detailSheet.deleteRow(i + 1);
-      break;
-    }
-  }
-
-  addHistory({
-    userName: params._userName,
-    code: '', name: 'group:' + params.group_id + ' / set:' + params.product_set_id,
-    type: '特別価格削除', before: '', after: '', result: '成功'
-  });
-  return { ok: true };
-}
 
 // ===================== 例外表示設定 =====================
 const VF_FILTER_VALUE = '非会員,通常会員,1,2';
@@ -3439,6 +3708,7 @@ function saveIndividualPrices(params) {
 
   const customers = fetchCustomersCached();  // 取得失敗でも保留として登録は続行
 
+  spSnapshotSchema_(SHEET_SP_INDIVIDUAL, true);
   const sheet = getOrCreateSheet(SHEET_SP_INDIVIDUAL);
   const rows = sheet.getDataRange().getValues();
   const rowKey = {};  // customer_code|product_set_id → 行番号
@@ -3480,6 +3750,7 @@ function saveIndividualPrices(params) {
       const newId = 'I' + new Date().getTime().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6);
       sheet.appendRow([newId, code, memberId, memberName, set.id, String(set.product_no || ''), set.name || '', price, nowStr, '', String(item.note || '')]);
       rowKey[key] = sheet.getLastRow();
+      spMarkNewSource_(SHEET_SP_INDIVIDUAL, sheet.getLastRow());
       added++;
     }
   });
@@ -3500,135 +3771,9 @@ function saveIndividualPrices(params) {
 }
 
 // BCART反映。product_set単位でPATCHをまとめ、保留行（会員未登録）は反映前に再解決を試みる
-function applyIndividualPrices(params) {
-  const sheet = getOrCreateSheet(SHEET_SP_INDIVIDUAL);
-  const rows = sheet.getDataRange().getValues();
-  const onlyIds = params.detail_ids && params.detail_ids.length > 0 ? params.detail_ids.map(String) : null;
 
-  const customers = fetchCustomersCached();
 
-  const targets = [];  // {rowIdx, memberId, setId, price}
-  let resolvedNow = 0;
-  const pending = [];
-  for (let i = 1; i < rows.length; i++) {
-    if (!rows[i][0]) continue;
-    if (onlyIds && onlyIds.indexOf(String(rows[i][0])) === -1) continue;
-    const code = String(rows[i][1] || '');
-    let memberId = String(rows[i][2] || '');
-    if (!memberId && customers.ok) {
-      const m = customers.byExtId[code];
-      if (m) {
-        memberId = String(m.id);
-        sheet.getRange(i + 1, 3).setValue(memberId);
-        sheet.getRange(i + 1, 4).setValue(m.comp_name || m.name || '');
-        resolvedNow++;
-      }
-    }
-    if (!memberId) { pending.push(code); continue; }
-    targets.push({ rowIdx: i + 1, memberId: memberId, setId: String(rows[i][4]), price: Number(rows[i][7]) });
-  }
 
-  if (targets.length === 0) {
-    return { ok: true, successCount: 0, failCount: 0, resolvedNow: resolvedNow, skippedPending: [...new Set(pending)], errors: [] };
-  }
-
-  const allSets = bcartGetAll('/product_sets');
-  if (!allSets.ok) return allSets;
-  const setMap = {};
-  allSets.data.forEach(s => { setMap[String(s.id)] = s; });
-
-  const bySet = {};
-  targets.forEach(t => { (bySet[t.setId] = bySet[t.setId] || []).push(t); });
-
-  let successCount = 0, failCount = 0;
-  const errors = [];
-  const nowStr = new Date().toLocaleString('ja-JP');
-
-  Object.keys(bySet).forEach(setId => {
-    const list = bySet[setId];
-    const bcartSet = setMap[setId];
-    if (!bcartSet) {
-      failCount += list.length;
-      errors.push('setId ' + setId + ': 商品セットが見つかりません');
-      return;
-    }
-    const newSp = Object.assign({}, bcartSet.special_price || {});
-    list.forEach(t => {
-      // カンマ区切りキーに対象会員が含まれる場合は個別キーに分解してから上書き（他会員の価格は維持）
-      Object.keys(newSp).forEach(key => {
-        if (key.indexOf(',') !== -1) {
-          const ids = key.split(',').map(s => s.trim()).filter(s => s);
-          if (ids.indexOf(t.memberId) !== -1) {
-            const val = newSp[key];
-            delete newSp[key];
-            ids.forEach(id => { if (id !== t.memberId) newSp[id] = val; });
-          }
-        }
-      });
-      newSp[t.memberId] = { unit_price: t.price };
-    });
-    const res = bcartPatch('/product_sets/' + setId, { special_price: newSp });
-    if (res.ok) {
-      successCount += list.length;
-      list.forEach(t => { sheet.getRange(t.rowIdx, 10).setValue(nowStr); });
-    } else {
-      failCount += list.length;
-      errors.push('setId ' + setId + ': ' + res.error);
-    }
-    Utilities.sleep(150);
-  });
-
-  addHistory({
-    userName: params._userName, code: '', name: '個別特価',
-    type: '個別特価適用',
-    before: '',
-    after: '成功: ' + successCount + '件 / 失敗: ' + failCount + '件' + (pending.length > 0 ? ' / 未登録保留: ' + [...new Set(pending)].length + '件' : ''),
-    result: failCount > 0 ? '一部失敗' : '成功'
-  });
-
-  return {
-    ok: true, successCount: successCount, failCount: failCount,
-    resolvedNow: resolvedNow, skippedPending: [...new Set(pending)], errors: errors
-  };
-}
-
-function deleteIndividualPrice(params) {
-  const sheet = getOrCreateSheet(SHEET_SP_INDIVIDUAL);
-  const rows = sheet.getDataRange().getValues();
-  let rowIdx = -1, row = null;
-  for (let i = 1; i < rows.length; i++) {
-    if (String(rows[i][0]) === String(params.detail_id)) { rowIdx = i + 1; row = rows[i]; break; }
-  }
-  if (rowIdx < 0) return { ok: false, error: '対象が見つかりません' };
-
-  const memberId = String(row[2] || '');
-  const setId = String(row[4] || '');
-  const applied = String(row[9] || '') !== '';
-  if (memberId && setId && applied) {
-    const cur = bcartGet('/product_sets/' + setId);
-    if (cur.ok && cur.data) {
-      const newSp = Object.assign({}, cur.data.special_price || {});
-      let changed = false;
-      Object.keys(newSp).forEach(key => {
-        const ids = key.split(',').map(s => s.trim()).filter(s => s);
-        if (ids.indexOf(memberId) !== -1) {
-          const val = newSp[key];
-          delete newSp[key];
-          ids.forEach(id => { if (id !== memberId) newSp[id] = val; });
-          changed = true;
-        }
-      });
-      if (changed) bcartPatch('/product_sets/' + setId, { special_price: newSp });
-    }
-  }
-  sheet.deleteRow(rowIdx);
-
-  addHistory({
-    userName: params._userName, code: String(row[1] || ''), name: String(row[5] || '') + ' ' + String(row[6] || ''),
-    type: '個別特価削除', before: '', after: '', result: '成功'
-  });
-  return { ok: true };
-}
 
 // ===================== マスター整合チェック =====================
 // BCART実態（special_price）とアプリ内マスター（グループ明細＋個別特価）を突合する
@@ -3648,7 +3793,7 @@ function auditSpecialPrices(params) {
   let excludedCount = 0;
 
   // 期待値マップ expected[setId][memberId] = {price, source, sourceType, groupId}
-  const expected = {};
+  const expected = spAuditExpected_(spReadModel_());
   const pendingCodes = {};  // 未登録得意先コード → 出所
 
   const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
@@ -3674,7 +3819,7 @@ function auditSpecialPrices(params) {
     const setId = String(detailRows[i][2]);
     const price = Number(detailRows[i][5]);
     if (!expected[setId]) expected[setId] = {};
-    g.memberIds.forEach(mid => { expected[setId][mid] = { price: price, source: 'グループ: ' + g.name, sourceType: 'group', groupId: gid }; });
+
   }
 
   const indSheet = getOrCreateSheet(SHEET_SP_INDIVIDUAL);
@@ -3686,7 +3831,7 @@ function auditSpecialPrices(params) {
     if (!mid) { if (!pendingCodes[code]) pendingCodes[code] = '個別特価'; continue; }
     const setId = String(indRows[i][4]);
     if (!expected[setId]) expected[setId] = {};
-    expected[setId][mid] = { price: Number(indRows[i][7]), source: '個別特価', sourceType: 'individual' };
+
   }
 
   // BCART実態と突合
@@ -3964,6 +4109,11 @@ function adoptUnmanagedPrices(params) {
     const productNo = String(item.product_no || '');
     const setName = String(item.set_name || '');
 
+    const actual = bcartGet('/product_sets/' + setId);
+    if (!actual.ok || !actual.data || !spExpand_(actual.data.special_price)[memberId] ||
+        Number(spExpand_(actual.data.special_price)[memberId].unit_price) !== price) {
+      skipped.push(productNo + '：BCART現在価格と一致しないため取り込みません'); return;
+    }
     const key = code + '|' + setId;
     if (rowKey[key]) {
       const r = rowKey[key];
@@ -3972,11 +4122,15 @@ function adoptUnmanagedPrices(params) {
       sheet.getRange(r, 8).setValue(price);
       sheet.getRange(r, 9).setValue(nowStr);
       sheet.getRange(r, 10).setValue(nowStr);  // 反映済み扱い（BCARTに既に設定あり）
+      const snapshot = spSnapshotSchema_(SHEET_SP_INDIVIDUAL, true);
+      snapshot.sheet.getRange(r, snapshot.start, 1, 3).setValues([[memberId, price, 'v1']]);
       updated++;
     } else {
       const newId = 'I' + new Date().getTime().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6);
       sheet.appendRow([newId, code, memberId, memberName, setId, productNo, setName, price, nowStr, nowStr, 'マスター整合チェックから取り込み']);
       rowKey[key] = sheet.getLastRow();
+      const snapshot = spSnapshotSchema_(SHEET_SP_INDIVIDUAL, true);
+      snapshot.sheet.getRange(sheet.getLastRow(), snapshot.start, 1, 3).setValues([[memberId, price, 'v1']]);
       added++;
     }
   });
