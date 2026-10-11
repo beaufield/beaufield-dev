@@ -1374,7 +1374,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = 'v2.18.0';
+const APP_VERSION = 'v2.19.0';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
 const BCART_ADMIN_BASE = 'https://beaufieldec.i16.bcart.jp/admin/products';
 
@@ -6186,6 +6186,7 @@ function submitFeatureModal() {
 
 // ===================== タブ9: 登録ドラフト =====================
 let draftList = [];
+let draftProductTags = [];
 let draftRejectTargetId = null;
 let draftLoadGeneration = 0;
 let draftCategoriesLoaded = false;
@@ -6267,6 +6268,7 @@ function loadDrafts(onDone) {
       if (!res.ok) { showLoadFailure('ドラフト取得エラー: ' + res.error); return; }
       if (draftDisplayedKey !== requestKey) draftSelectedIds.clear();
       draftList = res.drafts;
+      draftProductTags = Array.isArray(res.productTags) ? res.productTags : null;
       draftDisplayedKey = requestKey;
       document.getElementById('draftCount').textContent = draftList.length + '件';
       rebuildDraftSupplierFilter(draftList, supplierCd);
@@ -6406,6 +6408,32 @@ function renderDraftList(drafts) {
   el.innerHTML = drafts.map(draftCardHtml).join('');
 }
 
+// 商品特徴はサーバーから受け取ったBカートの識別文字列で保存する。
+function draftProductTagField(d, disabledAttr) {
+  if (d.draftType === 'add_to_existing') return '<div class="draft-meta-note">商品特徴: 既存商品の設定を維持します</div>';
+  if (!draftProductTags) return '<div class="draft-meta-note">商品特徴の編集には管理アプリの更新が必要です</div>';
+  const selected = String(d.productTag || '').split(',').map(function(code) { return code.trim(); }).filter(Boolean);
+  const tags = draftProductTags.slice();
+  selected.forEach(function(code) {
+    if (!tags.some(function(t) { return t.code === code; })) tags.push({ code: code, name: '未対応: ' + code });
+  });
+  return '<div class="draft-product-tags" id="draft-tags-' + escAttr(d.draftId) + '" style="width:100%;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin-top:6px;">' +
+    '<span style="font-weight:600;">商品特徴</span>' + tags.map(function(t) {
+      return '<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" value="' + escAttr(t.code) + '"' +
+        (selected.includes(t.code) ? ' checked' : '') + disabledAttr + '>' + esc(t.name) + '</label>';
+    }).join('') + '</div>';
+}
+
+function collectDraftProductTag(draftId) {
+  const field = document.getElementById('draft-tags-' + draftId);
+  return field ? Array.from(field.querySelectorAll('input[type="checkbox"]:checked')).map(function(el) { return el.value; }).join(',') : undefined;
+}
+
+function draftProductTagError(payload) {
+  if (payload.productTag !== undefined && payload.productTag.length > 21) return '商品特徴の組み合わせがBカートの制限を超えています。選択を減らしてください';
+  return '';
+}
+
 function draftCardHtml(d) {
   const setsRows = d.sets.map(function(s, i) {
     return '<tr>' +
@@ -6436,6 +6464,7 @@ function draftCardHtml(d) {
       '<div class="draft-meta-field"><label>税区分</label><select id="draft-tax-' + d.draftId + '"' + disabledAttr + '>' + draftTaxOptions(d.taxTypeId || 1) + '</select></div>' +
       '<div class="draft-meta-field"><label>上代タイプ</label><select id="draft-jodai-' + d.draftId + '"' + disabledAttr + '>' + draftJodaiTypeOptions(draftDefaultJodaiType(d)) + '</select></div>' +
       '<label class="draft-meta-checkbox"><input type="checkbox" id="draft-vgr-' + d.draftId + '"' + (d.viewGroupRestricted ? ' checked' : '') + disabledAttr + '>🔒 美容師限定表示（非会員・通常会員・個人会員には非表示）</label>' +
+      draftProductTagField(d, disabledAttr) +
       '<div class="draft-meta-note">公開設定: 商品(親)は非表示・セットは表示で登録（商品を表示化するには登録後の🌐ボタンから）</div>' +
     '</div>';
 
@@ -6519,6 +6548,7 @@ function collectDraftFormPayload(draftId) {
     jodaiType:   jodaiEl ? jodaiEl.value : undefined,
     taxTypeId:   taxEl   ? (parseInt(taxEl.value) || 1) : undefined,
     viewGroupRestricted: vgrEl ? vgrEl.checked : undefined,
+    productTag: collectDraftProductTag(draftId),
     sets: collectDraftSets(draftId)
   };
 }
@@ -6528,6 +6558,8 @@ function saveDraftOnly(draftId, btn) {
   btn.disabled = true;
   showBusyOverlay('保存中...');
   const payload = collectDraftFormPayload(draftId);
+  const tagError = draftProductTagError(payload);
+  if (tagError) { hideBusyOverlay(); btn.disabled = false; showToast(tagError, true); return; }
   gasPost(Object.assign({ action: 'updateDraft', draftId: draftId }, payload), function(res) {
     btn.disabled = false;
     if (!res.ok) { hideBusyOverlay(); showToast('保存失敗: ' + res.error, true); return; }
@@ -6541,6 +6573,8 @@ function approveDraftOne(draftId, btn) {
   if (draftNeedsReview(draftId)) { showToast('登録結果を確認してから登録対象へ戻してください', true); return; }
   const original = draftList.find(function(d) { return d.draftId === draftId; });
   const payload = collectDraftFormPayload(draftId);
+  const tagError = draftProductTagError(payload);
+  if (tagError) { showToast(tagError, true); return; }
   if (!payload.productName || !payload.productName.trim()) { showToast('商品名を入力してください', true); return; }
   if (original && original.draftType !== 'add_to_existing' && !payload.categoryId) {
     showToast('カテゴリーを選択してください', true);
@@ -6585,10 +6619,10 @@ async function approveSelectedDrafts() {
   const jobs = selected.map(function(d) { return { draft: d, payload: collectDraftFormPayload(d.draftId) }; });
   for (const job of jobs) {
     const p = job.payload;
-    const error = !p.productName || !p.productName.trim() ? '商品名を入力してください' :
+    const error = draftProductTagError(p) || (!p.productName || !p.productName.trim() ? '商品名を入力してください' :
       job.draft.draftType !== 'add_to_existing' && !p.categoryId ? 'カテゴリーを選択してください' :
       !p.sets.length ? 'セットがありません' :
-      p.sets.some(function(s) { return !String(s.code || '').trim() || !String(s.setName || '').trim(); }) ? 'コード・セット名を入力してください' : '';
+      p.sets.some(function(s) { return !String(s.code || '').trim() || !String(s.setName || '').trim(); }) ? 'コード・セット名を入力してください' : '');
     if (error) { showToast((p.productName || job.draft.draftId) + ': ' + error, true); return; }
   }
   const names = jobs.slice(0, 10).map(function(j) { return '・' + j.payload.productName; }).join('\n');
