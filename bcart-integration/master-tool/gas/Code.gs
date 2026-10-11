@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.32.2';
+const VERSION = 'v2.33.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -59,6 +59,9 @@ function doPost(e) {
       app: 'bcart-master', action: safeMetricField_(action, 60), startedAt: Date.now(),
       operationId: safeMetricField_(params.operation_id, 80), attemptId: safeMetricField_(params.attempt_id, 80)
     };
+
+    // Dedicated bridge dispatcher: isolated key and fixed actions; legacy auth is unchanged.
+    if (BMALL_BRIDGE_ACTIONS_.includes(action)) return jsonResponse(handleDraftBridge_(params));
 
     const noAuthActions = ['getVersion'];
     // AI用キーはプレビューとドラフト作成だけに限定する。
@@ -1562,6 +1565,8 @@ function addSetToProduct(params) {
 
 // 複数商品セットを紐付けた新規BCART商品を一括登録
 function bulkRegisterProduct(params) {
+  const tagResult = normalizeDraftProductTag_(params.productTag);
+  if (!tagResult.ok) return tagResult;
   const productBody = {
     products: [Object.assign({
       name:        params.productName,
@@ -1570,7 +1575,8 @@ function bulkRegisterProduct(params) {
       feature_id1: params.featureId1 || null,
       feature_id2: params.featureId2 || null,
       feature_id3: params.featureId3 || null
-    }, (params.viewGroupFilter ? { view_group_filter: params.viewGroupFilter } : {}))]
+    }, (params.viewGroupFilter ? { view_group_filter: params.viewGroupFilter } : {}),
+      (params.productTag !== undefined ? { tag: tagResult.tag } : {}))]
   };
 
   const step1 = bcartPost('/products', productBody);
@@ -1909,12 +1915,49 @@ function getRegisteredExamples(params) {
 }
 
 // saveDrafts — ドラフト保存（登録ドラフト／登録ドラフト_セットシートへ書き込み。部分保存はしない）
-function saveDrafts(params) {
+// 商品特徴: 本人提示のBカート管理画面の識別文字列と表示名を対応付ける。
+// 商品特徴の定義一覧を取得するAPIはないため、この一覧を唯一の定義として画面へ返す。
+const DRAFT_PRODUCT_TAGS = [
+  { code: 'new', name: '新着' }, { code: 'recommend', name: 'おすすめ' },
+  { code: 'limited', name: '限定商品' }, { code: 'toriyose', name: '取り寄せ品' },
+  { code: 'zaikokagiri', name: '在庫限り' }, { code: 'salon', name: '導入サロン限定' },
+  { code: 'sale', name: 'セール中' }, { code: 'gyomu', name: '業務用' },
+  { code: 'yoyaku', name: '予約受付' }, { code: 'gentei', name: '数量限定' }
+];
+
+function normalizeDraftProductTag_(value) {
+  if (value == null || value === '') return { ok: true, tag: '' };
+  if (typeof value !== 'string') return { ok: false, error: '商品特徴の形式が正しくありません' };
+  const codes = Array.from(new Set(value.split(',').map(s => s.trim()).filter(Boolean)));
+  if (codes.some(code => !DRAFT_PRODUCT_TAGS.some(t => t.code === code))) {
+    return { ok: false, error: '未対応の商品特徴があります。選択を確認してください' };
+  }
+  const tag = DRAFT_PRODUCT_TAGS.filter(t => codes.includes(t.code)).map(t => t.code).join(',');
+  // 公式products API仕様のtag最大桁数を事前に検査し、親だけ残る登録失敗を避ける。
+  if (tag.length > 21) return { ok: false, error: '商品特徴の組み合わせがBカートの制限を超えています。選択を減らしてください' };
+  return { ok: true, tag: tag };
+}
+
+function draftProductTagColumn_(sheet, create) {
+  // 旧21列のシートは読取時に移行しない。追加列は明示的な移行関数で用意する。
+  const header = sheet.getLastColumn() >= 22 ? String(sheet.getRange(1, 22).getValue() || '').trim() : '';
+  if (header && header !== 'product_tag') throw new Error('DATA_SCHEMA_ERROR');
+  if (!header && create) throw new Error('DATA_SCHEMA_ERROR');
+  return header || create ? 22 : null;
+}
+
+function saveDraftsUnlocked_(params, internalCapability) {
   const drafts = params.drafts || [];
   if (drafts.length === 0) return { ok: false, error: '保存するドラフトがありません' };
+  for (const d of drafts) {
+    if (d.draftType === 'add_to_existing') continue;
+    const tagResult = normalizeDraftProductTag_(d.productTag);
+    if (!tagResult.ok) return tagResult;
+  }
 
   const parentSheet = getOrCreateSheet(SHEET_DRAFT);
   const setSheet = getOrCreateSheet(SHEET_DRAFT_SETS);
+  draftProductTagColumn_(parentSheet, true);
 
   const parentRows = parentSheet.getDataRange().getValues();
   const parentStatusById = {};
@@ -1966,6 +2009,10 @@ function saveDrafts(params) {
 
     maxSeq++;
     const draftId = 'D' + todayStr + '-' + ('00' + maxSeq).slice(-3);
+    if (internalCapability === BMALL_BRIDGE_SAVE_CAPABILITY_) {
+      if (maxSeq > 999) bridgeFail_('DAILY_ID_EXHAUSTED_NO_RESEND');
+      bridgeClaimDraftIdBeforeAppend_(draftId);
+    }
 
     parentSheet.appendRow([
       draftId, '下書き', d.draftType || 'new_product', d.targetProductId || '',
@@ -1977,7 +2024,8 @@ function saveDrafts(params) {
       // 19-21列目: jodai_type / tax_type_id は空欄なら画面側の既定値で表示される。
       // view_group_restricted は明示的に false を渡したときだけOFF（既定はON）。
       d.jodaiType || '', d.taxTypeId || '',
-      d.viewGroupRestricted === false ? false : true
+      d.viewGroupRestricted === false ? false : true,
+      d.draftType === 'add_to_existing' ? '' : normalizeDraftProductTag_(d.productTag).tag
     ]);
 
     sets.forEach(s => {
@@ -1994,7 +2042,7 @@ function saveDrafts(params) {
     if (d.supplierName) supplierNames[d.supplierName] = true;
   });
 
-  if (savedCount > 0) {
+  if (savedCount > 0 && internalCapability !== BMALL_BRIDGE_SAVE_CAPABILITY_) {
     const webhook = PropertiesService.getScriptProperties().getProperty('LINEWORKS_WEBHOOK');
     if (webhook) {
       const supplierLabel = Object.keys(supplierNames).join('、') || '不明';
@@ -2019,7 +2067,7 @@ function saveDrafts(params) {
 // 登録ドラフト列インデックス(0始まり): 0 draft_id / 1 status / 2 draft_type / 3 target_product_id /
 // 4 product_name / 5 category_id / 6-8 feature_id1-3 / 9 description / 10 confidence / 11 reasoning /
 // 12 ref_urls / 13 supplier_cd / 14 supplier_name / 15 created_at / 16 reviewed_at / 17 registered_product_id /
-// 18 jodai_type / 19 tax_type_id / 20 view_group_restricted
+// 18 jodai_type / 19 tax_type_id / 20 view_group_restricted / 21 product_tag（任意の追加列）
 
 // 美容師限定表示フラグの読み出し。
 // ⚠️ Sheetsは setValue('TRUE'/'FALSE') を真偽値へ自動変換するため、セルには boolean と文字列が混在しうる。
@@ -2036,7 +2084,9 @@ function getDrafts(params) {
   const status = params.status !== undefined ? params.status : '下書き';
   const supplierCd = params.supplierCd != null ? String(params.supplierCd) : '';
 
-  const parentRows = getOrCreateSheet(SHEET_DRAFT).getDataRange().getValues();
+  const parentSheet = getOrCreateSheet(SHEET_DRAFT);
+  const tagColumn = draftProductTagColumn_(parentSheet, false);
+  const parentRows = parentSheet.getDataRange().getValues();
   const setRows = getOrCreateSheet(SHEET_DRAFT_SETS).getDataRange().getValues();
 
   const setsByDraft = {};
@@ -2065,12 +2115,13 @@ function getDrafts(params) {
       createdAt: r[15], reviewedAt: r[16] || '', registeredProductId: r[17] || null,
       jodaiType: r[18] || '', taxTypeId: r[19] || null,
       viewGroupRestricted: parseViewGroupRestricted(r[20]),
+      productTag: tagColumn ? String(r[21] || '') : '',
       sets: setsByDraft[r[0]] || []
     });
   }
   drafts.sort((a, b) => b.draftId.localeCompare(a.draftId));
 
-  return { ok: true, drafts: drafts };
+  return { ok: true, drafts: drafts, productTags: tagColumn ? DRAFT_PRODUCT_TAGS : null };
 }
 
 function updateDraft(params) {
@@ -2081,7 +2132,16 @@ function updateDraft(params) {
     if (rows[i][0] === params.draftId) { rowIdx = i + 1; break; }
   }
   if (rowIdx === -1) return { ok: false, error: 'draftIdが見つかりません' };
+  let productTag;
+  if (params.productTag !== undefined) {
+    if (rows[rowIdx - 1][2] === 'add_to_existing') return { ok: false, error: '既存商品の商品特徴はこのドラフトでは変更できません' };
+    const tagResult = normalizeDraftProductTag_(params.productTag);
+    if (!tagResult.ok) return tagResult;
+    productTag = tagResult.tag;
+    draftProductTagColumn_(sheet, true);
+  }
 
+  if (productTag !== undefined) sheet.getRange(rowIdx, 22).setValue(productTag);
   if (params.productName !== undefined) sheet.getRange(rowIdx, 5).setValue(params.productName);
   if (params.categoryId !== undefined) sheet.getRange(rowIdx, 6).setValue(params.categoryId);
   if (params.featureId1 !== undefined) sheet.getRange(rowIdx, 7).setValue(params.featureId1);
@@ -2119,6 +2179,9 @@ function approveDraft(params) {
   if (rowIdx === -1) return { ok: false, error: 'draftIdが見つかりません' };
   if (draft[1] !== '下書き') return { ok: false, error: 'このドラフトは下書き状態ではありません（status: ' + draft[1] + '）' };
 
+  const tagColumn = draftProductTagColumn_(parentSheet, false);
+  const tagResult = normalizeDraftProductTag_(draft[2] === 'add_to_existing' || !tagColumn ? '' : draft[21]);
+  if (!tagResult.ok) return tagResult;
   const setRows = getOrCreateSheet(SHEET_DRAFT_SETS).getDataRange().getValues();
   const rawSets = [];
   for (let i = 1; i < setRows.length; i++) {
@@ -2200,7 +2263,7 @@ function approveDraft(params) {
       _userName: params._userName, productName: productName, categoryId: categoryId,
       featureId1: featureId1, featureId2: featureId2, featureId3: featureId3,
       productFlag: '非表示', setFlag: '表示', jodaiType: jodaiType, taxTypeId: taxTypeId,
-      viewGroupFilter: viewGroupFilter, sets: sets
+      viewGroupFilter: viewGroupFilter, productTag: tagResult.tag, sets: sets
     });
     if (!bulkRes.ok) return Object.assign(bulkRes, { notes: notes });  // 全セット失敗＝ロールバック済み。ドラフトは下書きのまま
     productId = bulkRes.productId;
@@ -4112,6 +4175,25 @@ function setupDataSpreadsheet() {
 }
 
 // 既存環境のシート作成・列追加・書式移行はこの明示関数に限定する。
+// 配備時に管理者が明示実行する。既存のドラフト内容は変更しない。
+function migrateDraftProductTags() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const sheet = getDataSpreadsheet_().getSheetByName(SHEET_DRAFT);
+    if (!sheet) throw new Error('DATA_SCHEMA_ERROR');
+    const expected = requiredSheetHeaders_(SHEET_DRAFT);
+    const header = sheet.getRange(1, 1, 1, expected.length).getValues()[0];
+    if (expected.some((value, i) => header[i] !== value)) throw new Error('DATA_SCHEMA_ERROR');
+    const existing = sheet.getLastColumn() >= 22 ? String(sheet.getRange(1, 22).getValue() || '').trim() : '';
+    if (existing && existing !== 'product_tag') throw new Error('DATA_SCHEMA_ERROR');
+    // 見出しが空欄でもデータがあれば上書きせず停止する。
+    if (!existing && sheet.getLastColumn() >= 22 && sheet.getDataRange().getValues().slice(1).some(row => row[21] !== '' && row[21] != null)) throw new Error('DATA_SCHEMA_ERROR');
+    if (!existing) sheet.getRange(1, 22).setValue('product_tag').setFontWeight('bold').setBackground('#f3f4f6');
+    return { ok: true, column: 22, changed: !existing };
+  } finally { lock.releaseLock(); }
+}
+
 function migrateDataSpreadsheet() {
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
@@ -4165,9 +4247,9 @@ function setupOrMigrateSheet_(sheetName) {
       sheet.setFrozenRows(1);
       sheet.getRange(1, 1, 1, 3).setFontWeight('bold').setBackground('#f3f4f6');
     } else if (sheetName === SHEET_DRAFT) {
-      sheet.appendRow(['draft_id', 'status', 'draft_type', 'target_product_id', 'product_name', 'category_id', 'feature_id1', 'feature_id2', 'feature_id3', 'description', 'confidence', 'reasoning', 'ref_urls', 'supplier_cd', 'supplier_name', 'created_at', 'reviewed_at', 'registered_product_id', 'jodai_type', 'tax_type_id', 'view_group_restricted']);
+      sheet.appendRow(['draft_id', 'status', 'draft_type', 'target_product_id', 'product_name', 'category_id', 'feature_id1', 'feature_id2', 'feature_id3', 'description', 'confidence', 'reasoning', 'ref_urls', 'supplier_cd', 'supplier_name', 'created_at', 'reviewed_at', 'registered_product_id', 'jodai_type', 'tax_type_id', 'view_group_restricted', 'product_tag']);
       sheet.setFrozenRows(1);
-      sheet.getRange(1, 1, 1, 21).setFontWeight('bold').setBackground('#f3f4f6');
+      sheet.getRange(1, 1, 1, 22).setFontWeight('bold').setBackground('#f3f4f6');
     } else if (sheetName === SHEET_DRAFT_SETS) {
       sheet.appendRow(['draft_id', 'code', 'set_name', 'jan', 'unit_price', 'jodai', 'shiire', 'unit', 'last_sale_date']);
       sheet.setFrozenRows(1);
@@ -4221,6 +4303,9 @@ function setupOrMigrateSheet_(sheetName) {
         sheet.getRange(1, 21).setValue('view_group_restricted');
         sheet.getRange(1, 21).setFontWeight('bold').setBackground('#f3f4f6');
       }
+      const tagHeader = sheet.getLastColumn() >= 22 ? String(sheet.getRange(1, 22).getValue() || '').trim() : '';
+      if (tagHeader && tagHeader !== 'product_tag') throw new Error('DATA_SCHEMA_ERROR');
+      if (!tagHeader) sheet.getRange(1, 22).setValue('product_tag').setFontWeight('bold').setBackground('#f3f4f6');
     } else if (sheetName === SHEET_DRAFT_SETS) {
       // code/jan列をテキスト書式に統一（既存シートへのマイグレーション。数値化された既存値はapproveDraft側のString()正規化で吸収）
       sheet.getRange('B2:B').setNumberFormat('@');
@@ -5705,4 +5790,417 @@ function previewLowPriceCampaign(params) {
     priceField: 'product_sets.unit_price', priceBasis: 'standard_ex_tax', maxPrice: 1000, inclusive: true },
     campaign: { id: campaignId, name: campaign.name, flag: campaign.flag === undefined ? null : campaign.flag },
     summary: summary, candidates: candidates, invalidPrices: invalidPrices };
+}
+
+// 商品別設定は公開対象外のGASファイルへ保持する。認証情報は含めない。
+// 既存の限定対象を再設定するためのAPIや画面は追加しない。
+function bridgeFixedScope_() {
+  if (typeof BMALL_BRIDGE_FIXED_SCOPE_DATA_ === 'undefined') throw new Error('BRIDGE_TARGET_CONFIG_MISSING');
+  return BMALL_BRIDGE_FIXED_SCOPE_DATA_;
+}
+
+// OFFLINE PROPOSAL ONLY. Do not deploy or configure properties without separate approval.
+// Dedicated bridge key is intentionally never defined here. No legacy key is reused.
+const BMALL_BRIDGE_ACTIONS_ = Object.freeze([
+  'getBridgeDraftCandidates', 'getBridgeRegisteredExamples',
+  'getDraftBridgeSnapshot', 'saveDraftBridge'
+]);
+const BMALL_BRIDGE_SAVE_CAPABILITY_ = Object.freeze({}); // identity cannot arrive in JSON
+
+const BMALL_BRIDGE_APPROVED_DRAFT_SHA256_ = ''; // reviewed canonical FULL payload only
+const BMALL_BRIDGE_APPROVED_MASTER_SHA256_ = ''; // reviewed CSV projection only
+const BMALL_BRIDGE_HIDDEN_COVERAGE_VERIFIED_ = false; // live read-only validation required
+const BMALL_BRIDGE_EXCLUSIVE_WINDOW_VERIFIED_ = false; // external writers must be coordinated
+
+
+function bridgeFail_(code) { throw new Error('BRIDGE_' + code); }
+function bridgeStable_(value) {
+  if (value instanceof Date) return JSON.stringify(value.toISOString());
+  if (Array.isArray(value)) return '[' + value.map(bridgeStable_).join(',') + ']';
+  if (value && typeof value === 'object') return '{' + Object.keys(value).sort().map(
+    k => JSON.stringify(k) + ':' + bridgeStable_(value[k])).join(',') + '}';
+  return JSON.stringify(value);
+}
+function bridgeHash_(value) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,
+    bridgeStable_(value), Utilities.Charset.UTF_8).map(b => ('0' + ((b + 256) % 256).toString(16)).slice(-2)).join('');
+}
+function bridgeExact_(value, keys) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      Object.keys(value).length !== keys.length || keys.some(k => !Object.prototype.hasOwnProperty.call(value, k))) {
+    bridgeFail_('INVALID_FIELDS');
+  }
+}
+function bridgeSafeError_(error) {
+  return error && /^BRIDGE_[A-Z0-9_]+$/.test(error.message) ? error.message : 'BRIDGE_INTERNAL_FAILURE';
+}
+function bridgeKeyMatches_(actual, expected) {
+  if (typeof actual !== 'string' || actual.length > 8192 || typeof expected !== 'string' || expected.length < 32) return false;
+  const a = bridgeHash_(actual), b = bridgeHash_(expected);
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+function handleDraftBridge_(params) {
+  // This dispatcher is reached BEFORE the legacy auth branch adds _userName.
+  // Authentication comes first. Never log params, credentials, response bodies or sheets.
+  try {
+    if (!params || BMALL_BRIDGE_ACTIONS_.indexOf(params.action) < 0) bridgeFail_('ACTION_NOT_ALLOWED');
+    const key = PropertiesService.getScriptProperties().getProperty('BMALL_BRIDGE_API_KEY');
+    if (!bridgeKeyMatches_(params.apiKey, key)) bridgeFail_('UNAUTHORIZED');
+    switch (params.action) {
+      case 'getBridgeDraftCandidates': {
+        bridgeExact_(params, ['action', 'apiKey', 'codes', 'supplierCd']);
+        if (bridgeStable_(params.codes) !== bridgeStable_([bridgeFixedScope_().code]) || params.supplierCd !== bridgeFixedScope_().supplierCd) bridgeFail_('TARGET_MISMATCH');
+        const result = getDraftCandidates({ codes: [bridgeFixedScope_().code], supplierCd: bridgeFixedScope_().supplierCd });
+        if (!result || result.ok !== true || !Array.isArray(result.candidates)) bridgeFail_('READ_FAILED');
+        const candidates = result.candidates.filter(c => String(c.code) === bridgeFixedScope_().code && String(c.supplierCd) === bridgeFixedScope_().supplierCd);
+        return { ok: true, total: candidates.length, candidates: candidates };
+      }
+      case 'getBridgeRegisteredExamples': {
+        bridgeExact_(params, ['action', 'apiKey', 'supplierCd', 'maxProducts']);
+        if (params.supplierCd !== bridgeFixedScope_().supplierCd || params.maxProducts !== 80) bridgeFail_('TARGET_MISMATCH');
+        const result = getRegisteredExamples({ supplierCd: bridgeFixedScope_().supplierCd, maxProducts: 80 });
+        if (!result || result.ok !== true || !Array.isArray(result.examples) || !Array.isArray(result.categories)) bridgeFail_('READ_FAILED');
+        // Legacy fallback scans unrelated suppliers. The dedicated bridge never exposes that fallback.
+        if (result.fallback === true) bridgeFail_('NO_SUPPLIER_EXAMPLES');
+        return { ok: true, fallback: false, examples: result.examples.slice(0, 80), categories: result.categories };
+      }
+      case 'getDraftBridgeSnapshot':
+        bridgeExact_(params, ['action', 'apiKey', 'code', 'supplierCd', 'expectedDraft']);
+        if (params.code !== bridgeFixedScope_().code || params.supplierCd !== bridgeFixedScope_().supplierCd) bridgeFail_('TARGET_MISMATCH');
+        bridgeValidateDraftShape_(params.expectedDraft);
+        return bridgeSnapshot_(params.expectedDraft);
+      case 'saveDraftBridge':
+        bridgeExact_(params, ['action', 'apiKey', 'drafts']);
+        if (!Array.isArray(params.drafts) || params.drafts.length !== 1) bridgeFail_('ONE_DRAFT_ONLY');
+        bridgeValidateDraftShape_(params.drafts[0]);
+        return saveDraftBridge_(params.drafts[0]);
+      default: bridgeFail_('ACTION_NOT_ALLOWED');
+    }
+  } catch (error) { return { ok: false, error: bridgeSafeError_(error) }; }
+}
+function bridgeSafeText_(value, max) {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= max && !/^\s*[=+@-]/.test(value);
+}
+function bridgeValidateDraftShape_(d) {
+  bridgeExact_(d, 'draftType targetProductId productName categoryId featureId1 featureId2 featureId3 description confidence reasoning refUrls supplierCd supplierName sets jodaiType taxTypeId viewGroupRestricted'.split(' '));
+  if (d.draftType !== 'new_product' || d.targetProductId !== null || d.supplierCd !== bridgeFixedScope_().supplierCd || d.supplierName !== bridgeFixedScope_().supplierName ||
+      d.jodaiType !== 'メーカー希望小売価格' || d.taxTypeId !== 1 || d.viewGroupRestricted !== true ||
+      bridgeStable_(d.refUrls) !== bridgeStable_([bridgeFixedScope_().ref])) bridgeFail_('TARGET_MISMATCH');
+  if (!Number.isSafeInteger(d.categoryId) || d.categoryId < 1) bridgeFail_('INVALID_CATEGORY');
+  ['featureId1', 'featureId2', 'featureId3'].forEach(k => {
+    if (d[k] !== null && (!Number.isSafeInteger(d[k]) || d[k] < 1)) bridgeFail_('INVALID_FEATURE');
+  });
+  if (!['productName', 'description', 'reasoning', 'confidence'].every(k => bridgeSafeText_(d[k], 2000)) ||
+      Array.from(d.description).length < 100 || Array.from(d.description).length > 150 ||
+      ['高', '中', '低'].indexOf(d.confidence) < 0) bridgeFail_('INVALID_TEXT');
+  if (!Array.isArray(d.sets) || d.sets.length !== 1) bridgeFail_('ONE_SET_ONLY');
+  const s = d.sets[0];
+  bridgeExact_(s, 'code setName jan unitPrice jodai shiire unit lastSaleDate'.split(' '));
+  if (s.code !== bridgeFixedScope_().code || s.jan !== bridgeFixedScope_().jan || s.setName !== bridgeFixedScope_().sizeName || s.unitPrice !== bridgeFixedScope_().unitPrice || s.jodai !== bridgeFixedScope_().jodai ||
+      !Number.isSafeInteger(s.shiire) || s.shiire < 0 || !bridgeSafeText_(s.unit, 20) ||
+      typeof s.lastSaleDate !== 'string' || (s.lastSaleDate !== '' && !/^\d{4}\/\d{2}\/\d{2}$/.test(s.lastSaleDate))) bridgeFail_('TARGET_MISMATCH');
+}
+function bridgeNormalizeCode_(v) {
+  const s = String(v == null ? '' : v).normalize('NFKC').trim();
+  return /^\d+$/.test(s) ? s.replace(/^0+(?=\d)/, '') : s;
+}
+function bridgeNormalizeJan_(v) {
+  return String(v == null ? '' : v).normalize('NFKC').replace(/[\s-]+/g, '');
+}
+function bridgeScalarKey_(v) {
+  return v == null || typeof v === 'string' || (Number.isSafeInteger(v) && v >= 0);
+}
+function bridgeNormalizeName_(v) {
+  return String(v == null ? '' : v).normalize('NFKC').toLowerCase().replace(/[\s\u3000]+/g, '').replace(/50g$/, '');
+}
+function bridgeStrictNumber_(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.0+)?$/.test(s)) bridgeFail_('MASTER_NUMBER_INVALID');
+  const n = Number(s.replace(/,/g, ''));
+  if (!Number.isSafeInteger(n) || n < 0) bridgeFail_('MASTER_NUMBER_INVALID');
+  return n;
+}
+function bridgeMasterDate_(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (s === '' || s === '00000000') return '';
+  const m = s.match(/^(\d{4})(?:[/-]?)(\d{2})(?:[/-]?)(\d{2})$/) || s.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+  if (!m) bridgeFail_('MASTER_DATE_INVALID');
+  const y = Number(m[1]), mo = Number(m[2]), day = Number(m[3]), date = new Date(Date.UTC(y, mo - 1, day));
+  if (date.getUTCFullYear() !== y || date.getUTCMonth() !== mo - 1 || date.getUTCDate() !== day) bridgeFail_('MASTER_DATE_INVALID');
+  return m[1] + '/' + ('0' + mo).slice(-2) + '/' + ('0' + day).slice(-2);
+}
+function bridgeReadMaster_() {
+  // Direct uncached CSV read; the legacy parser silently drops malformed rows.
+  // This parser rejects malformed/missing/duplicate target data instead.
+  if (!CSV_FOLDER_ID) bridgeFail_('MASTER_NOT_CONFIGURED');
+  const files = DriveApp.getFolderById(CSV_FOLDER_ID).getFilesByName(CSV_FILENAME);
+  if (!files.hasNext()) bridgeFail_('MASTER_MISSING');
+  const file = files.next();
+  if (files.hasNext()) bridgeFail_('MASTER_FILE_AMBIGUOUS');
+  const updatedAt = file.getLastUpdated().getTime();
+  if (!Number.isFinite(updatedAt) || Date.now() < updatedAt || Date.now() - updatedAt > 86400000) bridgeFail_('MASTER_STALE');
+  const csv = Utilities.parseCsv(file.getBlob().getDataAsString('Shift_JIS'));
+  if (!Array.isArray(csv) || csv.length < 2) bridgeFail_('MASTER_SCHEMA_INVALID');
+  const headers = csv[0].map(v => String(v).trim().replace(/^\uFEFF/, ''));
+  if (new Set(headers).size !== headers.length) bridgeFail_('MASTER_SCHEMA_INVALID');
+  const priceHeader = headers.indexOf('定価１') >= 0 ? '定価１' : '定価1';
+  const required = ['コード', '商品名', '仕入先CD', '仕入先名', 'JANCD', '売上単価', priceHeader, '仕入単価', '単位名', '最終売上日', '廃番'];
+  if (required.some(k => headers.indexOf(k) < 0)) bridgeFail_('MASTER_SCHEMA_INVALID');
+  const rows = [];
+  csv.slice(1).forEach(values => {
+    if (values.every(v => String(v).trim() === '')) return;
+    if (values.length !== headers.length) bridgeFail_('MASTER_SCHEMA_INVALID');
+    const row = {};
+    headers.forEach((h, i) => { row[h] = String(values[i]).trim(); });
+    if (bridgeNormalizeCode_(row['コード']) === bridgeFixedScope_().code) rows.push(row);
+  });
+  if (rows.length !== 1) bridgeFail_('MASTER_TARGET_AMBIGUOUS');
+  const r = rows[0];
+  if (!['', '0', 'FALSE'].includes(r['廃番'].toUpperCase())) bridgeFail_('MASTER_DISCONTINUED');
+  if (!String(r['商品名']).normalize('NFKC').toLowerCase().replace(/[\s\u3000]+/g, '').includes(bridgeFixedScope_().sizeName)) bridgeFail_('MASTER_SIZE_MISMATCH');
+  return { updatedAt: updatedAt, projection: {
+    code: bridgeNormalizeCode_(r['コード']), sourceName: r['商品名'],
+    supplierCd: bridgeNormalizeCode_(r['仕入先CD']), supplierName: r['仕入先名'],
+    jan: r['JANCD'], unitPrice: bridgeStrictNumber_(r['売上単価']), jodai: bridgeStrictNumber_(r[priceHeader]),
+    shiire: bridgeStrictNumber_(r['仕入単価']), unit: r['単位名'], lastSaleDate: bridgeMasterDate_(r['最終売上日'])
+  } };
+}
+function bridgeCatalog_(path) {
+  // Fixed unfiltered administrator collections only. Never accept a caller path/query.
+  const arrays = { '/products': 'products', '/product_sets': 'product_sets', '/categories': 'categories', '/product_features': 'product_features' };
+  if (!Object.prototype.hasOwnProperty.call(arrays, path)) bridgeFail_('CATALOG_PATH_INVALID');
+  const token = getBcartToken(), out = [], ids = new Set();
+  let total = null;
+  for (let offset = 0; offset === 0 || offset < total; offset += 100) {
+    const response = UrlFetchApp.fetch(BCART_BASE_URL + path + '?limit=100&offset=' + offset, {
+      method: 'get', headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
+      muteHttpExceptions: true, followRedirects: false
+    });
+    if (response.getResponseCode() !== 200) bridgeFail_('CATALOG_READ_FAILED');
+    let body;
+    try { body = JSON.parse(response.getContentText()); } catch (_) { bridgeFail_('CATALOG_SCHEMA_INVALID'); }
+    if (!body || body.message || body.error) bridgeFail_('CATALOG_SCHEMA_INVALID');
+    const rows = Array.isArray(body.data) ? body.data : body[arrays[path]];
+    const rawTotal = body.meta && body.meta.total;
+    if ((typeof rawTotal !== 'number' && typeof rawTotal !== 'string') || !/^\d+$/.test(String(rawTotal))) bridgeFail_('CATALOG_TOTAL_MISSING');
+    const count = Number(rawTotal);
+    if (!Number.isSafeInteger(count) || count < 0 || count > 50000 || !Array.isArray(rows)) bridgeFail_('CATALOG_SCHEMA_INVALID');
+    if (total !== null && count !== total) bridgeFail_('CATALOG_CHANGED');
+    total = count;
+    if (rows.length !== Math.min(100, total - offset)) bridgeFail_('CATALOG_PAGE_INCOMPLETE');
+    rows.forEach(row => {
+      if (!row || !/^[1-9]\d*$/.test(String(row.id)) || !Number.isSafeInteger(Number(row.id)) || ids.has(String(row.id))) bridgeFail_('CATALOG_ID_INVALID');
+      ids.add(String(row.id)); out.push(row);
+    });
+  }
+  if (out.length !== total) bridgeFail_('CATALOG_PAGE_INCOMPLETE');
+  return out;
+}
+function bridgeReadJournal_() {
+  const raw = PropertiesService.getScriptProperties().getProperty(bridgeFixedScope_().attemptKey);
+  if (!raw) return null;
+  let j; try { j = JSON.parse(raw); } catch (_) { bridgeFail_('JOURNAL_INVALID_NO_RESEND'); }
+  if (!j || !['IN_FLIGHT', 'UNKNOWN', 'UNVERIFIED', 'VERIFIED'].includes(j.state) ||
+      !/^[a-f0-9]{64}$/.test(j.payloadHash) || !/^[a-f0-9]{64}$/.test(j.baselineHash) ||
+      (j.draftId !== undefined && !/^D\d{8}-\d{3}$/.test(j.draftId))) bridgeFail_('JOURNAL_INVALID_NO_RESEND');
+  return j;
+}
+function bridgeWriteJournal_(j) {
+  const props = PropertiesService.getScriptProperties(), serialized = JSON.stringify(j);
+  props.setProperty(bridgeFixedScope_().attemptKey, serialized);
+  if (props.getProperty(bridgeFixedScope_().attemptKey) !== serialized) bridgeFail_('JOURNAL_DURABILITY_UNKNOWN_NO_RESEND');
+}
+function bridgeClaimDraftIdBeforeAppend_(id) {
+  const j = bridgeReadJournal_();
+  if (!j || j.state !== 'IN_FLIGHT' || j.draftId || !/^D\d{8}-\d{3}$/.test(id)) bridgeFail_('JOURNAL_INVALID_NO_RESEND');
+  j.draftId = id;
+  bridgeWriteJournal_(j); // MUST finish before the FIRST appendRow
+}
+function bridgeReadSheets_() {
+  const ss = getDataSpreadsheet_();
+  const read = name => {
+    const sheet = ss.getSheetByName(name);
+    if (!sheet) bridgeFail_('SHEET_MISSING');
+    const range = sheet.getDataRange(), values = range.getValues(), formulas = range.getFormulas();
+    const expected = requiredSheetHeaders_(name);
+    if (!values.length || !expected || expected.some((h, i) => String(values[0][i] || '').trim() !== h)) bridgeFail_('SHEET_SCHEMA_INVALID');
+    if (formulas.length !== values.length) bridgeFail_('SHEET_SCHEMA_INVALID');
+    return { values: values, formulas: formulas };
+  };
+  return { parents: read(SHEET_DRAFT), children: read(SHEET_DRAFT_SETS) };
+}
+function bridgeBaselineHash_(sheets, excludedId) {
+  const project = table => ({ header: table.values[0], headerFormulas: table.formulas[0], rows: table.values.slice(1).map((v, i) => ({
+    row: i + 2, values: v, formulas: table.formulas[i + 1]
+  })).filter(r => !excludedId || String(r.values[0]) !== excludedId) });
+  return bridgeHash_({ parents: project(sheets.parents), children: project(sheets.children) });
+}
+function bridgeCellNumber_(v, nullable, zeroIfBlank) {
+  if (v === '' || v === null) {
+    if (nullable) return null;
+    if (zeroIfBlank) return 0; // existing saveDrafts stores price 0 as an empty cell
+    bridgeFail_('TARGET_ROW_INVALID');
+  }
+  const n = Number(v);
+  if (!Number.isSafeInteger(n) || n < 0) bridgeFail_('TARGET_ROW_INVALID');
+  return n;
+}
+function bridgeReadbackDate_(v) {
+  return v instanceof Date ? Utilities.formatDate(v, 'Asia/Tokyo', 'yyyy/MM/dd') : String(v || '');
+}
+function bridgeTargetPayload_(r) {
+  if (![true, 'TRUE', 'true'].includes(r[20])) bridgeFail_('TARGET_ROW_INVALID');
+  return {
+    status: String(r[1]), reviewedAt: r[16] === '' ? '' : String(r[16]), registeredProductId: r[17] === '' ? '' : String(r[17]),
+    payload: { draftType: String(r[2]), targetProductId: bridgeCellNumber_(r[3], true, false), productName: String(r[4]),
+      categoryId: bridgeCellNumber_(r[5], false, false), featureId1: bridgeCellNumber_(r[6], true, false),
+      featureId2: bridgeCellNumber_(r[7], true, false), featureId3: bridgeCellNumber_(r[8], true, false),
+      description: String(r[9]), confidence: String(r[10]), reasoning: String(r[11]),
+      refUrls: String(r[12] || '').split('\n').filter(Boolean), supplierCd: String(r[13]), supplierName: String(r[14]),
+      jodaiType: String(r[18]), taxTypeId: bridgeCellNumber_(r[19], false, false), viewGroupRestricted: true }
+  };
+}
+function bridgeTargetSet_(r) {
+  return { code: String(r[1]), setName: String(r[2]), jan: String(r[3]),
+    unitPrice: bridgeCellNumber_(r[4], false, true), jodai: bridgeCellNumber_(r[5], false, true),
+    shiire: bridgeCellNumber_(r[6], false, true), unit: String(r[7]), lastSaleDate: bridgeReadbackDate_(r[8]) };
+}
+function bridgeValidateMaster_(d, master, categories, features) {
+  const errors = [], m = master.projection, s = d.sets[0];
+  if (!/^[a-f0-9]{64}$/.test(BMALL_BRIDGE_APPROVED_DRAFT_SHA256_) || bridgeHash_(d) !== BMALL_BRIDGE_APPROVED_DRAFT_SHA256_) errors.push('BRIDGE_APPROVED_PAYLOAD_MISSING_OR_MISMATCH');
+  if (!/^[a-f0-9]{64}$/.test(BMALL_BRIDGE_APPROVED_MASTER_SHA256_) || bridgeHash_(m) !== BMALL_BRIDGE_APPROVED_MASTER_SHA256_) errors.push('BRIDGE_APPROVED_MASTER_MISSING_OR_MISMATCH');
+  if (m.code !== bridgeFixedScope_().code || m.jan !== bridgeFixedScope_().jan || m.supplierCd !== bridgeFixedScope_().supplierCd || m.supplierName !== bridgeFixedScope_().supplierName ||
+      ['unitPrice', 'jodai', 'shiire', 'unit', 'lastSaleDate'].some(k => m[k] !== s[k])) errors.push('BRIDGE_MASTER_PAYLOAD_MISMATCH');
+  if (!categories.some(c => Number(c.id) === d.categoryId)) errors.push('BRIDGE_CATEGORY_NOT_FOUND');
+  if (['featureId1', 'featureId2', 'featureId3'].some(k => d[k] !== null && !features.some(f => Number(f.id) === d[k]))) errors.push('BRIDGE_FEATURE_NOT_FOUND');
+  return errors;
+}
+function bridgeSnapshot_(d) {
+  // Absolutely no setProperty, appendRow, getOrCreateSheet, notification, or repair here.
+  const observedAt = Date.now(); // earliest read, never make an old inventory look fresh
+  const journal = bridgeReadJournal_(), sheets = bridgeReadSheets_(), rawHash = bridgeHash_(sheets);
+  const products = bridgeCatalog_('/products'), productSets = bridgeCatalog_('/product_sets');
+  const categories = bridgeCatalog_('/categories'), features = bridgeCatalog_('/product_features');
+  const master = bridgeReadMaster_(), validationErrors = bridgeValidateMaster_(d, master, categories, features);
+  const productIds = new Set(products.map(p => String(p.id)));
+  if (products.some(p => typeof p.name !== 'string' || !['表示', '非表示'].includes(p.flag) ||
+        ![p.product_no, p.main_no, p.jan_code].every(bridgeScalarKey_)) ||
+      productSets.some(s => !productIds.has(String(s.product_id)) || typeof s.name !== 'string' ||
+        !Object.prototype.hasOwnProperty.call(s, 'product_no') || !Object.prototype.hasOwnProperty.call(s, 'jan_code') ||
+        ![s.product_no, s.jan_code].every(bridgeScalarKey_) ||
+        !['表示', '非表示'].includes(s.set_flag))) bridgeFail_('CATALOG_COVERAGE_INVALID');
+  // An unapproved expectedDraft must not turn this endpoint into an arbitrary name lookup.
+  const namesToCheck = [master.projection.sourceName];
+  if (bridgeHash_(d) === BMALL_BRIDGE_APPROVED_DRAFT_SHA256_) namesToCheck.push(d.productName);
+  const names = new Set(namesToCheck.map(bridgeNormalizeName_));
+  const codeMatches = [], janMatches = [], nameMatches = [], orphanRows = [], drafts = {}, sets = {};
+  const addMatches = (record, code, jan, name) => {
+    if (bridgeNormalizeCode_(code) === bridgeFixedScope_().code) codeMatches.push(record);
+    if (bridgeNormalizeJan_(jan) === bridgeFixedScope_().jan) janMatches.push(record);
+    if (names.has(bridgeNormalizeName_(name))) nameMatches.push(record);
+  };
+  products.forEach(p => {
+    const record = { kind: 'product', id: String(p.id), hidden: p.flag === '非表示' };
+    addMatches(record, p.product_no, p.jan_code, p.name);
+    if (bridgeNormalizeCode_(p.main_no) === bridgeFixedScope_().code && bridgeNormalizeCode_(p.product_no) !== bridgeFixedScope_().code) codeMatches.push(record);
+  });
+  productSets.forEach(s => addMatches({ kind: 'productSet', id: String(s.id), productId: String(s.product_id), hidden: s.set_flag === '非表示' }, s.product_no, s.jan_code, s.name));
+  const parents = {}, childCounts = {};
+  sheets.parents.values.slice(1).forEach((r, i) => {
+    if (r.every(v => v === '')) return;
+    const id = String(r[0] || '');
+    if (!id || parents[id]) orphanRows.push({ sheet: 'drafts', row: i + 2, draftId: id, reason: !id ? 'MISSING_ID' : 'DUPLICATE_PARENT_ID' });
+    parents[id] = true;
+    addMatches({ kind: 'draft', id: id, status: String(r[1]) }, '', '', r[4]);
+    if (journal && journal.draftId === id) {
+      if (sheets.parents.formulas[i + 1].some(Boolean)) bridgeFail_('TARGET_ROW_FORMULA');
+      drafts[id] = bridgeTargetPayload_(r);
+    }
+  });
+  sheets.children.values.slice(1).forEach((r, i) => {
+    if (r.every(v => v === '')) return;
+    const id = String(r[0] || ''); childCounts[id] = (childCounts[id] || 0) + 1;
+    if (!id || !parents[id]) orphanRows.push({ sheet: 'sets', row: i + 2, draftId: id, reason: 'MISSING_PARENT' });
+    addMatches({ kind: 'draftSet', id: id, row: i + 2 }, r[1], r[3], r[2]);
+    if (journal && journal.draftId === id) {
+      if (sheets.children.formulas[i + 1].some(Boolean)) bridgeFail_('TARGET_ROW_FORMULA');
+      if (!sets[id]) sets[id] = [];
+      sets[id].push(bridgeTargetSet_(r));
+    }
+  });
+  sheets.parents.values.slice(1).forEach((r, i) => {
+    if (r[0] && !childCounts[String(r[0])]) orphanRows.push({ sheet: 'drafts', row: i + 2, draftId: String(r[0]), reason: 'MISSING_SETS' });
+  });
+  // Legacy/manual writers do not all honor this lock. An unstable read must not be complete.
+  if (rawHash !== bridgeHash_(bridgeReadSheets_()) || bridgeStable_(journal) !== bridgeStable_(bridgeReadJournal_())) bridgeFail_('CONCURRENT_CHANGE');
+  if (Date.now() - observedAt > 60000 || Date.now() < observedAt) bridgeFail_('SNAPSHOT_TOO_SLOW');
+  return { ok: true, contractVersion: 2, complete: true,
+    includesHidden: BMALL_BRIDGE_HIDDEN_COVERAGE_VERIFIED_ === true, observedAt: observedAt,
+    baselineHash: bridgeBaselineHash_(sheets, journal && journal.draftId), codeMatches: codeMatches,
+    janMatches: janMatches, nameMatches: nameMatches,
+    validatedDraftHash: validationErrors.length ? null : bridgeHash_(d), validationErrors: validationErrors,
+    drafts: drafts, sets: sets, orphanRows: orphanRows,
+    attempt: journal ? { state: journal.state, payloadHash: journal.payloadHash, draftId: journal.draftId || null } : null,
+    notification: { verified: true, enabled: false }
+  };
+}
+function bridgeAssertPreflight_(s, d) {
+  if (s.complete !== true || s.includesHidden !== true || Date.now() - s.observedAt > 60000 || Date.now() < s.observedAt) bridgeFail_('INCOMPLETE_PREFLIGHT');
+  if (s.validatedDraftHash !== bridgeHash_(d)) bridgeFail_('PAYLOAD_NOT_APPROVED_OR_MASTER_CHANGED');
+  if (s.codeMatches.length || s.janMatches.length || s.nameMatches.length) bridgeFail_('POSSIBLE_DUPLICATE');
+  if (s.orphanRows.length) bridgeFail_('ORPHAN_ROWS_REQUIRE_REVIEW');
+  if (s.attempt || Object.keys(s.drafts).length || Object.keys(s.sets).length) bridgeFail_('ALREADY_ATTEMPTED_NO_RESEND');
+}
+function bridgeAssertReadback_(before, after, d, id) {
+  const payload = Object.assign({}, d); delete payload.sets;
+  if (after.complete !== true || after.includesHidden !== true || after.validatedDraftHash !== bridgeHash_(d) ||
+      after.observedAt < before.observedAt || Date.now() - after.observedAt > 60000 || Date.now() < after.observedAt ||
+      after.baselineHash !== before.baselineHash || after.orphanRows.length ||
+      bridgeStable_(Object.keys(after.drafts)) !== bridgeStable_([id]) || bridgeStable_(Object.keys(after.sets)) !== bridgeStable_([id]) ||
+      bridgeStable_(after.drafts[id]) !== bridgeStable_({ status: '下書き', reviewedAt: '', registeredProductId: '', payload: payload }) ||
+      bridgeStable_(after.sets[id]) !== bridgeStable_(d.sets)) bridgeFail_('READBACK_MISMATCH_NO_RESEND');
+  // The only permitted new duplicate hits are exactly this saved draft/set.
+  ['codeMatches', 'janMatches', 'nameMatches'].forEach(k => {
+    if (after[k].some(m => !['draft', 'draftSet'].includes(m.kind) || m.id !== id)) bridgeFail_('READBACK_DUPLICATE_NO_RESEND');
+  });
+}
+function saveDraftBridge_(draft) {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('BMALL_BRIDGE_WRITE_ENABLED') !== 'true' || BMALL_BRIDGE_EXCLUSIVE_WINDOW_VERIFIED_ !== true) bridgeFail_('SAVE_DISABLED');
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) bridgeFail_('BUSY_NO_WRITE');
+  let claimed = false;
+  try {
+    if (props.getProperty(bridgeFixedScope_().attemptKey) !== null) bridgeFail_('ALREADY_ATTEMPTED_NO_RESEND');
+    const before = bridgeSnapshot_(draft); bridgeAssertPreflight_(before, draft);
+    const j = { state: 'IN_FLIGHT', payloadHash: bridgeHash_(draft), baselineHash: before.baselineHash, attemptedAt: Date.now() };
+    bridgeWriteJournal_(j); claimed = true; // no write to sheets can occur before a durable claim
+    const result = saveDrafts({ drafts: [draft] }, BMALL_BRIDGE_SAVE_CAPABILITY_);
+    SpreadsheetApp.flush();
+    if (!result || result.ok !== true || result.saved !== 1 || bridgeStable_(result.skipped) !== '[]' ||
+        !Array.isArray(result.draftIds) || result.draftIds.length !== 1 || !/^D\d{8}-\d{3}$/.test(result.draftIds[0])) bridgeFail_('SAVE_OUTCOME_UNKNOWN_NO_RESEND');
+    const recorded = bridgeReadJournal_();
+    if (!recorded || recorded.draftId !== result.draftIds[0]) bridgeFail_('JOURNAL_INVALID_NO_RESEND');
+    const after = bridgeSnapshot_(draft); bridgeAssertReadback_(before, after, draft, result.draftIds[0]);
+    recorded.state = 'VERIFIED'; bridgeWriteJournal_(recorded);
+    return result; // retain existing ok/saved/skipped/draftIds response shape
+  } catch (error) {
+    if (claimed) {
+      try { const j = bridgeReadJournal_(); if (j) { j.state = 'UNKNOWN'; bridgeWriteJournal_(j); } } catch (_) {}
+      // Never roll back automatically, delete rows, clear the journal, or resend saveDrafts.
+      bridgeFail_('SAVE_OUTCOME_UNKNOWN_DO_NOT_RESEND');
+    }
+    throw error;
+  } finally { lock.releaseLock(); }
+}
+
+// Proposal wrapper: serialize ALL calls of existing saveDrafts for ID allocation.
+// Legacy callers retain their auth, payload behavior and notification side effect.
+function saveDrafts(params, internalCapability) {
+  if (internalCapability === BMALL_BRIDGE_SAVE_CAPABILITY_) return saveDraftsUnlocked_(params, internalCapability);
+  const lock = LockService.getScriptLock(); lock.waitLock(10000);
+  try { return saveDraftsUnlocked_(params, null); }
+  finally { lock.releaseLock(); }
 }
