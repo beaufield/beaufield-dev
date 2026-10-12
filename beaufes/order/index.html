@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="style.css">
   <script src="jsQR.js" defer></script>
   <script src="exceljs.min.js" defer></script>
-  <script src="app.js?build=20261009-order-remarks" type="module"></script>
+  <script src="app.js?build=20261012-order-recovery" type="module"></script>
 </head>
 <body>
 <header id="app-header"><div class="header-top"><div><small>BEAU Fes 2026</small><h1>ブース注文 <span id="version"></span></h1></div><span id="network" class="network-badge"></span></div><div id="maker-banner" class="maker-banner" hidden><span class="maker-label">メーカー</span><strong id="maker"></strong></div></header>
@@ -47,6 +47,7 @@
       <div class="remarks-help"><span id="remarks-help" class="muted">注文内容と一緒に送信されます。</span><span id="remarks-count" class="muted">0 / 1,000文字</span></div>
       <div class="total">税抜合計 <strong id="total">0円</strong></div>
       <button id="submit" class="primary">この内容で登録する</button>
+      <button id="another-purchase" class="secondary" type="button" hidden>別の購入を開始する</button>
       <div id="submit-status" role="status" aria-live="polite" hidden></div>
     </section>
     <section id="history-section" class="history-section" aria-labelledby="history-title"><div class="row section-heading"><h2 id="history-title">この端末の未送信・下書き <span id="order-count" class="count-badge"></span></h2><button id="retry" class="secondary small-action">未送信を再送・状態確認</button></div><p class="muted">この端末に残っている注文です。未送信・取消待ちは通信が戻った状態で再送してください。</p><div id="orders"></div></section>
@@ -58,5 +59,7 @@
 </main>
 <div id="camera-modal" class="modal" role="dialog" aria-modal="true" aria-label="名札QRを読み取る" hidden><div class="modal-panel camera-panel"><div class="modal-head"><h2>名札QRを読み取る</h2><button id="camera-close" class="secondary" type="button" aria-label="カメラを閉じる">閉じる</button></div><p class="muted">名札のQRコードを中央の枠に合わせてください。</p><div class="camera-frame"><video id="video" playsinline muted></video><span class="camera-target" aria-hidden="true"></span></div><canvas id="canvas" hidden></canvas></div></div>
 <div id="picker-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="picker-title" hidden><div class="modal-panel picker-panel"><div class="modal-head"><h2 id="picker-title"></h2><button id="picker-close" class="secondary" type="button">閉じる</button></div><label>絞り込み<input id="picker-search" type="search" autocomplete="off" placeholder="商品名・条件名で検索"></label><p id="picker-count" class="muted"></p><div id="picker-results" class="picker-results"></div></div></div>
+<div id="receipt-modal" class="modal" role="dialog" aria-modal="true" aria-label="購入控え" hidden><div class="modal-panel receipt-panel"><div class="row receipt-actions"><button id="receipt-close" class="secondary" type="button">閉じる</button><button id="receipt-print" type="button">控えを印刷する</button></div><div id="receipt-content"></div></div></div>
+<div id="additional-modal" class="modal" role="dialog" aria-modal="true" aria-label="別の購入を確認" hidden><div class="modal-panel"><h2>別の購入を開始しますか？</h2><p id="additional-customer"></p><p>登録済みの購入控えを残して、このお客様の追加購入を入力します。</p><div class="row"><button id="additional-cancel" class="secondary" type="button">戻る</button><button id="additional-start" type="button">追加購入を開始する</button></div></div></div>
 <footer>購入内容を確認してから登録してください。</footer>
 </body></html>
