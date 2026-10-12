@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.34.0';
+const VERSION = 'v2.34.6';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -1785,6 +1785,11 @@ function getDraftSupplierSummary() {
 //    手作業での確認が必要になった）。最終売上日は「並び替えの基準」であって「除外条件」ではない。
 //    売上履歴なしは既定で含め、limitに埋もれないよう先頭に並べる（excludeNoSale:true で従来動作）。
 function getDraftCandidates(params) {
+  // 既存認証の12680限定読取監査。任意コード/検索/保存へ権限を広げない。
+  if (Object.prototype.hasOwnProperty.call(params, 'bridge12680Audit')) {
+    if (params.bridge12680Audit !== true || bridgeStable_(params.codes) !== bridgeStable_([bridgeReadScope_().code]) || params.supplierCd !== bridgeReadScope_().supplierCd) bridgeFail_('TARGET_MISMATCH');
+    try { return bridge12680Audit_(); } catch (error) { return { ok: false, error: bridgeSafeError_(error) }; }
+  }
   const wantCodes = Array.isArray(params.codes) && params.codes.length > 0;
   const data = getUnregisteredForDraft({ collectExcluded: wantCodes });
   if (!data.ok) return data;
@@ -5958,7 +5963,7 @@ function bridgeFixedScope_() {
   return BMALL_BRIDGE_FIXED_SCOPE_DATA_;
 }
 
-// OFFLINE PROPOSAL ONLY. Do not deploy or configure properties without separate approval.
+// 本人承認済み12680専用。通常は書込OFF、ON前に他更新停止とFOXの保存時刻を確認する。
 // Dedicated bridge key is intentionally never defined here. No legacy key is reused.
 const BMALL_BRIDGE_ACTIONS_ = Object.freeze([
   'getBridgeDraftCandidates', 'getBridgeRegisteredExamples',
@@ -5966,10 +5971,18 @@ const BMALL_BRIDGE_ACTIONS_ = Object.freeze([
 ]);
 const BMALL_BRIDGE_SAVE_CAPABILITY_ = Object.freeze({}); // identity cannot arrive in JSON
 
-const BMALL_BRIDGE_APPROVED_DRAFT_SHA256_ = ''; // reviewed canonical FULL payload only
-const BMALL_BRIDGE_APPROVED_MASTER_SHA256_ = ''; // reviewed CSV projection only
-const BMALL_BRIDGE_HIDDEN_COVERAGE_VERIFIED_ = false; // live read-only validation required
-const BMALL_BRIDGE_EXCLUSIVE_WINDOW_VERIFIED_ = false; // external writers must be coordinated
+// 承認payload・実マスター・監査根拠は非公開の専用設定へ分離する。
+// 書込は既存のBMALL_BRIDGE_WRITE_ENABLEDがtrueの場合だけ。FOXとの時刻調整まではfalseを維持する。
+const BMALL_BRIDGE_APPROVED_DRAFT_SHA256_ = ''; // 非公開設定なしなら必ず停止
+const BMALL_BRIDGE_APPROVED_MASTER_SHA256_ = '';
+const BMALL_BRIDGE_HIDDEN_COVERAGE_VERIFIED_ = false;
+const BMALL_BRIDGE_EXCLUSIVE_WINDOW_VERIFIED_ = false;
+
+function bridgeReleaseGate_(name, fallback) {
+  // グローバル初期化順に依存させず、読取/保存処理の実行時にだけ参照する。
+  if (typeof BMALL_BRIDGE_RELEASE_GATES_ === 'undefined') return fallback;
+  return BMALL_BRIDGE_RELEASE_GATES_[name];
+}
 
 
 function bridgeFail_(code) { throw new Error('BRIDGE_' + code); }
@@ -6011,10 +6024,10 @@ function handleDraftBridge_(params) {
       case 'getBridgeDraftCandidates': {
         bridgeExact_(params, ['action', 'apiKey', 'codes', 'supplierCd']);
         if (bridgeStable_(params.codes) !== bridgeStable_([bridgeReadScope_().code]) || params.supplierCd !== bridgeReadScope_().supplierCd) bridgeFail_('TARGET_MISMATCH');
-        const result = getDraftCandidates({ codes: [bridgeReadScope_().code], supplierCd: bridgeReadScope_().supplierCd });
+        const result = getDraftCandidates({ codes: [bridgeReadScope_().code], supplierCd: bridgeReadScope_().supplierCd, bridge12680Audit: true });
         if (!result || result.ok !== true || !Array.isArray(result.candidates)) bridgeFail_('READ_FAILED');
         const candidates = result.candidates.filter(c => String(c.code) === bridgeReadScope_().code && String(c.supplierCd) === bridgeReadScope_().supplierCd);
-        return { ok: true, total: candidates.length, candidates: candidates };
+        return { ok: true, total: candidates.length, candidates: candidates, audit: result.audit };
       }
       case 'getBridgeRegisteredExamples': {
         bridgeExact_(params, ['action', 'apiKey', 'supplierCd', 'maxProducts']);
@@ -6045,19 +6058,19 @@ function bridgeSafeText_(value, max) {
 function bridgeValidateDraftShape_(d) {
   bridgeExact_(d, 'draftType targetProductId productName categoryId featureId1 featureId2 featureId3 description confidence reasoning refUrls supplierCd supplierName sets jodaiType taxTypeId viewGroupRestricted'.split(' '));
   if (d.draftType !== 'new_product' || d.targetProductId !== null || d.supplierCd !== bridgeFixedScope_().supplierCd || d.supplierName !== bridgeFixedScope_().supplierName ||
-      d.jodaiType !== 'メーカー希望小売価格' || d.taxTypeId !== 1 || d.viewGroupRestricted !== true ||
+      d.jodaiType !== 'メーカー希望小売価格' || d.taxTypeId !== 1 || d.viewGroupRestricted !== bridgeFixedScope_().viewGroupRestricted ||
       bridgeStable_(d.refUrls) !== bridgeStable_([bridgeFixedScope_().ref])) bridgeFail_('TARGET_MISMATCH');
   if (!Number.isSafeInteger(d.categoryId) || d.categoryId < 1) bridgeFail_('INVALID_CATEGORY');
   ['featureId1', 'featureId2', 'featureId3'].forEach(k => {
     if (d[k] !== null && (!Number.isSafeInteger(d[k]) || d[k] < 1)) bridgeFail_('INVALID_FEATURE');
   });
   if (!['productName', 'description', 'reasoning', 'confidence'].every(k => bridgeSafeText_(d[k], 2000)) ||
-      Array.from(d.description).length < 100 || Array.from(d.description).length > 150 ||
+      Array.from(d.description).length < 1 || Array.from(d.description).length > 150 ||
       ['高', '中', '低'].indexOf(d.confidence) < 0) bridgeFail_('INVALID_TEXT');
   if (!Array.isArray(d.sets) || d.sets.length !== 1) bridgeFail_('ONE_SET_ONLY');
   const s = d.sets[0];
   bridgeExact_(s, 'code setName jan unitPrice jodai shiire unit lastSaleDate'.split(' '));
-  if (s.code !== bridgeFixedScope_().code || s.jan !== bridgeFixedScope_().jan || s.setName !== bridgeFixedScope_().sizeName || s.unitPrice !== bridgeFixedScope_().unitPrice || s.jodai !== bridgeFixedScope_().jodai ||
+  if (s.code !== bridgeFixedScope_().code || s.jan !== bridgeFixedScope_().jan || d.productName !== bridgeFixedScope_().productName || s.setName !== bridgeFixedScope_().setName || s.unitPrice !== bridgeFixedScope_().unitPrice || s.jodai !== bridgeFixedScope_().jodai ||
       !Number.isSafeInteger(s.shiire) || s.shiire < 0 || !bridgeSafeText_(s.unit, 20) ||
       typeof s.lastSaleDate !== 'string' || (s.lastSaleDate !== '' && !/^\d{4}\/\d{2}\/\d{2}$/.test(s.lastSaleDate))) bridgeFail_('TARGET_MISMATCH');
 }
@@ -6072,7 +6085,7 @@ function bridgeScalarKey_(v) {
   return v == null || typeof v === 'string' || (Number.isSafeInteger(v) && v >= 0);
 }
 function bridgeNormalizeName_(v) {
-  return String(v == null ? '' : v).normalize('NFKC').toLowerCase().replace(/[\s\u3000]+/g, '').replace(/50g$/, '');
+  return String(v == null ? '' : v).normalize('NFKC').toLowerCase().replace(/[\s\u3000]+/g, '');
 }
 function bridgeStrictNumber_(v) {
   const s = String(v == null ? '' : v).trim();
@@ -6126,37 +6139,8 @@ function bridgeReadMaster_() {
     shiire: bridgeStrictNumber_(r['仕入単価']), unit: r['単位名'], lastSaleDate: bridgeMasterDate_(r['最終売上日'])
   } };
 }
-function bridgeCatalog_(path) {
-  // Fixed unfiltered administrator collections only. Never accept a caller path/query.
-  const arrays = { '/products': 'products', '/product_sets': 'product_sets', '/categories': 'categories', '/product_features': 'product_features' };
-  if (!Object.prototype.hasOwnProperty.call(arrays, path)) bridgeFail_('CATALOG_PATH_INVALID');
-  const token = getBcartToken(), out = [], ids = new Set();
-  let total = null;
-  for (let offset = 0; offset === 0 || offset < total; offset += 100) {
-    const response = UrlFetchApp.fetch(BCART_BASE_URL + path + '?limit=100&offset=' + offset, {
-      method: 'get', headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
-      muteHttpExceptions: true, followRedirects: false
-    });
-    if (response.getResponseCode() !== 200) bridgeFail_('CATALOG_READ_FAILED');
-    let body;
-    try { body = JSON.parse(response.getContentText()); } catch (_) { bridgeFail_('CATALOG_SCHEMA_INVALID'); }
-    if (!body || body.message || body.error) bridgeFail_('CATALOG_SCHEMA_INVALID');
-    const rows = Array.isArray(body.data) ? body.data : body[arrays[path]];
-    const rawTotal = body.meta && body.meta.total;
-    if ((typeof rawTotal !== 'number' && typeof rawTotal !== 'string') || !/^\d+$/.test(String(rawTotal))) bridgeFail_('CATALOG_TOTAL_MISSING');
-    const count = Number(rawTotal);
-    if (!Number.isSafeInteger(count) || count < 0 || count > 50000 || !Array.isArray(rows)) bridgeFail_('CATALOG_SCHEMA_INVALID');
-    if (total !== null && count !== total) bridgeFail_('CATALOG_CHANGED');
-    total = count;
-    if (rows.length !== Math.min(100, total - offset)) bridgeFail_('CATALOG_PAGE_INCOMPLETE');
-    rows.forEach(row => {
-      if (!row || !/^[1-9]\d*$/.test(String(row.id)) || !Number.isSafeInteger(Number(row.id)) || ids.has(String(row.id))) bridgeFail_('CATALOG_ID_INVALID');
-      ids.add(String(row.id)); out.push(row);
-    });
-  }
-  if (out.length !== total) bridgeFail_('CATALOG_PAGE_INCOMPLETE');
-  return out;
-}
+function bridgeCatalog_(path) { return bridgeAuditCatalog_(path).rows; }
+
 function bridgeReadJournal_() {
   const raw = PropertiesService.getScriptProperties().getProperty(bridgeFixedScope_().attemptKey);
   if (!raw) return null;
@@ -6210,7 +6194,8 @@ function bridgeReadbackDate_(v) {
   return v instanceof Date ? Utilities.formatDate(v, 'Asia/Tokyo', 'yyyy/MM/dd') : String(v || '');
 }
 function bridgeTargetPayload_(r) {
-  if (![true, 'TRUE', 'true'].includes(r[20])) bridgeFail_('TARGET_ROW_INVALID');
+  if (parseViewGroupRestricted(r[20]) !== bridgeFixedScope_().viewGroupRestricted) bridgeFail_('TARGET_ROW_INVALID');
+  if (r[21] !== '' && r[21] !== undefined) bridgeFail_('TARGET_PRODUCT_TAG_MISMATCH');
   return {
     status: String(r[1]), reviewedAt: r[16] === '' ? '' : String(r[16]), registeredProductId: r[17] === '' ? '' : String(r[17]),
     payload: { draftType: String(r[2]), targetProductId: bridgeCellNumber_(r[3], true, false), productName: String(r[4]),
@@ -6218,7 +6203,7 @@ function bridgeTargetPayload_(r) {
       featureId2: bridgeCellNumber_(r[7], true, false), featureId3: bridgeCellNumber_(r[8], true, false),
       description: String(r[9]), confidence: String(r[10]), reasoning: String(r[11]),
       refUrls: String(r[12] || '').split('\n').filter(Boolean), supplierCd: String(r[13]), supplierName: String(r[14]),
-      jodaiType: String(r[18]), taxTypeId: bridgeCellNumber_(r[19], false, false), viewGroupRestricted: true }
+      jodaiType: String(r[18]), taxTypeId: bridgeCellNumber_(r[19], false, false), viewGroupRestricted: bridgeFixedScope_().viewGroupRestricted }
   };
 }
 function bridgeTargetSet_(r) {
@@ -6228,8 +6213,8 @@ function bridgeTargetSet_(r) {
 }
 function bridgeValidateMaster_(d, master, categories, features) {
   const errors = [], m = master.projection, s = d.sets[0];
-  if (!/^[a-f0-9]{64}$/.test(BMALL_BRIDGE_APPROVED_DRAFT_SHA256_) || bridgeHash_(d) !== BMALL_BRIDGE_APPROVED_DRAFT_SHA256_) errors.push('BRIDGE_APPROVED_PAYLOAD_MISSING_OR_MISMATCH');
-  if (!/^[a-f0-9]{64}$/.test(BMALL_BRIDGE_APPROVED_MASTER_SHA256_) || bridgeHash_(m) !== BMALL_BRIDGE_APPROVED_MASTER_SHA256_) errors.push('BRIDGE_APPROVED_MASTER_MISSING_OR_MISMATCH');
+  if (!/^[a-f0-9]{64}$/.test(bridgeReleaseGate_('draftSha256', BMALL_BRIDGE_APPROVED_DRAFT_SHA256_)) || bridgeHash_(d) !== bridgeReleaseGate_('draftSha256', BMALL_BRIDGE_APPROVED_DRAFT_SHA256_)) errors.push('BRIDGE_APPROVED_PAYLOAD_MISSING_OR_MISMATCH');
+  if (!/^[a-f0-9]{64}$/.test(bridgeReleaseGate_('masterSha256', BMALL_BRIDGE_APPROVED_MASTER_SHA256_)) || bridgeHash_(m) !== bridgeReleaseGate_('masterSha256', BMALL_BRIDGE_APPROVED_MASTER_SHA256_)) errors.push('BRIDGE_APPROVED_MASTER_MISSING_OR_MISMATCH');
   if (m.code !== bridgeFixedScope_().code || m.jan !== bridgeFixedScope_().jan || m.supplierCd !== bridgeFixedScope_().supplierCd || m.supplierName !== bridgeFixedScope_().supplierName ||
       ['unitPrice', 'jodai', 'shiire', 'unit', 'lastSaleDate'].some(k => m[k] !== s[k])) errors.push('BRIDGE_MASTER_PAYLOAD_MISMATCH');
   if (!categories.some(c => Number(c.id) === d.categoryId)) errors.push('BRIDGE_CATEGORY_NOT_FOUND');
@@ -6252,7 +6237,7 @@ function bridgeSnapshot_(d) {
         !['表示', '非表示'].includes(s.set_flag))) bridgeFail_('CATALOG_COVERAGE_INVALID');
   // An unapproved expectedDraft must not turn this endpoint into an arbitrary name lookup.
   const namesToCheck = [master.projection.sourceName];
-  if (bridgeHash_(d) === BMALL_BRIDGE_APPROVED_DRAFT_SHA256_) namesToCheck.push(d.productName);
+  if (bridgeHash_(d) === bridgeReleaseGate_('draftSha256', BMALL_BRIDGE_APPROVED_DRAFT_SHA256_)) namesToCheck.push(d.productName);
   const names = new Set(namesToCheck.map(bridgeNormalizeName_));
   const codeMatches = [], janMatches = [], nameMatches = [], orphanRows = [], drafts = {}, sets = {};
   const addMatches = (record, code, jan, name) => {
@@ -6290,13 +6275,13 @@ function bridgeSnapshot_(d) {
     }
   });
   sheets.parents.values.slice(1).forEach((r, i) => {
-    if (r[0] && !childCounts[String(r[0])]) orphanRows.push({ sheet: 'drafts', row: i + 2, draftId: String(r[0]), reason: 'MISSING_SETS' });
+    if (r[0] && !childCounts[String(r[0])] && !bridgeVerifiedArchive_(r, sheets)) orphanRows.push({ sheet: 'drafts', row: i + 2, draftId: String(r[0]), reason: 'MISSING_SETS' });
   });
   // Legacy/manual writers do not all honor this lock. An unstable read must not be complete.
   if (rawHash !== bridgeHash_(bridgeReadSheets_()) || bridgeStable_(journal) !== bridgeStable_(bridgeReadJournal_())) bridgeFail_('CONCURRENT_CHANGE');
   if (Date.now() - observedAt > 60000 || Date.now() < observedAt) bridgeFail_('SNAPSHOT_TOO_SLOW');
   return { ok: true, contractVersion: 2, complete: true,
-    includesHidden: BMALL_BRIDGE_HIDDEN_COVERAGE_VERIFIED_ === true, observedAt: observedAt,
+    includesHidden: bridgeReleaseGate_('hiddenCoverageVerified', BMALL_BRIDGE_HIDDEN_COVERAGE_VERIFIED_) === true, observedAt: observedAt,
     baselineHash: bridgeBaselineHash_(sheets, journal && journal.draftId), codeMatches: codeMatches,
     janMatches: janMatches, nameMatches: nameMatches,
     validatedDraftHash: validationErrors.length ? null : bridgeHash_(d), validationErrors: validationErrors,
@@ -6327,7 +6312,7 @@ function bridgeAssertReadback_(before, after, d, id) {
 }
 function saveDraftBridge_(draft) {
   const props = PropertiesService.getScriptProperties();
-  if (props.getProperty('BMALL_BRIDGE_WRITE_ENABLED') !== 'true' || BMALL_BRIDGE_EXCLUSIVE_WINDOW_VERIFIED_ !== true) bridgeFail_('SAVE_DISABLED');
+  if (props.getProperty('BMALL_BRIDGE_WRITE_ENABLED') !== 'true' || bridgeReleaseGate_('exclusiveWindowVerified', BMALL_BRIDGE_EXCLUSIVE_WINDOW_VERIFIED_) !== true) bridgeFail_('SAVE_DISABLED');
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(1000)) bridgeFail_('BUSY_NO_WRITE');
   let claimed = false;
@@ -6362,4 +6347,115 @@ function saveDrafts(params, internalCapability) {
   const lock = LockService.getScriptLock(); lock.waitLock(10000);
   try { return saveDraftsUnlocked_(params, null); }
   finally { lock.releaseLock(); }
+}
+
+// 12680限定の読取監査。既存認証のみを使用し、シート・プロパティ・通知へ書かない。
+function bridgeAuditCatalog_(path) {
+  const allowed = {'/products':'products','/product_sets':'product_sets','/categories':'categories','/product_features':'product_features','/view_groups':'view_groups'};
+  if (!Object.prototype.hasOwnProperty.call(allowed, path)) bridgeFail_('CATALOG_PATH_INVALID');
+  const token = getBcartToken(), rows = [], ids = new Set(), startedAt = Date.now();
+  const request = offset => ({url:BCART_BASE_URL+path+'?limit=100&offset='+offset,
+    method:'get',headers:{Authorization:'Bearer '+token,Accept:'application/json'},muteHttpExceptions:true,followRedirects:false});
+  let total = null, pages = 0;
+  const consume = (response, offset) => {
+    if (response.getResponseCode() !== 200) bridgeFail_('CATALOG_READ_FAILED');
+    let body;try {body=JSON.parse(response.getContentText());} catch (_) {bridgeFail_('CATALOG_SCHEMA_INVALID');}
+    const data=Array.isArray(body.data)?body.data:body[allowed[path]], rawTotal=body.meta&&body.meta.total;
+    if ((typeof rawTotal!=='number'&&typeof rawTotal!=='string')||!/^\d+$/.test(String(rawTotal))) bridgeFail_('CATALOG_TOTAL_MISSING');
+    const n=Number(rawTotal);
+    if (!Number.isSafeInteger(n)||n<0||n>50000||!Array.isArray(data)||body.error||body.message) bridgeFail_('CATALOG_SCHEMA_INVALID');
+    if (total!==null&&n!==total) bridgeFail_('CATALOG_CHANGED');total=n;
+    if (data.length!==Math.min(100,total-offset)) bridgeFail_('CATALOG_PAGE_INCOMPLETE');
+    data.forEach(row=>{if (!row||!/^[1-9]\d*$/.test(String(row.id))||!Number.isSafeInteger(Number(row.id))||ids.has(String(row.id))) bridgeFail_('CATALOG_ID_INVALID');ids.add(String(row.id));rows.push(row);});pages++;
+  };
+  const first=request(0);consume(UrlFetchApp.fetch(first.url,first),0);
+  const offsets=[];for(let off=100;off<total;off+=100)offsets.push(off);
+  // 既存GASと同じfetchAllを使い、固定ページを10件ずつ検証する。
+  for(let i=0;i<offsets.length;i+=10){const chunk=offsets.slice(i,i+10),responses=UrlFetchApp.fetchAll(chunk.map(request));
+    if(responses.length!==chunk.length)bridgeFail_('CATALOG_PAGE_INCOMPLETE');responses.forEach((r,j)=>consume(r,chunk[j]));}
+  if(rows.length!==total)bridgeFail_('CATALOG_PAGE_INCOMPLETE');
+  return {rows:rows,evidence:{path:path,total:total,rowCount:rows.length,pageCount:pages,limit:100,filters:[],startedAt:startedAt,completedAt:Date.now()}};
+}
+function bridgeArchiveCell_(v) {
+  // 正規Sheets読取のUNFORMATTED_VALUE/SERIAL_NUMBERと、GAS Dateを同じ日本時間の数値へ揃える。
+  // 履歴行・証跡ハッシュの値は変更しない。
+  if (v instanceof Date) {
+    if (!Number.isFinite(v.getTime())) bridgeFail_('ARCHIVE_DATE_INVALID');
+    // スプレッドシートの実タイムゾーンで、Sheets APIのSERIAL_NUMBERと同じ値に揃える。
+    const text = Utilities.formatDate(v, getDataSpreadsheet_().getSpreadsheetTimeZone(), "yyyy-MM-dd'T'HH:mm:ss.SSS");
+    const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})$/.exec(text);
+    if (!parts) bridgeFail_('ARCHIVE_DATE_INVALID');
+    const localMilliseconds = Date.UTC(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]), Number(parts[4]), Number(parts[5]), Number(parts[6]), Number(parts[7]));
+    return String((localMilliseconds + 2209161600000) / 86400000);
+  }
+  if (v == null) return '';
+  if (v === true) return 'TRUE';
+  if (v === false) return 'FALSE';
+  return String(v);
+}
+function bridgeArchiveRowHash_(r){return bridgeHash_(Array.from({length:22},(_,i)=>bridgeArchiveCell_(r[i])));}
+function bridgeVerifiedArchive_(r, sheets) {
+  if(String(r[1])!=='統合済'||typeof BMALL_BRIDGE_ARCHIVE_PROOFS_==='undefined')return false;
+  const found=BMALL_BRIDGE_ARCHIVE_PROOFS_.filter(p=>p.draftId===String(r[0]));if(found.length!==1)return false;
+  const p=found[0];if(bridgeArchiveRowHash_(r)!==p.rowSha256||r.slice(22).some(v=>v!==''&&v!=null))return false;
+  const parents=sheets.parents.values.map((v,i)=>({v:v,i:i})).filter(x=>String(x.v[0])===p.draftId);
+  if(parents.length!==1||sheets.parents.formulas[parents[0].i].some(Boolean))return false;
+  if(sheets.children.values.slice(1).some(v=>String(v[0])===p.draftId)||!p.transferredSets.length)return false;
+  return p.transferredSets.every(t=>{
+    const rows=sheets.children.values.slice(1).map((v,i)=>({v:v,i:i+1})).filter(x=>bridgeNormalizeCode_(x.v[1])===t.code);
+    if(rows.length!==1||String(rows[0].v[0])!==t.destinationDraftId||sheets.children.formulas[rows[0].i].some(Boolean))return false;
+    const v=rows[0].v;
+    return bridgeNormalizeJan_(v[3])===t.jan&&['unitPrice','jodai','shiire','unit'].every((k,j)=>bridgeArchiveCell_(v[j+4])===t[k]);
+  });
+}
+function bridge12680Audit_() {
+  const startedAt=Date.now(),sheets=bridgeReadSheets_(),baselineHash=bridgeHash_(sheets),master=bridgeReadMaster_();
+  const paths=['/products','/product_sets','/categories','/product_features','/view_groups'],reads={};
+  paths.forEach(p=>{reads[p]=bridgeAuditCatalog_(p);});
+  const products=reads['/products'].rows,sets=reads['/product_sets'].rows,scope=bridgeReadScope_(),fixed=bridgeFixedScope_();
+  const productIds=new Set(products.map(p=>String(p.id)));
+  if(products.some(p=>typeof p.name!=='string'||!['表示','非表示'].includes(p.flag)||![p.product_no,p.main_no,p.jan_code].every(bridgeScalarKey_))||
+     sets.some(s=>!productIds.has(String(s.product_id))||typeof s.name!=='string'||!['表示','非表示'].includes(s.set_flag)||
+       !Object.prototype.hasOwnProperty.call(s,'product_no')||!Object.prototype.hasOwnProperty.call(s,'jan_code')||![s.product_no,s.jan_code].every(bridgeScalarKey_)))bridgeFail_('CATALOG_COVERAGE_INVALID');
+  const identity=(ps,ss)=>({products:ps.map(p=>[p.id,p.product_no,p.main_no,p.jan_code,p.name,p.flag]),sets:ss.map(s=>[s.id,s.product_id,s.product_no,s.jan_code,s.name,s.set_flag])});
+  // 画像等の別更新と区別し、コード/JAN/名称/表示/所属/全IDの安定を再取得で検証する。
+  const secondProducts=bridgeAuditCatalog_('/products'),secondSets=bridgeAuditCatalog_('/product_sets');
+  if(bridgeHash_(identity(products,sets))!==bridgeHash_(identity(secondProducts.rows,secondSets.rows)))bridgeFail_('CATALOG_CHANGED');
+  if(baselineHash!==bridgeHash_(bridgeReadSheets_()))bridgeFail_('CONCURRENT_CHANGE');
+  const targetCode=scope.code,targetJan=fixed.jan,targetNames=new Set([master.projection.sourceName,fixed.productName].map(bridgeNormalizeName_));
+  const matches={code:[],jan:[],name:[]};
+  const match=(kind,id,code,jan,name,hidden)=>{const r={kind:kind,id:String(id),hidden:hidden};if(bridgeNormalizeCode_(code)===targetCode)matches.code.push(r);
+    if(bridgeNormalizeJan_(jan)===targetJan)matches.jan.push(r);if(targetNames.has(bridgeNormalizeName_(name)))matches.name.push(r);};
+  products.forEach(p=>{match('product',p.id,p.product_no,p.jan_code,p.name,p.flag==='非表示');if(bridgeNormalizeCode_(p.main_no)===targetCode&&bridgeNormalizeCode_(p.product_no)!==targetCode)matches.code.push({kind:'product',id:String(p.id),hidden:p.flag==='非表示'});});
+  sets.forEach(s=>match('productSet',s.id,s.product_no,s.jan_code,s.name,s.set_flag==='非表示'));
+  const parents=new Map(),children=new Map(),orphans=[];let parentCount=0,setCount=0,verifiedArchives=0;
+  sheets.parents.values.slice(1).forEach((r,i)=>{if(r.every(v=>v===''))return;parentCount++;const id=String(r[0]||'');if(!id||parents.has(id))orphans.push({reason:'INVALID_PARENT_ID',row:i+2});parents.set(id,r);match('draft',id,'','',r[4],false);});
+  sheets.children.values.slice(1).forEach((r,i)=>{if(r.every(v=>v===''))return;setCount++;const id=String(r[0]||'');if(!id||!parents.has(id))orphans.push({reason:'MISSING_PARENT',row:i+2});children.set(id,(children.get(id)||0)+1);match('draftSet',id,r[1],r[3],r[2],false);});
+  parents.forEach((r,id)=>{if(!children.has(id)){if(bridgeVerifiedArchive_(r,sheets))verifiedArchives++;else orphans.push({reason:'UNVERIFIED_PARENT_WITHOUT_SETS'});}});
+  const typeSheet=getDataSpreadsheet_().getSheetByName(SHEET_FEATURES);if(!typeSheet)bridgeFail_('FEATURE_TYPES_MISSING');
+  const types={};typeSheet.getDataRange().getValues().slice(1).forEach(r=>{types[String(r[0])]=String(r[1]);});
+  const featureIds=[36,35],referenceCodes=['12028','12029','12395'];
+  const references=referenceCodes.map(code=>{const found=sets.filter(s=>bridgeNormalizeCode_(s.product_no)===code);return {code:code,sets:found.map(s=>{
+    const p=products.find(p=>String(p.id)===String(s.product_id));return {productId:p.id,productName:p.name,categoryId:p.category_id,featureIds:[p.feature_id1,p.feature_id2,p.feature_id3],
+      productViewGroupFilter:p.view_group_filter,setViewGroupFilter:s.view_group_filter,taxTypeId:s.tax_type_id,jodaiType:s.jodai_type,productFlag:p.flag,setFlag:s.set_flag};})};});
+  const hiddenProducts=products.filter(p=>p.flag==='非表示').length,hiddenSets=sets.filter(s=>s.set_flag==='非表示').length;
+  const audit={targetCode:targetCode,targetJan:targetJan,complete:true,includesHidden:true,startedAt:startedAt,completedAt:Date.now(),catalogEvidence:paths.map(p=>reads[p].evidence),
+    secondPassEvidence:[secondProducts.evidence,secondSets.evidence],catalogIdentityStable:true,hiddenProducts:hiddenProducts,hiddenSets:hiddenSets,matches:matches,
+    parentRows:parentCount,setRows:setCount,verifiedArchivedParents:verifiedArchives,unverifiedOrphans:orphans.length,baselineHash:baselineHash,masterProjection:master.projection,
+    category:reads['/categories'].rows.filter(c=>Number(c.id)===35).map(c=>({id:c.id,name:c.name})),
+    features:reads['/product_features'].rows.filter(f=>featureIds.includes(Number(f.id))).map(f=>({id:f.id,name:f.name,type:types[String(f.id)]||null})),
+    viewGroups:reads['/view_groups'].rows.filter(g=>[1,2,10].includes(Number(g.id))).map(g=>({id:g.id,name:g.name})),references:references,notification:{verified:true,enabled:false},writes:0};
+  const m=master.projection;
+  audit.spreadsheetTimeZone = getDataSpreadsheet_().getSpreadsheetTimeZone();
+  // 秘密・台帳本文・他商品のデータは返さず、OFF/試行有無と固定マスター照合だけを返す。
+  const writeSetting = PropertiesService.getScriptProperties().getProperty('BMALL_BRIDGE_WRITE_ENABLED');
+  audit.releaseEvidence = {
+    gasVersion: VERSION,
+    writeSetting: writeSetting === null ? 'unset' : ['true', 'false'].includes(writeSetting) ? writeSetting : 'other',
+    attempted: bridgeReadJournal_() !== null,
+    approvedMasterMatches: bridgeHash_(master.projection) === bridgeReleaseGate_('masterSha256', BMALL_BRIDGE_APPROVED_MASTER_SHA256_),
+    hiddenCoverageVerified: bridgeReleaseGate_('hiddenCoverageVerified', BMALL_BRIDGE_HIDDEN_COVERAGE_VERIFIED_) === true,
+    exclusiveCoordinationAgreed: bridgeReleaseGate_('exclusiveWindowVerified', BMALL_BRIDGE_EXCLUSIVE_WINDOW_VERIFIED_) === true
+  };
+  return {ok:true,total:1,candidates:[{code:m.code,name:m.sourceName,supplierCd:m.supplierCd,supplierName:m.supplierName,jan:m.jan,price:m.unitPrice,kouri:m.jodai,shiire:m.shiire,unit:m.unit,lastSaleDate:m.lastSaleDate}],audit:audit};
 }
