@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.34.6';
+const VERSION = 'v2.34.7';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -2842,19 +2842,53 @@ function spHash_(value) {
     .map(x => ('0' + ((x + 256) % 256).toString(16)).slice(-2)).join('');
 }
 
-// カンマ区切りの会員を展開しても価格・数量割引等の全項目を保持する。
-function spExpand_(raw) {
+// 送信・一覧取得・個別取得を同じ形へそろえる。未知の項目と数量割引は保持する。
+function spNormalizeValue_(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('BCARTの特別価格形式が不正です');
+  const normalized = JSON.parse(JSON.stringify(value));
+  normalized.unit_price = spPrice_(value.unit_price);
+  if (value.volume_discount === undefined || value.volume_discount === null || value.volume_discount === '') {
+    normalized.volume_discount = null;
+  }
+  return normalized;
+}
+
+// カンマ区切りの会員を展開する。旧記録の照合時だけ補完前の表現も保持する。
+function spExpand_(raw, legacy) {
   const result = {};
   Object.keys(raw || {}).forEach(key => {
-    const value = raw[key];
-    if (!value || typeof value !== 'object') throw new Error('BCARTの特別価格形式が不正です');
-    spPrice_(value.unit_price);
+    const value = spNormalizeValue_(raw[key]);
     spIds_(key).forEach(id => {
-      if (result[id] && spHash_(result[id]) !== spHash_(value)) throw new Error('BCARTに同一会員の異なる価格が重複しています。管理画面で確認してください');
-      result[id] = JSON.parse(JSON.stringify(value));
+      if (result[id] && spHash_(spNormalizeValue_(result[id])) !== spHash_(value)) throw new Error('BCARTに同一会員の異なる価格が重複しています。管理画面で確認してください');
+      result[id] = JSON.parse(JSON.stringify(legacy ? raw[key] : value));
     });
   });
   return result;
+}
+
+// 旧方式では新規会員だけvolume_discountを省略した。その表現を再現し全項目をハッシュ照合する。
+// 価格だけの一致で確定しない。対象外会員・数量割引・未知項目が違えば記録を保持する。
+function spLegacyAfterMatches_(journal, raw) {
+  if (journal.normalizationVersion !== undefined || !Array.isArray(journal.writes) || !journal.writes.length) return false;
+  const model = spReadModel_();
+  const sources = model.sources.filter(s => s.setId === String(journal.setId));
+  const priorMembers = new Set(sources.flatMap(s => s.ready ? s.members : s.legacyMembers));
+  const added = new Set();
+  journal.writes.forEach(w => {
+    const source = sources.find(s => s.key === w.key && s.sheetName === w.sheetName && s.id === w.id);
+    if (!source || w.setId !== String(journal.setId) ||
+        spHash_({ members: source.currentMembers, price: source.currentPrice, groupId: source.groupId }) !== w.currentHash) {
+      throw new Error('特価マスターが処理中に変更されました。復旧前に確認してください');
+    }
+    spIds_(w.members.join(',')).filter(mid => !priorMembers.has(mid)).forEach(mid => added.add(mid));
+  });
+  return [true, false].some(legacy => {
+    const expected = spExpand_(raw, legacy);
+    added.forEach(mid => {
+      if (expected[mid] && expected[mid].volume_discount === null) delete expected[mid].volume_discount;
+    });
+    return spHash_(expected) === journal.afterHash;
+  });
 }
 
 // 追加3列は通常の読取りでは作らない。書込み前に既存列と競合しないか確認する。
@@ -3032,7 +3066,7 @@ function spPlanSet_(model, set, changes, initialize) {
   touched.forEach(mid => {
     const decision = spSelectPrice_(after, mid);
     const before = actual[mid] ? Number(actual[mid].unit_price) : null;
-    if (decision) proposed[mid] = Object.assign({}, proposed[mid] || {}, { unit_price: decision.price });
+    if (decision) proposed[mid] = spNormalizeValue_(Object.assign({}, proposed[mid] || {}, { unit_price: decision.price }));
     else delete proposed[mid];
     rows.push({ member_id: mid, before: before, after: decision ? decision.price : null,
       reason: decision ? decision.reason : '適用条件なし（通常価格へ戻す）', changed: before !== (decision ? decision.price : null) });
@@ -3084,7 +3118,7 @@ function spApplyPlan_(plan, approvedToken) {
   if (!approvedToken || approvedToken !== plan.token) throw new Error('設定またはBCART価格がプレビュー後に変わりました。再度確認してください');
   // リモート更新前に復旧に必要な反映状態だけを端末外のScriptPropertiesへ保存する。
   const props = PropertiesService.getScriptProperties();
-  const journal = { setId: plan.setId, beforeHash: plan.beforeHash, afterHash: plan.afterHash, writes: plan.writes };
+  const journal = { normalizationVersion: 'v1', setId: plan.setId, beforeHash: plan.beforeHash, afterHash: plan.afterHash, writes: plan.writes };
   const encoded = JSON.stringify(journal);
   if (Utilities.newBlob(encoded).getBytes().length > 8000) throw new Error('反映条件が多いため安全な復旧記録の上限を超えています。反映していません');
   props.setProperty(SP_PENDING_KEY_, encoded);
@@ -3122,14 +3156,24 @@ function recoverSpecialPriceOperation(params) {
   const current = bcartGet('/product_sets/' + journal.setId);
   if (!current.ok || !current.data) return { ok: false, error: 'BCARTを取得できません。復旧記録を保持しています' };
   const hash = spHash_(spExpand_(current.data.special_price));
-  if (hash === journal.afterHash) {
+  const legacyHash = journal.normalizationVersion === undefined ? spHash_(spExpand_(current.data.special_price, true)) : null;
+  if (hash === journal.afterHash || legacyHash === journal.afterHash || spLegacyAfterMatches_(journal, current.data.special_price)) {
+    // 全項目の一致を確認した旧記録は、シート更新前に正規化ハッシュへ移す。
+    // 途中のシート保存が失敗しても、次回は更新済みの一部行から旧表現を推測しない。
+    if (journal.normalizationVersion === undefined) {
+      journal.normalizationVersion = 'v1';
+      journal.afterHash = hash;
+      const encoded = JSON.stringify(journal);
+      if (Utilities.newBlob(encoded).getBytes().length > 8000) throw new Error('復旧記録の上限を超えています。記録を保持しています');
+      props.setProperty(SP_PENDING_KEY_, encoded);
+    }
     spApplySnapshotWrites_(journal.writes);
-    props.deleteProperty(SP_PENDING_KEY_);
     spRefreshGroupMarkers_();
+    props.deleteProperty(SP_PENDING_KEY_);
     addHistory({ userName: params._userName, code: '', name: journal.setId, type: '特価反映の復旧確認', before: '', after: 'BCART再読一致・反映状態を確定', result: '成功' });
     return { ok: true, recovered: true, message: 'BCART再読が一致したため、前回の反映状態を確定しました' };
   }
-  if (hash === journal.beforeHash) {
+  if (hash === journal.beforeHash || legacyHash === journal.beforeHash) {
     props.deleteProperty(SP_PENDING_KEY_);
     return { ok: true, recovered: false, message: 'BCARTは変更前のままです。プレビューから反映し直してください' };
   }
