@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.34.7';
+const VERSION = 'v2.34.8';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -2912,7 +2912,7 @@ function spSnapshotSchema_(sheetName, write) {
   return { sheet: sheet, start: start, exists: present || write };
 }
 
-function spReadModel_() {
+function spReadModel_(recoveryWrites) {
   const groups = {};
   const groupRows = getOrCreateSheet(SHEET_SP_GROUPS).getDataRange().getValues();
   groupRows.slice(1).forEach(row => {
@@ -2941,7 +2941,20 @@ function spReadModel_() {
       if (sheetName === SHEET_SP_DETAILS && !group) throw new Error('特価明細の所属グループが見つかりません');
       const ready = schema.exists && String(row[schema.start + 1] || '') === 'v1';
       if (schema.exists && row[schema.start + 1] && !ready) throw new Error('未対応の特価反映状態です');
-      const members = ready ? spIds_(row[schema.start - 1]) : [];
+      let members = [];
+      if (ready) {
+        try { members = spIds_(row[schema.start - 1]); }
+        catch (error) {
+          // 復旧済み価格の記録保存中に、Sheetsがカンマ区切りIDを巨大な数値へ変換した行だけを救済する。
+          // 全体のBCARTハッシュ一致後に呼ぶ保存処理専用。通常読取と他行の不正値は停止を維持する。
+          const repair = (recoveryWrites || []).find(w => w.key === (group ? 'G:' : 'I:') + String(row[0]) &&
+            w.sheetName === sheetName && w.id === String(row[0]) && w.setId === String(row[group ? 2 : 4]));
+          if (!repair || typeof row[schema.start - 1] !== 'number' ||
+              Number(row[schema.start]) !== repair.price ||
+              spHash_({ members: group ? group.members : spIds_(row[2]), price: row[group ? 5 : 7], groupId: group ? group.id : '' }) !== repair.currentHash) throw error;
+          members = spIds_(repair.members.join(','));
+        }
+      }
       const price = members.length ? spPrice_(row[schema.start]) : null;
       if (ready && !members.length && row[schema.start] !== '' && row[schema.start] !== null && row[schema.start] !== undefined) throw new Error('反映済み会員と価格が一致しません');
       const setId = String(row[group ? 2 : 4] || '');
@@ -3086,7 +3099,7 @@ function spPlanSet_(model, set, changes, initialize) {
 
 function spApplySnapshotWrites_(writes) {
   // 先にすべての行を検証する。失敗時は復旧記録を残して後続の特価更新を止める。
-  const model = spReadModel_();
+  const model = spReadModel_(writes);
   const entries = writes.map(w => {
     const s = model.sources.find(s => s.key === w.key && s.setId === w.setId);
     if (!s || spHash_({ members: s.currentMembers, price: s.currentPrice, groupId: s.groupId }) !== w.currentHash) {
@@ -3095,6 +3108,8 @@ function spApplySnapshotWrites_(writes) {
     return { source: s, write: w, schema: spSnapshotSchema_(w.sheetName, true) };
   });
   entries.forEach(e => {
+    // 17名等のカンマ連結を数値として丸めないよう、値より先に文字列書式を固定する。
+    e.schema.sheet.getRange(e.source.rowIdx, e.schema.start).setNumberFormat('@');
     e.schema.sheet.getRange(e.source.rowIdx, e.schema.start, 1, 3).setValues([[e.write.members.join(','), e.write.price === null ? '' : e.write.price, 'v1']]);
     // 当該保存内容を反映したときだけ未反映バッジを消す。
     e.schema.sheet.getRange(e.source.rowIdx, e.source.type === 'group' ? 8 : 10).setValue(e.write.appliedAt);
