@@ -1,6 +1,6 @@
 import {get,set,records,update as storageUpdate,mergeReceipt,sanitizeLegacyQr,clearMakerConnection,storageMode} from './storage.js';
 import {buildWorkbook} from './export.js';
-const APP_VERSION='v0.14.2';
+const APP_VERSION='v0.14.3';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -491,7 +491,7 @@ async function refreshAdmin(){const data=await api('admin_orders');$('admin-orde
  const actionButton=(label,state)=>{const button=element('button',label,'secondary');button.onclick=async()=>{try{let slip_number;if(state==='entered'){slip_number=prompt('販売管理に入力した伝票番号を入力してください。');if(!slip_number)return;}await api('posting',{request_id:order.request_id,booth:order.booth,revision:order.posting.revision,state,slip_number});await refreshAdmin();}catch(e){message(errorText(e));}};node.append(button);};
  if(order.state==='active'&&order.customer.customer_code&&order.posting.state==='ready')actionButton('この注文の入力を担当する','claimed');
  if(order.posting.state==='claimed'&&order.posting.owner===info.scope.device){actionButton('入力済みにする','entered');actionButton('入力結果が不明','unknown');}
- showRemarks(node,order.remarks);const receiptButton=element('button','購入控えを表示','secondary');receiptButton.onclick=()=>showReceipt(order);node.append(receiptButton);$('admin-orders').append(node);}}
+ showRemarks(node,order.remarks);const receiptButton=element('button','購入控えを表示','secondary');receiptButton.onclick=()=>showReceipt(order.purchase_receipt||order);node.append(receiptButton);$('admin-orders').append(node);}}
 async function reviewSubject(row,code,state){
  const label=state==='confirmed'?code+' に確定':'保留';
  if(!confirm(row.salon+' ／ '+row.name+' を「'+label+'」にしますか？'))return;
