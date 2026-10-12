@@ -97,7 +97,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 .diff-detail .new { color: #059669; font-weight: 600; }
 
 /* 出所と変更方向を文字でも明示し、色だけに頼らず比較できるようにする。 */
-.diff-change { display: grid; grid-template-columns: 90px minmax(0, 1fr) 72px minmax(0, 1fr); gap: 12px; align-items: center; max-width: 840px; padding: 6px 0; }
+.diff-change { display: grid; grid-template-columns: 146px minmax(0, 1fr) 72px minmax(0, 1fr); gap: 12px; align-items: center; max-width: 840px; padding: 6px 0; }
 .diff-change-label { color: #4b5563; font-weight: 600; }
 .diff-change-value { border: 1px solid #d1d5db; border-radius: 7px; padding: 9px 12px; background: #f9fafb; min-width: 0; }
 .diff-change-source { display: block; color: #4b5563; font-size: 12px; font-weight: 600; }
@@ -425,7 +425,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
       <div id="csvWarn" class="warn-bar" style="display:none;"></div>
 
       <div class="summary-bar">
-        <div class="summary-item" id="card-price" onclick="setFilterByType('price')"><div class="label">💰 価格・上代差異</div><div class="value value-price" id="cnt-price">-</div></div>
+        <div class="summary-item" id="card-price" onclick="setFilterByType('price')"><div class="label">💰 価格・メーカー希望小売価格差異</div><div class="value value-price" id="cnt-price">-</div></div>
         <div class="summary-item" id="card-disc"  onclick="setFilterByType('discontinued')"><div class="label">🚫 廃番未処理</div><div class="value value-disc" id="cnt-disc">-</div></div>
         <div class="summary-item" id="card-unreg" onclick="setFilterByType('unregistered')"><div class="label">❌ 未登録</div><div class="value value-unreg" id="cnt-unreg">-</div></div>
         <div class="summary-item" id="card-ignore" onclick="setFilterByType('ignored')"><div class="label">📋 対応不要</div><div class="value" id="cnt-ignore">-</div></div>
@@ -434,7 +434,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
       <div class="filter-bar">
         <span style="font-size:13px;color:#6b7280;">絞り込み:</span>
         <button class="filter-btn type-filter-btn active" data-filter="all"         onclick="setFilter('all',this)">すべて</button>
-        <button class="filter-btn type-filter-btn"        data-filter="price"        onclick="setFilter('price',this)">💰 価格・上代</button>
+        <button class="filter-btn type-filter-btn"        data-filter="price"        onclick="setFilter('price',this)">💰 価格・メーカー希望小売価格</button>
         <button class="filter-btn type-filter-btn"        data-filter="jan"          onclick="setFilter('jan',this)">🔖 JAN差異</button>
         <button class="filter-btn type-filter-btn"        data-filter="discontinued" onclick="setFilter('discontinued',this)">🚫 廃番</button>
         <button class="filter-btn type-filter-btn"        data-filter="unregistered" onclick="setFilter('unregistered',this)">❌ 未登録</button>
@@ -471,7 +471,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
         </label>
         <div class="bulk-update-group" id="bulkUpdateGroup">
           <button class="btn btn-price btn-sm" id="bulkPriceBtn" onclick="bulkUpdateByType('price')" disabled title="チェックした商品の売価差異のみ更新">💰 売価のみ</button>
-          <button class="btn btn-jodai btn-sm" id="bulkJodaiBtn" onclick="bulkUpdateByType('jodai')" disabled title="チェックした商品の上代差異のみ更新">💴 上代のみ</button>
+          <button class="btn btn-jodai btn-sm" id="bulkJodaiBtn" onclick="bulkUpdateByType('jodai')" disabled title="チェックした商品のメーカー希望小売価格差異のみ更新">💴 メーカー希望小売価格のみ</button>
           <button class="btn btn-primary btn-sm" id="bulkAllBtn"  onclick="bulkUpdateByType('all')"   disabled title="チェックした商品の全差異をまとめて更新">▶ まとめて更新</button>
           <button class="btn btn-wip btn-sm" id="bulkWipBtn" onclick="bulkMarkWipAll()" disabled style="display:none;" title="チェックした未登録商品をまとめて作業中にする">📝 一括作業中にする</button>
           <button class="btn btn-gray btn-sm" id="bulkAddSetBtn" disabled style="display:none;" title="チェックした作業中の商品を既存のBCART商品にまとめて追加">📦 既存の商品にまとめて追加</button>
@@ -774,27 +774,22 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <!-- 特価サロングループ編集モーダル（会員はカード画面から別途管理） -->
 <!-- ↑このコメントは既存groupModalを置き換え済み -->
 
-<!-- 上代タイプ選択モーダル -->
+<!-- 価格の表示方法選択モーダル -->
 <div class="modal-overlay" id="jodaiTypeModal">
   <div class="modal">
-    <h3>💴 上代の参考タイプを選択</h3>
+    <h3>💴 メーカー希望小売価格の表示設定</h3>
     <div id="jodaiTypeMessage" style="margin-bottom:12px;font-size:13px;color:#374151;"></div>
     <div class="form-field" style="margin-bottom:16px;">
-      <label>参考タイプ</label>
+      <label>表示方法</label>
       <select id="jodaiTypeSelect" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;background:#fff;">
+        <option value="メーカー希望小売価格" selected>メーカー希望小売価格</option>
         <option value="非表示">非表示</option>
         <option value="オープン">オープン</option>
-        <option value="参考上代" selected>参考上代</option>
-        <option value="メーカー希望小売価格">メーカー希望小売価格</option>
-        <option value="カタログ価格">カタログ価格</option>
-        <option value="カスタム">カスタム</option>
-        <option value="単価">単価</option>
       </select>
     </div>
     <div class="actions" style="flex-wrap:wrap;gap:6px;">
       <button class="btn btn-gray" onclick="cancelJodaiType()">キャンセル</button>
-      <button class="btn btn-jodai" onclick="confirmJodaiTypeDefault()" style="background:#ede9fe;color:#6d28d9;border-color:#c4b5fd;">💴 参考上代で更新</button>
-      <button class="btn btn-jodai" onclick="confirmJodaiType()">💴 選択して更新</button>
+      <button class="btn btn-jodai" onclick="confirmJodaiType()">💴 この設定で更新</button>
     </div>
   </div>
 </div>
@@ -886,20 +881,16 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
           <input type="number" id="regPrice" min="0">
         </div>
         <div class="form-field">
-          <label>上代（定価1）</label>
+          <label>メーカー希望小売価格（定価1）</label>
           <input type="number" id="regKouri" min="0">
         </div>
         <div class="form-field">
-          <label>上代タイプ</label>
+          <label>価格の表示方法</label>
           <select id="regJodaiType">
-            <option value="非表示">非表示</option>
-            <option value="オープン">オープン</option>
-            <option value="参考上代">参考上代</option>
-            <option value="メーカー希望小売価格" selected>メーカー希望小売価格</option>
-            <option value="カタログ価格">カタログ価格</option>
-            <option value="カスタム">カスタム</option>
-            <option value="単価">単価</option>
-          </select>
+        <option value="メーカー希望小売価格" selected>メーカー希望小売価格</option>
+        <option value="非表示">非表示</option>
+        <option value="オープン">オープン</option>
+      </select>
         </div>
         <div class="form-field">
           <label>仕入単価</label>
@@ -1207,16 +1198,12 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
           </select>
         </div>
         <div style="display:flex;align-items:center;gap:6px;">
-          <label style="font-size:13px;color:#6b7280;white-space:nowrap;">上代タイプ（全件）:</label>
+          <label style="font-size:13px;color:#6b7280;">価格の表示方法（全件）:</label>
           <select id="bRegJodaiType" style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">
-            <option value="非表示">非表示</option>
-            <option value="オープン">オープン</option>
-            <option value="参考上代">参考上代</option>
-            <option value="メーカー希望小売価格" selected>メーカー希望小売価格</option>
-            <option value="カタログ価格">カタログ価格</option>
-            <option value="カスタム">カスタム</option>
-            <option value="単価">単価</option>
-          </select>
+        <option value="メーカー希望小売価格" selected>メーカー希望小売価格</option>
+        <option value="非表示">非表示</option>
+        <option value="オープン">オープン</option>
+      </select>
         </div>
       </div>
     </div>
@@ -1267,16 +1254,12 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
         </select>
       </div>
       <div style="display:flex;align-items:center;gap:6px;">
-        <label style="font-size:13px;color:#6b7280;white-space:nowrap;">上代タイプ（全件）:</label>
+        <label style="font-size:13px;color:#6b7280;">価格の表示方法（全件）:</label>
         <select id="bulkAddSetJodaiType" style="padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">
-          <option value="非表示">非表示</option>
-          <option value="オープン">オープン</option>
-          <option value="参考上代">参考上代</option>
-          <option value="メーカー希望小売価格" selected>メーカー希望小売価格</option>
-          <option value="カタログ価格">カタログ価格</option>
-          <option value="カスタム">カスタム</option>
-          <option value="単価">単価</option>
-        </select>
+        <option value="メーカー希望小売価格" selected>メーカー希望小売価格</option>
+        <option value="非表示">非表示</option>
+        <option value="オープン">オープン</option>
+      </select>
       </div>
     </div>
     <div class="actions">
@@ -1346,20 +1329,16 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
           <input type="number" id="addSetPrice" min="0">
         </div>
         <div class="form-field">
-          <label>上代（定価1）</label>
+          <label>メーカー希望小売価格（定価1）</label>
           <input type="number" id="addSetKouri" min="0">
         </div>
         <div class="form-field">
-          <label>上代タイプ</label>
+          <label>価格の表示方法</label>
           <select id="addSetJodaiType">
-            <option value="非表示">非表示</option>
-            <option value="オープン">オープン</option>
-            <option value="参考上代">参考上代</option>
-            <option value="メーカー希望小売価格" selected>メーカー希望小売価格</option>
-            <option value="カタログ価格">カタログ価格</option>
-            <option value="カスタム">カスタム</option>
-            <option value="単価">単価</option>
-          </select>
+        <option value="メーカー希望小売価格" selected>メーカー希望小売価格</option>
+        <option value="非表示">非表示</option>
+        <option value="オープン">オープン</option>
+      </select>
         </div>
         <div class="form-field">
           <label>仕入単価</label>
@@ -1397,7 +1376,9 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = 'v2.20.1';
+const APP_VERSION = 'v2.20.2';
+// 画面で新しく選べる表示方法。保存済みの旧設定は勝手に変換しない。
+const JODAI_DISPLAY_TYPES = ['メーカー希望小売価格', '非表示', 'オープン'];
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
 const BCART_ADMIN_BASE = 'https://beaufieldec.i16.bcart.jp/admin/products';
 
@@ -1768,10 +1749,10 @@ function renderDiffItem(d) {
         }
       }
       if (issue.type === 'jodai') {
-        badges += '<span class="badge badge-jodai">💴 上代差異</span>';
-        details += renderDiffChange('上代', issue.bcartJodai.toLocaleString() + '円', issue.csvJodai.toLocaleString() + '円');
+        badges += '<span class="badge badge-jodai">💴 メーカー希望小売価格差異</span>';
+        details += renderDiffChange('メーカー希望小売価格', issue.bcartJodai.toLocaleString() + '円', issue.csvJodai.toLocaleString() + '円');
         if (!isIgnored) {
-          actionBtns += '<button class="btn btn-jodai btn-sm" onclick="updateJodai(\'' + jsArg(d.bcartSetId) + '\',\'' + jsArg(d.code) + '\',' + issue.csvJodai + ')">💴 上代更新</button>';
+          actionBtns += '<button class="btn btn-jodai btn-sm" onclick="updateJodai(\'' + jsArg(d.bcartSetId) + '\',\'' + jsArg(d.code) + '\',' + issue.csvJodai + ')">💴 メーカー希望小売価格更新</button>';
           updatableIssues.push({ type: 'jodai', jodai: issue.csvJodai });
         }
       }
@@ -1899,7 +1880,7 @@ function updateBulkBtn() {
   allBtn.disabled   = anyCount === 0;
 
   priceBtn.textContent = priceCount > 0 ? '💰 売価のみ (' + priceCount + '件)' : '💰 売価のみ';
-  jodaiBtn.textContent = jodaiCount > 0 ? '💴 上代のみ (' + jodaiCount + '件)' : '💴 上代のみ';
+  jodaiBtn.textContent = jodaiCount > 0 ? '💴 メーカー希望小売価格のみ (' + jodaiCount + '件)' : '💴 メーカー希望小売価格のみ';
   allBtn.textContent   = anyCount   > 0 ? '▶ まとめて更新 (' + anyCount + '件)' : '▶ まとめて更新';
 }
 
@@ -1934,7 +1915,7 @@ async function bulkUpdateByType(type) {
   if (items.length === 0) return;
 
   const jodaiItems = items.filter(i => i.action === 'updateJodai');
-  const typeLabel = { price: '売価', jodai: '上代', all: '全差異' }[type] || '差異';
+  const typeLabel = { price: '売価', jodai: 'メーカー希望小売価格', all: '全差異' }[type] || '差異';
 
   async function proceedBulk(jodaiType) {
     if (jodaiType) jodaiItems.forEach(i => { i.jodaiType = jodaiType; });
@@ -1968,7 +1949,7 @@ async function bulkUpdateByType(type) {
 
   if (jodaiItems.length > 0) {
     openJodaiTypeModal(
-      jodaiItems.length + '件の上代更新に適用する参考タイプを選択してください。',
+      jodaiItems.length + '件のメーカー希望小売価格更新に適用する表示方法を選択してください。',
       proceedBulk
     );
   } else {
@@ -2073,30 +2054,19 @@ function updatePrice(bcartSetId, code, price, csvKouri, csvShiire) {
 function openJodaiTypeModal(message, callback) {
   pendingJodaiCallback = callback;
   document.getElementById('jodaiTypeMessage').textContent = message;
-  const saved = localStorage.getItem('bm_jodaiType') || '参考上代';
-  document.getElementById('jodaiTypeSelect').value = saved;
+  // 以前の選択・旧設定にかかわらず、毎回指定の既定値から確認する。
+  document.getElementById('jodaiTypeSelect').value = 'メーカー希望小売価格';
   document.getElementById('jodaiTypeModal').classList.add('open');
 }
 
 function confirmJodaiType() {
   const type = document.getElementById('jodaiTypeSelect').value;
-  localStorage.setItem('bm_jodaiType', type);
+  if (!JODAI_DISPLAY_TYPES.includes(type)) { showToast('表示方法を選択してください', true); return; }
   closeModal('jodaiTypeModal');
   if (pendingJodaiCallback) {
     const cb = pendingJodaiCallback;
     pendingJodaiCallback = null;
     cb(type);
-  }
-}
-
-function confirmJodaiTypeDefault() {
-  localStorage.setItem('bm_jodaiType', '参考上代');
-  document.getElementById('jodaiTypeSelect').value = '参考上代';
-  closeModal('jodaiTypeModal');
-  if (pendingJodaiCallback) {
-    const cb = pendingJodaiCallback;
-    pendingJodaiCallback = null;
-    cb('参考上代');
   }
 }
 
@@ -2107,11 +2077,11 @@ function cancelJodaiType() {
 
 function updateJodai(bcartSetId, code, jodai) {
   openJodaiTypeModal(
-    code + ' の上代を ' + Number(jodai).toLocaleString() + '円 に更新します。参考タイプを選択してください。',
+    code + ' のメーカー希望小売価格を ' + Number(jodai).toLocaleString() + '円 に更新します。表示方法を選択してください。',
     function(jodaiType) {
       gasPost({ action: 'updateJodai', bcartSetId: bcartSetId, jodai: jodai, jodaiType: jodaiType, code: code }, function(res) {
         if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
-        showToast('上代を更新しました');
+        showToast('メーカー希望小売価格を更新しました');
         removeIssue(code, 'jodai');
       });
     }
@@ -2130,7 +2100,7 @@ function updateJan(bcartSetId, code, janCode) {
 function updateAll(bcartSetId, code, price, jodai, janCode, csvKouri, csvShiire) {
   const items = [];
   if (price !== null) items.push('売価: ' + Number(price).toLocaleString() + '円');
-  if (jodai !== null) items.push('上代: ' + Number(jodai).toLocaleString() + '円');
+  if (jodai !== null) items.push('メーカー希望小売価格: ' + Number(jodai).toLocaleString() + '円');
   if (janCode) items.push('JAN: ' + janCode);
   if (!confirm(code + ' をまとめて更新します。\n' + items.join('\n') + '\n\nよろしいですか？')) return;
 
@@ -2148,7 +2118,7 @@ function updateAll(bcartSetId, code, price, jodai, janCode, csvKouri, csvShiire)
 
   if (jodai !== null) {
     openJodaiTypeModal(
-      code + ' の上代（' + Number(jodai).toLocaleString() + '円）の参考タイプを選択してください。',
+      code + ' のメーカー希望小売価格（' + Number(jodai).toLocaleString() + '円）の表示方法を選択してください。',
       doUpdateAll
     );
   } else {
@@ -6326,8 +6296,11 @@ function draftDefaultJodaiType(d) {
 }
 
 function draftJodaiTypeOptions(selected) {
-  const values = ['非表示', 'オープン', '参考上代', 'メーカー希望小売価格', 'カタログ価格', 'カスタム', '単価'];
-  return values.map(function(v) {
+  // 旧設定のあるドラフトは表示・保存だけで別の設定へ変えない。
+  // 旧値は現在値としてだけ残し、新しく選べるのは指定の3種類に限定する。
+  const legacy = selected && !JODAI_DISPLAY_TYPES.includes(selected)
+    ? '<option value="' + esc(selected) + '" selected disabled>以前の設定（保存済み）</option>' : '';
+  return legacy + JODAI_DISPLAY_TYPES.map(function(v) {
     return '<option value="' + esc(v) + '"' + (v === selected ? ' selected' : '') + '>' + esc(v) + '</option>';
   }).join('');
 }
@@ -6405,7 +6378,7 @@ function draftCardHtml(d) {
         draftFeatureField(3, '特集3（キャンペーン）', d, disabledAttr)
         : '') +
       '<div class="draft-meta-field"><label>税区分</label><select id="draft-tax-' + d.draftId + '"' + disabledAttr + '>' + draftTaxOptions(d.taxTypeId || 1) + '</select></div>' +
-      '<div class="draft-meta-field"><label>上代タイプ</label><select id="draft-jodai-' + d.draftId + '"' + disabledAttr + '>' + draftJodaiTypeOptions(draftDefaultJodaiType(d)) + '</select></div>' +
+      '<div class="draft-meta-field"><label>価格の表示方法</label><select id="draft-jodai-' + d.draftId + '"' + disabledAttr + '>' + draftJodaiTypeOptions(draftDefaultJodaiType(d)) + '</select></div>' +
       '<label class="draft-meta-checkbox"><input type="checkbox" id="draft-vgr-' + d.draftId + '"' + (d.viewGroupRestricted ? ' checked' : '') + disabledAttr + '>🔒 美容師限定表示（非会員・通常会員・個人会員には非表示）</label>' +
       draftProductTagField(d, disabledAttr) +
       '<div class="draft-meta-note">公開設定: 商品(親)は非表示・セットは表示で登録（商品を表示化するには登録後の🌐ボタンから）</div>' +
@@ -6447,7 +6420,7 @@ function draftCardHtml(d) {
     '</div>' +
     targetInfo +
     metaRow +
-    '<table class="draft-set-table"><thead><tr><th>コード</th><th>セット名</th><th>売価</th><th>上代</th><th>仕入</th><th>最終売上日</th></tr></thead><tbody>' +
+    '<table class="draft-set-table"><thead><tr><th>コード</th><th>セット名</th><th>売価</th><th>メーカー希望小売価格</th><th>仕入</th><th>最終売上日</th></tr></thead><tbody>' +
       setsRows +
     '</tbody></table>' +
     '<textarea class="draft-desc-textarea" id="draft-desc-' + d.draftId + '" rows="4"' +
@@ -6527,7 +6500,7 @@ function approveDraftOne(draftId, btn) {
   btn.disabled = true;
   btn.textContent = '登録中...';
   showBusyOverlay('登録中...');
-  // 承認前にカード上の編集内容（カテゴリ・特集・税区分・上代タイプ含む）を保存してから登録を実行する
+  // 承認前にカード上の編集内容（カテゴリ・特集・税区分・価格の表示方法含む）を保存してから登録を実行する
   gasPostAsync(Object.assign({ action: 'updateDraft', draftId: draftId }, payload))
     .then(function(updateRes) {
       if (!updateRes.ok) throw Object.assign(new Error('ドラフト保存失敗: ' + updateRes.error), { code: updateRes.error });
