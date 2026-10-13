@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.42.0';
+const VERSION  = '0.44.0';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -998,7 +998,14 @@ function updateApplication(data) {
     appId = rows[foundRow - 1][0];
     if (aliases.pendingIds[String(appId)]) return _err('MIGRATION_IN_PROGRESS');
     if (String(rows[foundRow - 1][17]) === 'cancelled') return _err('APPLICATION_CANCELLED');
-    _updateApplicationRow(sh, foundRow, f);
+    const saved = rows[foundRow - 1];
+    if (String(saved[15] || '')) {
+      const identityError = _lineCheckFixedFields(f, _lineSavedPolicy(saved));
+      if (identityError) return _lineIdentityError(identityError);
+      _updateLineLockedApplicationRow(sh, foundRow, saved, f);
+    } else {
+      _updateApplicationRow(sh, foundRow, f);
+    }
 
     if (touchSessions) {
       try {
@@ -1023,47 +1030,123 @@ function updateApplication(data) {
 //    IDトークンを検証し、line_friends_cacheと既存申込（line_user_id）から埋められる項目を返す。
 //    友だちが見つからなくても success:true（空のフォームを出す。エラーにしない・§2-9）。
 // ============================================================
+// 登録済み基本情報は画面だけでなく保存側でも固定し、既存人物・QRを変更しない。
+const LINE_IDENTITY_KEYS = ['salon_name', 'staff_name', 'email', 'phone', 'business_type'];
+const LINE_IDENTITY_COLUMNS = [4, 5, 6, 8, 20];
+const LINE_IDENTITY_FIELDS = ['salonName', 'staffName', 'email', 'phone', 'businessType'];
+
+function _lineIdentityError(code) {
+  // 古いキャッシュ画面にも、そのまま表示できる日本語で理由を返す。
+  const messages = {
+    LINE_BASIC_INFORMATION_LOCKED: '登録済みの基本情報は変更できません。申込画面を開き直してご確認ください。',
+    LINE_PROFILE_UNAVAILABLE: '公式LINEの登録情報を確認できませんでした。時間をおいて再確認してください。',
+    LINE_PROFILE_CHANGED: '登録情報が更新されています。申込画面を開き直してご確認ください。'
+  };
+  const result = _err(messages[code] || code);
+  result.error_code = code;
+  return result;
+}
+
+function _lineIdentityText(value) {
+  return String(value == null ? '' : value).trim();
+}
+function _lineIdentityCompare(key, value) {
+  const text = _lineIdentityText(value);
+  return key === 'email' ? text.toLowerCase() : text;
+}
+function _lineRegisteredProfile(actor) {
+  // 既存の対象解決を1回だけ使用し、鮮度確認は対象friendの詳細GETだけで行う。
+  const cached = _findFriendByLineUserId(actor);
+  if (!cached) return { found: false, friendId: '', basic: {}, hasTransaction: '' };
+  const current = _lhGetFriend(cached.friendId);
+  if (!current || String(current.id) !== String(cached.friendId) ||
+      String(current.lineUserId || current.line_user_id || '') !== actor) {
+    throw new Error('LINE_PROFILE_UNAVAILABLE');
+  }
+  const meta = current.metadata || {};
+  const basic = {};
+  LINE_IDENTITY_KEYS.forEach(function (key) {
+    const value = _lineIdentityText(meta[key]);
+    if (value) basic[key] = value;
+  });
+  return { found: true, friendId: cached.friendId, basic: basic,
+    hasTransaction: _lineIdentityText(meta.ext_id) ? 'yes' : 'no' };
+}
+function _lineIdentityPolicy(profile, existing) {
+  const basic = {};
+  LINE_IDENTITY_KEYS.forEach(function (key, index) {
+    // 保存済み人物が最優先。LINE最新値による既存申込の修復・移管は行わない。
+    const saved = existing ? _lineIdentityText(existing[LINE_IDENTITY_COLUMNS[index]]) : '';
+    const value = saved || _lineIdentityText(profile.basic[key]);
+    if (value) basic[key] = value;
+  });
+  const locked = LINE_IDENTITY_KEYS.filter(function (key) { return !!basic[key]; });
+  return { basic: basic, locked_fields: locked,
+    has_transaction: existing ? String(existing[10] || 'yes') : profile.hasTransaction,
+    revision: _bookingHash([basic, locked]),
+    registration_review_required: !!basic.business_type && BUSINESS_TYPE_OPTIONS.indexOf(basic.business_type) < 0 };
+}
+function _lineCheckFixedFields(fields, policy) {
+  for (let i = 0; i < LINE_IDENTITY_KEYS.length; i++) {
+    const key = LINE_IDENTITY_KEYS[i];
+    if (!policy.basic[key]) continue;
+    const field = LINE_IDENTITY_FIELDS[i];
+    if (_lineIdentityCompare(key, fields[field]) !== _lineIdentityCompare(key, policy.basic[key])) {
+      return 'LINE_BASIC_INFORMATION_LOCKED';
+    }
+    fields[field] = policy.basic[key];
+  }
+  fields.emailNorm = fields.email.toLowerCase();
+  return '';
+}
+function _lineSavedPolicy(row) {
+  return _lineIdentityPolicy({ basic: {}, hasTransaction: '' }, row);
+}
+function _updateLineLockedApplicationRow(sh, rowNumber, row, fields) {
+  // 固定済みセルは再書込みもしない。数式保護・既存表記・メール索引を保持する。
+  sh.getRange(rowNumber, 3).setValue(_now());
+  LINE_IDENTITY_KEYS.forEach(function (key, index) {
+    const column = LINE_IDENTITY_COLUMNS[index];
+    if (_lineIdentityText(row[column])) return;
+    if (key === 'phone') sh.getRange(rowNumber, column + 1).setNumberFormat('@');
+    sh.getRange(rowNumber, column + 1).setValue(_applicationCellValue(fields[LINE_IDENTITY_FIELDS[index]]));
+    if (key === 'email') sh.getRange(rowNumber, 8).setValue(_applicationCellValue(fields.emailNorm));
+  });
+  sh.getRange(rowNumber, 11, 1, 3).setValues([[
+    fields.hasTransaction, fields.address, fields.referrer
+  ].map(_applicationCellValue)]);
+  sh.getRange(rowNumber, 20).setValue(_applicationCellValue(fields.note));
+}
+
 function liffPrefill(data) {
   _checkProps();
-
-  const idToken = String(data.id_token || '').trim();
-  let lineUserId;
-  try {
-    lineUserId = _verifyLineIdToken(idToken);
-  } catch (e) {
-    return _err('INVALID_ID_TOKEN');
-  }
-
-  const friend = _findFriendByLineUserId(lineUserId);
-  const result = { found: !!friend };
-
-  if (friend) {
-    result.friend_id = friend.friendId;
-
-    const prefill = {};
-    if (friend.salonName) prefill.salon_name = friend.salonName;
-    if (friend.staffName) prefill.staff_name = friend.staffName;
-    if (friend.phone)     prefill.phone = friend.phone;
-    if (friend.email)     prefill.email = friend.email;
-    if (friend.businessType && BUSINESS_TYPE_OPTIONS.indexOf(friend.businessType) >= 0) {
-      prefill.business_type = friend.businessType; // 🔴 6択に無い値(旧表記「エステ」等)は省略（§1-4 地雷5）
-    }
-    result.prefill = prefill;
-    result.has_transaction = friend.extId ? 'yes' : 'no';
-  }
-
-  const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const sh  = _getSheet(ss, SHEET_APPLICATIONS);
-  const rows = sh.getDataRange().getValues();
+  let actor;
+  try { actor = _verifyLineIdToken(String(data.id_token || '').trim()); }
+  catch (error) { return _err('INVALID_ID_TOKEN'); }
+  let profile;
+  try { profile = _lineRegisteredProfile(actor); }
+  catch (error) { return _lineIdentityError('LINE_PROFILE_UNAVAILABLE'); }
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const rows = _getSheet(ss, SHEET_APPLICATIONS).getDataRange().getValues();
+  let existing = null;
   for (let i = 1; i < rows.length; i++) {
-    if (String(rows[i][15]) === lineUserId && String(rows[i][17]) !== 'cancelled') {
-      result.existing_application = { app_id: String(rows[i][0]), ticket_token: String(rows[i][16]) };
-      break;
-    }
+    if (String(rows[i][15]) === actor && String(rows[i][17]) !== 'cancelled') { existing = rows[i]; break; }
   }
-
+  const policy = _lineIdentityPolicy(profile, existing);
+  const result = { line_identity_policy: 1, found: profile.found,
+    prefill: policy.basic, locked_fields: policy.locked_fields,
+    profile_revision: policy.revision, has_transaction: policy.has_transaction,
+    registration_review_required: policy.registration_review_required };
+  if (profile.friendId) result.friend_id = profile.friendId;
+  if (existing) {
+    result.existing_application = { app_id: String(existing[0]), ticket_token: String(existing[16]) };
+    result.prefill.address = String(existing[11] || '');
+    result.prefill.referrer = String(existing[12] || '');
+    result.prefill.note = String(existing[19] || '');
+  }
   return _ok(result);
 }
+
 
 // ============================================================
 // 🆕 L1-c: LIFF申込の確定（doPost: action=applyLiff）―― §2-10
@@ -1087,8 +1170,10 @@ function applyLiff(data) {
   if (v.error) return _err(v.error);
   const f = v.fields;
 
-  const friend       = _findFriendByLineUserId(lineUserId);
-  const lineFriendId = friend ? friend.friendId : '';
+  let registeredProfile;
+  try { registeredProfile = _lineRegisteredProfile(lineUserId); }
+  catch (error) { return _lineIdentityError('LINE_PROFILE_UNAVAILABLE'); }
+  const lineFriendId = registeredProfile.friendId;
 
   let appId, ticketToken, isUpdate;
   // 🆕 v0.20.0: セミナー予約。LIFFは本人確定なので、再申込＝内容変更として予約も差し替える
@@ -1113,8 +1198,17 @@ function applyLiff(data) {
       isUpdate    = true;
       appId       = rows[foundRow - 1][0];
       ticketToken = rows[foundRow - 1][16];
-      _updateApplicationRow(sh, foundRow, f);
+      const saved = rows[foundRow - 1];
+      const policy = _lineIdentityPolicy(registeredProfile, saved);
+      const identityError = _lineCheckFixedFields(f, policy);
+      if (identityError) return _lineIdentityError(identityError);
+      _updateLineLockedApplicationRow(sh, foundRow, saved, f);
     } else {
+      const policy = _lineIdentityPolicy(registeredProfile, null);
+      if (policy.registration_review_required) return _lineIdentityError('LINE_BASIC_INFORMATION_LOCKED');
+      if (data.profile_revision && data.profile_revision !== policy.revision) return _lineIdentityError('LINE_PROFILE_CHANGED');
+      const identityError = _lineCheckFixedFields(f, policy);
+      if (identityError) return _lineIdentityError(identityError);
       isUpdate = false;
       const created = _appendApplicationRow(sh, rows, f, 'liff', lineFriendId, lineUserId);
       appId       = created.appId;
@@ -1274,6 +1368,8 @@ function _syncApplicationToLine(appId, friendId, isUpdate, f, passUrl) {
   } catch (e) {
     _logLineSync(appId, friendId, 'tag', 'error', String(e));
   }
+
+  if (isUpdate) return; // 既存人物の登録情報は申込編集から変更しない。
 
   // ⑤ metadataの空欄だけ書き戻す（§2-4）。🔴 既に値がある項目は絶対に送らない。
   try {
@@ -1469,6 +1565,7 @@ function getPass(data) {
         address:         rows[i][11],
         referrer:        rows[i][12],
         note:            rows[i][19],
+        locked_basic_fields: String(rows[i][15] || '') ? _lineSavedPolicy(rows[i]).locked_fields : [],
         event: {
           date:       cfg.event_date       || '',
           time:       cfg.event_time       || '',
