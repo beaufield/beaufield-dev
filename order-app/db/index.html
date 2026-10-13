@@ -1528,7 +1528,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.84.1-db';
+const APP_VERSION    = 'v1.84.2-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -10981,7 +10981,9 @@ async function calculatePropAdjustment() {
 }
 function propAdjustmentResultHtml(result) {
   const days=v=>v===null?'需要なし':v.toFixed(1)+'日';
-  return `<p><b>${escHtml(result.rule?.label||'最低金額への補充')} ／ ${result.totalCases!==null?result.totalCases+'ケース':result.coreQty!==null?result.coreQty+'本':''} 合計 ${formatYen(result.totalAmount)}</b></p>${result.minimumAmount?`<p>最低金額対象 ${formatYen(result.eligibleAmount)} / ${formatYen(result.minimumAmount)}（税抜）</p>`:''}<p>候補と指定上限の範囲で、不足日数→追加在庫の金額×保有日数→購入金額の順に比較。${!result.rule?'金額の超過は候補の最大1発注単位分まで。':''}将来の販売や納期を保証するものではありません。</p>${result.warnings.map(w=>`<p class="prop-pending-warn">${escHtml(w)}</p>`).join('')}<div class="prop-adjust-table"><table><thead><tr><th>商品</th><th>数量<br>現在→調整</th><th>在庫日数<br>現在→発注後</th><th>金額</th></tr></thead><tbody>${[...result.rows,...(result.zeroRows||[])].map(r=>`<tr><td>${escHtml(r.name)}<small>${escHtml(r.code)} ／ ${r.lot}${result.rule?.kind==='case'?'個/ケース':'個単位'}<br>${escHtml(r.reason)}</small></td><td>${r.original} → <b>${r.qty}</b>${result.rule?.kind==='case'&&r.inRule?`<small>${r.qty/r.lot}ケース</small>`:''}</td><td>${days(r.daysBefore)} → <b>${days(r.daysAfter)}</b></td><td>${formatYen(r.amount)}</td></tr>`).join('')}</tbody></table></div><p>自動追加対象から除外 ${result.ignoredCodes.length}品。反映後も数量を確認し、発注画面で出力・保存してください。</p>`;
+  // 帳簿在庫と未入荷分を分け、注文0の行も同じ在庫表示にする。
+  const stockHtml=r=>{const unit=result.rule?.kind==='core'&&r.inRule?'本':'個';return `<div class="prop-adjust-stock">現在在庫：<b>${Number(r.stock).toLocaleString('ja-JP')}${unit}</b></div>${Number(r.onOrder)>0?`<small>未入荷：${Number(r.onOrder).toLocaleString('ja-JP')}${unit}（現在在庫に含まず）</small>`:''}`;};
+  return `<p><b>${escHtml(result.rule?.label||'最低金額への補充')} ／ ${result.totalCases!==null?result.totalCases+'ケース':result.coreQty!==null?result.coreQty+'本':''} 合計 ${formatYen(result.totalAmount)}</b></p>${result.minimumAmount?`<p>最低金額対象 ${formatYen(result.eligibleAmount)} / ${formatYen(result.minimumAmount)}（税抜）</p>`:''}<p>候補と指定上限の範囲で、不足日数→追加在庫の金額×保有日数→購入金額の順に比較。${!result.rule?'金額の超過は候補の最大1発注単位分まで。':''}将来の販売や納期を保証するものではありません。</p><p>現在在庫は商品マスターの帳簿在庫です（未入荷分は含みません）。在庫日数は未入荷分を含みます。</p>${result.warnings.map(w=>`<p class="prop-pending-warn">${escHtml(w)}</p>`).join('')}<div class="prop-adjust-table"><table><thead><tr><th>商品</th><th>数量<br>現在→調整</th><th>在庫日数<br>現在→発注後</th><th>金額</th></tr></thead><tbody>${[...result.rows,...(result.zeroRows||[])].map(r=>`<tr><td>${escHtml(r.name)}<small>${escHtml(r.code)} ／ ${r.lot}${result.rule?.kind==='case'?'個/ケース':'個単位'}<br>${escHtml(r.reason)}</small>${stockHtml(r)}</td><td>${r.original} → <b>${r.qty}</b>${result.rule?.kind==='case'&&r.inRule?`<small>${r.qty/r.lot}ケース</small>`:''}</td><td>${days(r.daysBefore)} → <b>${days(r.daysAfter)}</b></td><td>${formatYen(r.amount)}</td></tr>`).join('')}</tbody></table></div><p>自動追加対象から除外 ${result.ignoredCodes.length}品。反映後も数量を確認し、発注画面で出力・保存してください。</p>`;
 }
 async function applyPropAdjustment() {
   const preview=propAdjustment.preview;if(!preview)return;
