@@ -968,6 +968,32 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
   </div>
 </div>
 
+<!-- グループ内容を確認・変更して新しいグループとして保存する -->
+<div class="modal-overlay" id="groupCopyModal">
+  <div class="modal" style="width:620px;max-width:95vw;max-height:90vh;overflow-y:auto;">
+    <h3>導入サロングループを複製</h3>
+    <p id="groupCopyInfo" style="font-size:13px;margin:10px 0;"></p>
+    <div class="form-field" style="margin-bottom:10px;"><label>新しいグループ名 *</label><input id="groupCopyName" type="text"></div>
+    <div class="form-field" style="margin-bottom:10px;"><label>メーカー</label><input id="groupCopyMaker" type="text" list="groupMakerList"></div>
+    <div class="form-field" style="margin-bottom:10px;"><label>メモ</label><input id="groupCopyNote" type="text"></div>
+    <label style="display:flex;align-items:center;gap:6px;margin:12px 0;font-size:13px;"><input id="groupCopyMembers" type="checkbox" onchange="toggleGroupCopyMembers()">元グループの会員を引き継ぐ</label>
+    <div class="form-row" style="margin-bottom:10px;">
+      <div class="form-field" style="flex:1;"><label>会員ID（カンマ区切り）</label><input id="groupCopyMemberIds" type="text" placeholder="空のまま保存し、後で「会員を管理」から追加できます"></div>
+    </div>
+    <div class="form-field" style="margin-bottom:10px;"><label>得意先コード（カンマ区切り）</label><input id="groupCopyCustomerCodes" type="text" placeholder="任意"></div>
+    <p style="font-size:12px;color:#6b7280;">会員は最初は空です。引き継ぐ場合も保存前に変更できます。</p>
+    <h4 style="margin:14px 0 8px;">複製する商品・特別価格</h4>
+    <div style="overflow-x:auto;"><table style="width:100%;"><thead><tr><th>商品</th><th style="width:120px;">特別価格（円）</th></tr></thead><tbody id="groupCopyItems"></tbody></table></div>
+    <label style="display:flex;align-items:center;gap:6px;margin:12px 0;font-size:13px;"><input id="groupCopyViews" type="checkbox">例外表示の対象商品も引き継ぐ <span id="groupCopyViewCount"></span></label>
+    <label style="display:flex;align-items:center;gap:6px;margin:12px 0;font-size:13px;"><input id="groupCopyUseView" type="checkbox">例外表示設定を使用する</label>
+    <p style="font-size:12px;background:#eff6ff;padding:10px;border-radius:6px;">保存すると新しいグループができます。BCARTの価格・表示は変更されません。会員と価格を確認してから「価格設定」で反映してください。</p>
+    <div class="actions" style="margin-top:14px;">
+      <button class="btn btn-gray" id="groupCopyCancel" onclick="closeModal('groupCopyModal')">キャンセル</button>
+      <button class="btn btn-primary" id="groupCopySave" onclick="saveGroupCopyModal()" disabled>新しいグループとして保存</button>
+    </div>
+  </div>
+</div>
+
 <!-- 特価もれ検出: 選択会員をグループに追加 モーダル -->
 <div class="modal-overlay" id="salesGroupAddModal">
   <div class="modal" style="width:420px;max-width:95vw;">
@@ -1376,7 +1402,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = 'v2.20.2';
+const APP_VERSION = 'v2.21.0';
 // 画面で新しく選べる表示方法。保存済みの旧設定は勝手に変換しない。
 const JODAI_DISPLAY_TYPES = ['メーカー希望小売価格', '非表示', 'オープン'];
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
@@ -2585,7 +2611,7 @@ const RETRYABLE_READ_ACTIONS = new Set([
   'loadData', 'getIgnoreList', 'searchProducts', 'getSpecials', 'getHistory',
   'getCategories', 'getFeatures', 'getSpecialPriceData', 'getProductSetsForFeature',
   'searchProductSets', 'getSpecialPriceCurrent', 'getViewFilterCurrent', 'getMembers',
-  'getGroupViewInfo', 'getGroupPricePreview', 'auditSpecialPrices', 'getAuditExclusions', 'auditSalesVsBcart',
+  'getGroupViewInfo', 'getGroupPricePreview', 'getCustomerGroupDuplicatePreview', 'auditSpecialPrices', 'getAuditExclusions', 'auditSalesVsBcart',
   'getProductsForDescription', 'getSimilarProducts', 'getFeatureList', 'getDrafts'
 ]);
 const RESPONSE_ARRAY_KEYS = {
@@ -3455,6 +3481,7 @@ function renderSpGroups() {
         '<button class="btn btn-sm btn-wip" onclick="openMemberSelectModal(\'' + jsArg(g.group_id) + '\',\'' + jsArg(g.group_name) + '\')">👥 会員を管理</button>' +
         '<button class="btn btn-sm btn-primary" onclick="switchToSettings(\'' + jsArg(g.group_id) + '\')">💎 価格設定</button>' +
         '<button class="btn btn-sm btn-gray" onclick="openGroupModal(\'' + jsArg(g.group_id) + '\')">編集</button>' +
+        '<button class="btn btn-sm btn-gray" onclick="openGroupCopyModal(\'' + jsArg(g.group_id) + '\')">複製</button>' +
         '<button class="btn btn-sm btn-danger" onclick="deleteGroup(\'' + jsArg(g.group_id) + '\',\'' + jsArg(g.group_name) + '\')">削除</button>' +
         '</div>' +
         '</div>';
@@ -4576,6 +4603,103 @@ function deleteSpDetail(detailId, productNo) {
   gasPost({ action: 'deleteSpecialPriceDetail', detail_id: detailId }, function(res) {
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
     showToast('削除しました');
+    loadSpecialPriceData();
+  });
+}
+
+// 開くだけでは保存しない。元の会員は本人が選んだときだけフォームへ入れる。
+let spGroupCopy = null;
+let spGroupCopyOpenSeq = 0;
+
+function openGroupCopyModal(groupId) {
+  const seq = ++spGroupCopyOpenSeq;
+  spGroupCopy = null;
+  ['groupCopyName', 'groupCopyMaker', 'groupCopyNote', 'groupCopyMemberIds', 'groupCopyCustomerCodes'].forEach(id => {
+    document.getElementById(id).value = ''; document.getElementById(id).disabled = false;
+  });
+  ['groupCopyMembers', 'groupCopyViews', 'groupCopyUseView'].forEach(id => {
+    document.getElementById(id).checked = false; document.getElementById(id).disabled = false;
+  });
+  document.getElementById('groupCopyItems').innerHTML = '<tr><td colspan="2">読み込み中…</td></tr>';
+  document.getElementById('groupCopyViewCount').textContent = '';
+  document.getElementById('groupCopyInfo').textContent = '複製元の設定を読み込み中…';
+  const save = document.getElementById('groupCopySave');
+  save.disabled = true; save.textContent = '新しいグループとして保存';
+  document.getElementById('groupCopyCancel').disabled = false;
+  document.getElementById('groupCopyModal').classList.add('open');
+  populateGroupMakerList();
+  ensureSpFeaturesCache(populateGroupMakerList);
+  gasPost({ action: 'getCustomerGroupDuplicatePreview', source_group_id: groupId }, function(res) {
+    if (seq !== spGroupCopyOpenSeq || !document.getElementById('groupCopyModal').classList.contains('open')) return;
+    if (!res.ok) { document.getElementById('groupCopyInfo').textContent = res.error || '読み込みに失敗しました'; return; }
+    const source = res.source;
+    spGroupCopy = { source: source, requestId: res.copy_request_id || crypto.randomUUID(), resume: !!res.resume };
+    const form = res.resume || { group_name: source.group.group_name + '（複製）', maker: source.group.maker,
+      note: source.group.note, member_ids: '', customer_codes: '', use_view_filter: source.group.use_view_filter,
+      copy_view_filters: true, items: source.items };
+    document.getElementById('groupCopyInfo').textContent = res.resume
+      ? '前回の複製保存を再開します。確認した内容で未保存分だけを保存します。'
+      : '複製元：「' + source.group.group_name + '」 / 特別価格 ' + source.items.length + '件';
+    document.getElementById('groupCopyName').value = form.group_name;
+    document.getElementById('groupCopyMaker').value = form.maker;
+    document.getElementById('groupCopyNote').value = form.note;
+    document.getElementById('groupCopyMemberIds').value = form.member_ids;
+    document.getElementById('groupCopyCustomerCodes').value = form.customer_codes;
+    document.getElementById('groupCopyUseView').checked = form.use_view_filter;
+    document.getElementById('groupCopyViews').checked = form.copy_view_filters;
+    document.getElementById('groupCopyViewCount').textContent = '（' + source.viewItems.length + '件）';
+    document.getElementById('groupCopyItems').innerHTML = source.items.length ? source.items.map(item => {
+      const price = form.items.find(x => String(x.product_set_id) === String(item.product_set_id));
+      return '<tr><td>' + esc(item.product_no) + '<br>' + esc(item.product_set_name) + '</td><td>' +
+        '<input class="group-copy-price" type="number" min="0.01" step="any" data-set-id="' + esc(item.product_set_id) + '" value="' + esc(price.unit_price) + '" style="width:100%;min-width:80px;"></td></tr>';
+    }).join('') : '<tr><td colspan="2">特別価格の設定はありません。</td></tr>';
+    if (res.resume) setGroupCopyInputsDisabled(true);
+    save.textContent = res.resume ? '前回の保存を完了する' : '新しいグループとして保存';
+    save.disabled = false;
+  });
+}
+
+function toggleGroupCopyMembers() {
+  if (!spGroupCopy || spGroupCopy.resume) return;
+  const group = spGroupCopy.source.group;
+  const include = document.getElementById('groupCopyMembers').checked;
+  document.getElementById('groupCopyMemberIds').value = include ? group.member_ids : '';
+  document.getElementById('groupCopyCustomerCodes').value = include ? group.customer_codes : '';
+}
+
+function setGroupCopyInputsDisabled(disabled) {
+  ['groupCopyName', 'groupCopyMaker', 'groupCopyNote', 'groupCopyMembers', 'groupCopyMemberIds',
+    'groupCopyCustomerCodes', 'groupCopyViews', 'groupCopyUseView'].forEach(id => document.getElementById(id).disabled = disabled);
+  document.querySelectorAll('.group-copy-price').forEach(input => input.disabled = disabled);
+}
+
+function saveGroupCopyModal() {
+  if (!spGroupCopy || document.getElementById('groupCopySave').disabled) return;
+  const name = document.getElementById('groupCopyName').value.trim();
+  if (!name) { showToast('新しいグループ名は必須です', true); return; }
+  const items = Array.from(document.querySelectorAll('.group-copy-price')).map(input => ({ product_set_id: input.dataset.setId, unit_price: Number(input.value) }));
+  if (items.some(item => !Number.isFinite(item.unit_price) || item.unit_price <= 0)) { showToast('特別価格は0より大きい数値を入力してください', true); return; }
+  const request = { action: 'duplicateCustomerGroup', copy_request_id: spGroupCopy.requestId,
+    source_group_id: spGroupCopy.source.group.group_id, source_token: spGroupCopy.source.token, group_name: name,
+    maker: document.getElementById('groupCopyMaker').value.trim(), note: document.getElementById('groupCopyNote').value.trim(),
+    member_ids: document.getElementById('groupCopyMemberIds').value.trim(), customer_codes: document.getElementById('groupCopyCustomerCodes').value.trim(),
+    use_view_filter: document.getElementById('groupCopyUseView').checked, copy_view_filters: document.getElementById('groupCopyViews').checked, items: items };
+  const save = document.getElementById('groupCopySave');
+  save.disabled = true; save.textContent = '保存中…';
+  setGroupCopyInputsDisabled(true); document.getElementById('groupCopyCancel').disabled = true;
+  gasPost(request, function(res) {
+    save.disabled = false; document.getElementById('groupCopyCancel').disabled = false;
+    if (!res.ok) {
+      // 応答不明でも確認IDを保持する。再試行で新しいグループを作らない。
+      spGroupCopy.resume = res.copyPending !== false;
+      setGroupCopyInputsDisabled(spGroupCopy.resume);
+      save.textContent = spGroupCopy.resume ? '同じ内容で保存を再試行' : '新しいグループとして保存';
+      document.getElementById('groupCopyInfo').textContent = '保存を完了できませんでした。' + (res.error || '') +
+        (spGroupCopy.resume ? ' 同じ内容で再試行できます。' : ' 内容を修正するか、複製画面を開き直してください。');
+      showToast(res.error || '保存に失敗しました', true); return;
+    }
+    spGroupCopy = null; closeModal('groupCopyModal');
+    showToast((res.message || '複製しました。BCARTには反映していません。') + (res.historyWarning ? ' 更新履歴の記録だけ失敗しました。' : ''));
     loadSpecialPriceData();
   });
 }

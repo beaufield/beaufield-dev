@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.34.8';
+const VERSION = 'v2.35.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -73,7 +73,7 @@ function doPost(e) {
       'previewLowPriceCampaign', 'loadData', 'getIgnoreList', 'searchProducts', 'getSpecials', 'getHistory',
       'getCategories', 'getFeatures', 'getSpecialPriceData', 'getProductSetsForFeature',
       'searchProductSets', 'getSpecialPriceCurrent', 'getViewFilterCurrent', 'getMembers',
-      'getGroupViewInfo', 'getGroupPricePreview',
+      'getGroupViewInfo', 'getGroupPricePreview', 'getCustomerGroupDuplicatePreview',
       'auditSpecialPrices', 'getAuditExclusions', 'auditSalesVsBcart',
       'getProductsForDescription', 'getSimilarProducts', 'getFeatureList',
       'previewSuffixName', 'previewHanbaiEnd', 'previewSetDescription',
@@ -106,15 +106,16 @@ function doPost(e) {
     params._userName = userName;
     // 特価の読取り→再計算→書込みを直列化し、未確定の処理がある間は変更を止める。
     const specialMutations = {
-      saveCustomerGroup: saveCustomerGroup, addCustomerCodesToGroup: addCustomerCodesToGroup,
+      duplicateCustomerGroup: duplicateCustomerGroup, saveCustomerGroup: saveCustomerGroup, addCustomerCodesToGroup: addCustomerCodesToGroup,
       saveSpecialPriceDetails: saveSpecialPriceDetails, saveIndividualPrices: saveIndividualPrices,
       applyGroupPrices: applyGroupPrices, applyIndividualPrices: applyIndividualPrices,
       deleteSpecialPriceDetail: deleteSpecialPriceDetail, deleteIndividualPrice: deleteIndividualPrice,
       deleteCustomerGroup: deleteCustomerGroup, adoptUnmanagedPrices: adoptUnmanagedPrices,
-      recoverSpecialPriceOperation: recoverSpecialPriceOperation
+      recoverSpecialPriceOperation: recoverSpecialPriceOperation,
+      saveViewFilterDetails: saveViewFilterDetails, applyViewFilters: applyViewFilters, deleteViewFilterDetail: deleteViewFilterDetail
     };
     if (Object.prototype.hasOwnProperty.call(specialMutations, action)) {
-      return jsonResponse(spWithLock_(() => specialMutations[action](params), action === 'recoverSpecialPriceOperation'));
+      return jsonResponse(spWithLock_(() => specialMutations[action](params), action === 'recoverSpecialPriceOperation', action === 'duplicateCustomerGroup' ? params.copy_request_id : null));
     }
 
 
@@ -159,6 +160,7 @@ function doPost(e) {
       case 'bulkRegisterProduct':  return jsonResponse(bulkRegisterProduct(params));
       // 機能B: 特別価格管理
       case 'getSpecialPriceData':       return jsonResponse(getSpecialPriceData());
+      case 'getCustomerGroupDuplicatePreview': return jsonResponse(getCustomerGroupDuplicatePreview(params));
       case 'getGroupPricePreview': return jsonResponse(getGroupPricePreview(params));
       case 'getGroupViewInfo':          return jsonResponse(getGroupViewInfo(params));
       case 'saveCustomerGroup':         return jsonResponse(saveCustomerGroup(params));
@@ -3150,16 +3152,21 @@ function spApplyPlan_(plan, approvedToken) {
   return plan.rows.filter(r => r.before !== null && r.after === null).length;
 }
 
-function spWithLock_(callback, recovery) {
+function spWithLock_(callback, recovery, copyRequestId) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(1000)) return { ok: false, error: '別の特価処理が実行中です。少し待って再操作してください' };
   try {
+    const copyRaw = PropertiesService.getScriptProperties().getProperty(SP_COPY_PENDING_KEY_);
+    if (copyRaw && JSON.parse(copyRaw).requestId !== copyRequestId) {
+      return { ok: false, copyPending: true, error: '前回のグループ複製が未完了です。複製元の「複製」から保存を完了してください' };
+    }
     if (!recovery && PropertiesService.getScriptProperties().getProperty(SP_PENDING_KEY_)) {
       return { ok: false, recoveryRequired: true, error: 'SP_RECOVERY_REQUIRED: 前回の結果が未確定です。「前回の結果を確認」を実行してください' };
     }
     return callback();
   } catch (e) {
-    return { ok: false, recoveryRequired: !!PropertiesService.getScriptProperties().getProperty(SP_PENDING_KEY_), error: e.message };
+    return { ok: false, recoveryRequired: !!PropertiesService.getScriptProperties().getProperty(SP_PENDING_KEY_),
+      copyPending: !!PropertiesService.getScriptProperties().getProperty(SP_COPY_PENDING_KEY_), error: e.message };
   } finally { lock.releaseLock(); }
 }
 
@@ -3217,6 +3224,7 @@ function getGroupPricePreview(params) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(1000)) return { ok: false, error: '別の特価処理が実行中です' };
   try {
+    if (PropertiesService.getScriptProperties().getProperty(SP_COPY_PENDING_KEY_)) return { ok: false, copyPending: true, error: '前回のグループ複製が未完了です。複製元の「複製」から保存を完了してください' };
     if (PropertiesService.getScriptProperties().getProperty(SP_PENDING_KEY_)) return { ok: false, recoveryRequired: true, error: '前回の結果を確認してからプレビューしてください' };
     const model = spReadModel_();
     const targets = spGroupTargets_(model, params.group_id);
@@ -3375,6 +3383,143 @@ function writeAppliedMemberIds_(groupId, memberIds) {
   }
   return false;
 }
+
+// 複製はアプリ内の新規設定保存だけ。BCARTの価格・表示APIは呼ばない。
+const SP_COPY_PENDING_KEY_ = 'SP_GROUP_COPY_PENDING_V1';
+
+function spCopySource_(groupId) {
+  const groupRows = getOrCreateSheet(SHEET_SP_GROUPS).getDataRange().getValues();
+  const found = groupRows.slice(1).filter(r => String(r[0]) === String(groupId));
+  if (found.length !== 1) throw new Error('複製元のグループが見つからないか、IDが重複しています');
+  const row = found[0];
+  const group = { group_id: String(row[0]), group_name: String(row[1]), member_ids: String(row[2] || ''),
+    note: String(row[4] || ''), use_view_filter: row[5] === true || row[5] === 'TRUE',
+    customer_codes: String(row[6] || ''), maker: String(row[7] || '') };
+  const readItems = (sheetName, hasPrice) => {
+    const seen = new Set();
+    return getOrCreateSheet(sheetName).getDataRange().getValues().slice(1)
+      .filter(r => r[0] && String(r[1]) === group.group_id).map(r => {
+        const id = String(r[2] || '');
+        if (!/^[1-9]\d*$/.test(id) || seen.has(id)) throw new Error('複製元の商品セットIDが不正または重複しています');
+        seen.add(id);
+        const item = { product_set_id: id, product_no: String(r[3] || ''), product_set_name: String(r[4] || '') };
+        if (hasPrice) item.unit_price = spPrice_(r[5]);
+        return item;
+      });
+  };
+  const source = { group: group, items: readItems(SHEET_SP_DETAILS, true), viewItems: readItems(SHEET_VF_DETAILS, false) };
+  source.token = spHash_(source);
+  return source;
+}
+
+function getCustomerGroupDuplicatePreview(params) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) return { ok: false, error: '別の特価処理が実行中です。少し待ってください' };
+  try {
+    const raw = PropertiesService.getScriptProperties().getProperty(SP_COPY_PENDING_KEY_);
+    if (raw) {
+      const pending = JSON.parse(raw);
+      if (pending.sourceGroup.group_id !== String(params.source_group_id)) {
+        return { ok: false, error: '前回の複製保存が未完了です。「' + pending.sourceGroup.group_name + '」の複製画面で保存を再開してください' };
+      }
+      const source = { group: pending.sourceGroup, token: pending.sourceToken,
+        items: pending.detailRows.map(r => ({ product_set_id: r[2], product_no: r[3], product_set_name: r[4], unit_price: r[5] })),
+        viewItems: pending.viewRows.map(r => ({ product_set_id: r[2], product_no: r[3], product_set_name: r[4] })) };
+      return { ok: true, source: source, resume: pending.form, copy_request_id: pending.requestId };
+    }
+    return { ok: true, source: spCopySource_(params.source_group_id) };
+  } catch (e) { return { ok: false, error: e.message }; }
+  finally { lock.releaseLock(); }
+}
+
+function spCopyWriteRows_(sheetName, rows) {
+  if (!rows.length) return;
+  const sheet = getOrCreateSheet(sheetName);
+  const existing = sheet.getDataRange().getValues();
+  const missing = [];
+  rows.forEach(row => {
+    const found = existing.slice(1).filter(r => String(r[0]) === row[0]);
+    if (found.length > 1 || (found.length && spHash_(found[0].slice(0, row.length)) !== spHash_(row))) {
+      throw new Error('複製先の保存内容が変わりました。管理者の確認が必要です');
+    }
+    if (!found.length) missing.push(row);
+  });
+  if (missing.length) {
+    const range = sheet.getRange(sheet.getLastRow() + 1, 1, missing.length, missing[0].length);
+    // IDのカンマ連結・品番・コードを文字列として保持する。
+    range.setNumberFormat('@');
+    range.setValues(missing.map(row => row.map(value => typeof value === 'string' && value.startsWith('=') ? "'" + value : value)));
+    SpreadsheetApp.flush();
+  }
+  const check = sheet.getDataRange().getValues();
+  rows.forEach(row => {
+    const found = check.slice(1).filter(r => String(r[0]) === row[0]);
+    if (found.length !== 1 || spHash_(found[0].slice(0, row.length)) !== spHash_(row)) throw new Error('複製の保存結果を照合できません。同じ複製画面で保存を再試行してください');
+  });
+}
+
+function duplicateCustomerGroup(params) {
+  const props = PropertiesService.getScriptProperties();
+  const requestId = String(params.copy_request_id || '');
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) throw new Error('複製の確認情報がありません。複製画面を開き直してください');
+  const newId = 'GC' + requestId.replace(/-/g, '').toUpperCase();
+  const raw = props.getProperty(SP_COPY_PENDING_KEY_);
+  let pending;
+  if (raw) {
+    pending = JSON.parse(raw);
+    if (pending.requestId !== requestId) throw new Error('前回の複製保存を完了してから操作してください');
+  } else {
+    const completed = getOrCreateSheet(SHEET_SP_GROUPS).getDataRange().getValues().slice(1).find(r => String(r[0]) === newId);
+    if (completed) return { ok: true, group_id: newId, alreadyCreated: true, message: '前回保存したグループを確認しました。重複作成していません' };
+    const source = spCopySource_(params.source_group_id);
+    if (!params.source_token || params.source_token !== source.token) throw new Error('複製元が確認後に変わりました。複製画面を開き直してください');
+    const name = String(params.group_name || '').trim();
+    if (!name) throw new Error('グループ名は必須です');
+    const names = getOrCreateSheet(SHEET_SP_GROUPS).getDataRange().getValues();
+    if (names.slice(1).some(r => r[0] && String(r[1]).trim() === name)) throw new Error('同じグループ名があります。新しい名前を付けてください');
+    const ids = spIds_(params.member_ids || '').join(',');
+    const codes = [...new Set(String(params.customer_codes || '').split(',').map(v => v.trim()).filter(Boolean))].join(',');
+    if (!Array.isArray(params.items) || params.items.length !== source.items.length) throw new Error('複製する価格明細が一致しません。複製画面を開き直してください');
+    const prices = new Map();
+    params.items.forEach(item => {
+      const id = String(item.product_set_id);
+      if (prices.has(id) || !source.items.some(s => s.product_set_id === id)) throw new Error('複製する商品が不正または重複しています');
+      prices.set(id, spPrice_(item.unit_price));
+    });
+    const form = { group_name: name, maker: String(params.maker || '').trim(), note: String(params.note || '').trim(),
+      member_ids: ids, customer_codes: codes, use_view_filter: params.use_view_filter === true,
+      copy_view_filters: params.copy_view_filters === true,
+      items: source.items.map(item => ({ product_set_id: item.product_set_id, unit_price: prices.get(item.product_set_id) })) };
+    const date = new Date().toLocaleString('ja-JP');
+    pending = { requestId: requestId, newId: newId, sourceGroup: source.group, sourceToken: source.token, form: form,
+      groupRows: [[newId, name, ids, date, form.note, form.use_view_filter, codes, form.maker, '']],
+      detailRows: source.items.map((item, i) => ['DC' + newId.slice(2) + '_' + i, newId, item.product_set_id,
+        item.product_no, item.product_set_name, prices.get(item.product_set_id), date, '', '', '', 'v1']),
+      viewRows: form.copy_view_filters ? source.viewItems.map((item, i) => ['VC' + newId.slice(2) + '_' + i, newId,
+        item.product_set_id, item.product_no, item.product_set_name, '']) : [] };
+    const encoded = JSON.stringify(pending);
+    if (Utilities.newBlob(encoded).getBytes().length > 8000) throw new Error('明細が多く複製の保存確認上限を超えています。保存していません');
+    // 列契約を確認してから記録する。反映済み会員・価格・日時はコピーしない。
+    const groups = getOrCreateSheet(SHEET_SP_GROUPS);
+    const headers = groups.getRange(1, 7, 1, 3).getValues()[0];
+    if (spHash_(headers) !== spHash_(['customer_codes', 'maker', 'applied_member_ids'])) throw new Error('グループ列の構成が一致しません');
+    if (source.items.length) spSnapshotSchema_(SHEET_SP_DETAILS, true);
+    props.setProperty(SP_COPY_PENDING_KEY_, encoded);
+  }
+  // 保存途中で応答が途切れても同じIDの行を照合し、未保存行だけを追加する。
+  spCopyWriteRows_(SHEET_SP_GROUPS, pending.groupRows);
+  spCopyWriteRows_(SHEET_SP_DETAILS, pending.detailRows);
+  spCopyWriteRows_(SHEET_VF_DETAILS, pending.viewRows);
+  props.deleteProperty(SP_COPY_PENDING_KEY_);
+  let historyWarning = false;
+  try {
+    addHistory({ userName: params._userName, code: '', name: pending.form.group_name, type: '導入サロングループ複製',
+      before: pending.sourceGroup.group_name, after: 'アプリ保存のみ / 特価' + pending.detailRows.length + '件 / 例外表示' + pending.viewRows.length + '件', result: '成功' });
+  } catch (e) { historyWarning = true; }
+  return { ok: true, group_id: newId, savedCount: pending.detailRows.length, viewCount: pending.viewRows.length,
+    historyWarning: historyWarning, message: '複製したグループを保存しました。BCARTへの反映は価格設定から行ってください' };
+}
+
 
 function saveCustomerGroup(params) {
   const sheet = getOrCreateSheet(SHEET_SP_GROUPS);
