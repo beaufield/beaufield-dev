@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.35.1';
+const VERSION = 'v2.36.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -62,6 +62,7 @@ function doPost(e) {
 
     // Dedicated bridge dispatcher: isolated key and fixed actions; legacy auth is unchanged.
     if (BMALL_BRIDGE_ACTIONS_.includes(action)) return jsonResponse(handleDraftBridge_(params));
+    if (BMALL_AUTO_ACTIONS_.includes(action)) return jsonResponse(handleBmallAuto_(params));
 
     const noAuthActions = ['getVersion'];
     // AI用キーはプレビューとドラフト作成だけに限定する。
