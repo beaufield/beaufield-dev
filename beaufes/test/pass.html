@@ -175,6 +175,7 @@
   <div class="card formCard" id="editPanel" style="display:none;">
     <p class="panelTitle">お申し込み内容の変更</p>
     <form id="editForm">
+      <p id="editIdentityNote" style="font-size:12px;color:#555;line-height:1.8;"></p>
       <label>サロン様名<span class="req">必須</span></label>
       <input type="text" id="e_salon_name" required>
 
@@ -253,7 +254,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.25.6';
+const APP_VERSION = '0.26.0';
 const GAS_URL = 'TEST_ENV_NO_GAS';
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
@@ -399,7 +400,11 @@ function loadCache(token) {
 // 「一時的な配信失敗」と「本当にパスが無い」を区別できるようにする。
 // ------------------------------------------------------------
 async function fetchPassOnce(token) {
-  if (bookingApi.isMock()) return bookingApi.mockResponse({action:'getPass'});
+  if (bookingApi.isMock()) {
+    const preview = bookingApi.mockResponse({action:'getPass'});
+    preview.data.locked_basic_fields = [];
+    return preview;
+  }
   const params = new URLSearchParams({
     action: 'getPass',
     data: JSON.stringify({ ticket_token: token })
@@ -595,6 +600,17 @@ function populateEditForm(d) {
   el('e_address').value       = d.address || '';
   el('e_referrer').value      = d.referrer || '';
   el('e_note').value          = d.note || '';
+
+  // 古い端末キャッシュでは固定情報が未取得のため、再取得まで基本情報を保護する。
+  const keys = ['salon_name','staff_name','email','phone','business_type'];
+  const locked = Array.isArray(d.locked_basic_fields) ? d.locked_basic_fields : keys;
+  keys.forEach(function (key) {
+    const input = el('e_' + key), fixed = locked.indexOf(key) >= 0;
+    if (input.tagName === 'SELECT') input.disabled = fixed;
+    else input.readOnly = fixed;
+    input.style.background = fixed ? '#edf3f6' : '';
+  });
+  el('editIdentityNote').textContent = locked.length ? '基本情報は変更できません。訂正は担当営業へご連絡ください。' : '';
 
   const hasTx = d.has_transaction || 'yes';
   document.querySelectorAll('input[name=e_has_transaction]').forEach(function (r) {

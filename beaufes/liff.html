@@ -111,6 +111,7 @@
   .okMsg a { color: #059669; font-weight: bold; }
   .linkLine { text-align: center; margin-top: 18px; font-size: 13px; }
   .linkLine a { color: var(--main-dark); }
+  .registered-field { background:#edf3f6 !important; color:#333 !important; opacity:1; }
 </style>
 <link rel="stylesheet" href="lib/booking-v1.3.1.css">
 <script src="lib/booking-v1.3.9.js"></script>
@@ -132,6 +133,7 @@
   <!-- ============ 読み込み中・失敗時 ============ -->
   <div class="card" id="bootCard">
     <div id="bootText">読み込み中…</div>
+    <button type="button" id="profileRetryBtn" style="display:none;min-height:44px;margin-top:16px;">登録情報を再確認する</button>
   </div>
 
   <!-- ============ 申込済み通知（line_user_idで既存申込が引けた場合） ============ -->
@@ -155,6 +157,7 @@
   <!-- ============ 申込フォーム ============ -->
   <div id="formWrap" style="display:none;">
     <form class="card" id="applyForm">
+      <p class="hint" id="registeredInfoNote" style="line-height:1.8;color:#555;"></p>
       <label>サロン様名<span class="req">必須</span></label>
       <input type="text" id="salon_name" required>
 
@@ -232,7 +235,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.19.0';
+const APP_VERSION = '0.20.0';
 const GAS_URL  = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const LIFF_ID  = '2010404613-cwHA5B0U';
 
@@ -415,15 +418,81 @@ function setIfUntouched(id, value) {
   el(id).value = value;
 }
 
-function applyPrefill(prefill) {
-  if (!prefill) return;
-  setIfUntouched('salon_name',    prefill.salon_name);
-  setIfUntouched('staff_name',    prefill.staff_name);
-  setIfUntouched('email',         prefill.email);
-  setIfUntouched('phone',         prefill.phone);
-  setIfUntouched('business_type', prefill.business_type);
-  // 🔴 agree_capabilityは本人の意思表示なのでプリフィルしない（必ず未チェックのまま）
+// 登録情報の確認が終わるまで入力・送信を止め、取得した項目だけ固定する。
+let lineProfileReady = false;
+let lineProfileRevision = '';
+const LINE_FIXED_FIELDS = ['salon_name', 'staff_name', 'email', 'phone', 'business_type'];
+function lineIdentityMessage(error) {
+  const messages = {
+    LINE_PROFILE_UNAVAILABLE: '公式LINEの登録情報を確認できませんでした。下のボタンで再確認してください。',
+    LINE_BASIC_INFORMATION_LOCKED: '登録済みの基本情報は変更できません。画面を読み込み直してご確認ください。',
+    LINE_PROFILE_CHANGED: '登録情報が更新されています。画面を読み込み直してご確認ください。',
+    INVALID_ID_TOKEN: 'LINEの認証情報を確認できません。LINEから申込画面を開き直してください。'
+  };
+  return messages[error] || error || '登録情報を確認できませんでした。もう一度お試しください。';
 }
+function applyPrefill(prefill, locked) {
+  prefill = prefill || {};
+  locked = locked || [];
+  LINE_FIXED_FIELDS.forEach(function (id) {
+    const input = el(id);
+    if (prefill[id]) input.value = prefill[id];
+    const fixed = locked.indexOf(id) >= 0;
+    if (input.tagName === 'SELECT') input.disabled = fixed;
+    else input.readOnly = fixed;
+    input.classList.toggle('registered-field', fixed);
+  });
+  ['address', 'referrer', 'note'].forEach(function (id) {
+    if (Object.prototype.hasOwnProperty.call(prefill, id)) el(id).value = prefill[id];
+  });
+  el('registeredInfoNote').textContent = locked.length
+    ? '登録済みの項目は変更できません。未登録の項目だけご入力ください。訂正は担当営業へご連絡ください。'
+    : '公式LINEに登録されていない項目をご入力ください。';
+}
+async function loadLineRegisteredInfo(idToken) {
+  lineProfileReady = false;
+  el('formWrap').style.display = 'none';
+  el('existingBanner').style.display = 'none';
+  el('bootCard').style.display = 'block';
+  el('bootText').textContent = '公式LINEの登録情報を確認しています…';
+  el('profileRetryBtn').style.display = 'none';
+  el('submitBtn').disabled = true;
+  try {
+    const json = bookingApi.isMock()
+      ? { success: true, data: { line_identity_policy: 1, prefill: {}, locked_fields: [], profile_revision: 'MOCK' } }
+      : await postWithRetry({ action: 'liffPrefill', data: JSON.stringify({ id_token: idToken }) });
+    if (!json || !json.success) throw new Error(lineIdentityMessage(json && json.error));
+    const data = json.data || {};
+    if (data.line_identity_policy !== 1 || !Array.isArray(data.locked_fields)) {
+      throw new Error('申込画面を更新しています。少し待ってから再確認してください。');
+    }
+    if (data.registration_review_required) {
+      throw new Error('登録情報の確認が必要です。担当営業へご連絡ください。');
+    }
+    applyPrefill(data.prefill, data.locked_fields);
+    applyHasTransaction(data.has_transaction);
+    lineProfileRevision = data.profile_revision || '';
+    if (data.existing_application) {
+      el('existingPassLink').href = 'pass.html?t=' + encodeURIComponent(data.existing_application.ticket_token);
+      if (bookingForm) {
+        try { await bookingForm.setToken(data.existing_application.ticket_token); }
+        catch (error) { console.warn('予約欄を読み込めませんでした。来場申込は続けられます。'); }
+      }
+      el('existingBanner').style.display = 'block';
+    }
+    lineProfileReady = true;
+    hideBoot();
+    el('eventInfo').style.display = 'block';
+    el('formWrap').style.display = 'block';
+    el('submitBtn').disabled = false;
+  } catch (error) {
+    el('bootText').textContent = error.message || '登録情報を確認できませんでした。再確認してください。';
+    el('profileRetryBtn').style.display = 'inline-block';
+  }
+}
+document.getElementById('profileRetryBtn').addEventListener('click', function () {
+  if (currentIdToken) loadLineRegisteredInfo(currentIdToken);
+});
 
 function applyHasTransaction(hasTransaction) {
   if (!hasTransaction) return;
@@ -449,6 +518,7 @@ let currentIdToken = null;
 function buildPayload(idToken) {
   return {
     id_token:         idToken,
+    profile_revision: lineProfileRevision,
     salon_name:       el('salon_name').value.trim(),
     staff_name:       el('staff_name').value.trim(),
     email:            el('email').value.trim(),
@@ -476,7 +546,7 @@ async function sendApplyLiff(idToken) {
     if (!json.success) {
       overlay(false);
       el('submitBtn').disabled = false;
-      showError('errorMsg', json.error || '送信に失敗しました。時間をおいて再度お試しください。');
+      showError('errorMsg', lineIdentityMessage(json.error) || '送信に失敗しました。時間をおいて再度お試しください。');
       return;
     }
 
@@ -500,7 +570,7 @@ async function sendApplyLiff(idToken) {
 el('applyForm').addEventListener('submit', function (ev) {
   ev.preventDefault();
   hideError('errorMsg');
-  if (!currentIdToken) {
+  if (!currentIdToken || !lineProfileReady) {
     // 実際にはフォームはトークン取得後にしか表示されないので、ここへは通常来ない。
     // 表示条件を将来変えたときに、黙ってリロードされるのではなく理由が出るようにしておく。
     showError('errorMsg', 'LINEのログイン情報を確認しています。数秒おいて、もう一度お試しください。');
@@ -538,7 +608,7 @@ document.getElementById('eventLpLink').addEventListener('click', function (event
 });
 
 async function boot() {
-  if (bookingApi.isMock()) { currentIdToken='MOCK'; hideBoot(); el('formWrap').style.display='block'; el('eventInfo').style.display='block'; return; }
+  if (bookingApi.isMock()) { currentIdToken='MOCK'; await loadLineRegisteredInfo(currentIdToken); return; }
   // 1) LIFF SDKをCDNから読み込む（失敗時は通常フォームへ逃がす・§2-7）
   try {
     await loadLiffSdk();
@@ -572,32 +642,8 @@ async function boot() {
     return;
   }
 
-  // 🔴 フォームを表示するより先にトークンを渡す。表示された瞬間から送信できる状態にするため。
   currentIdToken = idToken;
-
-  hideBoot();
-  el('eventInfo').style.display = 'block';
-  el('formWrap').style.display  = 'block';
-
-  // 🆕 取得中であることが分かるようにする（通信が遅い日に「何も起きていない」ように見えないため）
-  el('prefillStatus').style.display = 'block';
-  try {
-    const json = await postWithRetry({ action: 'liffPrefill', data: JSON.stringify({ id_token: idToken }) });
-    if (json && json.success) {
-      applyPrefill(json.data.prefill);
-      applyHasTransaction(json.data.has_transaction);
-      if (json.data.existing_application) {
-        el('existingPassLink').href = 'pass.html?t=' + encodeURIComponent(json.data.existing_application.ticket_token);
-        if(bookingForm) await bookingForm.setToken(json.data.existing_application.ticket_token);
-        el('existingBanner').style.display = 'block';
-      }
-    }
-    // 🔴 見つからない・取得失敗でもエラーにしない。空のフォームのまま使ってもらう（§2-9）
-  } catch (e) {
-    // プリフィル取得に失敗しても、フォーム自体は使える状態のまま何もしない
-  } finally {
-    el('prefillStatus').style.display = 'none';
-  }
+  await loadLineRegisteredInfo(idToken);
   // 🔴 ここに submit ハンドラを戻さないこと（v0.5.0で上のトップレベルへ移した）。
   // 理由は currentIdToken の宣言に書いてある。
 }
