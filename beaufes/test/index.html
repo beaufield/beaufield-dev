@@ -48,6 +48,18 @@
   }
   header h1 { margin: 0 0 6px; font-size: 22px; }
   header p  { margin: 0; font-size: 13px; opacity: .95; }
+  /* 申込画面を残して、イベント内容を別画面で確認するリンク。 */
+  header .event-lp-link {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    min-height: 44px; margin-top: 16px; padding: 10px 18px;
+    border: 1px solid rgba(255,255,255,.85); border-radius: 8px;
+    background: #fff; color: #16637a;
+    font-size: 14px; font-weight: bold; line-height: 1.5; text-decoration: none;
+  }
+  header .event-lp-link:hover { background: #e9f8fc; }
+  header .event-lp-link:focus-visible { outline: 3px solid #123c4a; outline-offset: 3px; }
+  header .event-lp-hint { margin-top: 10px; font-size: 12px; line-height: 1.7; }
+
   main { max-width: 520px; margin: 0 auto; padding: 20px 16px; }
   .card {
     background: #fff;
@@ -143,6 +155,12 @@
 <header>
   <h1>ビューフェス2026 お申し込み</h1>
   <p>美容従事者(理美容師・エステ等サロン様)限定のイベントです</p>
+  <a class="event-lp-link" id="eventLpLink"
+     href="https://beaufield.github.io/beaufield-dev/beaufes/event.html?openExternalBrowser=1"
+     target="_blank" rel="noopener noreferrer">
+    ビューフェスの内容を見る<span aria-hidden="true">↗</span>
+  </a>
+  <p class="event-lp-hint">別画面で開きます。内容を確認したら、<br>この申込画面に戻ってください。</p>
 </header>
 
 <main>
@@ -282,7 +300,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.26.6';
+const APP_VERSION = '0.27.0';
 const GAS_URL = 'TEST_ENV_NO_GAS';
 
 let bookingForm = null;
