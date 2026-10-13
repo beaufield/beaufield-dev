@@ -26,7 +26,7 @@ const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
 const DB_URL          = _PROPS.getProperty('DB_URL');          // §8: SupabaseプロジェクトURL（例 https://xxxx.supabase.co）
 const DB_SECRET_KEY   = _PROPS.getProperty('DB_SECRET_KEY');   // §8: service_role相当のsecret key（apikeyヘッダーにのみ使う）
-const VERSION         = 'v1.40.1';
+const VERSION         = 'v1.40.2';
 const APP_NAME        = 'order-app';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 let _requestMetric = null;
@@ -84,6 +84,7 @@ const ORDER_TEMPLATES = {
   'chiyoda':           '48.pdf',
   'alpenrose':         '57.pdf',
   'pacific_v1':        '58-v1.pdf',
+  'sato_ox_v1':        '94-ox-v1.pdf',
   'melos':             '2.pdf',
   'melos_2025':        'メロス発注書2025年価格改定後.pdf',
   'adelans':           '82.pdf',

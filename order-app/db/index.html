@@ -1017,6 +1017,7 @@
       <button id="btn-text"        class="btn btn-secondary" onclick="outputText()"       style="margin-bottom:8px;display:none">💬 テキスト出力</button>
       <button id="btn-grandex-pdf"  class="btn btn-secondary" onclick="outputGrandexPDF()"  style="margin-bottom:8px;display:none">📋 グランデックス発注書 出力</button>
       <button id="btn-chiyoda-pdf"    class="btn btn-secondary" onclick="outputChiyodaPDF()"    style="margin-bottom:8px;display:none">📋 千代田化学発注書 出力</button>
+      <button id="btn-sato-ox-pdf" class="btn btn-secondary" onclick="outputSatoOxPDF()" style="margin-bottom:8px;display:none">📋 ティアーズオキシ専用発注書 出力</button>
       <button id="btn-pacific-pdf" class="btn btn-secondary" onclick="outputPacificPDF()" style="margin-bottom:8px;display:none">📋 パシフィックプロダクツ発注書 出力</button>
       <button id="btn-alpenrose-pdf"  class="btn btn-secondary" onclick="outputAlpenrosePDF()"  style="margin-bottom:8px;display:none">📋 アルペンローゼ発注書 出力</button>
       <button id="btn-melos-pdf"      class="btn btn-secondary" onclick="outputMelosPDF()"      style="margin-bottom:8px;display:none">📋 メロス発注書 出力</button>
@@ -1527,7 +1528,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.83.0-db';
+const APP_VERSION    = 'v1.84.0-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -2357,7 +2358,7 @@ window.addEventListener('beforeunload', () => {
 =================================================== */
 const TEMPLATE_BUCKET = 'order-templates';
 // 本番GASの ORDER_TEMPLATES と同じファイル名（Driveと同じ名前のままアップロードする）
-const TEMPLATE_FILES = { grandex: '54.pdf', chiyoda: '48.pdf', alpenrose: '57.pdf', pacific_v1: '58-v1.pdf', melos: '2.pdf', adelans: '82.pdf' };
+const TEMPLATE_FILES = { grandex: '54.pdf', chiyoda: '48.pdf', alpenrose: '57.pdf', pacific_v1: '58-v1.pdf', sato_ox_v1: '94-ox-v1.pdf', melos: '2.pdf', adelans: '82.pdf' };
 const TEMPLATE_STORAGE_TIMEOUT_MS = 20000;
 
 async function _fetchTemplateFromGas(makerKey) {
@@ -3209,6 +3210,8 @@ function _dbJstToday() {
   return new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
 }
 function _dbApplyLot(row, lot) {
+  // ティアーズオキシは独立注文の固定12本条件を優先する。
+  if (SatoOxOrderForm.target(row)) { row=Object.assign({},row,{groupId:''}); lot=12; }
   // グループ所属行はlotだけ変える（配分はGAS/Pythonの分析結果のまま）。単独提案行は現行applyLotToProposal_と同じ再計算
   if (row.groupId) return Object.assign({}, row, { lot });
   const shortage = (row.recommended || 0) - ((row.stock || 0) + (row.onOrder || 0));
@@ -3810,6 +3813,7 @@ function goToSelect() {
 }
 
 function goToConfirm() {
+  if (!satoOxValidateCart()) return;
   if (cartItems.length === 0) { showToast('商品が追加されていません', 'error'); return; }
   const mismatches = cartItems.filter(item =>
     !item.isHandwritten && item.supplierCD && item.supplierCD !== currentOrder.supplierCode
@@ -4129,6 +4133,7 @@ function openQtyModal(product, isHandwritten) {
   document.getElementById('qty-memo').value = '';
   buildUnitOptions(product.unit || '');
   resetQtyButtons();
+  if (SatoOxOrderForm.target(product)) document.getElementById('qty-sub').textContent += ' | 専用注文・12本単位';
   openModal('modal-qty');
   if (hasReorder && hasStock) refreshQtySupply(product);
 }
@@ -4142,14 +4147,18 @@ function applyRecommendedQty() {
   // selectOtherQty内の50msタイムアウト後にinp.value=''されるため、その後に値をセット
   setTimeout(() => {
     const input = document.getElementById('qty-val');
-    if (input) input.value = val;
+    if (input) input.value = SatoOxOrderForm.target(pendingProduct) ? Math.ceil(val / 12) * 12 : val;
   }, 60);
 }
 
 function resetQtyButtons() {
-  selectedQty = 1;
+  const ox=SatoOxOrderForm.target(pendingProduct);
+  selectedQty = ox ? 12 : 1;
+  document.querySelectorAll('.qty-btn').forEach(b=>{
+    const n=Number(b.textContent); b.style.display=ox && n && n%12 ? 'none' : '';
+  });
   document.querySelectorAll('.qty-btn').forEach(b => b.classList.remove('selected'));
-  document.querySelectorAll('.qty-btn')[0].classList.add('selected');
+  Array.from(document.querySelectorAll('.qty-btn')).find(b=>Number(b.textContent)===selectedQty)?.classList.add('selected');
   document.getElementById('manual-qty-wrap').style.display = 'none';
   document.getElementById('qty-val').value = '';
 }
@@ -4173,6 +4182,9 @@ function selectOtherQty(el) {
 }
 
 function confirmQty() {
+  if (SatoOxOrderForm.target(pendingProduct) && selectedQty===null) {
+    try {SatoOxOrderForm.quantity(document.getElementById('qty-val').value);}catch(e){showToast(e.message,'error');return;}
+  }
   let qty;
   if (selectedQty !== null) {
     qty = selectedQty;
@@ -4197,6 +4209,13 @@ function confirmQty() {
     makerCode:     pendingProduct.makerCode     || '',
     purchasePrice: pendingProduct.purchasePrice || 0
   };
+  if (SatoOxOrderForm.target(item)) {
+    try {SatoOxOrderForm.quantity(qty);}catch(e){showToast(e.message,'error');return;}
+  }
+  if (cartItems.length && SatoOxOrderForm.contains([...cartItems,item]) &&
+      ![...cartItems,item].every(SatoOxOrderForm.target)) {
+    showToast('ティアーズオキシは他のサトー商品と別の注文にしてください','error');return;
+  }
   const dupIdx = findDupIndex(item);
   if (dupIdx !== -1) {
     closeModal('modal-qty');
@@ -4431,7 +4450,12 @@ function discardCart() {
 }
 /* === /CART RESUME === */
 
-function updateItemQty(idx, val){ const q = parseInt(val); if (q > 0) { cartItems[idx].qty = q; saveCart(); } }
+function updateItemQty(idx, val){
+  if (SatoOxOrderForm.target(cartItems[idx])) {
+    try { SatoOxOrderForm.quantity(val); } catch(e) {showToast(e.message,'error');renderItemList();return;}
+  }
+  const q=parseInt(val);if(q>0){cartItems[idx].qty=q;saveCart();}
+}
 function updateItemMemo(idx, v) { cartItems[idx].memo = v; saveCart(); }
 function removeItem(idx)        { cartItems.splice(idx, 1); saveCart(); renderItemList(); }
 
@@ -4468,6 +4492,7 @@ function renderItemList() {
 // カートの中身で最低発注金額を満たしているかを1行出す（表示のみ・発注は止めない。v1.72.0）。
 // 手打ち商品は仕入単価が入っていれば集計に入れる（商品コードが無いのでグループ判定は名前で行う）
 function renderConfirmMinOrder() {
+  if (SatoOxOrderForm.contains(cartItems)) return '<div style="margin-top:8px">ティアーズオキシ専用注文・各12本単位</div>';
   const supplierCode = currentOrder.supplierCode;
   if (!minOrderSetting(supplierCode)) return '';
   const amount = cartItems.reduce((s, i) =>
@@ -4590,8 +4615,13 @@ function applyOutputButtons() {
   show('btn-aderans-pdf', methods.includes('メーカーPDF') &&
                           currentOrder.supplierCode === ADERANS_SUPPLIER_CODE);
 
+  const ox = SatoOxOrderForm.contains(cartItems);
+  show('btn-sato-ox-pdf', ox);
+  if (ox) ['btn-csv','btn-pdf','btn-text','btn-grandex-pdf','btn-chiyoda-pdf',
+    'btn-pacific-pdf','btn-alpenrose-pdf','btn-melos-pdf','btn-aderans-pdf','btn-web-record'].forEach(id => show(id,false));
+
   // Web発注先：アプリからは送信せず、記録のみ保存する（Phase H）
-  show('btn-web-record', methods.includes('Web'));
+  show('btn-web-record', methods.includes('Web') && !ox);
 }
 
 /* ===================================================
@@ -4911,6 +4941,9 @@ async function _recoverOrderEntry(entry) {
   }
 
   // 未検出は未登録の確定ではない。同じrequestId・同じ固定payloadで1回だけ収束再送する。
+  // UNKNOWNは照会を済ませてから、実際の再送直前に専用注文の条件を検査する。
+  try { SatoOxOrderForm.guard(JSON.parse(entry.params.items),entry.params.supplierCode,entry.params.date); }
+  catch(e) { _markOrderEntry(entry,'STALE',e.message); throw e; }
   _markOrderEntry(entry, 'RECOVERING');
   // ⚠️ tryで囲むのは「結果が曖昧になりうる通信そのもの」だけにする（v1.67.0）。
   //    応答の解釈や保存成立後の後始末まで囲むと、保存できているのに「不明」として
@@ -4951,6 +4984,7 @@ async function _processOrderEntry(entry, initialSend) {
   if (_orderOutboxInFlight.has(entry.requestId)) return _orderOutboxInFlight.get(entry.requestId);
   const task = (async () => {
     if (!initialSend) return _recoverOrderEntry(entry);
+    SatoOxOrderForm.guard(JSON.parse(entry.params.items), entry.params.supplierCode, entry.params.date);
     _markOrderEntry(entry, 'SENDING');
     // ⚠️ _recoverOrderEntry と同じ理由で、tryは通信だけを囲む（v1.67.0）
     let res = null;
@@ -5103,6 +5137,7 @@ async function _approveDuplicateOrder(entry, conflicts) {
 }
 
 async function saveOrderToGAS(outputType) {
+  satoOxGuardCart();
   // H4: DBモードだけ、押し直し・再読み込みの直前に「知っている失効」を確認してから進む
   if (DATA_BACKEND === 'db') {
     try { await dbAdapter.ready(); } catch(e) { /* IndexedDBが読めなくてもメモリだけで進む */ }
@@ -5236,6 +5271,7 @@ function _finishExternalOutput() {
 // 保存確認後にだけ出力する。確認が曖昧な通信障害で先にテキストを渡すと、外部発注だけが
 // 完了して履歴に残らず、翌日の提案で同じ商品が再び候補になる。
 async function outputText() {
+  if (SatoOxOrderForm.contains(cartItems)) return outputSatoOxPDF();
   const lines = cartItems.map(i => `${i.name} × ${i.qty}${i.unit || ''}`);
   const text  = lines.join('\n');
 
@@ -5261,6 +5297,7 @@ async function outputText() {
 // Web発注先の発注記録として保存（アプリからは送信しない。Phase H）
 // 発注サイトで注文した（する）内容を記録するだけのため、出力・ダウンロードは行わない
 async function outputWebRecord() {
+  if (SatoOxOrderForm.contains(cartItems)) return outputSatoOxPDF();
   if (!confirm(
     '発注サイトで注文した（する）内容で間違いありませんか？\n' +
     '記録すると、この数量は「発注済み」として提案から差し引かれます。'
@@ -5277,6 +5314,7 @@ async function outputWebRecord() {
 
 // CSV出力（ヘッダー行なし）。保存確認後にだけダウンロードする。
 async function outputCSV() {
+  if (SatoOxOrderForm.contains(cartItems)) return outputSatoOxPDF();
   const csvItems = cartItems.filter(i => !i.isHandwritten);
   if (csvItems.length === 0) {
     showToast('CSV出力可能な商品がありません\n（手書き商品はCSV対象外）', 'error'); return;
@@ -5795,6 +5833,7 @@ async function outputAderansPDF() {
 }
 
 async function outputPDF() {
+  if (SatoOxOrderForm.contains(cartItems)) return outputSatoOxPDF();
   showLoading('発注履歴を保存・確認中...');
   try {
     const orderNo = await _saveBeforeExternalOutput('PDF');
@@ -6197,9 +6236,15 @@ async function getHistoryDetail_(orderNo) {
 function buildHistReOutputBtns(orderNo, supplierCode) {
   const sup     = masters.suppliers.find(s => s.code === supplierCode);
   const methods = (sup && sup.outputMethods && sup.outputMethods.length > 0)
-    ? sup.outputMethods
+    ? sup.outputMethods.slice()
     : ['CSV', 'PDF', 'テキスト', 'メーカーPDF'];
   const btns = [];
+  const oxHistory = historyDetailCache[orderNo] || [];
+  if (SatoOxOrderForm.supplier(supplierCode) === SatoOxOrderForm.SUPPLIER &&
+      oxHistory.length && oxHistory.every(SatoOxOrderForm.target)) {
+    btns.push(`<button class="btn btn-secondary btn-sm" ${orderAction('reOutputSatoOxPDF',orderNo)}>📋 ティアーズオキシ専用発注書 再出力</button>`);
+    methods.length = 0;
+  }
   if (methods.includes('CSV'))
     btns.push(`<button class="btn btn-outline btn-sm" ${orderAction('reOutputCSV', orderNo)}>📥 CSV再出力</button>`);
   if (methods.includes('PDF'))
@@ -6227,6 +6272,8 @@ function buildHistReOutputBtns(orderNo, supplierCode) {
 
 // 履歴からCSV再出力（ヘッダーなし）
 async function reOutputCSV(orderNo) {
+  const oxItems=historyDetailCache[orderNo] || [];
+  if (oxItems.length && oxItems.every(SatoOxOrderForm.target)) return reOutputSatoOxPDF(orderNo);
   const orderInfo = getHistoryOrderInfo(orderNo);
   let items       = historyDetailCache[orderNo];
   if (!items || !orderInfo) { showToast('データが見つかりません', 'error'); return; }
@@ -6257,6 +6304,8 @@ async function reOutputCSV(orderNo) {
 
 // 履歴からPDF再出力
 async function reOutputPDF(orderNo) {
+  const oxItems=historyDetailCache[orderNo] || [];
+  if (oxItems.length && oxItems.every(SatoOxOrderForm.target)) return reOutputSatoOxPDF(orderNo);
   const orderInfo = getHistoryOrderInfo(orderNo);
   let items       = historyDetailCache[orderNo];
   if (!items || !orderInfo) { showToast('データが見つかりません', 'error'); return; }
@@ -6316,6 +6365,8 @@ async function reOutputPDF(orderNo) {
 
 // 履歴からテキスト再出力（クリップボードコピー + .txtダウンロード）
 async function reOutputText(orderNo) {
+  const oxItems=historyDetailCache[orderNo] || [];
+  if (oxItems.length && oxItems.every(SatoOxOrderForm.target)) return reOutputSatoOxPDF(orderNo);
   const orderInfo = getHistoryOrderInfo(orderNo);
   let items       = historyDetailCache[orderNo];
   if (!items || !orderInfo) { showToast('データが見つかりません', 'error'); return; }
@@ -7809,7 +7860,7 @@ async function loadProposals(force = false) {
         if (p.refOnly) propUncheckedItems.add(p.supplierCode + '|' + p.code);
       });
       proposalsData = {
-        proposals:  res.proposals  || [],
+        proposals:  (res.proposals || []).map(p => SatoOxOrderForm.target(p) ? _dbApplyLot(p,12) : p),
         analyzedAt: res.analyzedAt || '',
         analysisInputAt: res.analysisInputAt || '',
         analysisId: res.analysisId || '',
@@ -8088,7 +8139,7 @@ function renderProposalList() {
         g.items.forEach(p => { if (p.groupId && !mgIds.includes(p.groupId)) mgIds.push(p.groupId); });
         const renderItem = (p, c) => renderPropItem(p, c, delayedByCode, orderedByCode);
         const items = mgIds.map(gid => renderMgBlock(gid, code, renderItem)).join('')
-          + g.items.filter(p => !p.groupId).map(p => renderItem(p, code)).join('');
+          + g.items.filter(p => !p.groupId && !SatoOxOrderForm.target(p)).map(p => renderItem(p, code)).join('');
         const totalQty = g.mainItems.reduce((s, p) => s + (p.proposedQty || 0), 0);
         const totalAmount = g.totalAmount;
         const refNote = g.refCount ? `<span style="color:var(--text-light)"> ＋参考${g.refCount}件</span>` : '';
@@ -8116,7 +8167,7 @@ function renderProposalList() {
         const isOpen = propOpenGroups.has(code);
         const isWeb = isWebSupplier(code);
         const webBadge = isWeb ? '<span class="prop-badge sporadic" style="margin-left:4px">🌐 Web</span>' : '';
-        const startBtnLabel = isWeb ? '📝 チェックした商品を発注記録へ' : '🛒 チェックした商品で発注画面へ';
+        const startBtnLabel = SatoOxOrderForm.supplier(code)==='94' ? '🛒 他のサトー商品で発注画面へ' : (isWeb ? '📝 チェックした商品を発注記録へ' : '🛒 チェックした商品で発注画面へ');
         return `
         <div class="card prop-group${isOpen ? ' open' : ''}" id="prop-group-${escHtml(code)}">
           <div class="prop-group-head" ${orderAction('toggleProposalGroup', code)}>
@@ -8126,6 +8177,7 @@ function renderProposalList() {
           </div>
           <div class="prop-group-body">
             ${items}
+            ${satoOxProposalControls(code,g.items,renderItem)}
             <div class="prop-min-order"></div>
             ${propAdjustmentControls(code)}
             <div class="prop-group-summary" id="prop-summary-${escHtml(code)}">選択中: ${checkedItems.length}件 / ${formatYen(checkedAmount)}</div>
@@ -9450,7 +9502,7 @@ async function restoreEol(code) {
 function computeProposedQty(p) {
   const shortage = (p.recommended || 0) - ((p.stock || 0) + (p.onOrder || 0));
   if (shortage <= 0) return 0;
-  const lot = p.lot > 1 ? p.lot : 1;
+  const lot = SatoOxOrderForm.target(p) ? 12 : (p.lot > 1 ? p.lot : 1);
   return Math.ceil(shortage / lot) * lot;
 }
 
@@ -9555,8 +9607,8 @@ function collectPickedFrom(rootEl, supplierCode) {
     // チェックONでも数量0（手動でその商品を除外した行など）はカートに入れない。
     // parseInt(値) || p.proposedQty だと「明示的に0にした」行が誤って proposedQty に化けるため、
     // 入力値が数値として読めない（空欄など）ときだけ proposedQty にフォールバックする
-    const rawQty = parseInt(el.querySelector('.prop-qty').value, 10);
-    const qty = Number.isNaN(rawQty) ? p.proposedQty : rawQty;
+    const rawQty = SatoOxOrderForm.target(p) ? Number(el.querySelector('.prop-qty').value) : parseInt(el.querySelector('.prop-qty').value, 10);
+    const qty = Number.isNaN(rawQty) && !SatoOxOrderForm.target(p) ? p.proposedQty : rawQty;
     if (qty < 1) return;
     picked.push({ p, qty });
   });
@@ -9568,6 +9620,13 @@ function startOrderFromProposals(supplierCode) {
   if (!group) return;
 
   let picked = collectPickedFrom(group, supplierCode);
+  const oxPicked = picked.filter(x=>SatoOxOrderForm.target(x.p));
+  if (oxPicked.length) {
+    const regular = picked.filter(x=>!SatoOxOrderForm.target(x.p));
+    if (!regular.length) { startSatoOxFromProposals(supplierCode); return; }
+    if (!confirm('ティアーズオキシは専用注文として発注します。\nオキシを外して、他のサトー商品だけで発注画面へ進みますか？\nオキシは専用ボタンから別に発注してください。')) return;
+    picked = regular;
+  }
   if (picked.length === 0) { showToast('商品にチェックを入れてください', 'error'); return; }
   /* PROP_ADJUST_START_GUARD */
   const unitError=propAdjustmentUnitError(masters.suppliers.find(s=>s.code===supplierCode)?.name,
@@ -9663,6 +9722,8 @@ function cartItemsFromProposalPicked(supplierCode, picked) {
 // picked: [{ p: 提案行, qty: 発注数 }]。仕入先カード全体からでも、まとめ発注グループ
 // ブロック単体からでも、ここに流し込めば以降はまったく同じ経路で動く
 function startOrderWithPicked(supplierCode, picked, toastLabel) {
+  try { SatoOxOrderForm.guard(cartItemsFromProposalPicked(supplierCode,picked),supplierCode,resolveOrderDate()); }
+  catch(e) { showToast(e.message,'error'); return; }
   if (picked.length === 0) { showToast('商品にチェックを入れてください', 'error'); return; }
 
   if (cartItems.length > 0 &&
@@ -10351,6 +10412,8 @@ const ORDER_ACTION_HANDLERS = Object.freeze({
   reOutputGrandexPDF: a => reOutputGrandexPDF(a[0]),
   reOutputAlpenrosePDF: a => reOutputAlpenrosePDF(a[0]),
   reOutputPacificPDF: a => reOutputPacificPDF(a[0]),
+  reOutputSatoOxPDF: a => reOutputSatoOxPDF(a[0]),
+  startSatoOxFromProposals: a => startSatoOxFromProposals(a[0]),
   reOutputMelosPDF: a => reOutputMelosPDF(a[0]),
   reOutputAderansPDF: a => reOutputAderansPDF(a[0]),
   copyOrderFromHistory: a => copyOrderFromHistory(a[0]),
@@ -11460,5 +11523,155 @@ async function reOutputPacificPDF(orderNo) {
 
 </script>
 <!-- PACIFIC_FORM_EMBED_END -->
+<!-- SATO_OX_FORM_EMBED_BEGIN -->
+<script>
+/* サトー直送オキシ専用帳票。対象2商品の識別子と印字座標だけを公開コードに持つ。 */
+(function(root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.SatoOxOrderForm = api;
+})(typeof globalThis === 'object' ? globalThis : this, function() {
+  'use strict';
+  const TEMPLATE_KEY = 'sato_ox_v1';
+  const TEMPLATE_SHA256 = '3cb5c3524aa74d186bbe79d8b90ae019fa7f5fccfa07cf27495b48eea1c2eec9';
+  const WIDTH = 593.64, HEIGHT = 850.68, LOT = 12, SUPPLIER = '94';
+  const ROWS = Object.freeze([
+    Object.freeze({code:'010063', jan:'4983209565043', makerCode:'112500001', label:'6%', x0:150, x1:225, y:400}),
+    Object.freeze({code:'010064', jan:'4983209565050', makerCode:'112500002', label:'3%', x0:389, x1:464, y:400})
+  ]);
+  const byCode = new Map(ROWS.map(r => [r.code, r]));
+  const byJan = new Map(ROWS.map(r => [r.jan, r]));
+  function code(v) { const s=String(v ?? '').trim(); return /^\d{1,6}$/.test(s)?s.padStart(6,'0'):s; }
+  function supplier(v) { return String(v ?? '').trim().replace(/^0+(?=\d)/,''); }
+  function target(item) { return !!item && (byCode.has(code(item.code)) || byJan.has(String(item.janCode ?? item.jan ?? '').trim())); }
+  function contains(items) { return Array.isArray(items) && items.some(target); }
+  function date(v) {
+    const m=/^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(String(v || ''));
+    if (!m) throw Error('発注日が不正です');
+    const y=+m[1], mo=+m[2], d=+m[3], x=new Date(Date.UTC(y,mo-1,d));
+    if (y<2019 || y>2099 || x.getUTCFullYear()!==y || x.getUTCMonth()!==mo-1 || x.getUTCDate()!==d || x<Date.UTC(2019,4,1))
+      throw Error('発注日は令和の有効な日付で入力してください');
+    return `${m[1]}-${m[2]}-${m[3]}`;
+  }
+  function quantity(raw) {
+    if (typeof raw!=='number' && (typeof raw!=='string' || !/^\d+$/.test(raw.trim()))) throw Error('数量が不正です');
+    const n=Number(raw);
+    if (!Number.isSafeInteger(n) || n<LOT || n>999996 || n%LOT) throw Error('ティアーズオキシは6%・3%それぞれ12本単位で入力してください');
+    return n;
+  }
+  function plan(items, supplierCode, orderDate) {
+    if (supplier(supplierCode)!==SUPPLIER) throw Error('サトー（94）の発注だけに対応しています');
+    if (!Array.isArray(items) || !items.length) throw Error('商品がありません');
+    const totals=new Map(); let inputTotal=0;
+    for (const item of items) {
+      if (!item || item.isHandwritten) throw Error('手書き商品はティアーズオキシの専用注文に含められません');
+      const cd=code(item.code), jan=String(item.janCode ?? item.jan ?? '').trim();
+      const a=byCode.get(cd), b=jan?byJan.get(jan):null;
+      if ((cd && !a) || (jan && !b) || (a && b && a!==b)) throw Error('商品コードとJANがティアーズオキシの対応表に一致しません');
+      const row=a || b;
+      if (!row) throw Error('他のサトー商品とは別の注文にしてください。専用注文にはオキシ6%・3%だけを入れてください');
+      if (item.supplierCD && supplier(item.supplierCD)!==SUPPLIER) throw Error('商品の仕入先がサトー（94）ではありません');
+      if (item.makerCode && String(item.makerCode).trim()!==row.makerCode) throw Error('メーカー商品コードが一致しません');
+      // 商品マスターの「個」はこの帳票の「本」と同じ1パウチを表す。ケースへ換算しない。
+      if (!['個','本'].includes(String(item.unit || '').normalize('NFKC').trim())) throw Error('数量の単位は個または本で入力してください');
+      if (String(item.memo || '').trim()) throw Error('この専用発注書には備考欄がありません。備考を空にしてから出力してください');
+      const qty=quantity(item.qty), next=(totals.get(row.code)?.qty || 0)+qty;
+      quantity(next); totals.set(row.code,{row,qty:next}); inputTotal+=qty;
+    }
+    return Object.freeze({date:date(orderDate),lines:[...totals.values()],inputTotal,itemCount:items.length});
+  }
+  function guard(items, supplierCode, orderDate) { return contains(items)?plan(items,supplierCode,orderDate):null; }
+  async function prepare(PDFLib, bytes, drawing, digest) {
+    if (await digest(bytes)!==TEMPLATE_SHA256) throw Error('ティアーズオキシ帳票の版が一致しません');
+    const doc=await PDFLib.PDFDocument.load(bytes), pages=doc.getPages();
+    if (pages.length!==1 || Math.abs(pages[0].getWidth()-WIDTH)>.05 || Math.abs(pages[0].getHeight()-HEIGHT)>.05)
+      throw Error('ティアーズオキシ帳票のページ構成が一致しません');
+    const page=pages[0], font=await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+    for (const {row,qty} of drawing.lines) {
+      const text=String(qty), size=18, w=font.widthOfTextAtSize(text,size);
+      if (w>row.x1-row.x0) throw Error('発注数欄に数量が収まりません');
+      page.drawText(text,{x:row.x1-w,y:row.y,size,font,color:PDFLib.rgb(0,0,0)});
+    }
+    const [year,month,day]=drawing.date.split('-').map(Number);
+    // 原本の「令和 年 月 日」欄へ数字だけを入れる。住所・宛先・本の単位は原本を保持。
+    for (const [n,x] of [[year-2018,211],[month,264],[day,317]])
+      page.drawText(String(n),{x,y:285,size:11,font,color:PDFLib.rgb(0,0,0)});
+    return doc.save();
+  }
+  return Object.freeze({TEMPLATE_KEY,TEMPLATE_SHA256,WIDTH,HEIGHT,LOT,SUPPLIER,ROWS,code,supplier,target,contains,date,quantity,plan,guard,prepare});
+});
+
+// 専用の独立注文。既存の保存確定・未確定照会・履歴再出力の契約を維持する。
+let satoOxOutputBusy=false;
+function satoOxGuardCart(items=cartItems, info=currentOrder) {
+  return SatoOxOrderForm.guard(items,info.supplierCode,info.date);
+}
+function satoOxProposalControls(supplierCode,items,renderItem) {
+  if (SatoOxOrderForm.supplier(supplierCode)!==SatoOxOrderForm.SUPPLIER) return '';
+  return `<div style="margin-top:12px;padding:12px;border:1px solid var(--border);border-radius:8px">
+    <strong>ティアーズオキシ6%・3% 専用注文</strong>
+    <div style="font-size:12px;margin-top:4px">他のサトー商品と分けて発注します。各12本単位。選択した数量で専用発注書を作成します。</div>
+    ${(items || []).filter(SatoOxOrderForm.target).map(p=>renderItem(p,supplierCode)).join('')}
+    <button class="btn btn-secondary" style="margin-top:8px" ${orderAction('startSatoOxFromProposals',supplierCode)}>ティアーズオキシだけで発注画面へ</button>
+    </div>`;
+}
+function startSatoOxFromProposals(supplierCode) {
+  const group=document.getElementById('prop-group-'+supplierCode);
+  if (!group) return;
+  const picked=collectPickedFrom(group,supplierCode).filter(x=>SatoOxOrderForm.target(x.p));
+  if (!picked.length) {showToast('ティアーズオキシ6%・3%にチェックを入れてください','error');return;}
+  startOrderWithPicked(supplierCode,picked,'ティアーズオキシ専用注文');
+}
+function satoOxValidateCart(show=true) {
+  try { satoOxGuardCart(); return true; }
+  catch(e) {if(show)showToast(e.message,'error');return false;}
+}
+function satoOxFingerprint() {return pacificFingerprint();}
+async function satoOxPrepare(items,info) {
+  const drawing=SatoOxOrderForm.plan(items,info.supplierCode,info.date);
+  const bytes=await fetchTemplateAsArrayBuffer(SatoOxOrderForm.TEMPLATE_KEY);
+  return SatoOxOrderForm.prepare(PDFLib,bytes,drawing,pacificDigest);
+}
+async function outputSatoOxPDF() {
+  if(satoOxOutputBusy)return;
+  satoOxOutputBusy=true;
+  let confirmedNo='';const signature=satoOxFingerprint();
+  const items=JSON.parse(JSON.stringify(cartItems)),info={...currentOrder};
+  showLoading('ティアーズオキシ専用発注書を生成中...');
+  try {
+    pacificPendingMatches(items);
+    const bytes=await satoOxPrepare(items,info);
+    if(signature!==satoOxFingerprint())throw Error('作成中に発注内容が変わりました。内容を確認して出力し直してください');
+    pacificPendingMatches(items);
+    confirmedNo=await _saveBeforeExternalOutput('メーカー発注書');
+    if(!confirmedNo)throw Error('保存確定番号を確認できません');
+    if(signature!==satoOxFingerprint() || _isOrderKnownInactive(confirmedNo))throw Error('内容または状態が変わりました。履歴から再出力してください');
+    downloadBlob(new Blob([bytes],{type:'application/pdf'}),`サトー_ティアーズオキシ発注書_${SatoOxOrderForm.date(info.date).replace(/-/g,'')}_${confirmedNo}.pdf`);
+    try{_finishExternalOutput();}catch(e){/* 保存確定済み。片付け失敗で再登録を促さない */}
+    showToast('ティアーズオキシ専用発注書を出力しました','success');
+  }catch(e){showToast(confirmedNo?`発注${confirmedNo}は保存済みです。履歴から再出力してください。${e.message}`:'発注書は出力していません: '+e.message,'error');}
+  finally{satoOxOutputBusy=false;hideLoading();}
+}
+async function reOutputSatoOxPDF(orderNo) {
+  if(satoOxOutputBusy)return;
+  satoOxOutputBusy=true;showLoading('ティアーズオキシ専用発注書を再出力中...');
+  try {
+    const info=getHistoryOrderInfo(orderNo);
+    if(!info || DATA_BACKEND!=='db')throw Error('発注履歴を確認できません');
+    const user=currentUser && currentUser.user_id, first=await _confirmHistoryOrderActive(orderNo);
+    if(!first.ok)throw Error('発注の最新状態を確認できません。履歴を更新してください');
+    const signature=JSON.stringify(first.items),infoSignature=JSON.stringify(info);
+    const bytes=await satoOxPrepare(first.items,info);
+    const last=await _confirmHistoryOrderActive(orderNo);
+    if(!last.ok || JSON.stringify(last.items)!==signature || JSON.stringify(getHistoryOrderInfo(orderNo))!==infoSignature || user!==(currentUser && currentUser.user_id))
+      throw Error('発注の内容または状態が変わりました。履歴を更新して再出力してください');
+    downloadBlob(new Blob([bytes],{type:'application/pdf'}),`サトー_ティアーズオキシ発注書_${SatoOxOrderForm.date(info.date).replace(/-/g,'')}_${orderNo}.pdf`);
+    showToast('ティアーズオキシ専用発注書を再出力しました','success');
+  }catch(e){showToast('再出力していません: '+e.message,'error');}
+  finally{satoOxOutputBusy=false;hideLoading();}
+}
+
+</script>
+<!-- SATO_OX_FORM_EMBED_END -->
 </body>
 </html>
