@@ -167,21 +167,26 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 /* ===== 共通ローディング（v2.15.0）=====
    このアプリはBCART APIを叩くので1操作に数秒かかる。
    「押したのに何も起きない」を無くすため、通信中は必ず次の2つが出る:
-   1) 画面上部の「通信中…」ピル（gasPostを通る全操作で自動）
+   1) 画面中央の「通信中…」表示（gasPostを通る全操作で自動）
    2) 押したボタン自体のスピナー（クリック元を自動で特定）
    ボタンは disabled ではなく pointer-events で止める。
    既存ハンドラが自前で textContent や disabled を書き換えていても衝突しないため。 */
+/* 通信状態を中央に大きく表示。背景の操作を遮断せず、専用進捗表示を優先する。 */
 #netBusy {
-  display: none; position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
-  z-index: 900; background: #111827; color: #fff; border-radius: 999px;
-  padding: 6px 16px 6px 12px; font-size: 12px; font-weight: 600;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.25); align-items: center; gap: 8px;
+  display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  z-index: 900; width: min(300px, calc(100vw - 32px)); background: #111827; color: #fff;
+  border-radius: 16px; padding: 24px; font-size: 20px; font-weight: 700;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.35); align-items: center; justify-content: center;
+  gap: 16px; pointer-events: none;
 }
 #netBusy.open { display: flex; }
 #netBusy .net-spinner {
-  width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.35);
+  width: 28px; height: 28px; flex-shrink: 0; border: 3px solid rgba(255,255,255,0.35);
   border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite;
 }
+#netBusy .net-busy-help { margin-top: 6px; font-size: 13px; font-weight: 400; color: #d1d5db; }
+body:has(#busyOverlay.open, #progressOverlay.open) #netBusy { display: none; }
+@media (prefers-reduced-motion: reduce) { #netBusy .net-spinner { animation: none; } }
 .btn.is-busy, button.is-busy {
   pointer-events: none; opacity: 0.65; position: relative;
 }
@@ -1111,7 +1116,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 </div>
 
 <!-- 通信中インジケータ（gasPostが自動で出し入れする） -->
-<div id="netBusy"><span class="net-spinner"></span><span id="netBusyText">通信中…</span></div>
+<div id="netBusy" role="status" aria-live="polite" aria-atomic="true"><span class="net-spinner" aria-hidden="true"></span><div><div id="netBusyText">通信中…</div><div class="net-busy-help">しばらくお待ちください</div></div></div>
 
 <!-- 全画面ビジーオーバーレイ -->
 <div id="busyOverlay">
@@ -1408,7 +1413,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = 'v2.22.0';
+const APP_VERSION = 'v2.22.1';
 // 画面で新しく選べる表示方法。保存済みの旧設定は勝手に変換しない。
 const JODAI_DISPLAY_TYPES = ['メーカー希望小売価格', '非表示', 'オープン'];
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
@@ -3380,7 +3385,7 @@ function gotoSpSubview(view) {
 
 function loadSpecialPriceData(onDone) {
   // 初回だけ全面スピナー。保存後などの再読込では今の画面を残したまま差し替える
-  // （通信中であることは画面上部の「通信中…」ピルと押したボタンのスピナーで分かる）
+  // （通信中であることは画面中央の「通信中…」表示と押したボタンのスピナーで分かる）
   if (!spData) {
     document.getElementById('sp-content').innerHTML =
       '<div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>';
