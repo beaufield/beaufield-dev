@@ -1528,7 +1528,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.84.0-db';
+const APP_VERSION    = 'v1.84.1-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -3780,6 +3780,7 @@ async function startOrder() {
 }
 
 function updateInputHeader() {
+  const ox = SatoOxOrderForm.contains(cartItems);
   syncOrderDateInputs();
   document.getElementById('input-supplier').textContent = currentOrder.supplierName;
   document.getElementById('input-meta').textContent =
@@ -3789,21 +3790,22 @@ function updateInputHeader() {
 
   const sup = masters.suppliers.find(s => s.code === currentOrder.supplierCode);
   const deadlineEl = document.getElementById('input-deadline');
-  if (sup && sup.deadline) {
+  if (!ox && sup && sup.deadline) {
     deadlineEl.textContent = '⏰ 発注限 ' + sup.deadline;
     deadlineEl.style.display = 'block';
   } else {
     deadlineEl.style.display = 'none';
   }
   const noteEl = document.getElementById('input-note');
-  if (sup && sup.note) {
+  if (!ox && sup && sup.note) {
     noteEl.textContent = '📌 ' + sup.note;
     noteEl.style.display = 'block';
   } else {
     noteEl.style.display = 'none';
   }
   const webBanner = document.getElementById('input-web-banner');
-  webBanner.style.display = isWebSupplier(currentOrder.supplierCode) ? 'block' : 'none';
+  webBanner.textContent = ox ? '📋 ティアーズオキシ専用発注書を出力して印刷してください。6%・3%はそれぞれ12本単位です。' : '🌐 Web発注先です。このアプリからは送信しません。発注サイトで注文した（する）内容を記録します';
+  webBanner.style.display = ox || isWebSupplier(currentOrder.supplierCode) ? 'block' : 'none';
 }
 
 function goToSelect() {
@@ -4460,6 +4462,7 @@ function updateItemMemo(idx, v) { cartItems[idx].memo = v; saveCart(); }
 function removeItem(idx)        { cartItems.splice(idx, 1); saveCart(); renderItemList(); }
 
 function renderItemList() {
+  updateInputHeader();
   const container = document.getElementById('added-list');
   document.getElementById('item-count').textContent = `(${cartItems.length}件)`;
   if (cartItems.length === 0) {
@@ -4516,10 +4519,10 @@ function renderConfirmPage() {
         ${dateHtml} / 担当: ${currentOrder.staff}
         ${currentOrder.fax ? ' / FAX: ' + currentOrder.fax : ''}
       </div>
-      ${confirmSup && confirmSup.deadline ? `<div class="order-summary-deadline" style="margin-top:8px">⏰ 発注限 ${escHtml(confirmSup.deadline)}</div>` : ''}
-      ${confirmSup && confirmSup.note ? `<div class="order-summary-note" style="margin-top:8px">📌 ${escHtml(confirmSup.note)}</div>` : ''}
+      ${!SatoOxOrderForm.contains(cartItems) && confirmSup && confirmSup.deadline ? `<div class="order-summary-deadline" style="margin-top:8px">⏰ 発注限 ${escHtml(confirmSup.deadline)}</div>` : ''}
+      ${!SatoOxOrderForm.contains(cartItems) && confirmSup && confirmSup.note ? `<div class="order-summary-note" style="margin-top:8px">📌 ${escHtml(confirmSup.note)}</div>` : ''}
       ${renderConfirmMinOrder()}
-      ${isWebSupplier(currentOrder.supplierCode) ? `<div class="order-summary-web" style="margin-top:8px">🌐 このアプリからは送信されません。発注サイトで注文した（する）内容を記録します</div>` : ''}
+      ${SatoOxOrderForm.contains(cartItems) ? `<div class="order-summary-web" style="margin-top:8px">📋 専用発注書を出力して印刷してください。</div>` : isWebSupplier(currentOrder.supplierCode) ? `<div class="order-summary-web" style="margin-top:8px">🌐 このアプリからは送信されません。発注サイトで注文した（する）内容を記録します</div>` : ''}
     </div>`;
 
   const hasPrices   = cartItems.some(i => !i.isHandwritten && i.purchasePrice > 0);
