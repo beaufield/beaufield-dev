@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.35.0';
+const VERSION = 'v2.35.1';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -2662,7 +2662,7 @@ function getSpecialPriceData() {
         member_ids:     String(groupRows[i][2] || ''),
         created_at:     String(groupRows[i][3]),
         note:           groupRows[i][4] || '',
-        use_view_filter: groupRows[i][5] === true || groupRows[i][5] === 'TRUE',
+        use_view_filter: String(groupRows[i][5]).toUpperCase() === 'TRUE',
         customer_codes: String(groupRows[i][6] || ''),
         maker:          String(groupRows[i][7] || ''),
         applied_member_ids: String(groupRows[i][8] || '')
@@ -3393,7 +3393,7 @@ function spCopySource_(groupId) {
   if (found.length !== 1) throw new Error('複製元のグループが見つからないか、IDが重複しています');
   const row = found[0];
   const group = { group_id: String(row[0]), group_name: String(row[1]), member_ids: String(row[2] || ''),
-    note: String(row[4] || ''), use_view_filter: row[5] === true || row[5] === 'TRUE',
+    note: String(row[4] || ''), use_view_filter: String(row[5]).toUpperCase() === 'TRUE',
     customer_codes: String(row[6] || ''), maker: String(row[7] || '') };
   const readItems = (sheetName, hasPrice) => {
     const seen = new Set();
@@ -3432,6 +3432,20 @@ function getCustomerGroupDuplicatePreview(params) {
   finally { lock.releaseLock(); }
 }
 
+// Sheetsの文字列書式が変換する真偽値・価格だけを正規化する。他の列は厳密に照合する。
+function spCopyComparableRow_(sheetName, row) {
+  const normalized = row.slice();
+  if (sheetName === SHEET_SP_GROUPS) {
+    const value = normalized[5];
+    if (value === true || value === 'TRUE' || value === 'true') normalized[5] = true;
+    else if (value === false || value === 'FALSE' || value === 'false') normalized[5] = false;
+    else throw new Error('複製先の例外表示設定が不正です。管理者の確認が必要です');
+  } else if (sheetName === SHEET_SP_DETAILS) {
+    normalized[5] = spPrice_(normalized[5]);
+  }
+  return normalized;
+}
+
 function spCopyWriteRows_(sheetName, rows) {
   if (!rows.length) return;
   const sheet = getOrCreateSheet(sheetName);
@@ -3439,7 +3453,7 @@ function spCopyWriteRows_(sheetName, rows) {
   const missing = [];
   rows.forEach(row => {
     const found = existing.slice(1).filter(r => String(r[0]) === row[0]);
-    if (found.length > 1 || (found.length && spHash_(found[0].slice(0, row.length)) !== spHash_(row))) {
+    if (found.length > 1 || (found.length && spHash_(spCopyComparableRow_(sheetName, found[0].slice(0, row.length))) !== spHash_(spCopyComparableRow_(sheetName, row)))) {
       throw new Error('複製先の保存内容が変わりました。管理者の確認が必要です');
     }
     if (!found.length) missing.push(row);
@@ -3448,13 +3462,18 @@ function spCopyWriteRows_(sheetName, rows) {
     const range = sheet.getRange(sheet.getLastRow() + 1, 1, missing.length, missing[0].length);
     // IDのカンマ連結・品番・コードを文字列として保持する。
     range.setNumberFormat('@');
-    range.setValues(missing.map(row => row.map(value => typeof value === 'string' && value.startsWith('=') ? "'" + value : value)));
+    // 真偽値は既存の列契約に合わせる。価格列は数値の書式で保存する。
+    if (sheetName === SHEET_SP_DETAILS) sheet.getRange(sheet.getLastRow() + 1, 6, missing.length, 1).setNumberFormat('0.########');
+    range.setValues(missing.map(row => row.map((value, column) => {
+      if (sheetName === SHEET_SP_GROUPS && column === 5) value = value === true ? 'TRUE' : 'FALSE';
+      return typeof value === 'string' && value.startsWith('=') ? "'" + value : value;
+    })));
     SpreadsheetApp.flush();
   }
   const check = sheet.getDataRange().getValues();
   rows.forEach(row => {
     const found = check.slice(1).filter(r => String(r[0]) === row[0]);
-    if (found.length !== 1 || spHash_(found[0].slice(0, row.length)) !== spHash_(row)) throw new Error('複製の保存結果を照合できません。同じ複製画面で保存を再試行してください');
+    if (found.length !== 1 || spHash_(spCopyComparableRow_(sheetName, found[0].slice(0, row.length))) !== spHash_(spCopyComparableRow_(sheetName, row))) throw new Error('複製の保存結果を照合できません。同じ複製画面で保存を再試行してください');
   });
 }
 

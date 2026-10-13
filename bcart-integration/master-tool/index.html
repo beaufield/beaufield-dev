@@ -983,6 +983,12 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
     <div class="form-field" style="margin-bottom:10px;"><label>得意先コード（カンマ区切り）</label><input id="groupCopyCustomerCodes" type="text" placeholder="任意"></div>
     <p style="font-size:12px;color:#6b7280;">会員は最初は空です。引き継ぐ場合も保存前に変更できます。</p>
     <h4 style="margin:14px 0 8px;">複製する商品・特別価格</h4>
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+      <label for="groupCopyBulkPrice" style="font-size:13px;">一括価格（円）</label>
+      <input id="groupCopyBulkPrice" type="number" min="0.01" step="any" placeholder="例: 375" style="width:120px;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;">
+      <button id="groupCopyBulkApply" class="btn btn-gray btn-sm" onclick="applyGroupCopyBulkPrice()">全商品へ設定</button>
+    </div>
+    <p id="groupCopyBulkInfo" style="font-size:12px;color:#6b7280;">下の商品すべてを同じ金額にします。設定後も商品ごとに変更できます。</p>
     <div style="overflow-x:auto;"><table style="width:100%;"><thead><tr><th>商品</th><th style="width:120px;">特別価格（円）</th></tr></thead><tbody id="groupCopyItems"></tbody></table></div>
     <label style="display:flex;align-items:center;gap:6px;margin:12px 0;font-size:13px;"><input id="groupCopyViews" type="checkbox">例外表示の対象商品も引き継ぐ <span id="groupCopyViewCount"></span></label>
     <label style="display:flex;align-items:center;gap:6px;margin:12px 0;font-size:13px;"><input id="groupCopyUseView" type="checkbox">例外表示設定を使用する</label>
@@ -1402,7 +1408,7 @@ body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 14px; backgr
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = 'v2.21.0';
+const APP_VERSION = 'v2.22.0';
 // 画面で新しく選べる表示方法。保存済みの旧設定は勝手に変換しない。
 const JODAI_DISPLAY_TYPES = ['メーカー希望小売価格', '非表示', 'オープン'];
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
@@ -4620,6 +4626,10 @@ function openGroupCopyModal(groupId) {
   ['groupCopyMembers', 'groupCopyViews', 'groupCopyUseView'].forEach(id => {
     document.getElementById(id).checked = false; document.getElementById(id).disabled = false;
   });
+  document.getElementById('groupCopyBulkPrice').value = '';
+  document.getElementById('groupCopyBulkPrice').disabled = true;
+  document.getElementById('groupCopyBulkApply').disabled = true;
+  document.getElementById('groupCopyBulkInfo').textContent = '下の商品すべてを同じ金額にします。設定後も商品ごとに変更できます。';
   document.getElementById('groupCopyItems').innerHTML = '<tr><td colspan="2">読み込み中…</td></tr>';
   document.getElementById('groupCopyViewCount').textContent = '';
   document.getElementById('groupCopyInfo').textContent = '複製元の設定を読み込み中…';
@@ -4653,7 +4663,7 @@ function openGroupCopyModal(groupId) {
       return '<tr><td>' + esc(item.product_no) + '<br>' + esc(item.product_set_name) + '</td><td>' +
         '<input class="group-copy-price" type="number" min="0.01" step="any" data-set-id="' + esc(item.product_set_id) + '" value="' + esc(price.unit_price) + '" style="width:100%;min-width:80px;"></td></tr>';
     }).join('') : '<tr><td colspan="2">特別価格の設定はありません。</td></tr>';
-    if (res.resume) setGroupCopyInputsDisabled(true);
+    setGroupCopyInputsDisabled(!!res.resume);
     save.textContent = res.resume ? '前回の保存を完了する' : '新しいグループとして保存';
     save.disabled = false;
   });
@@ -4669,8 +4679,22 @@ function toggleGroupCopyMembers() {
 
 function setGroupCopyInputsDisabled(disabled) {
   ['groupCopyName', 'groupCopyMaker', 'groupCopyNote', 'groupCopyMembers', 'groupCopyMemberIds',
-    'groupCopyCustomerCodes', 'groupCopyViews', 'groupCopyUseView'].forEach(id => document.getElementById(id).disabled = disabled);
-  document.querySelectorAll('.group-copy-price').forEach(input => input.disabled = disabled);
+    'groupCopyCustomerCodes', 'groupCopyViews', 'groupCopyUseView', 'groupCopyBulkPrice', 'groupCopyBulkApply'].forEach(id => document.getElementById(id).disabled = disabled);
+  const prices = document.querySelectorAll('.group-copy-price');
+  prices.forEach(input => input.disabled = disabled);
+  if (!prices.length) document.getElementById('groupCopyBulkApply').disabled = true;
+}
+
+// 一括設定は画面内の入力だけ。保存とBCART反映はそれぞれ別操作にする。
+function applyGroupCopyBulkPrice() {
+  if (!spGroupCopy || spGroupCopy.resume || document.getElementById('groupCopyBulkApply').disabled) return;
+  const raw = document.getElementById('groupCopyBulkPrice').value.trim();
+  const price = Number(raw);
+  if (!raw || !Number.isFinite(price) || price <= 0) { showToast('一括価格は0より大きい数値を入力してください', true); return; }
+  const inputs = document.querySelectorAll('.group-copy-price');
+  if (!inputs.length) { showToast('複製する価格明細がありません', true); return; }
+  inputs.forEach(input => input.value = String(price));
+  document.getElementById('groupCopyBulkInfo').textContent = inputs.length + '商品の入力を' + price.toLocaleString('ja-JP') + '円に設定しました。保存前に確認してください。';
 }
 
 function saveGroupCopyModal() {
