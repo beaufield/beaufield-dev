@@ -1528,7 +1528,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.84.2-db';
+const APP_VERSION    = 'v1.84.4-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -2358,7 +2358,7 @@ window.addEventListener('beforeunload', () => {
 =================================================== */
 const TEMPLATE_BUCKET = 'order-templates';
 // 本番GASの ORDER_TEMPLATES と同じファイル名（Driveと同じ名前のままアップロードする）
-const TEMPLATE_FILES = { grandex: '54.pdf', chiyoda: '48.pdf', alpenrose: '57.pdf', pacific_v1: '58-v1.pdf', sato_ox_v1: '94-ox-v1.pdf', melos: '2.pdf', adelans: '82.pdf' };
+const TEMPLATE_FILES = { grandex: '54.pdf', chiyoda: '48.pdf', alpenrose: '57.pdf', pacific_v2: '58-v2.pdf', sato_ox_v1: '94-ox-v1.pdf', melos: '2.pdf', adelans: '82.pdf' };
 const TEMPLATE_STORAGE_TIMEOUT_MS = 20000;
 
 async function _fetchTemplateFromGas(makerKey) {
@@ -11042,8 +11042,8 @@ function propAdjustmentUnitError(supplierName,selected,metrics) {
   else root.PacificOrderForm = api;
 })(typeof globalThis === 'object' ? globalThis : this, function() {
   'use strict';
-  const TEMPLATE_KEY = 'pacific_v1';
-  const TEMPLATE_SHA256 = '9e2f3b5243312389f362214b87393d181a8a8d88ffc0eaae07f95f4a11c05fbf';
+  const TEMPLATE_KEY = 'pacific_v2';
+  const TEMPLATE_SHA256 = '24623eaac4cb8edb43bfe03c9a9358e9fd68e269cb786bfdc1899e8f03cd3c4c';
   const WIDTH = 595.2, HEIGHT = 841.68;
   const ROWS = [
   {
@@ -11342,9 +11342,9 @@ function propAdjustmentUnitError(supplierName,selected,metrics) {
     ],
     "formCode": "4743",
     "unit": "ｾｯﾄ",
-    "x0": 477,
-    "x1": 546,
-    "y": 146
+    "x0": 481.42,
+    "x1": 556.2,
+    "y": 359.93
   },
   {
     "code": "012076",
@@ -11354,9 +11354,9 @@ function propAdjustmentUnitError(supplierName,selected,metrics) {
     ],
     "formCode": "4744",
     "unit": "ｾｯﾄ",
-    "x0": 477,
-    "x1": 546,
-    "y": 124
+    "x0": 481.42,
+    "x1": 556.2,
+    "y": 336.53
   },
   {
     "code": "012077",
@@ -11366,9 +11366,9 @@ function propAdjustmentUnitError(supplierName,selected,metrics) {
     ],
     "formCode": "4745",
     "unit": "ｾｯﾄ",
-    "x0": 477,
-    "x1": 546,
-    "y": 102
+    "x0": 481.42,
+    "x1": 556.2,
+    "y": 313.13
   }
 ];
   const EXCLUDED = Object.freeze({
@@ -11436,7 +11436,15 @@ function propAdjustmentUnitError(supplierName,selected,metrics) {
     if (pages.length !== 1 || Math.abs(pages[0].getWidth() - WIDTH) > .05 || Math.abs(pages[0].getHeight() - HEIGHT) > .05)
       throw Error('専用帳票のページ構成が一致しません');
     const page = pages[0], font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+    // 注文に含まれるパウチだけ文字素材を描画する。注文なしの行は原本の空欄を保つ。
+    const pouchCodes = new Set(['4743', '4744', '4745']);
     for (const { row, qty } of drawingPlan.lines) {
+      if (pouchCodes.has(row.formCode)) {
+        const name = PDFLib.PDFName.of('PacificPouch' + row.formCode);
+        const resources = page.node.Resources().lookup(PDFLib.PDFName.of('XObject'), PDFLib.PDFDict);
+        if (!resources.has(name)) throw Error('パウチの商品表示素材がありません。テンプレートの配信を確認してください');
+        page.pushOperators(PDFLib.pushGraphicsState(), PDFLib.drawObject(name), PDFLib.popGraphicsState());
+      }
       const text = String(qty), size = 10, w = font.widthOfTextAtSize(text, size);
       if (w > row.x1 - row.x0 - 10) throw Error('数量が発注数欄に収まりません');
       page.drawText(text, { x: row.x1 - 8 - w, y: row.y, size, font, color: PDFLib.rgb(0, 0, .55) });
@@ -11461,7 +11469,7 @@ async function pacificDigest(bytes) {
 }
 async function pacificPrepare(items, info) {
   const drawing = PacificOrderForm.plan(items, info.supplierCode, info.date);
-  const bytes = await fetchTemplateAsArrayBuffer('pacific_v1');
+  const bytes = await fetchTemplateAsArrayBuffer(PacificOrderForm.TEMPLATE_KEY);
   return PacificOrderForm.prepare(PDFLib, bytes, drawing, pacificDigest);
 }
 function pacificPendingMatches(items) {
