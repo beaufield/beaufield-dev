@@ -615,7 +615,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.15.1';
+const APP_VERSION = '0.15.2';
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
@@ -2617,6 +2617,11 @@ function bookingTimeLabel(session) {
   return session.starts_at + (session.ends_at ? '〜' + session.ends_at : '〜');
 }
 
+// SP等の体験会IDを含めず、予約選択画面と同じ分類を使う。
+function isBookingSeminar(session) {
+  return /^S\d+$/.test(String(session.session_id || '')) || String(session.slot || '').startsWith('セミナー');
+}
+
 function bookingProgramName(session) {
   const titleIsTime = !!(session.starts_at && String(session.title || '').indexOf(session.starts_at) >= 0);
   return (titleIsTime && session.slot) ? session.slot : (session.title || session.slot || session.session_id);
@@ -2707,8 +2712,8 @@ function renderBookingSummary(box, data) {
     if (id) directCounts[id] = (directCounts[id] || 0) + 1;
   });
 
-  const seminars = active.filter(s => String(s.session_id || '').startsWith('S'));
-  const experiences = active.filter(s => !String(s.session_id || '').startsWith('S'));
+  const seminars = active.filter(isBookingSeminar);
+  const experiences = active.filter(s => !isBookingSeminar(s));
 
   if (seminars.length) {
     const section = document.createElement('section');
@@ -2833,7 +2838,7 @@ function mockAdminBookingSnapshot(data) {
 function openBookingReservers(session, data) {
   const info = bookingReserversFor(session, data);
   // スパルーチェ等のSP枠をセミナー扱いしない。
-  const isSeminar = /^S\d+$/.test(String(session.session_id || '')) || String(session.slot || '').startsWith('セミナー');
+  const isSeminar = isBookingSeminar(session);
   el('rvTitle').textContent = bookingProgramName(session);
   const meta = (isSeminar ? (session.slot || 'セミナー') + ' ・ ' : '') + bookingTimeLabel(session);
   el('rvMeta').textContent = info.direct.length

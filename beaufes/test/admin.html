@@ -402,7 +402,7 @@
 <header class="appHeader">
   <h1>ビューフェス2026 申込者一覧（社員用）</h1>
   <div class="headActions">
-    <a class="navLink" href="badges.html">🖨 名札印刷へ</a>
+    <a class="navLink" href="makers/">メーカー別キャンペーン・注文QR</a><a class="navLink" href="badges.html">🖨 名札印刷へ</a>
     <button type="button" class="navLink" id="qrBtn">📱 申込フォームQR</button>
     <button type="button" class="navLink" id="walkInBtn">➕ 飛び込み登録</button>
   </div>
@@ -642,7 +642,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.14.4';
+const APP_VERSION = '0.15.2';
 const GAS_URL = 'TEST_ENV_NO_GAS';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
@@ -2644,6 +2644,11 @@ function bookingTimeLabel(session) {
   return session.starts_at + (session.ends_at ? '〜' + session.ends_at : '〜');
 }
 
+// SP等の体験会IDを含めず、予約選択画面と同じ分類を使う。
+function isBookingSeminar(session) {
+  return /^S\d+$/.test(String(session.session_id || '')) || String(session.slot || '').startsWith('セミナー');
+}
+
 function bookingProgramName(session) {
   const titleIsTime = !!(session.starts_at && String(session.title || '').indexOf(session.starts_at) >= 0);
   return (titleIsTime && session.slot) ? session.slot : (session.title || session.slot || session.session_id);
@@ -2734,8 +2739,8 @@ function renderBookingSummary(box, data) {
     if (id) directCounts[id] = (directCounts[id] || 0) + 1;
   });
 
-  const seminars = active.filter(s => String(s.session_id || '').startsWith('S'));
-  const experiences = active.filter(s => !String(s.session_id || '').startsWith('S'));
+  const seminars = active.filter(isBookingSeminar);
+  const experiences = active.filter(s => !isBookingSeminar(s));
 
   if (seminars.length) {
     const section = document.createElement('section');
@@ -2860,7 +2865,7 @@ function mockAdminBookingSnapshot(data) {
 function openBookingReservers(session, data) {
   const info = bookingReserversFor(session, data);
   // スパルーチェ等のSP枠をセミナー扱いしない。
-  const isSeminar = /^S\d+$/.test(String(session.session_id || '')) || String(session.slot || '').startsWith('セミナー');
+  const isSeminar = isBookingSeminar(session);
   el('rvTitle').textContent = bookingProgramName(session);
   const meta = (isSeminar ? (session.slot || 'セミナー') + ' ・ ' : '') + bookingTimeLabel(session);
   el('rvMeta').textContent = info.direct.length
