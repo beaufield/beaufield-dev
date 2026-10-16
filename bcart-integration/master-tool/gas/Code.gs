@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.36.1';
+const VERSION = 'v2.36.2';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -50,11 +50,54 @@ function safeMetricField_(value, maxLength) {
 }
 
 // ===================== エントリポイント =====================
+
+// 計測と参照オブジェクトの再利用は1要求内だけ。認証・正本データはキャッシュしない。
+let _apiPerf = null;
+let _apiReadCache = null;
+function apiCount_(name, value) {
+  if (_apiPerf) _apiPerf.counters[name] = (_apiPerf.counters[name] || 0) + value;
+}
+function apiTimed_(name, callback) {
+  const started = Date.now();
+  try { return callback(); }
+  finally {
+    if (_apiPerf) {
+      const phase = _apiPerf.phases[name] || { calls: 0, elapsedMs: 0 };
+      phase.calls++; phase.elapsedMs += Date.now() - started;
+      _apiPerf.phases[name] = phase;
+    }
+  }
+}
+function apiFetch_(url, options) {
+  const kind = url === AUTH_GAS_URL ? 'auth' : String(url).startsWith(BCART_BASE_URL) ? 'bcart' : 'external';
+  return apiTimed_(kind + 'Fetch', () => {
+    apiCount_(kind + 'Requests', 1);
+    const response = UrlFetchApp.fetch(url, options);
+    try {
+      apiCount_('http' + response.getResponseCode(), 1);
+      apiCount_('responseChars', response.getContentText().length);
+    } catch (_) { /* 計測不能でも本来の応答を変えない。 */ }
+    return response;
+  });
+}
+function apiReadFull_(sheet) {
+  return apiTimed_('sheetFullRead', () => {
+    const rows = sheet.getDataRange().getValues();
+    apiCount_('sheetCells', rows.reduce((n, row) => n + row.length, 0));
+    return rows;
+  });
+}
+
 function doPost(e) {
+  _apiPerf = { startedAt: Date.now(), phases: {}, counters: {}, authorized: false };
+  _apiReadCache = null;
   _requestMetric = { app: 'bcart-master', action: '', startedAt: Date.now(), operationId: '', attemptId: '' };
   try {
     const params = JSON.parse(e.postData.contents);
     const action = params.action;
+    if (['getHistory','getSpecialPriceData','getGroupViewInfo','getFeatures','loadData','searchProductSets'].includes(action)) {
+      _apiReadCache = { spreadsheet: null, sheets: Object.create(null) };
+    }
     _requestMetric = {
       app: 'bcart-master', action: safeMetricField_(action, 60), startedAt: Date.now(),
       operationId: safeMetricField_(params.operation_id, 80), attemptId: safeMetricField_(params.attempt_id, 80)
@@ -95,6 +138,7 @@ function doPost(e) {
     } else if (!noAuthActions.includes(action)) {
       const authResult = validateSession(params.session);
       if (!authResult.ok) return jsonResponse({ ok: false, error: authResult.error || 'UNAUTHORIZED' });
+      _apiPerf.authorized = true;
       const role = String((authResult.user && authResult.user.role) || '').toLowerCase();
       const canMutate = Boolean(authResult.user && authResult.user.is_admin) || ['admin', 'editor'].includes(role);
       if (!sessionReadOnlyActions.includes(action) && !canMutate) {
@@ -247,13 +291,16 @@ function jsonResponse(data) {
   if (_requestMetric) {
     const metric = _requestMetric;
     _requestMetric = null;
+    const timing = _apiPerf ? { serverMs: Date.now() - _apiPerf.startedAt, phases: _apiPerf.phases, counters: _apiPerf.counters } : null;
+    if (timing && _apiPerf.authorized && _apiReadCache && data && data.ok === true) data._timing = timing;
     try {
       console.log(JSON.stringify({
         message: 'gas_action', app: metric.app, version: VERSION, action: metric.action,
         operationId: metric.operationId, attemptId: metric.attemptId, phase: 'complete',
         elapsedMs: Date.now() - metric.startedAt,
         outcome: data && (data.ok === true || data.success === true) ? 'success' : 'failure',
-        error: data && data.error ? safeMetricField_(data.error, 80) : ''
+        error: data && data.error ? safeMetricField_(data.error, 80) : '',
+        timing: timing
       }));
     } catch (_) {}
   }
@@ -263,9 +310,10 @@ function jsonResponse(data) {
 
 // ===================== セッション検証 =====================
 function validateSession(session) {
+  return apiTimed_('auth', () => {
   if (!session || !session.token) return { ok: false, error: 'UNAUTHORIZED' };
   try {
-    const res = UrlFetchApp.fetch(AUTH_GAS_URL, {
+    const res = apiFetch_(AUTH_GAS_URL, {
       method: 'post',
       contentType: 'application/json',
       payload: JSON.stringify({
@@ -296,6 +344,8 @@ function validateSession(session) {
   } catch (e) {
     return { ok: false, error: 'AUTH_UNAVAILABLE' };
   }
+
+  });
 }
 
 // ===================== メインデータ読み込み =====================
@@ -426,6 +476,7 @@ function debugCode(params) {
 
 // ===================== CSV読み込み =====================
 function loadCsvFromDrive() {
+  return apiTimed_('driveCsv', () => {
   try {
     const folder = DriveApp.getFolderById(CSV_FOLDER_ID);
     const files = folder.getFilesByName(CSV_FILENAME);
@@ -445,6 +496,8 @@ function loadCsvFromDrive() {
     Logger.log('loadCsvFromDrive error: ' + e.message);
     return { ok: false, error: 'INTERNAL_ERROR' };
   }
+
+  });
 }
 
 // 特価もれ検出の集計CSV読み込み（UTF-8。loadCsvFromDriveはCSV_FOLDER_ID固定・Shift_JIS固定のため流用不可）
@@ -607,7 +660,7 @@ function bcartExtractRows_(parsed) {
 function bcartFetchPage_(url, token) {
   let res;
   for (let retry = 0; retry <= 3; retry++) {
-    res = UrlFetchApp.fetch(url, {
+    res = apiFetch_(url, {
       method: 'get',
       headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
       muteHttpExceptions: true
@@ -647,7 +700,9 @@ function bcartFetchPagesParallel_(urls, token) {
   }));
   let responses = null;
   try {
-    responses = UrlFetchApp.fetchAll(reqs);
+    apiCount_('bcartRequests', reqs.length);
+    responses = apiTimed_('bcartParallelFetch', () => UrlFetchApp.fetchAll(reqs));
+    responses.forEach(r => { apiCount_('http' + r.getResponseCode(), 1); apiCount_('responseChars', r.getContentText().length); });
   } catch (e) {
     Logger.log('bcartFetchPagesParallel_ fetchAll例外（直列リトライへ）: ' + e.message);
   }
@@ -728,7 +783,7 @@ function bcartGet(path, params) {
       const qs = Object.entries(params).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
       url += '?' + qs;
     }
-    const res = UrlFetchApp.fetch(url, {
+    const res = apiFetch_(url, {
       method: 'get',
       headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
       muteHttpExceptions: true
@@ -745,7 +800,7 @@ function bcartGet(path, params) {
 function bcartPatch(path, body) {
   try {
     const token = getBcartToken();
-    const res = UrlFetchApp.fetch(BCART_BASE_URL + path, {
+    const res = apiFetch_(BCART_BASE_URL + path, {
       method: 'patch',
       headers: {
         'Authorization': 'Bearer ' + token,
@@ -771,7 +826,7 @@ function bcartPatch(path, body) {
 function bcartDelete(path) {
   try {
     const token = getBcartToken();
-    const res = UrlFetchApp.fetch(BCART_BASE_URL + path, {
+    const res = apiFetch_(BCART_BASE_URL + path, {
       method: 'delete',
       headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
       muteHttpExceptions: true
@@ -788,7 +843,7 @@ function bcartDelete(path) {
 function bcartPost(path, body) {
   try {
     const token = getBcartToken();
-    const res = UrlFetchApp.fetch(BCART_BASE_URL + path, {
+    const res = apiFetch_(BCART_BASE_URL + path, {
       method: 'post',
       headers: {
         'Authorization': 'Bearer ' + token,
@@ -1981,14 +2036,14 @@ function saveDraftsUnlocked_(params, internalCapability) {
   const setSheet = getOrCreateSheet(SHEET_DRAFT_SETS);
   draftProductTagColumn_(parentSheet, true);
 
-  const parentRows = parentSheet.getDataRange().getValues();
+  const parentRows = apiReadFull_(parentSheet);
   const parentStatusById = {};
   for (let i = 1; i < parentRows.length; i++) {
     if (parentRows[i][0]) parentStatusById[parentRows[i][0]] = parentRows[i][1];
   }
 
   // 重複ガード: 既存の下書き/承認/登録済ドラフトに含まれるcodeを収集
-  const existingSetRows = setSheet.getDataRange().getValues();
+  const existingSetRows = apiReadFull_(setSheet);
   const activeCodes = {};
   for (let i = 1; i < existingSetRows.length; i++) {
     const draftId = existingSetRows[i][0];
@@ -2069,7 +2124,7 @@ function saveDraftsUnlocked_(params, internalCapability) {
     if (webhook) {
       const supplierLabel = Object.keys(supplierNames).join('、') || '不明';
       try {
-        UrlFetchApp.fetch(webhook, {
+        apiFetch_(webhook, {
           method: 'post',
           contentType: 'application/json',
           payload: JSON.stringify({ content: `【BCART登録ドラフト】${savedCount}件保存（仕入先: ${supplierLabel}）\nレビューをお願いします。` }),
@@ -2108,8 +2163,8 @@ function getDrafts(params) {
 
   const parentSheet = getOrCreateSheet(SHEET_DRAFT);
   const tagColumn = draftProductTagColumn_(parentSheet, false);
-  const parentRows = parentSheet.getDataRange().getValues();
-  const setRows = getOrCreateSheet(SHEET_DRAFT_SETS).getDataRange().getValues();
+  const parentRows = apiReadFull_(parentSheet);
+  const setRows = apiReadFull_(getOrCreateSheet(SHEET_DRAFT_SETS));
 
   const setsByDraft = {};
   for (let i = 1; i < setRows.length; i++) {
@@ -2148,7 +2203,7 @@ function getDrafts(params) {
 
 function updateDraft(params) {
   const sheet = getOrCreateSheet(SHEET_DRAFT);
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
   let rowIdx = -1;
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][0] === params.draftId) { rowIdx = i + 1; break; }
@@ -2177,7 +2232,7 @@ function updateDraft(params) {
 
   if (params.sets) {
     const setSheet = getOrCreateSheet(SHEET_DRAFT_SETS);
-    const setRows = setSheet.getDataRange().getValues();
+    const setRows = apiReadFull_(setSheet);
     for (let i = setRows.length; i >= 2; i--) {
       if (setRows[i - 1][0] === params.draftId) setSheet.deleteRow(i);
     }
@@ -2193,7 +2248,7 @@ function updateDraft(params) {
 // 承認＝登録実行。CSV最新値で価格をリフレッシュし、シートの現在値を正として非表示登録する
 function approveDraft(params) {
   const parentSheet = getOrCreateSheet(SHEET_DRAFT);
-  const parentRows = parentSheet.getDataRange().getValues();
+  const parentRows = apiReadFull_(parentSheet);
   let rowIdx = -1, draft = null;
   for (let i = 1; i < parentRows.length; i++) {
     if (parentRows[i][0] === params.draftId) { rowIdx = i + 1; draft = parentRows[i]; break; }
@@ -2204,7 +2259,7 @@ function approveDraft(params) {
   const tagColumn = draftProductTagColumn_(parentSheet, false);
   const tagResult = normalizeDraftProductTag_(draft[2] === 'add_to_existing' || !tagColumn ? '' : draft[21]);
   if (!tagResult.ok) return tagResult;
-  const setRows = getOrCreateSheet(SHEET_DRAFT_SETS).getDataRange().getValues();
+  const setRows = apiReadFull_(getOrCreateSheet(SHEET_DRAFT_SETS));
   const rawSets = [];
   for (let i = 1; i < setRows.length; i++) {
     if (setRows[i][0] === params.draftId) {
@@ -2327,7 +2382,7 @@ function approveDraft(params) {
 // 却下＝対応不要マークへ。以後の候補抽出から自動的に消える
 function rejectDraft(params) {
   const parentSheet = getOrCreateSheet(SHEET_DRAFT);
-  const rows = parentSheet.getDataRange().getValues();
+  const rows = apiReadFull_(parentSheet);
   let rowIdx = -1;
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][0] === params.draftId) { rowIdx = i + 1; break; }
@@ -2338,7 +2393,7 @@ function rejectDraft(params) {
   parentSheet.getRange(rowIdx, 2).setValue('却下');
   parentSheet.getRange(rowIdx, 17).setValue(new Date().toLocaleString('ja-JP'));
 
-  const setRows = getOrCreateSheet(SHEET_DRAFT_SETS).getDataRange().getValues();
+  const setRows = apiReadFull_(getOrCreateSheet(SHEET_DRAFT_SETS));
   const codes = [];
   for (let i = 1; i < setRows.length; i++) {
     if (setRows[i][0] === params.draftId) codes.push({ code: String(setRows[i][1]), setName: setRows[i][2] });
@@ -2357,7 +2412,7 @@ function rejectDraft(params) {
 // 公開＝表示化（登録済ドラフトのみ。画像アップ完了後にTakashiが押す想定）
 function publishDraft(params) {
   const parentSheet = getOrCreateSheet(SHEET_DRAFT);
-  const rows = parentSheet.getDataRange().getValues();
+  const rows = apiReadFull_(parentSheet);
   let rowIdx = -1, draft = null;
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][0] === params.draftId) { rowIdx = i + 1; draft = rows[i]; break; }
@@ -2369,7 +2424,7 @@ function publishDraft(params) {
   const registeredProductId = draft[17];
   if (!registeredProductId) return { ok: false, error: '登録済み商品IDが記録されていません' };
 
-  const setRows = getOrCreateSheet(SHEET_DRAFT_SETS).getDataRange().getValues();
+  const setRows = apiReadFull_(getOrCreateSheet(SHEET_DRAFT_SETS));
   const codes = [];
   for (let i = 1; i < setRows.length; i++) {
     if (setRows[i][0] === params.draftId) codes.push(String(setRows[i][1]));
@@ -2413,7 +2468,7 @@ function getMembers() {
 
     while (true) {
       const url = BCART_BASE_URL + '/customers?limit=' + limit + '&offset=' + offset;
-      const res = UrlFetchApp.fetch(url, {
+      const res = apiFetch_(url, {
         method: 'get',
         headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },
         muteHttpExceptions: true
@@ -2631,7 +2686,7 @@ function resolveCustomerCodes(codes) {
 // グループシートから該当行を探す（行の値配列を返す）
 function findGroupRowValues(groupId) {
   const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
-  const groupRows = groupSheet.getDataRange().getValues();
+  const groupRows = apiReadFull_(groupSheet);
   for (let i = 1; i < groupRows.length; i++) {
     if (String(groupRows[i][0]) === String(groupId)) return groupRows[i];
   }
@@ -2652,8 +2707,9 @@ function getGroupEffectiveMembers(groupId) {
 
 // ③ applied_at列を含めてデータを返す
 function getSpecialPriceData() {
+  return apiTimed_('specialData', () => {
   const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
-  const groupRows = groupSheet.getDataRange().getValues();
+  const groupRows = apiReadFull_(groupSheet);
   const groups = [];
   for (let i = 1; i < groupRows.length; i++) {
     if (groupRows[i][0]) {
@@ -2672,7 +2728,7 @@ function getSpecialPriceData() {
   }
 
   const detailSheet = getOrCreateSheet(SHEET_SP_DETAILS);
-  const detailRows = detailSheet.getDataRange().getValues();
+  const detailRows = apiReadFull_(detailSheet);
   const details = [];
   for (let i = 1; i < detailRows.length; i++) {
     if (detailRows[i][0]) {
@@ -2690,7 +2746,7 @@ function getSpecialPriceData() {
   }
 
   const vfSheet = getOrCreateSheet(SHEET_VF_DETAILS);
-  const vfRows = vfSheet.getDataRange().getValues();
+  const vfRows = apiReadFull_(vfSheet);
   const vfDetails = [];
   for (let i = 1; i < vfRows.length; i++) {
     if (vfRows[i][0]) {
@@ -2706,7 +2762,7 @@ function getSpecialPriceData() {
   }
 
   const indSheet = getOrCreateSheet(SHEET_SP_INDIVIDUAL);
-  const indRows = indSheet.getDataRange().getValues();
+  const indRows = apiReadFull_(indSheet);
   const individuals = [];
   for (let i = 1; i < indRows.length; i++) {
     if (indRows[i][0]) {
@@ -2732,6 +2788,8 @@ function getSpecialPriceData() {
   // 表示中のグループの分だけを getGroupViewInfo で後追い取得する方式に変更した
   // （常に最新の値を出しつつ、初期表示はシート読みだけで済ませる）。
   return { ok: true, groups: groups, details: details, vfDetails: vfDetails, individuals: individuals };
+
+  });
 }
 
 // ===================== 表示中グループの付帯情報（v2.28.0）=====================
@@ -2741,6 +2799,7 @@ function getSpecialPriceData() {
 // ・会員のBCART反映状況（未反映＝追加したがまだ反映していない／取り残し＝外したがBCARTに特価が残っている）
 
 function spBeginApplyHistory_(params, group, targets) {
+  return apiTimed_('historyBegin', () => {
   const sheet = getOrCreateSheet(SHEET_HISTORY);
   const marker = '特価処理ID:' + Utilities.getUuid();
   const codes = targets.map(s => s.productNo || s.setId);
@@ -2755,9 +2814,12 @@ function spBeginApplyHistory_(params, group, targets) {
   const index = rows.findIndex(r => String(r[0]).split(' / ')[0] === marker);
   if (index < 0) throw new Error('反映の開始履歴を確認できないため、価格は変更していません');
   return { sheet: sheet, row: first + index, marker: marker, targets: targets };
+
+  });
 }
 
 function spCheckpointApplyHistory_(record, completed, error, finished) {
+  return apiTimed_('historyCheckpoint', () => {
   const marker = String(record.sheet.getRange(record.row, 6).getValue()).split(' / ')[0];
   if (marker !== record.marker) throw new Error('反映履歴の位置が変わりました。価格を再送せず確認してください');
   const done = new Set(completed.map(String));
@@ -2769,6 +2831,8 @@ function spCheckpointApplyHistory_(record, completed, error, finished) {
     (finished ? '成功' : (done.size ? '途中完了・残り未確認' : '開始・完了未確認'));
   record.sheet.getRange(record.row, 7, 1, 2).setValues([[text, status]]);
   SpreadsheetApp.flush();
+
+  });
 }
 
 // 反映日時だけでなく、承認・保存した会員と価格が現設定に一致するかを確認する。
@@ -2797,6 +2861,7 @@ function spDetailReflection_(row, currentMembers, unresolved) {
 
 
 function getGroupViewInfo(params) {
+  return apiTimed_('groupView', () => {
   const groupId = String(params.group_id || '');
   if (!groupId) return { ok: false, error: 'group_idが必要です' };
 
@@ -2807,11 +2872,11 @@ function getGroupViewInfo(params) {
 
   // このグループの商品セットID（特価＋例外表示）
   const setIds = [];
-  const detailRows = getOrCreateSheet(SHEET_SP_DETAILS).getDataRange().getValues();
+  const detailRows = apiReadFull_(getOrCreateSheet(SHEET_SP_DETAILS));
   for (let i = 1; i < detailRows.length; i++) {
     if (String(detailRows[i][1]) === groupId && detailRows[i][2] !== '') setIds.push(String(detailRows[i][2]));
   }
-  const vfRows = getOrCreateSheet(SHEET_VF_DETAILS).getDataRange().getValues();
+  const vfRows = apiReadFull_(getOrCreateSheet(SHEET_VF_DETAILS));
   for (let i = 1; i < vfRows.length; i++) {
     if (String(vfRows[i][1]) === groupId && vfRows[i][2] !== '') setIds.push(String(vfRows[i][2]));
   }
@@ -2865,6 +2930,8 @@ function getGroupViewInfo(params) {
     priceError: priceError,
     memberError: memberError
   };
+
+  });
 }
 
 // 既存シートにcustomer_codes列(7)・maker列(8)・applied_member_ids列(9)のヘッダーを補う
@@ -2987,7 +3054,7 @@ function spSnapshotSchema_(sheetName, write) {
 
 function spReadModel_(recoveryWrites) {
   const groups = {};
-  const groupRows = getOrCreateSheet(SHEET_SP_GROUPS).getDataRange().getValues();
+  const groupRows = apiReadFull_(getOrCreateSheet(SHEET_SP_GROUPS));
   groupRows.slice(1).forEach(row => {
     if (!row[0]) return;
     const id = String(row[0]);
@@ -3007,7 +3074,7 @@ function spReadModel_(recoveryWrites) {
   const sources = [];
   [SHEET_SP_DETAILS, SHEET_SP_INDIVIDUAL].forEach(sheetName => {
     const schema = spSnapshotSchema_(sheetName, false);
-    const rows = schema.sheet.getDataRange().getValues();
+    const rows = apiReadFull_(schema.sheet);
     rows.slice(1).forEach((row, index) => {
       if (!row[0]) return;
       const group = sheetName === SHEET_SP_DETAILS ? groups[String(row[1])] : null;
@@ -3103,7 +3170,7 @@ function deleteCustomerGroup(params) {
   spDeleteSources_(sources.map(s => s.key));
   // 例外表示は他グループが必要とする会員を残す。取得失敗時は原本の削除を止める。
   const vfSheet = getOrCreateSheet(SHEET_VF_DETAILS);
-  const vfRows = vfSheet.getDataRange().getValues();
+  const vfRows = apiReadFull_(vfSheet);
   const own = vfRows.slice(1).map((r, i) => ({ row: i + 2, values: r })).filter(e => String(e.values[1]) === group.id);
   const members = [...new Set(group.members.concat(group.appliedMembers))];
   for (const entry of own) {
@@ -3126,7 +3193,7 @@ function deleteCustomerGroup(params) {
   const detailSheet = getOrCreateSheet(SHEET_SP_DETAILS);
   sources.sort((a,b) => b.rowIdx - a.rowIdx).forEach(s => detailSheet.deleteRow(s.rowIdx));
   const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
-  const rows = groupSheet.getDataRange().getValues();
+  const rows = apiReadFull_(groupSheet);
   const index = rows.findIndex((r,i) => i > 0 && String(r[0]) === group.id);
   if (index < 1) throw new Error('削除対象のグループが変わりました');
   groupSheet.deleteRow(index + 1);
@@ -3171,6 +3238,7 @@ function spPlanSet_(model, set, changes, initialize) {
 }
 
 function spApplySnapshotWrites_(writes) {
+  return apiTimed_('snapshotCommit', () => {
   // 先にすべての行を検証する。失敗時は復旧記録を残して後続の特価更新を止める。
   const model = spReadModel_(writes);
   const entries = writes.map(w => {
@@ -3189,6 +3257,8 @@ function spApplySnapshotWrites_(writes) {
     if (e.source.type === 'individual' && e.write.members.length) e.schema.sheet.getRange(e.source.rowIdx, 3).setValue(e.write.members[0]);
   });
   SpreadsheetApp.flush();
+
+  });
 }
 
 function spRefreshGroupMarkers_() {
@@ -3225,7 +3295,7 @@ function spApplyPlan_(plan, approvedToken) {
 
 function spWithLock_(callback, recovery, copyRequestId) {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(1000)) return { ok: false, error: '別の特価処理が実行中です。少し待って再操作してください' };
+  if (!apiTimed_('lockWait', () => lock.tryLock(1000))) return { ok: false, error: '別の特価処理が実行中です。少し待って再操作してください' };
   try {
     const copyRaw = PropertiesService.getScriptProperties().getProperty(SP_COPY_PENDING_KEY_);
     if (copyRaw && JSON.parse(copyRaw).requestId !== copyRequestId) {
@@ -3293,7 +3363,7 @@ function spGroupTargets_(model, groupId, items) {
 
 function getGroupPricePreview(params) {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(1000)) return { ok: false, error: '別の特価処理が実行中です' };
+  if (!apiTimed_('lockWait', () => lock.tryLock(1000))) return { ok: false, error: '別の特価処理が実行中です' };
   try {
     if (PropertiesService.getScriptProperties().getProperty(SP_COPY_PENDING_KEY_)) return { ok: false, copyPending: true, error: '前回のグループ複製が未完了です。複製元の「複製」から保存を完了してください' };
     if (PropertiesService.getScriptProperties().getProperty(SP_PENDING_KEY_)) return { ok: false, recoveryRequired: true, error: '前回の結果を確認してからプレビューしてください' };
@@ -3435,7 +3505,7 @@ function isFinalChunk_(params) {
 // このグループの明細に未反映(applied_at空)が残っていないか。
 // クライアントが報告する集計だけを信じないための、サーバ側の裏取り。
 function hasUnappliedDetails_(groupId) {
-  const rows = getOrCreateSheet(SHEET_SP_DETAILS).getDataRange().getValues();
+  const rows = apiReadFull_(getOrCreateSheet(SHEET_SP_DETAILS));
   for (let i = 1; i < rows.length; i++) {
     if (String(rows[i][1]) === String(groupId) && rows[i][0] && !String(rows[i][7] || '')) return true;
   }
@@ -3454,7 +3524,7 @@ function readAppliedMemberIds_(groupId) {
 function writeAppliedMemberIds_(groupId, memberIds) {
   const sheet = getOrCreateSheet(SHEET_SP_GROUPS);
   ensureSpGroupCodesHeader(sheet);
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
   for (let i = 1; i < rows.length; i++) {
     if (String(rows[i][0]) === String(groupId)) {
       const cell = sheet.getRange(i + 1, 9);
@@ -3470,7 +3540,7 @@ function writeAppliedMemberIds_(groupId, memberIds) {
 const SP_COPY_PENDING_KEY_ = 'SP_GROUP_COPY_PENDING_V1';
 
 function spCopySource_(groupId) {
-  const groupRows = getOrCreateSheet(SHEET_SP_GROUPS).getDataRange().getValues();
+  const groupRows = apiReadFull_(getOrCreateSheet(SHEET_SP_GROUPS));
   const found = groupRows.slice(1).filter(r => String(r[0]) === String(groupId));
   if (found.length !== 1) throw new Error('複製元のグループが見つからないか、IDが重複しています');
   const row = found[0];
@@ -3479,7 +3549,7 @@ function spCopySource_(groupId) {
     customer_codes: String(row[6] || ''), maker: String(row[7] || '') };
   const readItems = (sheetName, hasPrice) => {
     const seen = new Set();
-    return getOrCreateSheet(sheetName).getDataRange().getValues().slice(1)
+    return apiReadFull_(getOrCreateSheet(sheetName)).slice(1)
       .filter(r => r[0] && String(r[1]) === group.group_id).map(r => {
         const id = String(r[2] || '');
         if (!/^[1-9]\d*$/.test(id) || seen.has(id)) throw new Error('複製元の商品セットIDが不正または重複しています');
@@ -3496,7 +3566,7 @@ function spCopySource_(groupId) {
 
 function getCustomerGroupDuplicatePreview(params) {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(1000)) return { ok: false, error: '別の特価処理が実行中です。少し待ってください' };
+  if (!apiTimed_('lockWait', () => lock.tryLock(1000))) return { ok: false, error: '別の特価処理が実行中です。少し待ってください' };
   try {
     const raw = PropertiesService.getScriptProperties().getProperty(SP_COPY_PENDING_KEY_);
     if (raw) {
@@ -3531,7 +3601,7 @@ function spCopyComparableRow_(sheetName, row) {
 function spCopyWriteRows_(sheetName, rows) {
   if (!rows.length) return;
   const sheet = getOrCreateSheet(sheetName);
-  const existing = sheet.getDataRange().getValues();
+  const existing = apiReadFull_(sheet);
   const missing = [];
   rows.forEach(row => {
     const found = existing.slice(1).filter(r => String(r[0]) === row[0]);
@@ -3552,7 +3622,7 @@ function spCopyWriteRows_(sheetName, rows) {
     })));
     SpreadsheetApp.flush();
   }
-  const check = sheet.getDataRange().getValues();
+  const check = apiReadFull_(sheet);
   rows.forEach(row => {
     const found = check.slice(1).filter(r => String(r[0]) === row[0]);
     if (found.length !== 1 || spHash_(spCopyComparableRow_(sheetName, found[0].slice(0, row.length))) !== spHash_(spCopyComparableRow_(sheetName, row))) throw new Error('複製の保存結果を照合できません。同じ複製画面で保存を再試行してください');
@@ -3570,13 +3640,13 @@ function duplicateCustomerGroup(params) {
     pending = JSON.parse(raw);
     if (pending.requestId !== requestId) throw new Error('前回の複製保存を完了してから操作してください');
   } else {
-    const completed = getOrCreateSheet(SHEET_SP_GROUPS).getDataRange().getValues().slice(1).find(r => String(r[0]) === newId);
+    const completed = apiReadFull_(getOrCreateSheet(SHEET_SP_GROUPS)).slice(1).find(r => String(r[0]) === newId);
     if (completed) return { ok: true, group_id: newId, alreadyCreated: true, message: '前回保存したグループを確認しました。重複作成していません' };
     const source = spCopySource_(params.source_group_id);
     if (!params.source_token || params.source_token !== source.token) throw new Error('複製元が確認後に変わりました。複製画面を開き直してください');
     const name = String(params.group_name || '').trim();
     if (!name) throw new Error('グループ名は必須です');
-    const names = getOrCreateSheet(SHEET_SP_GROUPS).getDataRange().getValues();
+    const names = apiReadFull_(getOrCreateSheet(SHEET_SP_GROUPS));
     if (names.slice(1).some(r => r[0] && String(r[1]).trim() === name)) throw new Error('同じグループ名があります。新しい名前を付けてください');
     const ids = spIds_(params.member_ids || '').join(',');
     const codes = [...new Set(String(params.customer_codes || '').split(',').map(v => v.trim()).filter(Boolean))].join(',');
@@ -3625,7 +3695,7 @@ function duplicateCustomerGroup(params) {
 function saveCustomerGroup(params) {
   const sheet = getOrCreateSheet(SHEET_SP_GROUPS);
   ensureSpGroupCodesHeader(sheet);
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
   const memberIds = params.member_ids || '';
   // customer_codes は渡されたときだけ更新（会員選択モーダル等からの保存で消さない）
   const hasCodes = params.customer_codes !== undefined && params.customer_codes !== null;
@@ -3685,7 +3755,7 @@ function addCustomerCodesToGroup(params) {
 
   ensureSpGroupCodesHeader(getOrCreateSheet(SHEET_SP_GROUPS));
   const sheet = getOrCreateSheet(SHEET_SP_GROUPS);
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
 
   if (params.group_id) {
     for (let i = 1; i < rows.length; i++) {
@@ -3781,7 +3851,7 @@ function saveSpecialPriceDetails(params) {
   });
   spSnapshotSchema_(SHEET_SP_DETAILS, true);
   const detailSheet = getOrCreateSheet(SHEET_SP_DETAILS);
-  let detailRows = detailSheet.getDataRange().getValues();
+  let detailRows = apiReadFull_(detailSheet);
 
   params.items.forEach(item => {
     let found = false;
@@ -3874,7 +3944,7 @@ function getViewFilterCurrent(params) {
 // ③ アプリ保存時にapplied_atをクリア（VF）
 function saveViewFilterDetails(params) {
   const sheet = getOrCreateSheet(SHEET_VF_DETAILS);
-  let rows = sheet.getDataRange().getValues();
+  let rows = apiReadFull_(sheet);
 
   params.items.forEach(item => {
     let found = false;
@@ -3915,7 +3985,7 @@ function applyViewFilters(params) {
   }
 
   const vfSheet = getOrCreateSheet(SHEET_VF_DETAILS);
-  let vfRows = vfSheet.getDataRange().getValues();
+  let vfRows = apiReadFull_(vfSheet);
 
   let successCount = 0, failCount = 0;
   const errors = [];
@@ -3979,7 +4049,7 @@ function deleteViewFilterDetail(params) {
   }
 
   const sheet = getOrCreateSheet(SHEET_VF_DETAILS);
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
   for (let i = 1; i < rows.length; i++) {
     if (String(rows[i][0]) === params.detail_id) { sheet.deleteRow(i + 1); break; }
   }
@@ -4020,7 +4090,7 @@ function saveIndividualPrices(params) {
 
   spSnapshotSchema_(SHEET_SP_INDIVIDUAL, true);
   const sheet = getOrCreateSheet(SHEET_SP_INDIVIDUAL);
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
   const rowKey = {};  // customer_code|product_set_id → 行番号
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][0]) rowKey[String(rows[i][1]) + '|' + String(rows[i][4])] = i + 1;
@@ -4107,7 +4177,7 @@ function auditSpecialPrices(params) {
   const pendingCodes = {};  // 未登録得意先コード → 出所
 
   const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
-  const groupRows = groupSheet.getDataRange().getValues();
+  const groupRows = apiReadFull_(groupSheet);
   const groupInfo = {};
   for (let i = 1; i < groupRows.length; i++) {
     if (!groupRows[i][0]) continue;
@@ -4120,7 +4190,7 @@ function auditSpecialPrices(params) {
   }
 
   const detailSheet = getOrCreateSheet(SHEET_SP_DETAILS);
-  const detailRows = detailSheet.getDataRange().getValues();
+  const detailRows = apiReadFull_(detailSheet);
   for (let i = 1; i < detailRows.length; i++) {
     if (!detailRows[i][0]) continue;
     const gid = String(detailRows[i][1]);
@@ -4133,7 +4203,7 @@ function auditSpecialPrices(params) {
   }
 
   const indSheet = getOrCreateSheet(SHEET_SP_INDIVIDUAL);
-  const indRows = indSheet.getDataRange().getValues();
+  const indRows = apiReadFull_(indSheet);
   for (let i = 1; i < indRows.length; i++) {
     if (!indRows[i][0]) continue;
     const mid = String(indRows[i][2] || '');
@@ -4354,7 +4424,7 @@ function expandSpecialPrice_(sp) {
 // auditSpecialPrices / auditSalesVsBcart の両方から使う（同じ`特別価格_突合除外`シートを共用）。
 function buildAuditExclusionSets_(customers) {
   const exSheet = getOrCreateSheet(SHEET_SP_AUDIT_EXCLUDE);
-  const exRows = exSheet.getDataRange().getValues();
+  const exRows = apiReadFull_(exSheet);
   const excludedMemberIds = new Set();  // String(会員ID)
   const excludedCodes = new Set();      // normCode_(得意先コード)
   for (let i = 1; i < exRows.length; i++) {
@@ -4397,7 +4467,7 @@ function adoptUnmanagedPrices(params) {
   if (!items.length) return { ok: false, error: 'items が空です' };
 
   const sheet = getOrCreateSheet(SHEET_SP_INDIVIDUAL);
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
   const rowKey = {};  // customer_code|product_set_id → 行番号
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][0]) rowKey[String(rows[i][1]) + '|' + String(rows[i][4])] = i + 1;
@@ -4458,7 +4528,7 @@ function adoptUnmanagedPrices(params) {
 // ===================== マスター整合チェック・特価もれ検出 共通の除外設定 =====================
 function getAuditExclusions() {
   const sheet = getOrCreateSheet(SHEET_SP_AUDIT_EXCLUDE);
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
   const list = [];
   for (let i = 1; i < rows.length; i++) {
     if (!rows[i][0]) continue;
@@ -4500,7 +4570,7 @@ function addAuditExclusion(params) {
   }
 
   const sheet = getOrCreateSheet(SHEET_SP_AUDIT_EXCLUDE);
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
   for (let i = 1; i < rows.length; i++) {
     if (!rows[i][0]) continue;
     const rc = String(rows[i][1] || '').trim();
@@ -4527,7 +4597,7 @@ function deleteAuditExclusion(params) {
   const id = String(params.exclude_id || '').trim();
   if (!id) return { ok: false, error: 'exclude_id が指定されていません' };
   const sheet = getOrCreateSheet(SHEET_SP_AUDIT_EXCLUDE);
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
   for (let i = 1; i < rows.length; i++) {
     if (String(rows[i][0]) === id) {
       const label = String(rows[i][3] || '') || String(rows[i][1] || '');
@@ -4562,35 +4632,31 @@ function addHistory(entry) {
 }
 
 function getHistory() {
-  const sheet = getOrCreateSheet(SHEET_HISTORY);
-  const rows = sheet.getDataRange().getValues();
-  const list = [];
-  for (let i = rows.length - 1; i >= 1 && list.length < 200; i--) {
-    if (rows[i][0]) {
-      list.push({
-        date:     String(rows[i][0]),
-        userName: rows[i][1],
-        code:     rows[i][2],
-        name:     rows[i][3],
-        type:     rows[i][4],
-        before:   rows[i][5],
-        after:    rows[i][6],
-        result:   rows[i][7]
-      });
+  const sheet = getOrCreateSheet(SHEET_HISTORY), list = [];
+  let end = sheet.getLastRow();
+  while (end >= 2 && list.length < 200) {
+    const start = Math.max(2, end - 199);
+    const rows = apiTimed_('sheetHistoryRead', () => sheet.getRange(start, 1, end - start + 1, 8).getValues());
+    apiCount_('historyRowsRead', rows.length); apiCount_('sheetCells', rows.length * 8);
+    for (let i = rows.length - 1; i >= 0 && list.length < 200; i--) {
+      if (rows[i][0]) list.push({ date: String(rows[i][0]), userName: rows[i][1], code: rows[i][2], name: rows[i][3],
+        type: rows[i][4], before: rows[i][5], after: rows[i][6], result: rows[i][7] });
     }
+    end = start - 1;
   }
   return { ok: true, list: list };
 }
 
 // ===================== シート管理 =====================
 function getDataSpreadsheet_() {
+  if (_apiReadCache && _apiReadCache.spreadsheet) { apiCount_('spreadsheetReuse', 1); return _apiReadCache.spreadsheet; }
   const ssId = PropertiesService.getScriptProperties().getProperty('MASTER_TOOL_SS_ID');
   if (!ssId) throw new Error('DATA_NOT_CONFIGURED');
   try {
-    return SpreadsheetApp.openById(ssId);
-  } catch (e) {
-    throw new Error('DATA_UNAVAILABLE');
-  }
+    const ss = apiTimed_('spreadsheetOpen', () => SpreadsheetApp.openById(ssId));
+    if (_apiReadCache) _apiReadCache.spreadsheet = ss;
+    return ss;
+  } catch (e) { throw new Error('DATA_UNAVAILABLE'); }
 }
 
 function requiredSheetHeaders_(sheetName) {
@@ -4614,13 +4680,17 @@ function requiredSheetHeaders_(sheetName) {
 
 // 互換名を維持するが、通常処理では作成も移行も行わない。
 function getOrCreateSheet(sheetName) {
-  const ss = getDataSpreadsheet_();
-  const sheet = ss.getSheetByName(sheetName);
-  const expected = requiredSheetHeaders_(sheetName);
-  if (!sheet || !expected) throw new Error('DATA_SCHEMA_ERROR');
-  const actual = sheet.getRange(1, 1, 1, expected.length).getValues()[0].map(v => String(v || '').trim());
-  if (expected.some((name, i) => actual[i] !== name)) throw new Error('DATA_SCHEMA_ERROR');
-  return sheet;
+  if (_apiReadCache && _apiReadCache.sheets[sheetName]) { apiCount_('sheetReuse', 1); return _apiReadCache.sheets[sheetName]; }
+  return apiTimed_('sheetSchema', () => {
+    const ss = getDataSpreadsheet_();
+    const sheet = ss.getSheetByName(sheetName);
+    const expected = requiredSheetHeaders_(sheetName);
+    if (!sheet || !expected) throw new Error('DATA_SCHEMA_ERROR');
+    const actual = sheet.getRange(1, 1, 1, expected.length).getValues()[0].map(v => String(v || '').trim());
+    if (expected.some((name, i) => actual[i] !== name)) throw new Error('DATA_SCHEMA_ERROR');
+    if (_apiReadCache) _apiReadCache.sheets[sheetName] = sheet;
+    return sheet;
+  });
 }
 
 // GASエディタから明示的に実行する初期設定。通常APIからは呼ばない。
@@ -4652,7 +4722,7 @@ function migrateDraftProductTags() {
     const existing = sheet.getLastColumn() >= 22 ? String(sheet.getRange(1, 22).getValue() || '').trim() : '';
     if (existing && existing !== 'product_tag') throw new Error('DATA_SCHEMA_ERROR');
     // 見出しが空欄でもデータがあれば上書きせず停止する。
-    if (!existing && sheet.getLastColumn() >= 22 && sheet.getDataRange().getValues().slice(1).some(row => row[21] !== '' && row[21] != null)) throw new Error('DATA_SCHEMA_ERROR');
+    if (!existing && sheet.getLastColumn() >= 22 && apiReadFull_(sheet).slice(1).some(row => row[21] !== '' && row[21] != null)) throw new Error('DATA_SCHEMA_ERROR');
     if (!existing) sheet.getRange(1, 22).setValue('product_tag').setFontWeight('bold').setBackground('#f3f4f6');
     return { ok: true, column: 22, changed: !existing };
   } finally { lock.releaseLock(); }
@@ -4791,7 +4861,7 @@ function setupOrMigrateSheet_(sheetName) {
 
 function getIgnoreMap() {
   const sheet = getOrCreateSheet(SHEET_IGNORE);
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
   const map = {};
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][0]) {
@@ -4807,7 +4877,7 @@ function getIgnoreMap() {
 
 function getWipMap() {
   const sheet = getOrCreateSheet(SHEET_WIP);
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
   const map = {};
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][0]) map[rows[i][0]] = true;
@@ -4817,7 +4887,7 @@ function getWipMap() {
 
 function markIgnore(params) {
   const sheet = getOrCreateSheet(SHEET_IGNORE);
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][0] === params.code) {
       sheet.getRange(i + 1, 3).setValue(params.reason);
@@ -4831,7 +4901,7 @@ function markIgnore(params) {
 
 function unmarkIgnore(params) {
   const sheet = getOrCreateSheet(SHEET_IGNORE);
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][0] === params.code) { sheet.deleteRow(i + 1); return { ok: true }; }
   }
@@ -4841,7 +4911,7 @@ function unmarkIgnore(params) {
 function getIgnoreList() {
   const sheet = getOrCreateSheet(SHEET_IGNORE);
   const lastCol = sheet.getLastColumn();
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
   const list = [];
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][0]) {
@@ -4859,7 +4929,7 @@ function getIgnoreList() {
 
 function markWip(params) {
   const sheet = getOrCreateSheet(SHEET_WIP);
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
   for (let i = 1; i < rows.length; i++) {
     if (String(rows[i][0]) === String(params.code)) return { ok: true };
   }
@@ -4869,7 +4939,7 @@ function markWip(params) {
 
 function unmarkWip(params) {
   const sheet = getOrCreateSheet(SHEET_WIP);
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
   for (let i = 1; i < rows.length; i++) {
     if (String(rows[i][0]) === String(params.code)) { sheet.deleteRow(i + 1); return { ok: true }; }
   }
@@ -4879,7 +4949,7 @@ function unmarkWip(params) {
 // ===================== 機能C-補助: 説明文不要フラグ =====================
 function getDescSkipMap() {
   const sheet = getOrCreateSheet(SHEET_DESC_SKIP);
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
   const map = {};
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][0]) map[String(rows[i][0])] = true;
@@ -4889,7 +4959,7 @@ function getDescSkipMap() {
 
 function markDescSkip(params) {
   const sheet = getOrCreateSheet(SHEET_DESC_SKIP);
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
   for (let i = 1; i < rows.length; i++) {
     if (String(rows[i][0]) === String(params.id)) return { ok: true };
   }
@@ -4899,7 +4969,7 @@ function markDescSkip(params) {
 
 function unmarkDescSkip(params) {
   const sheet = getOrCreateSheet(SHEET_DESC_SKIP);
-  const rows = sheet.getDataRange().getValues();
+  const rows = apiReadFull_(sheet);
   for (let i = 1; i < rows.length; i++) {
     if (String(rows[i][0]) === String(params.id)) { sheet.deleteRow(i + 1); return { ok: true }; }
   }
@@ -5042,7 +5112,7 @@ function generateDescription(params) {
   if (useSearch) body.tools = [{ google_search: {} }];
 
   try {
-    const res = UrlFetchApp.fetch(url, {
+    const res = apiFetch_(url, {
       method: 'post',
       contentType: 'application/json',
       payload: JSON.stringify(body),
@@ -5145,7 +5215,7 @@ function factCheckDescription(params) {
   };
 
   try {
-    const res = UrlFetchApp.fetch(url, {
+    const res = apiFetch_(url, {
       method: 'post',
       contentType: 'application/json',
       payload: JSON.stringify(body),
@@ -5224,7 +5294,7 @@ function weeklyCheck() {
   if (!webhook) return;
 
   try {
-    UrlFetchApp.fetch(webhook, {
+    apiFetch_(webhook, {
       method: 'post',
       contentType: 'application/json',
       payload: JSON.stringify({ body: { text: msg } }),
@@ -5418,7 +5488,7 @@ function notifyStockSyncAlert_(msg) {
   try {
     // ⚠️ LINE WORKS Incoming Webhook（webhook.worksmobile.com）のペイロードは
     //    { body: { text } } が正（kiki-kanri で動作実績あり）。{ content } では表示されない。
-    UrlFetchApp.fetch(webhook, {
+    apiFetch_(webhook, {
       method: 'post',
       contentType: 'application/json',
       payload: JSON.stringify({ body: { text: msg } }),
@@ -5602,7 +5672,7 @@ function bulkSaveFeatureTypes(params) {
 
 function getFeatureTypeMap_() {
   const sheet = getOrCreateSheet(SHEET_FEATURES);
-  const data = sheet.getDataRange().getValues();
+  const data = apiReadFull_(sheet);
   const map = {};
   for (let i = 1; i < data.length; i++) {
     if (data[i][0] !== '') map[String(data[i][0])] = data[i][1];
@@ -5612,7 +5682,7 @@ function getFeatureTypeMap_() {
 
 function saveFeatureTypeInternal_(featureId, type) {
   const sheet = getOrCreateSheet(SHEET_FEATURES);
-  const data = sheet.getDataRange().getValues();
+  const data = apiReadFull_(sheet);
   const now = new Date().toISOString();
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][0]) === String(featureId)) {
@@ -6673,7 +6743,7 @@ function bridgeAuditCatalog_(path) {
     if (data.length!==Math.min(100,total-offset)) bridgeFail_('CATALOG_PAGE_INCOMPLETE');
     data.forEach(row=>{if (!row||!/^[1-9]\d*$/.test(String(row.id))||!Number.isSafeInteger(Number(row.id))||ids.has(String(row.id))) bridgeFail_('CATALOG_ID_INVALID');ids.add(String(row.id));rows.push(row);});pages++;
   };
-  const first=request(0);consume(UrlFetchApp.fetch(first.url,first),0);
+  const first=request(0);consume(apiFetch_(first.url,first),0);
   const offsets=[];for(let off=100;off<total;off+=100)offsets.push(off);
   // 既存GASと同じfetchAllを使い、固定ページを10件ずつ検証する。
   for(let i=0;i<offsets.length;i+=10){const chunk=offsets.slice(i,i+10),responses=UrlFetchApp.fetchAll(chunk.map(request));
@@ -6738,7 +6808,7 @@ function bridge12680Audit_() {
   sheets.children.values.slice(1).forEach((r,i)=>{if(r.every(v=>v===''))return;setCount++;const id=String(r[0]||'');if(!id||!parents.has(id))orphans.push({reason:'MISSING_PARENT',row:i+2});children.set(id,(children.get(id)||0)+1);match('draftSet',id,r[1],r[3],r[2],false);});
   parents.forEach((r,id)=>{if(!children.has(id)){if(bridgeVerifiedArchive_(r,sheets))verifiedArchives++;else orphans.push({reason:'UNVERIFIED_PARENT_WITHOUT_SETS'});}});
   const typeSheet=getDataSpreadsheet_().getSheetByName(SHEET_FEATURES);if(!typeSheet)bridgeFail_('FEATURE_TYPES_MISSING');
-  const types={};typeSheet.getDataRange().getValues().slice(1).forEach(r=>{types[String(r[0])]=String(r[1]);});
+  const types={};apiReadFull_(typeSheet).slice(1).forEach(r=>{types[String(r[0])]=String(r[1]);});
   const featureIds=[36,35],referenceCodes=['12028','12029','12395'];
   const references=referenceCodes.map(code=>{const found=sets.filter(s=>bridgeNormalizeCode_(s.product_no)===code);return {code:code,sets:found.map(s=>{
     const p=products.find(p=>String(p.id)===String(s.product_id));return {productId:p.id,productName:p.name,categoryId:p.category_id,featureIds:[p.feature_id1,p.feature_id2,p.feature_id3],

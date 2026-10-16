@@ -1413,7 +1413,7 @@ body:has(#busyOverlay.open, #progressOverlay.open) #netBusy { display: none; }
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = 'v2.22.3';
+const APP_VERSION = 'v2.22.4';
 // 画面で新しく選べる表示方法。保存済みの旧設定は勝手に変換しない。
 const JODAI_DISPLAY_TYPES = ['メーカー希望小売価格', '非表示', 'オープン'];
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
@@ -2548,7 +2548,7 @@ function cloneSearchProduct(productId, btn) {
 // ===================== 更新履歴 =====================
 function loadHistory() {
   document.getElementById('historyList').innerHTML = '<div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>';
-  gasPost({ action: 'getHistory' }, function(res) {
+  apiReadOnce({ action: 'getHistory' }, function(res) {
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
     const list = res.list || [];
     if (list.length === 0) {
@@ -2671,7 +2671,46 @@ function recordClientDiagnostic(entry) {
   } catch (_) {}
 }
 
+
+// 同時に走る同一読取だけを共有する。完了済みデータのキャッシュや更新系の共有はしない。
+const API_SHARED_READS = new Set(['getHistory', 'getSpecialPriceData', 'getGroupViewInfo', 'getFeatures']);
+const apiReadFlights = new Map();
+let apiReadEpoch = 0;
+function apiReadOnce(params, callback) {
+  if (!API_SHARED_READS.has(params.action)) throw new Error('読取以外は共有できません');
+  const key = JSON.stringify([params.action, params.group_id || '', apiReadEpoch]);
+  const token = session && session.token;
+  const old = apiReadFlights.get(key);
+  if (old && old.token === token) { old.callbacks.push(callback); return; }
+  const entry = { token: token, epoch: apiReadEpoch, callbacks: [callback] };
+  apiReadFlights.set(key, entry);
+  gasPost(params, function(res) {
+    if (apiReadFlights.get(key) === entry) apiReadFlights.delete(key);
+    if (entry.token !== (session && session.token)) res = { ok: false, error: 'SESSION_CHANGED' };
+    // 保存・反映の前に始まった参照結果では、最新の画面を上書きしない。
+    else if (entry.epoch !== apiReadEpoch) {
+      entry.callbacks.forEach(cb => apiReadOnce({ action: params.action, group_id: params.group_id }, cb));
+      return;
+    }
+    entry.callbacks.forEach(cb => {
+      try { cb(res); } catch (_) { showToast('通信は完了しましたが、画面更新に失敗しました。再送せず一覧を再取得してください。', true); }
+    });
+  });
+}
+function apiReadMutationStart(action) {
+  if (!RETRYABLE_READ_ACTIONS.has(action)) apiReadEpoch++;
+}
+function apiReadMutationEnd(action) {
+  if (!RETRYABLE_READ_ACTIONS.has(action)) apiReadEpoch++;
+}
+function apiRecordTiming(action, totalMs, response) {
+  if (!response || !response._timing) return;
+  // サーバーが数値だけに限定した区間情報。要求本文・認証情報・業務明細は記録しない。
+  console.info('bcart_perf ' + JSON.stringify({ action: action, totalMs: totalMs, timing: response._timing }));
+}
+
 function gasPost(params, callback, retryCount) {
+  apiReadMutationStart(params.action);
   retryCount = retryCount || 0;
   if (!params.operation_id) params.operation_id = makeDiagnosticId();
   params.attempt_id = params.operation_id + '_' + (retryCount + 1);
@@ -2686,6 +2725,7 @@ function gasPost(params, callback, retryCount) {
   const finish = (outcome) => {
     if (done) return;
     done = true;
+    apiReadMutationEnd(params.action);
     netBusyEnd();
     releaseBtnBusy(btn);
     recordClientDiagnostic({ action: params.action, operationId: params.operation_id, attemptId: params.attempt_id,
@@ -2700,6 +2740,7 @@ function gasPost(params, callback, retryCount) {
   .then(r => r.json())
   .then(res => {
     const checked = validateBusinessResponse(params.action, res);
+    apiRecordTiming(params.action, Date.now() - diagnosticStartedAt, checked);
     finish(checked.ok ? 'success' : 'response_error');
     try { callback(checked); }
     catch (uiError) {
@@ -2723,6 +2764,7 @@ function gasPost(params, callback, retryCount) {
   });
 }
 function gasPostAsync(params) {
+  apiReadMutationStart(params.action);
   if (!params.operation_id) params.operation_id = makeDiagnosticId();
   params.attempt_id = params.operation_id + '_1';
   params.session = session;
@@ -2735,13 +2777,16 @@ function gasPostAsync(params) {
     body: JSON.stringify(params)
   }).then(r => r.json())
     .then(res => {
+      apiReadMutationEnd(params.action);
       netBusyEnd();
       const checked = validateBusinessResponse(params.action, res);
+      apiRecordTiming(params.action, Date.now() - diagnosticStartedAt, checked);
       recordClientDiagnostic({ action: params.action, operationId: params.operation_id, attemptId: params.attempt_id,
         phase: 'complete', elapsedMs: Date.now() - diagnosticStartedAt, outcome: checked.ok ? 'success' : 'response_error' });
       return checked;
     })
     .catch(err => {
+      apiReadMutationEnd(params.action);
       netBusyEnd();
       recordClientDiagnostic({ action: params.action, operationId: params.operation_id, attemptId: params.attempt_id,
         phase: 'complete', elapsedMs: Date.now() - diagnosticStartedAt, outcome: 'network_error' });
@@ -2854,7 +2899,7 @@ function openRegisterModal(code) {
     populateCategorySelect();
   }
   if (regFeatures.length === 0) {
-    gasPost({ action: 'getFeatures' }, function(res) {
+    apiReadOnce({ action: 'getFeatures' }, function(res) {
       if (res.ok && res.specials) {
         regFeatures = res.specials;
         populateFeatureSelects();
@@ -3162,7 +3207,7 @@ function openBulkRegisterModal() {
     });
   }
   if (regFeatures.length === 0) {
-    gasPost({ action: 'getFeatures' }, function(res) {
+    apiReadOnce({ action: 'getFeatures' }, function(res) {
       if (res.ok && res.specials) { regFeatures = res.specials; populateBulkRegFeatureSelects(); }
     });
   } else {
@@ -3392,7 +3437,7 @@ function loadSpecialPriceData(onDone) {
     document.getElementById('sp-content').innerHTML =
       '<div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>';
   }
-  gasPost({ action: 'getSpecialPriceData' }, function(res) {
+  apiReadOnce({ action: 'getSpecialPriceData' }, function(res) {
     if (!res.ok) { showToast('エラー: ' + res.error, true); if (onDone) onDone(false); return; }
     spData = res;
     renderSpContent();
@@ -3510,7 +3555,7 @@ function renderSpGroups() {
 // メーカー候補は特集キャッシュに依存するので、無ければ裏で取ってから描き直す
 function ensureSpFeaturesCache(cb) {
   if (spFeaturesCache) { if (cb) cb(); return; }
-  gasPost({ action: 'getFeatures' }, function(res) {
+  apiReadOnce({ action: 'getFeatures' }, function(res) {
     if (res.ok && res.specials) {
       spFeaturesCache = res.specials;
       if (spSubview === 'groups') renderSpGroups();
@@ -3744,7 +3789,7 @@ function renderSpSettings() {
       populateSpFeatureSelect();
       populateVfFeatureSelect();
     } else {
-      gasPost({ action: 'getFeatures' }, function(res) {
+      apiReadOnce({ action: 'getFeatures' }, function(res) {
         if (res.ok && res.specials) {
           spFeaturesCache = res.specials;
           populateSpFeatureSelect();
@@ -3782,7 +3827,8 @@ function loadGroupViewInfo(groupId) {
   if (!groupId) { spViewInfo = null; return; }
   spViewInfo = null;
   spViewInfoLoading = true;
-  gasPost({ action: 'getGroupViewInfo', group_id: groupId }, function(res) {
+  apiReadOnce({ action: 'getGroupViewInfo', group_id: groupId }, function(res) {
+    if (groupId !== spSelectedGroupId) return;
     spViewInfoLoading = false;
     if (!res.ok) {
       spViewInfo = { memberMap: {}, setPrices: {}, loadError: res.error || '取得に失敗しました' };
@@ -4562,7 +4608,7 @@ function confirmMemberSelect() {
     const addedCount = ids.filter(id => memberSelOriginal.indexOf(id) < 0).length;
     closeModal('memberSelectModal');
     // 一覧を取り直してから初めてオーバーレイを外す（押しても何も動かない、を無くす）
-    gasPost({ action: 'getSpecialPriceData' }, function(r2) {
+    apiReadOnce({ action: 'getSpecialPriceData' }, function(r2) {
       hideBusyOverlay();
       if (btn) { btn.textContent = '確定して保存'; btn.disabled = false; }
       if (r2.ok) {
@@ -5370,7 +5416,7 @@ function submitSalesGroupAdd() {
     btn.disabled = false; btn.textContent = '追加する';
     if (!res.ok) { showToast('エラー: ' + res.error, true); return; }
     closeModal('salesGroupAddModal');
-    gasPost({ action: 'getSpecialPriceData' }, function(res2) {
+    apiReadOnce({ action: 'getSpecialPriceData' }, function(res2) {
       if (res2.ok) spData = res2;
       switchToSettings(res.group_id);
       showToast(res.added + '件の会員を「' + res.group_name + '」に追加しました。特別価格設定で商品の特価を設定し、「💎 BCARTに反映」を押してください（既に商品特価が設定済みのグループでも、新しい会員に適用するには再度「反映」が必要です）。');
@@ -5471,7 +5517,7 @@ var _similarTargetId = null;
 
 function initDescriptionTab() {
   if (descFeatureList.length > 0) return;
-  gasPost({ action: 'getFeatures' }, function(res) {
+  apiReadOnce({ action: 'getFeatures' }, function(res) {
     if (res.ok && res.specials) {
       descFeatureList = res.specials;
       var sel = document.getElementById('descFeatureFilter');
@@ -6331,7 +6377,7 @@ function ensureDraftMasters(cb) {
   }
   if (!draftFeaturesLoaded) {
     pending++;
-    gasPost({ action: 'getFeatures' }, function(res) {
+    apiReadOnce({ action: 'getFeatures' }, function(res) {
       if (res.ok) { regFeatures = res.specials; draftFeaturesLoaded = true; }
       done(res.ok);
     });
