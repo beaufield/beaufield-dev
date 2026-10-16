@@ -1413,7 +1413,7 @@ body:has(#busyOverlay.open, #progressOverlay.open) #netBusy { display: none; }
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = 'v2.22.2';
+const APP_VERSION = 'v2.22.3';
 // 画面で新しく選べる表示方法。保存済みの旧設定は勝手に変換しない。
 const JODAI_DISPLAY_TYPES = ['メーカー希望小売価格', '非表示', 'オープン'];
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
@@ -3592,7 +3592,7 @@ function renderSpSettings() {
     if (details.length === 0) {
       html += '<div style="font-size:13px;color:#9ca3af;padding:8px 0;">まだ特別価格が設定されていません。</div>';
     } else {
-      const unappliedSpCount = details.filter(d => spDetailApplyState(d).state !== 'complete').length;
+      const unappliedSpCount = details.filter(d => spDetailApplyState(d).state === 'pending').length;
       if (unappliedSpCount > 0) {
         html += '<div class="warn-bar" style="margin-bottom:10px;">⚠️ ' + unappliedSpCount + '件がアプリ保存済みですが、BCARTにはまだ反映されていません。</div>';
       }
