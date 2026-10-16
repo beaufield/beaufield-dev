@@ -26,7 +26,7 @@ const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
 const DB_URL          = _PROPS.getProperty('DB_URL');          // §8: SupabaseプロジェクトURL（例 https://xxxx.supabase.co）
 const DB_SECRET_KEY   = _PROPS.getProperty('DB_SECRET_KEY');   // §8: service_role相当のsecret key（apikeyヘッダーにのみ使う）
-const VERSION         = 'v1.40.3';
+const VERSION         = 'v1.40.4';
 const APP_NAME        = 'order-app';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 let _requestMetric = null;
@@ -367,8 +367,8 @@ function setDbSyncTrigger() {
 }
 
 // ============================================================
-// §12-3 / G5: 写し copyChangesToSheets_（15分おき）
-// 人が見る用・切り戻しの足場。分析も在庫レポートもこの写しは読まない
+// 仕入先のDB→Sheets同期（15分おき）。旧画面専用の写しは終了。
+// リードタイム・発注サイクルの入力元シートとの対応を保つため、このトリガーは維持する。
 // ============================================================
 function setDbSheetCopyTrigger() {
   ScriptApp.getProjectTriggers()
@@ -437,86 +437,22 @@ function copyChangesToSheets_() {
 
     const res = callDbAdmin_('get_changes_since', { afterSeq: afterSeq, limit: 200 });
     if (!res || res.success !== true) { Logger.log('copyChangesToSheets_ get_changes_since失敗: ' + JSON.stringify(res)); return; }
-    const changes = res.changes || [];
-    if (changes.length === 0) return;
-
-    const ss = getSS();
-    const histSh = getSheet(SHEET_HISTORY);
-    const itemsSh = getSheet(SHEET_ITEMS);
-    ensureOrderHistorySchema_(histSh);
+    const allChanges = res.changes || [];
+    if (allChanges.length === 0) return;
+    if (!_PROPS.getProperty('LEGACY_SHEET_COPY_FINAL_SEQ')) {
+      _PROPS.setProperty('LEGACY_SHEET_COPY_FINAL_SEQ', String(afterSeq));
+    }
+    // 旧画面の履歴・明細・受領・設定の写しは終了。仕入先はリード/サイクル同期のため残す。
+    // change_log自体は削除しない。必要時は旧版とコピー位置を照合して再構築する。
+    const changes = allChanges.filter(ch => ch.kind === 'supplier');
+    if (changes.length === 0) {
+      _PROPS.setProperty(seqProp, String(res.lastSeq));
+      return;
+    }
 
     changes.forEach(function(ch) {
       const cur = ch.current;
-      if (ch.kind === 'create' || ch.kind === 'revise' || ch.kind === 'delete') {
-        const orderNo = ch.entityKey;
-        if (cur && cur.status === 'active') {
-          // DBの明細は JAN のキーが jan（GASの明細は janCode）。読み替えないとシートのJANが空になり、requestHash も本来の値と食い違う
-          const items = (cur.items || []).map(function(it) {
-            return normalizeOrderItem_(Object.assign({}, it, { janCode: it.janCode !== undefined ? it.janCode : it.jan }));
-          });
-          const requestHash = sha256Hex_(canonicalOrderPayload_({
-            date: cur.orderDate, supplierCode: cur.supplierCode, supplierName: cur.supplierName,
-            fax: cur.fax, staff: cur.staff, outputType: cur.outputType, revisionBaseOrderNo: cur.revisionBaseOrderNo
-          }, cur.userId, items));
-          const rows = findExactRows_(histSh, 1, orderNo);
-          const histRow = rows.length ? rows[0] : histSh.getLastRow() + 1;
-          histSh.getRange(histRow, 1, 1, 14).setValues([[
-            orderNo, cur.orderDate, cur.supplierCode, cur.supplierName, cur.fax, cur.staff,
-            cur.itemCount, cur.outputType, cur.createdAt, cur.userId, cur.requestId, requestHash,
-            cur.revisionBaseOrderNo, 'COMPLETE'
-          ]]);
-          deleteExactRows_(itemsSh, 1, orderNo);
-          if (items.length > 0) {
-            const itemRows = items.map(function(item) {
-              return [orderNo, item.janCode, item.code, item.name, item.qty, item.unit, item.memo,
-                item.isHandwritten ? 'TRUE' : 'FALSE', cur.createdAt];
-            });
-            itemsSh.getRange(itemsSh.getLastRow() + 1, 1, itemRows.length, 9).setValues(itemRows);
-          }
-        } else {
-          deleteExactRows_(histSh, 1, orderNo);
-          deleteExactRows_(itemsSh, 1, orderNo);
-        }
-        if (ch.kind === 'revise' && ch.detail && ch.detail.baseOrderNo) {
-          deleteExactRows_(histSh, 1, ch.detail.baseOrderNo);
-          deleteExactRows_(itemsSh, 1, ch.detail.baseOrderNo);
-        }
-      } else if (ch.kind === 'setting') {
-        if (ch.entity === 'proposal_exclusion') {
-          upsertOrDeleteSimpleSheetRow_(ss, SHEET_PROPOSAL_EXCL, ['商品コード','商品名','理由','登録者','登録日時'], ch.entityKey, cur, 'reason', 'addedBy');
-        } else if (ch.entity === 'eol_flag') {
-          upsertOrDeleteSimpleSheetRow_(ss, SHEET_EOL, ['商品コード','商品名','理由','登録者','登録日時'], ch.entityKey, cur, 'reason', 'addedBy');
-        } else if (ch.entity === 'lot_override') {
-          upsertOrDeleteSimpleSheetRow_(ss, SHEET_LOT_OVERRIDE, ['商品コード','商品名','最低発注数','登録者','登録日時'], ch.entityKey, cur, 'lot', 'addedBy');
-        } else if (ch.entity === 'excess_ack') {
-          upsertOrDeleteSimpleSheetRow_(ss, SHEET_EXCESS_ACK, ['商品コード','商品名','理由','確認者','確認日時'], ch.entityKey, cur, 'reason', 'ackedBy');
-        } else if (ch.entity === 'dead_ack') {
-          upsertOrDeleteSimpleSheetRow_(ss, SHEET_DEAD_ACK, ['商品コード','商品名','理由','確認者','確認日時'], ch.entityKey, cur, 'reason', 'ackedBy');
-        }
-      } else if (ch.kind === 'received') {
-        let sh = ss.getSheetByName(SHEET_RECEIVED);
-        const parts = String(ch.entityKey).split('|');
-        const orderNo = parts[0], code = parts[1];
-        if (!cur || cur.active !== true) {
-          if (sh && sh.getLastRow() > 1) {
-            const data = sh.getDataRange().getValues();
-            for (let i = data.length - 1; i >= 1; i--) {
-              if (String(data[i][0]).trim() === orderNo && String(data[i][1]).trim() === code) sh.deleteRow(i + 1);
-            }
-          }
-        } else {
-          if (!sh) { sh = ss.insertSheet(SHEET_RECEIVED); sh.appendRow(RECEIVED_HEADERS); }
-          const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
-          const data = sh.getLastRow() < 2 ? [] : sh.getDataRange().getValues();
-          let found = -1;
-          for (let i = 1; i < data.length; i++) {
-            if (String(data[i][0]).trim() === orderNo && String(data[i][1]).trim() === code) { found = i + 1; break; }
-          }
-          const row = [orderNo, code, cur.name || '', cur.qty || 0, cur.ackedBy || '', now];
-          if (found !== -1) sh.getRange(found, 1, 1, row.length).setValues([row]);
-          else sh.appendRow(row);
-        }
-      } else if (ch.kind === 'supplier') {
+      if (ch.kind === 'supplier') {
         const sh = getSheet(SHEET_SUPPLIERS);
         const code = ch.entityKey;
         const data = sh.getDataRange().getValues();
@@ -2749,6 +2685,8 @@ function updateOrderProposals(p) {
   // 今回の proposals から不足状態を判定して前回との差分を取る必要がある
   const stuckEntries = updateProposalStuckTracking_(ss, proposals, analyzedAt);
 
+  const groupStatus = p.groupStatus || [];
+  if (p.notificationOnly !== true) {
   let sh = ss.getSheetByName(SHEET_PROPOSALS);
   if (!sh) sh = ss.insertSheet(SHEET_PROPOSALS);
 
@@ -2788,7 +2726,6 @@ function updateOrderProposals(p) {
   }
 
   // 発注グループ状況シート（全面書き換え。Phase J, v1.27.0〜）
-  const groupStatus = p.groupStatus || [];
   let gsSh = ss.getSheetByName(SHEET_GROUP_STATUS);
   if (!gsSh) gsSh = ss.insertSheet(SHEET_GROUP_STATUS);
   gsSh.clearContents();
@@ -2867,6 +2804,8 @@ function updateOrderProposals(p) {
     deadSh.getRange(2, 1, deadRows.length, DEAD_HEADERS.length).setValues(deadRows);
   }
 
+  }
+
   // 在庫KPI履歴（実行日単位でappend。同日の再実行はその行を上書き）
   upsertKpiHistory(kpi);
 
@@ -2929,7 +2868,7 @@ function updateOrderProposals(p) {
   Logger.log('✅ 発注提案更新完了: ' + realProposals.length + '件（参考 ' + refCount + '件）/ 過剰在庫 '
              + excess.length + '件 / 死蔵在庫 ' + dead.length + '件 / 発注グループ '
              + groupStatus.length + '件（うち発注時期 ' + groupStatus.filter(x => x.due).length + '件）');
-  return { success: true, count: realProposals.length, refCount: refCount,
+  return { success: true, legacySheetsUpdated: p.notificationOnly !== true, count: realProposals.length, refCount: refCount,
            excessCount: excess.length, deadCount: dead.length,
            groupCount: groupStatus.length };
 }
