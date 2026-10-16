@@ -1531,7 +1531,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.85.1-db';
+const APP_VERSION    = 'v1.85.2-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -6737,8 +6737,37 @@ async function copyOrderFromHistory(orderNo) {
 }
 
 // 履歴削除（管理者のみ）
+/* HISTORY_DELETE_CONFIRM_BEGIN: 対象番号を確認するアプリ内モーダル。ここでは保存・削除APIを呼ばない。 */
+let historyDeleteConfirmPending=false;
+function confirmHistoryOrderDelete(orderNo) {
+  if(historyDeleteConfirmPending || typeof orderNo!=='string' || !orderNo) return Promise.resolve(false);
+  historyDeleteConfirmPending=true;
+  return new Promise(resolve=>{
+    const previousFocus=document.activeElement,dialog=document.createElement('dialog');
+    dialog.id='history-delete-confirm';dialog.setAttribute('aria-labelledby','history-delete-confirm-title');
+    dialog.style.cssText='width:min(420px,calc(100% - 32px));box-sizing:border-box;border:1px solid var(--border,#bbb);border-radius:12px;padding:20px;background:var(--bg,#fff);color:var(--text,#222);';
+    const title=document.createElement('h3');title.id='history-delete-confirm-title';title.textContent='この発注履歴を削除しますか？';
+    const target=document.createElement('p');target.id='history-delete-confirm-target';target.textContent='発注No: '+orderNo;
+    const warning=document.createElement('p');warning.textContent='アプリの履歴から削除します。この操作は取り消せません。';
+    const actions=document.createElement('div');actions.style.cssText='display:flex;flex-wrap:wrap;gap:10px;margin-top:20px;';
+    const cancel=document.createElement('button');cancel.type='button';cancel.className='btn btn-outline';cancel.id='history-delete-cancel';cancel.textContent='キャンセル';
+    const accept=document.createElement('button');accept.type='button';accept.className='btn btn-danger';accept.id='history-delete-accept';accept.textContent=orderNo+'を削除する';
+    let settled=false;
+    const finish=value=>{
+      if(settled) return;settled=true;accept.disabled=cancel.disabled=true;
+      if(dialog.open) dialog.close();dialog.remove();historyDeleteConfirmPending=false;previousFocus?.focus();resolve(value);
+    };
+    cancel.addEventListener('click',()=>finish(false));accept.addEventListener('click',()=>finish(true));
+    dialog.addEventListener('cancel',event=>{event.preventDefault();finish(false);});
+    dialog.addEventListener('close',()=>finish(false));
+    actions.append(cancel,accept);dialog.append(title,target,warning,actions);document.body.appendChild(dialog);
+    try {dialog.showModal();cancel.focus();} catch {finish(false);} // 非対応端末では削除せず閉じる。
+  });
+}
+/* HISTORY_DELETE_CONFIRM_END */
+
 async function deleteOrderHistory(orderNo) {
-  if (!confirm(`発注No: ${orderNo} を削除しますか？\nこの操作は取り消せません。`)) return;
+  if (!await confirmHistoryOrderDelete(orderNo)) return;
   showLoading('削除中...');
   try {
     const res = await gasPost({ action: 'deleteOrder', orderNo });
