@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta name="robots" content="noindex,nofollow">
+<script src="candidate-config.js"></script>
+<script src="ui-bootstrap.js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ビューフェス2026 お申し込み（LINE）</title>
+<style>
+  :root {
+    --main: #5BC8E8;
+    --main-dark: #2fa8cc;
+    --text: #333;
+    --bg: #f7fafc;
+    --border: #e0e6ea;
+    --error: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding-bottom: 60px;
+  }
+  header {
+    background: linear-gradient(135deg, var(--main), var(--main-dark));
+    color: #fff;
+    padding: 28px 20px 24px;
+    text-align: center;
+  }
+  header h1 { margin: 0 0 6px; font-size: 22px; }
+  header p  { margin: 0; font-size: 13px; opacity: .95; }
+  /* 申込画面を残して、イベント内容を別画面で確認するリンク。 */
+  header .event-lp-link {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    min-height: 44px; margin-top: 16px; padding: 10px 18px;
+    border: 1px solid rgba(255,255,255,.85); border-radius: 8px;
+    background: #fff; color: #16637a;
+    font-size: 14px; font-weight: bold; line-height: 1.5; text-decoration: none;
+  }
+  header .event-lp-link:hover { background: #e9f8fc; }
+  header .event-lp-link:focus-visible { outline: 3px solid #123c4a; outline-offset: 3px; }
+  header .event-lp-hint { margin-top: 10px; font-size: 12px; line-height: 1.7; }
+
+  main { max-width: 520px; margin: 0 auto; padding: 20px 16px; }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    margin-bottom: 16px;
+  }
+  .event-info { font-size: 14px; line-height: 1.9; }
+  .event-info b { color: var(--main-dark); }
+  label { display: block; font-weight: bold; font-size: 14px; margin: 16px 0 6px; }
+  label .req { color: var(--error); font-size: 12px; margin-left: 4px; }
+  input[type=text], input[type=email], input[type=tel], select, textarea {
+    width: 100%;
+    padding: 11px 12px;
+    font-size: 15px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--text);
+  }
+  textarea { resize: vertical; min-height: 60px; }
+  .radio-group { display: flex; gap: 16px; margin-top: 6px; }
+  .radio-group label { display: flex; align-items: center; gap: 6px; font-weight: normal; margin: 0; }
+  .checkbox-line { display: flex; align-items: flex-start; gap: 8px; margin-top: 18px; font-size: 14px; }
+  .checkbox-line input { margin-top: 3px; }
+  #newFields { display: none; margin-top: 6px; }
+  .hint { font-size: 12px; color: #888; margin-top: 4px; }
+  button#submitBtn {
+    width: 100%;
+    padding: 15px;
+    margin-top: 24px;
+    font-size: 16px;
+    font-weight: bold;
+    color: #fff;
+    background: var(--main-dark);
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  button#submitBtn:disabled { opacity: .5; }
+  .errorMsg {
+    display: none;
+    color: var(--error);
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+    margin-top: 14px;
+    line-height: 1.7;
+  }
+  #loadingOverlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(255,255,255,.85);
+    align-items: center; justify-content: center;
+    font-size: 15px; color: var(--main-dark); font-weight: bold;
+    z-index: 100;
+  }
+  /* 🆕 liff.html固有 */
+  #bootCard { text-align: center; padding: 40px 20px; color: #666; line-height: 1.9; }
+  #bootCard a { color: var(--main-dark); }
+  .okMsg {
+    background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0;
+    border-radius: 8px; padding: 14px; font-size: 14px; line-height: 1.8;
+  }
+  .okMsg a { color: #059669; font-weight: bold; }
+  .linkLine { text-align: center; margin-top: 18px; font-size: 13px; }
+  .linkLine a { color: var(--main-dark); }
+  .registered-field { background:#edf3f6 !important; color:#333 !important; opacity:1; }
+</style>
+<link rel="stylesheet" href="lib/booking-v1.3.1.css">
+<script src="lib/booking-v1.3.9.js"></script>
+</head>
+<body>
+
+<header>
+  <h1>ビューフェス2026 お申し込み</h1>
+  <p>美容従事者(理美容師・エステ等サロン様)限定のイベントです</p>
+  <a class="event-lp-link" id="eventLpLink"
+     href="https://beaufield.github.io/beaufield-dev/beaufes/event.html?openExternalBrowser=1"
+     target="_blank" rel="noopener noreferrer">
+    ビューフェスの内容を見る<span aria-hidden="true">↗</span>
+  </a>
+  <p class="event-lp-hint">別画面で開きます。内容を確認したら、<br>この申込画面に戻ってください。</p>
+</header>
+
+<main>
+  <!-- ============ 読み込み中・失敗時 ============ -->
+  <div class="card" id="bootCard">
+    <div id="bootText">読み込み中…</div>
+    <button type="button" id="profileRetryBtn" style="display:none;min-height:44px;margin-top:16px;">登録情報を再確認する</button>
+  </div>
+
+  <!-- ============ 申込済み通知（line_user_idで既存申込が引けた場合） ============ -->
+  <div class="card" id="existingBanner" style="display:none;">
+    <div class="okMsg">
+      すでにお申し込みをいただいています。<br>
+      <a id="existingPassLink" href="#">入場パス・お申し込み内容はこちら</a><br>
+      内容を変更したい場合は、下のフォームを直して送信してください。
+    </div>
+  </div>
+
+  <div class="card event-info" id="eventInfo" style="display:none;">
+    <div><b>日時</b>：2026年10月26日（月）10:00〜16:00</div>
+    <div><b>会場</b>：青島屋（AOSHIMAYA）宮崎市青島2丁目12-11</div>
+    <div><b>申込締切</b>：2026年10月20日（火）</div>
+  </div>
+
+  <!-- 🆕 自動入力の取得中だけ表示（何も起きていないように見えて不安にならないように） -->
+  <div class="linkLine" id="prefillStatus" style="display:none;color:#888;">自動入力を試しています…</div>
+
+  <!-- ============ 申込フォーム ============ -->
+  <div id="formWrap" style="display:none;">
+    <form class="card" id="applyForm">
+      <p class="hint" id="registeredInfoNote" style="line-height:1.8;color:#555;"></p>
+      <label>サロン様名<span class="req">必須</span></label>
+      <input type="text" id="salon_name" required>
+
+      <label>お名前（フルネーム）<span class="req">必須</span></label>
+      <input type="text" id="staff_name" required>
+
+      <label>メールアドレス<span class="req">必須</span></label>
+      <!-- 🔴 inputmode/autocapitalize/spellcheck は「日本語IMEのまま全角で打たれる」事故を
+           減らすためのもの。消さないこと（2026-09-03） -->
+      <input type="email" id="email" inputmode="email" autocomplete="email"
+             autocapitalize="off" spellcheck="false" required>
+      <div class="hint">入場パスの送付先です。入力ミスにご注意ください。</div>
+
+      <label>お電話番号<span class="req">必須</span></label>
+      <input type="tel" id="phone" required>
+
+      <!-- 🔴 選択肢はindex.html・LINE公式アカウントの顧客登録フォームの実物と1文字も違えないこと -->
+      <label>業態<span class="req">必須</span></label>
+      <select id="business_type" required>
+        <option value="">選択してください</option>
+        <option>美容室</option>
+        <option>理容室</option>
+        <option>エステサロン</option>
+        <option>ネイルサロン</option>
+        <option>アイサロン</option>
+        <option>その他</option>
+      </select>
+
+      <label>ビューフィールドとお取引はありますか？<span class="req">必須</span></label>
+      <div class="radio-group">
+        <label><input type="radio" name="has_transaction" value="yes" checked> あり</label>
+        <label><input type="radio" name="has_transaction" value="no"> なし（初めて）</label>
+      </div>
+
+      <div id="newFields">
+        <label>サロンのご住所</label>
+        <input type="text" id="address">
+        <label>ご紹介サロン名・お名前（あれば）</label>
+        <input type="text" id="referrer">
+      </div>
+
+      <label>備考（あれば）</label>
+      <textarea id="note"></textarea>
+
+      <div class="checkbox-line">
+        <input type="checkbox" id="agree_capability" required>
+        <label style="font-weight:normal;margin:0;" for="agree_capability">
+          美容従事者(理美容師、エステ等サロン様)であることを確認しました
+        </label>
+      </div>
+
+      <div id="bookingForm"></div>
+      <div class="errorMsg" id="errorMsg"></div>
+
+      <button type="submit" id="submitBtn">この内容で申し込む</button>
+    </form>
+
+    <div class="linkLine">
+      <a href="index.html">LINEを使わず通常フォームで申し込む方はこちら</a>
+    </div>
+  </div>
+
+  <p style="font-size:11px;color:#bbb;text-align:center;" id="versionLine"></p>
+</main>
+
+<div id="loadingOverlay">送信中…</div>
+
+<script>
+(async function(){
+await window.BFEventCandidate.ready;
+
+const IS_MOCK = new URLSearchParams(location.search).get('mock') === '1';
+// 予約部品が読めない場合も、来場申込・入場パス・社員一覧は継続する。
+const bookingApi = window.BeaufesBooking || {
+  isMock:()=>false, hasIssue:r=>!!r, mount:opts=>{
+    const root=document.querySelector(opts.root);
+    if(root)root.textContent='予約画面を読み込めませんでした。再読み込みしてご確認ください。来場申込は続けられます。';
+    return null;
+  }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
+};
+const APP_VERSION = '0.21.3';
+const GAS_URL = window.BFEventCandidate.endpoint;
+const LIFF_ID  = '2010404613-cwHA5B0U';
+
+let bookingForm = null;
+try { bookingForm = bookingApi.mount({root:'#bookingForm',mode:'form',url:GAS_URL}); }
+catch(e) { console.warn('予約欄を読み込めませんでした。来場申込は継続できます。'); }
+document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
+
+// GASの結果配信は逐次でも約7%失敗する（実測）。リトライ前提で組む（§2-6）。
+// 🆕 v0.2.0: 2026-08-06の実測（80回）に基づき再設計。詳細は index.html の同じ箇所を参照。
+// GASの結果配送は約32%失われる。応答は「数秒で返る」か「返らない」かの二択なので、
+// 長く待たず手数を増やす。20秒×3回=2.7%失敗 → 10秒×6回=約0.66%失敗
+//（誤記訂正・v0.3.0: 以前「0.12%」としていたが計算誤り。詳細はindex.htmlの同じ箇所を参照）。
+// 失敗は連続する傾向があるため、再試行の間隔を徐々に広げる。
+// applyLiff/liffPrefillはline_user_idで冪等なため、applyのようなrequest_idは不要。
+const FETCH_TIMEOUT_MS = 10000;
+const MAX_ATTEMPTS     = 6;
+const RETRY_WAIT_MS    = [1000, 2000, 3000, 5000, 8000];
+
+function el(id) { return document.getElementById(id); }
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+// ------------------------------------------------------------
+// 🆕 v0.4.0: メールアドレスの全角→半角 自動補正
+// ------------------------------------------------------------
+// 🔴 index.html v0.12.0 と同一の実装。経緯・注意点はそちらのコメントを参照
+//（要点: type="email" はブラウザ標準の検証が送信直前に走るため、日本語IMEのまま
+//  打った全角の `＠` `ａ` で「@ を挿入してください」と弾かれ、お客様には
+//  「入力できない」としか見えない。composition中に走らせるとIMEが壊れる）。
+// 🔴 index.html / pass.html にも同じ関数がある。直すときは3つとも直すこと。
+function normalizeEmailValue(v) {
+  return String(v)
+    .replace(/[！-～]/g, function (ch) {   // 全角ASCII（！〜～）→ 半角
+      return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0);
+    })
+    .replace(/[\s　]/g, '');                   // 空白（全角スペース含む）は除去
+}
+
+function attachEmailNormalizer(input, form) {
+  let composing = false;
+
+  function fix() {
+    if (composing) return false;
+    const before = input.value;
+    const after  = normalizeEmailValue(before);
+    if (after === before) return false;
+    input.value = after;
+    return true;
+  }
+
+  input.addEventListener('compositionstart', function () { composing = true; });
+  input.addEventListener('compositionend',   function () { composing = false; fix(); });
+  input.addEventListener('blur',   function () { fix(); });
+  input.addEventListener('change', function () { fix(); });
+
+  input.addEventListener('invalid', function (ev) {
+    if (!fix()) return;
+    if (!input.checkValidity()) return;
+    ev.preventDefault();
+    if (!form || !form.requestSubmit) return;
+    setTimeout(function () { form.requestSubmit(); }, 0);
+  });
+}
+
+// 🔴 プリフィルより先に仕掛ける。プリフィル取得は最大80秒かかりうるが、その間も
+// フォームは使える状態で表示されているため（§2-9）、補正も最初から効いている必要がある。
+// 🔴 補正はJSで value を書き換えるだけで input/change イベントを発火させないため、
+// touchedFields（お客様が触った項目の記録）を汚さない＝プリフィルの上書き判定に影響しない。
+attachEmailNormalizer(el('email'), el('applyForm'));
+
+function showError(id, msg) {
+  const e = el(id);
+  e.innerHTML = msg;
+  e.style.display = 'block';
+}
+function hideError(id) { el(id).style.display = 'none'; }
+function overlay(on) {
+  // 表示するたびに文言を初期化する（前回の再試行表示が残らないように）
+  if (on) el('loadingOverlay').textContent = '送信中…';
+  el('loadingOverlay').style.display = on ? 'flex' : 'none';
+}
+
+function showBoot(html) {
+  el('bootCard').style.display = 'block';
+  el('bootText').innerHTML = html;
+}
+function hideBoot() {
+  el('bootCard').style.display = 'none';
+}
+
+// 通常フォーム（index.html）へ逃がす（CDN読み込み失敗・LIFF初期化失敗時。§2-7）
+function fallbackToNormalForm(reasonHtml) {
+  showBoot(
+    reasonHtml + '<br><br>' +
+    '<a href="index.html">通常の申込フォームはこちら</a>'
+  );
+}
+
+document.querySelectorAll('input[name=has_transaction]').forEach(function (r) {
+  r.addEventListener('change', function () {
+    el('newFields').style.display =
+      document.querySelector('input[name=has_transaction]:checked').value === 'no' ? 'block' : 'none';
+  });
+});
+
+// ------------------------------------------------------------
+// GASへのPOST（リトライ付き。index.html/pass.htmlと同じ実装・§2-6）
+// ------------------------------------------------------------
+async function postOnce(params) {
+  const ctrl  = new AbortController();
+  const timer = setTimeout(function () { ctrl.abort(); }, FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      body: new URLSearchParams(params),
+      redirect: 'follow',
+      signal: ctrl.signal
+    });
+    if (!res.ok) throw new Error('HTTP_' + res.status);
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new Error('NON_JSON');
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// 🆕 v0.3.0: 「不明なアクション」「INVALID_REQUEST」は輸送路でパラメータが壊れて
+// 届いた場合のみ返る（サーバーには常にaction/dataを送っているため）。一時障害として
+// リトライする。詳細はindex.htmlの同じ箇所を参照。
+const TRANSPORT_ERROR_PATTERN = /^(不明なアクション|INVALID_REQUEST)/;
+
+// onProgress: 再試行に入ったことを画面に出すためのコールバック（省略可）。
+// 手数が増えた分、無言で待たせると固まったように見えるため。
+async function postWithRetry(params, onProgress) {
+  if (bookingApi.isMock()) return bookingApi.mockResponse(params);
+  let lastErr = null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      if (onProgress) onProgress(attempt + 1, MAX_ATTEMPTS);
+      await sleep(RETRY_WAIT_MS[attempt - 1] || 8000);
+    }
+    try {
+      const attemptParams = Object.assign({}, params, { client_attempt: String(attempt + 1) });
+      const json = await postOnce(attemptParams);
+      if (json && json.success === false && TRANSPORT_ERROR_PATTERN.test(String(json.error || ''))) {
+        lastErr = json.error;
+        continue;
+      }
+      return json;
+    } catch (e) {
+      lastErr = e && e.message ? e.message : String(e);
+    }
+  }
+  throw new Error(lastErr || 'UNKNOWN');
+}
+
+// ------------------------------------------------------------
+// プリフィルの反映
+// ------------------------------------------------------------
+// 🔴 お客様が自分で入力した項目は絶対に上書きしない（v0.2.0）。
+// プリフィルの取得は最大約80秒かかりうる（10秒×6回＋間隔）。その間フォームは
+// 使える状態で表示されているので、遅れて届いたプリフィルが入力済みの内容を
+// 消してしまう事故が起こりうる。触られた項目を記録しておき、そこは触らない。
+const touchedFields = {};
+['salon_name', 'staff_name', 'email', 'phone', 'business_type', 'address', 'referrer', 'note'].forEach(function (id) {
+  el(id).addEventListener('input',  function () { touchedFields[id] = true; });
+  el(id).addEventListener('change', function () { touchedFields[id] = true; });
+});
+document.querySelectorAll('input[name=has_transaction]').forEach(function (r) {
+  r.addEventListener('change', function () { touchedFields.has_transaction = true; });
+});
+
+function setIfUntouched(id, value) {
+  if (!value) return;
+  if (touchedFields[id]) return; // お客様が既に入力済み → 触らない
+  el(id).value = value;
+}
+
+// 登録情報の確認が終わるまで入力・送信を止め、取得した項目だけ固定する。
+let lineProfileReady = false;
+let lineProfileRevision = '';
+const LINE_FIXED_FIELDS = ['salon_name', 'staff_name', 'email', 'phone', 'business_type'];
+function lineIdentityMessage(error) {
+  const messages = {
+    LINE_PROFILE_UNAVAILABLE: '公式LINEの登録情報を確認できませんでした。下のボタンで再確認してください。',
+    LINE_BASIC_INFORMATION_LOCKED: '登録済みの基本情報は変更できません。画面を読み込み直してご確認ください。',
+    LINE_PROFILE_CHANGED: '登録情報が更新されています。画面を読み込み直してご確認ください。',
+    INVALID_ID_TOKEN: 'LINEの認証情報を確認できません。LINEから申込画面を開き直してください。'
+  };
+  return messages[error] || error || '登録情報を確認できませんでした。もう一度お試しください。';
+}
+function applyPrefill(prefill, locked) {
+  prefill = prefill || {};
+  locked = locked || [];
+  LINE_FIXED_FIELDS.forEach(function (id) {
+    const input = el(id);
+    if (prefill[id]) input.value = prefill[id];
+    const fixed = locked.indexOf(id) >= 0;
+    if (input.tagName === 'SELECT') input.disabled = fixed;
+    else input.readOnly = fixed;
+    input.classList.toggle('registered-field', fixed);
+  });
+  ['address', 'referrer', 'note'].forEach(function (id) {
+    if (Object.prototype.hasOwnProperty.call(prefill, id)) el(id).value = prefill[id];
+  });
+  el('registeredInfoNote').textContent = locked.length
+    ? '登録済みの項目は変更できません。未登録の項目だけご入力ください。訂正は担当営業へご連絡ください。'
+    : '公式LINEに登録されていない項目をご入力ください。';
+}
+async function loadLineRegisteredInfo(idToken) {
+  lineProfileReady = false;
+  el('formWrap').style.display = 'none';
+  el('existingBanner').style.display = 'none';
+  el('bootCard').style.display = 'block';
+  el('bootText').textContent = '公式LINEの登録情報を確認しています…';
+  el('profileRetryBtn').style.display = 'none';
+  el('submitBtn').disabled = true;
+  try {
+    const json = bookingApi.isMock()
+      ? { success: true, data: { line_identity_policy: 1, prefill: {}, locked_fields: [], profile_revision: 'MOCK' } }
+      : await postWithRetry({ action: 'liffPrefill', data: JSON.stringify({ id_token: idToken }) });
+    if (!json || !json.success) throw new Error(lineIdentityMessage(json && json.error));
+    const data = json.data || {};
+    if (data.line_identity_policy !== 1 || !Array.isArray(data.locked_fields)) {
+      throw new Error('申込画面を更新しています。少し待ってから再確認してください。');
+    }
+    if (data.registration_review_required) {
+      throw new Error('登録情報の確認が必要です。担当営業へご連絡ください。');
+    }
+    applyPrefill(data.prefill, data.locked_fields);
+    applyHasTransaction(data.has_transaction);
+    lineProfileRevision = data.profile_revision || '';
+    if (data.existing_application) {
+      el('existingPassLink').href = 'pass.html?t=' + encodeURIComponent(data.existing_application.ticket_token);
+      if (bookingForm) {
+        try { await bookingForm.setToken(data.existing_application.ticket_token); }
+        catch (error) { console.warn('予約欄を読み込めませんでした。来場申込は続けられます。'); }
+      }
+      el('existingBanner').style.display = 'block';
+    }
+    lineProfileReady = true;
+    hideBoot();
+    el('eventInfo').style.display = 'block';
+    el('formWrap').style.display = 'block';
+    el('submitBtn').disabled = false;
+  } catch (error) {
+    el('bootText').textContent = error.message || '登録情報を確認できませんでした。再確認してください。';
+    el('profileRetryBtn').style.display = 'inline-block';
+  }
+}
+document.getElementById('profileRetryBtn').addEventListener('click', function () {
+  if (currentIdToken) loadLineRegisteredInfo(currentIdToken);
+});
+
+function applyHasTransaction(hasTransaction) {
+  if (!hasTransaction) return;
+  if (touchedFields.has_transaction) return; // お客様が既に選び直している → 触らない
+  document.querySelectorAll('input[name=has_transaction]').forEach(function (r) {
+    r.checked = (r.value === hasTransaction);
+  });
+  el('newFields').style.display = (hasTransaction === 'no') ? 'block' : 'none';
+}
+
+// ------------------------------------------------------------
+// 送信
+// ------------------------------------------------------------
+// 🆕 v0.5.0: LINEのIDトークン。boot()が取得できた時点で入る。
+// 🔴 submitハンドラをboot()の中で登録してはいけない（v0.4.0以前はそうなっていた）。
+// boot()の登録位置はプリフィル取得のawaitより後だったが、フォームの表示はawaitより前。
+// プリフィル取得は最大約80秒かかりうる（10秒×6回＋待ち時間）ので、その間に送信すると
+// ハンドラがまだ無く、<form>が素のGET送信になって——actionが無いので同じURLへ遷移し——
+// **入力内容ごとページがリロードされる**。ハンドラは必ずトップレベルで先に登録し、
+// トークンの有無はハンドラの中で見ること。
+let currentIdToken = null;
+
+function buildPayload(idToken) {
+  return {
+    id_token:         idToken,
+    profile_revision: lineProfileRevision,
+    salon_name:       el('salon_name').value.trim(),
+    staff_name:       el('staff_name').value.trim(),
+    email:            el('email').value.trim(),
+    phone:            el('phone').value.trim(),
+    business_type:    el('business_type').value,
+    has_transaction:  document.querySelector('input[name=has_transaction]:checked').value,
+    address:          el('address').value.trim(),
+    referrer:         el('referrer').value.trim(),
+    note:             el('note').value.trim(),
+    agree_capability: el('agree_capability').checked
+  };
+}
+
+async function sendApplyLiff(idToken) {
+  const payload = Object.assign(buildPayload(idToken), bookingForm ? bookingForm.payload() : {});
+
+  overlay(true);
+  el('submitBtn').disabled = true;
+
+  try {
+    const json = await postWithRetry({ action: 'applyLiff', data: JSON.stringify(payload) }, function (n, max) {
+      el('loadingOverlay').textContent = '送信中…（確認しています ' + n + '/' + max + '）';
+    });
+
+    if (!json.success) {
+      overlay(false);
+      el('submitBtn').disabled = false;
+      showError('errorMsg', lineIdentityMessage(json.error) || '送信に失敗しました。時間をおいて再度お試しください。');
+      return;
+    }
+
+    // 入場パス画面へ遷移（QR表示・完了メッセージはそちらで担う）
+    const ticket = new URL(json.data.pass_url, location.href).searchParams.get('t');
+    location.href = 'pass.html?t=' + encodeURIComponent(ticket) + '&new=1' + (bookingApi.hasIssue(json.data.sessions_result) ? '&semissue=1' : '');
+
+  } catch (e) {
+    overlay(false);
+    el('submitBtn').disabled = false;
+    showError('errorMsg',
+      '送信結果を確認できませんでした。<br>' +
+      'お手数ですが、もう一度「この内容で申し込む」を押してください。<br>' +
+      '<span style="color:#888;">※二重にお申し込みが登録されることはありません。</span>');
+  }
+}
+
+// 🆕 v0.5.0: 送信ハンドラはここ（トップレベル）で登録する。boot()の完了を待たない。
+// 🔴 ev.preventDefault() は何よりも先に呼ぶこと。ここを通らずに抜けると<form>の
+// 既定動作（GET送信＝ページのリロード）が走り、入力内容が消える。
+el('applyForm').addEventListener('submit', function (ev) {
+  ev.preventDefault();
+  hideError('errorMsg');
+  if (!currentIdToken || !lineProfileReady) {
+    // 実際にはフォームはトークン取得後にしか表示されないので、ここへは通常来ない。
+    // 表示条件を将来変えたときに、黙ってリロードされるのではなく理由が出るようにしておく。
+    showError('errorMsg', 'LINEのログイン情報を確認しています。数秒おいて、もう一度お試しください。');
+    return;
+  }
+  sendApplyLiff(currentIdToken);
+});
+
+// ------------------------------------------------------------
+// LIFF起動シーケンス
+// ------------------------------------------------------------
+function loadLiffSdk() {
+  return new Promise(function (resolve, reject) {
+    const s = document.createElement('script');
+    s.src = 'https://static.line-scdn.net/liff/edge/2/sdk.js';
+    s.onload = resolve;
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
+
+// LP閲覧は申込・予約処理から独立させ、初期化前やLINE外では通常リンクを使う。
+let eventLpLiffReady = false;
+document.getElementById('eventLpLink').addEventListener('click', function (event) {
+  if (!eventLpLiffReady || !window.liff) return;
+  try {
+    if (!liff.isInClient()) return;
+    liff.openWindow({ url: this.href, external: true });
+    event.preventDefault();
+  } catch (error) {
+    // SDKが使えない場合もリンクは開けるようにし、元のフォームは遷移させない。
+    console.warn('外部ブラウザを開けませんでした。通常のリンクで開きます。');
+  }
+});
+
+async function boot() {
+  if (!window.BFEventCandidate.lineEnabled) { el('bootText').textContent='LINE連携は隔離環境での設定待ちです。'; return; }
+  if (bookingApi.isMock()) { currentIdToken='MOCK'; await loadLineRegisteredInfo(currentIdToken); return; }
+  // 1) LIFF SDKをCDNから読み込む（失敗時は通常フォームへ逃がす・§2-7）
+  try {
+    await loadLiffSdk();
+  } catch (e) {
+    fallbackToNormalForm('LIFFの読み込みに失敗しました。通信環境をご確認のうえ、再読み込みをお試しください。');
+    return;
+  }
+
+  // 2) LIFF初期化
+  try {
+    await liff.init({ liffId: LIFF_ID });
+    eventLpLiffReady = true;
+  } catch (e) {
+    fallbackToNormalForm('LIFFの初期化に失敗しました。');
+    return;
+  }
+
+  // 3) ログイン確認（未ログインならLINEログインへリダイレクト。戻ってきたらこのboot()が再実行される）
+  if (!liff.isLoggedIn()) {
+    liff.login();
+    return;
+  }
+
+  // 4) IDトークンを取得し、サーバー側で検証させてプリフィルを取得（§2-3・§2-9）
+  let idToken;
+  try {
+    idToken = liff.getIDToken();
+    if (!idToken) throw new Error('NO_ID_TOKEN');
+  } catch (e) {
+    fallbackToNormalForm('LINEのログイン情報を取得できませんでした。');
+    return;
+  }
+
+  currentIdToken = idToken;
+  await loadLineRegisteredInfo(idToken);
+  // 🔴 ここに submit ハンドラを戻さないこと（v0.5.0で上のトップレベルへ移した）。
+  // 理由は currentIdToken の宣言に書いてある。
+}
+
+boot();
+
+})();
+</script>
+
+</body>
+</html>
