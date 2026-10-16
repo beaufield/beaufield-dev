@@ -1531,7 +1531,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.85.0-db';
+const APP_VERSION    = 'v1.85.1-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -2533,6 +2533,7 @@ function loadMasters(forceRefresh = false) {
   return requestResource(_supplierRead, 'getMasters', 'suppliers', () => masters.suppliers.length > 0, res => {
       masters.suppliers = res.suppliers;
       renderSupplierDropdown();
+      if (currentScreen === 'proposal') aiOrderInit();
       renderSettingsPage();
       updateHistoryFilterOptions(); // マスター読込後にフィルター選択肢を更新
       // 復帰バナーは起動直後（suppliers未読込）にも描画されるため、発注先名を出せる状態で描き直す
