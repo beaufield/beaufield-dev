@@ -1,0 +1,48 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>受付端末の事前確認</title>
+<style>body{margin:0;background:#f2f7f8;color:#183c48;font:16px/1.8 system-ui,sans-serif}main{max-width:720px;margin:auto;padding:20px}section{background:white;border:1px solid #dbe7e9;border-radius:16px;padding:20px;margin:16px 0}h1{font-size:26px}h2{font-size:20px}button,a.button{font:inherit;display:inline-block;margin:6px 5px 6px 0;border:0;border-radius:10px;padding:13px 18px;background:#176677;color:white;text-decoration:none;min-height:48px}input{font:inherit;padding:10px;max-width:90%;border:1px solid #b5cbd0;border-radius:8px}.note{background:#fff0c9;padding:14px;border-radius:10px}.status{font-weight:bold;white-space:pre-wrap}video{display:block;max-width:100%;width:100%;background:#122c35;border-radius:10px}#qr svg{width:48mm;height:48mm}footer{font-size:13px;color:#54737b}@media print{main>*{display:none}#paper{display:block!important;border:0;margin:15mm}#paper button{display:none}}</style>
+<script src="qrcode.min.js"></script><script src="jsQR.js"></script></head><body><main>
+<h1>受付端末の事前確認</h1><p class="note">iPhone・iPad用の確認画面です。実際のお客様の受付・申込・注文は登録しません。</p>
+<section><h2>端末の名前</h2><label>受付1など <input id="deviceLabel" maxlength="40" placeholder="例：受付1 iPhone"></label></section>
+<section><h2>1. ポータルのログイン</h2><p>いつものポータルでログインしたあと、この画面へ戻って確認します。</p><a class="button" href="https://beaufield.github.io/beaufield-dev/" target="_blank" rel="noopener">ポータルを開く</a><button id="auth">ログインを確認</button><p class="status" id="authStatus">未確認</p></section>
+<section><h2>2. カメラと紙QR</h2><p>下の試験用QRを別端末に表示するか、印刷して読み取ってください。お客様のQRは使わないでください。</p><button id="camera">カメラを開始</button><button id="stop">停止</button><video id="video" muted playsinline></video><canvas id="canvas" hidden></canvas><p class="status" id="cameraStatus">未確認</p></section>
+<section id="paper"><h2>端末確認用の架空QR</h2><div id="qr"></div><p>受付端末の確認専用です。入場・申込・注文には使えません。</p><button id="print">このQRを印刷</button></section>
+<section><h2>3. 端末内への保存</h2><p>結果を保存して再読込し、この端末に残るか確認します。実受付の未送信記録とは別です。</p><button id="reload">保存して再読込する</button><p class="status" id="storageStatus">未確認</p></section>
+<section><h2>4. 結果を渡す</h2><p>端末の名前と確認結果だけを書き出します。PIN・ログイン情報・撮影画像は含みません。</p><button id="export">結果を書き出す</button><p id="exportStatus" role="status"></p></section>
+<footer><span id="version"></span> ／ 本番未切替・実機確認用</footer></main>
+<script>
+// 日本語コメント: 共通ポータルを読み取るだけ。実受付の保存先・セッションを書き換えない。
+const APP_VERSION='0.1.0';
+const STORAGE_KEY='bf_event_device_check_v1',TEST_PAYLOAD='BF_EVENT_DEVICE_TEST:20261016:CAMERA_ONLY';
+const PORTAL_ORIGIN='https://beaufield.github.io';
+const OFFICE_API='https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/office-api';
+const el=id=>document.getElementById(id);let stream=null,frame=null;
+let results={version:APP_VERSION,label:'',auth:'unconfirmed',camera:'unconfirmed',storage:'unconfirmed',actual_reception_tested:false};
+el('version').textContent='v'+APP_VERSION;
+try{const saved=JSON.parse(localStorage.getItem(STORAGE_KEY)||'null');if(saved?.reload_marker&&saved.version===APP_VERSION){results={...saved,storage:'passed_after_reload',reload_marker:false};el('deviceLabel').value=results.label;el('storageStatus').textContent='再読込後も保存されています。';}}catch{el('storageStatus').textContent='保存できません。ブラウザーの設定を確認してください。';}
+const save=()=>{results.label=el('deviceLabel').value.trim();results.checked_at=new Date().toISOString();localStorage.setItem(STORAGE_KEY,JSON.stringify(results));};
+async function checkPortal(){
+ if(location.origin!==PORTAL_ORIGIN){el('authStatus').textContent='ポータルと同じサイトの検証URLから開いてください。';return;}
+ let session;try{session=JSON.parse(localStorage.getItem('bf_session')||'null');}catch{}
+ if(!session||typeof session.token!=='string'||!/^[A-Za-z0-9_-]{32,256}$/.test(session.token)||!Number.isSafeInteger(session.expires)||session.expires<=Date.now()){el('authStatus').textContent='ポータルでログインしてから、もう一度確認してください。';return;}
+ el('auth').disabled=true;el('authStatus').textContent='確認しています…';
+ try{const response=await fetch(OFFICE_API,{method:'POST',cache:'no-store',redirect:'error',signal:AbortSignal.timeout(15000),headers:{'Content-Type':'application/json',Authorization:'Bearer '+session.token},body:JSON.stringify({action:'application_customers',body:{app_ids:[]}})});const value=await response.json();
+  if(response.ok&&value.schema_version===1&&Array.isArray(value.rows)&&value.rows.length===0){results.auth='passed_existing_portal_supabase';el('authStatus').textContent='ポータルの本人確認とビューフェス権限を、サーバーで確認できました。';}
+  else if([401,403].includes(response.status)){results.auth='login_or_permission_required';el('authStatus').textContent='ログインまたはビューフェス権限を確認してください。';}
+  else throw Error('unavailable');
+ }catch{results.auth='temporarily_unavailable';el('authStatus').textContent='通信できません。データを消さず、回線を確認して再試行してください。';}finally{el('auth').disabled=false;}
+}
+function stopCamera(){if(frame)cancelAnimationFrame(frame);frame=null;if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;el('video').srcObject=null;}
+async function startCamera(){
+ stopCamera();if(!navigator.mediaDevices?.getUserMedia){el('cameraStatus').textContent='カメラを使えるHTTPSの画面で開いてください。';return;}
+ try{stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}}});el('video').srcObject=stream;await el('video').play();el('cameraStatus').textContent='試験用QRを枠内に映してください。';
+  const canvas=el('canvas'),context=canvas.getContext('2d',{willReadFrequently:true});
+  const scan=()=>{const video=el('video');if(video.readyState>=2){canvas.width=video.videoWidth;canvas.height=video.videoHeight;context.drawImage(video,0,0);const image=context.getImageData(0,0,canvas.width,canvas.height),code=jsQR(image.data,image.width,image.height,{inversionAttempts:'dontInvert'});if(code){if(code.data===TEST_PAYLOAD){results.camera='passed_test_qr';el('cameraStatus').textContent='試験用QRを読み取れました。撮影画像は保存していません。';stopCamera();return;}el('cameraStatus').textContent='試験用ではないQRです。内容は保存せず、下の架空QRを使用してください。';}}
+   frame=requestAnimationFrame(scan);};frame=requestAnimationFrame(scan);
+ }catch(error){results.camera='not_passed';stopCamera();el('cameraStatus').textContent=error.name==='NotAllowedError'?'カメラが許可されていません。Safariの設定を確認してください。':'カメラを開始できません。他のカメラ画面を閉じて再試行してください。';}
+}
+const qr=qrcode(0,'M');qr.addData(TEST_PAYLOAD);qr.make();el('qr').innerHTML=qr.createSvgTag({cellSize:4,margin:16});
+el('auth').addEventListener('click',checkPortal);el('camera').addEventListener('click',startCamera);el('stop').addEventListener('click',stopCamera);el('print').addEventListener('click',()=>window.print());
+el('reload').addEventListener('click',()=>{try{results.reload_marker=true;save();location.reload();}catch{el('storageStatus').textContent='保存できません。設定と空き容量を確認してください。';}});
+el('export').addEventListener('click',()=>{try{save();const blob=new Blob([JSON.stringify(results,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download='beaufes-device-check.json';link.click();URL.revokeObjectURL(url);el('exportStatus').textContent='確認結果を書き出しました。';}catch{el('exportStatus').textContent='書き出せませんでした。画面の確認結果を担当者へ伝えてください。';}});
+window.addEventListener('pagehide',stopCamera);
+</script></body></html>
