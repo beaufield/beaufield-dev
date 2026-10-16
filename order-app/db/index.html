@@ -838,6 +838,9 @@
 #ai-mobile-modal label {display:block;font-weight:700;margin:12px 0 6px;}
 #ai-mobile-modal textarea {display:block;box-sizing:border-box;width:100%;font:inherit;font-size:16px;line-height:1.6;border:1px solid var(--border,#bbb);border-radius:8px;padding:10px;margin-bottom:12px;}
 #ai-mobile-modal button {min-height:44px;}
+#ai-mobile-modal #ai-mobile-actions {position:sticky;top:0;z-index:2;background:var(--bg,#fff);padding:10px 0;border-bottom:2px solid var(--border,#ddd);}
+#ai-mobile-modal #ai-mobile-summary {font-weight:700;margin:0 0 8px;}
+#ai-mobile-modal #ai-mobile-actions .ai-order-hint {margin:6px 0 0;font-size:12px;}
 #ai-mobile-modal p,#ai-mobile-modal li {line-height:1.6;overflow-wrap:anywhere;}
 #ai-mobile-modal .ai-mobile-user,#ai-mobile-modal .ai-mobile-assistant {white-space:pre-wrap;overflow-wrap:anywhere;border-radius:8px;padding:10px;margin:10px 0;font-size:14px;background:#eaf3ef;}
 #ai-mobile-modal .ai-mobile-assistant {background:#f3f5f4;}
@@ -1520,18 +1523,18 @@
     <textarea id="ai-mobile-request" maxlength="2000" rows="5"></textarea>
     <button type="button" class="btn btn-primary" id="ai-mobile-ask">AIに相談する</button>
     <p id="ai-mobile-status" role="status" aria-live="polite"></p><button type="button" class="btn btn-outline" id="ai-mobile-reconnect" hidden>接続を確認</button>
+    <div id="ai-mobile-actions" hidden><p id="ai-mobile-summary"></p><button type="button" class="btn btn-primary" id="ai-mobile-apply">候補をまとめてカートに入れる</button><p class="ai-order-hint">商品と数量を一括で入れて確認画面へ進みます。注文の保存・出力は次の画面で操作します。</p></div>
     <div id="ai-mobile-conversation"></div>
-    <div id="ai-mobile-result" hidden><h4>発注候補</h4><ul id="ai-mobile-conditions"></ul><div id="ai-mobile-rows"></div><p id="ai-mobile-total"></p><ul id="ai-mobile-warnings"></ul><button type="button" class="btn btn-primary" id="ai-mobile-apply">この候補で発注内容を確認する</button><p class="ai-order-hint">最新の在庫・価格・発注単位を再確認してカートへ入れます。保存・出力は次の確認画面で操作します。</p></div>
+    <div id="ai-mobile-result" hidden><h4>発注候補</h4><ul id="ai-mobile-conditions"></ul><div id="ai-mobile-rows"></div><p id="ai-mobile-total"></p><ul id="ai-mobile-warnings"></ul></div>
     <div id="ai-mobile-followup" hidden><label for="ai-mobile-answer">追加の希望・確認への回答</label><textarea id="ai-mobile-answer" maxlength="2000" rows="3" placeholder="例：他の条件はそのままで、calmを最低6本にして"></textarea><button type="button" class="btn btn-primary" id="ai-mobile-continue">この条件で続ける</button></div>
   </div>
 </div>
-
 
 <script>
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.85.2-db';
+const APP_VERSION    = 'v1.85.3-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -9955,7 +9958,7 @@ async function aiOrderConsultMobile() {
   aiMobile.epoch++;aiMobile.supplier={code,name:supplier.name};aiMobile.analysisId=null;aiMobile.history=[];aiMobile.jobId=null;aiMobile.candidate=null;aiMobile.online=false;
   aiMobile.previousFocus=document.activeElement;aiMobile.scroll=document.body.style.overflow;document.body.style.overflow='hidden';
   aiMobileEl('request').value=document.getElementById('ai-order-request').value.trim().slice(0,2000);
-  aiMobileEl('result').hidden=aiMobileEl('followup').hidden=true;aiMobileRenderConversation();
+  aiMobileEl('actions').hidden=aiMobileEl('result').hidden=aiMobileEl('followup').hidden=true;aiMobileRenderConversation();
   aiMobileEl('basis').textContent=supplier.name+' / 在庫は朝の分析値を使用';
   aiMobileEl('modal').hidden=false;aiMobileEl('close').focus();
   await aiMobileCheckConnection();if(aiMobile.online) aiMobileEl('request').focus();
@@ -10023,15 +10026,22 @@ async function aiMobileApplyCandidate() {
   } catch(error) {if(epoch===aiMobile.epoch) aiMobileStatus(error.message);}
   finally {aiMobile.applying=false;aiMobileBusy(false);}
 }
+function aiMobileIsCartRequest(text) {
+  // 表示済み候補への明示的な一括追加だけを扱う。条件変更や否定文は再計算側へ渡す。
+  const normalized=String(text).normalize('NFKC').replace(/\s+/g,'');
+  return /^(?:(?:この(?:内容|候補|発注案|提案)|これ|候補|全商品|全部|すべて)を?)?(?:まとめて|一括で)?カート(?:に|へ)(?:入れて|入れる|追加して|追加する)(?:ください|下さい|ほしい|欲しい)?[。!]*$/.test(normalized);
+}
 async function aiMobileAsk(followup) {
   if(aiMobile.busy||!aiMobile.online) return;
   const wording=aiMobileEl(followup?'answer':'request').value.trim();
   if(!wording || wording.length>2000 || followup && !aiMobile.history.length) {aiMobileStatus('希望または確認への回答を入力してください。');return;}
+  // カート反映はブラウザーで実行できる。既存候補をAIへ再送・再計算させない。
+  if(followup && aiMobile.candidate && aiMobileIsCartRequest(wording)) {await aiMobileApplyCandidate();return;}
   const history=followup?[...aiMobile.history,{role:'user',text:wording}]:[{role:'user',text:wording}];
   const messages=history.filter(x=>x.role==='user').map(x=>x.text);
   if(messages.length>12 || messages.join('').length>8000 || history.length>24 || history.reduce((n,x)=>n+x.text.length,0)>16000) {aiMobileStatus('会話が長くなりました。希望をまとめて、新しい相談を始めてください。');return;}
   const epoch=aiMobile.epoch,request={protocolVersion:'1',requestId:crypto.randomUUID(),inputRevision:epoch,messages,suppliers:[aiMobile.supplier],selectedSupplierCode:aiMobile.supplier.code};
-  aiMobile.candidate=null;aiMobileBusy(true);aiMobileEl('result').hidden=aiMobileEl('followup').hidden=true;aiMobileStatus('実データを確認しています…');
+  aiMobile.candidate=null;aiMobileBusy(true);aiMobileEl('actions').hidden=aiMobileEl('result').hidden=aiMobileEl('followup').hidden=true;aiMobileStatus('実データを確認しています…');
   try {
     const snapshot=await aiOrderReadLiveSnapshot(aiMobile.supplier.code);
     if(epoch!==aiMobile.epoch) return;
@@ -10055,11 +10065,14 @@ async function aiMobileAsk(followup) {
     if(!value) throw new Error('回答を確認する時間が過ぎました。同じ依頼は自動再送していません。閉じてからPCの状態を確認してください。');
     if(proposalsData.analysisId!==snapshot.analysisId || document.getElementById('ai-order-supplier').value!==snapshot.supplier.code) throw new Error(aiMobileError('ANALYSIS_CHANGED'));
     if(value.status==='proposed') aiMobileVerifyDraft(value);
-    aiMobile.history=[...history,{role:'assistant',text:[value.message,...value.questions].join('\n')}];aiMobile.analysisId=snapshot.analysisId;aiMobile.jobId=null;
+    const summary=value.status==='proposed'?aiMobileVerifyDraft(value).length+'品目・'+value.draft.rows.reduce((n,r)=>n+r.qty,0)+'点 / 税抜 '+Number(value.draft.totalAmount).toLocaleString('ja-JP')+'円':'';
+    const answer=value.status==='proposed'?summary+'の候補ができました。「候補をまとめてカートに入れる」で、商品と数量を一括で追加して確認画面へ進めます。':value.message;
+    aiMobile.history=[...history,{role:'assistant',text:[answer,...value.questions].join('\n')}];aiMobile.analysisId=snapshot.analysisId;aiMobile.jobId=null;
     aiMobileRenderConversation();aiMobileEl('answer').value='';aiMobileEl('followup').hidden=value.status!=='proposed' && !value.questions.length;
     aiMobileEl('basis').textContent=snapshot.supplier.name+' / 在庫の基準 '+snapshot.analysisInputAt;
     if(value.status==='proposed') {
       aiMobile.candidate={value,snapshot,request};
+      aiMobileEl('summary').textContent=summary;aiMobileEl('actions').hidden=false;
       aiMobileLines('conditions',value.constraints);aiMobileLines('warnings',value.draft.warnings);aiMobileEl('rows').replaceChildren();
       value.draft.rows.forEach(row=>{
         const card=document.createElement('div');card.className='ai-mobile-item';const name=document.createElement('span'),qty=document.createElement('strong');
@@ -10068,7 +10081,8 @@ async function aiMobileAsk(followup) {
       });
       aiMobileEl('total').textContent=(value.draft.mode==='case_order'?`合計${value.draft.totalCases}ケース / `:'')+'税抜合計 '+Number(value.draft.totalAmount).toLocaleString('ja-JP')+'円';aiMobileEl('result').hidden=false;
     }
-    aiMobileStatus(value.status==='proposed'?'候補ができました。追加の希望で変更できます。発注は保存されていません。':value.questions.length?'確認への回答を入力して続けてください。':value.message);
+    aiMobileStatus(value.status==='proposed'?'候補ができました。下のボタンで全商品をカートに入れられます。発注は保存されていません。':value.questions.length?'確認への回答を入力して続けてください。':value.message);
+    if(value.status==='proposed') aiMobileEl('actions').scrollIntoView?.({block:'nearest'});
   } catch(e) {if(epoch===aiMobile.epoch) aiMobileStatus(e.message);}
   finally {if(epoch===aiMobile.epoch) aiMobileBusy(false);}
 }
@@ -10080,7 +10094,7 @@ aiMobileEl('reconnect').addEventListener('click',aiMobileCheckConnection);
 aiMobileEl('request').addEventListener('input',()=>{
   if(aiMobile.busy) return;
   aiMobile.epoch++;aiMobile.history=[];aiMobile.analysisId=null;aiMobile.jobId=null;aiMobile.candidate=null;
-  aiMobileEl('result').hidden=aiMobileEl('followup').hidden=true;aiMobileRenderConversation();
+  aiMobileEl('actions').hidden=aiMobileEl('result').hidden=aiMobileEl('followup').hidden=true;aiMobileRenderConversation();
   aiMobileStatus('希望を変更しました。新しい相談を送ってください。');
 });
 aiMobileEl('modal').addEventListener('keydown',event=>{
@@ -10093,6 +10107,8 @@ aiMobileEl('modal').addEventListener('keydown',event=>{
   }
 });
 /* AI_MOBILE_END */
+
+
 
 
 
