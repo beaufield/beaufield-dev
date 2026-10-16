@@ -1413,7 +1413,7 @@ body:has(#busyOverlay.open, #progressOverlay.open) #netBusy { display: none; }
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = 'v2.22.4';
+const APP_VERSION = 'v2.23.0';
 // 画面で新しく選べる表示方法。保存済みの旧設定は勝手に変換しない。
 const JODAI_DISPLAY_TYPES = ['メーカー希望小売価格', '非表示', 'オープン'];
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
@@ -2622,7 +2622,7 @@ function netBusyEnd() {
 
 const RETRYABLE_READ_ACTIONS = new Set([
   'loadData', 'getIgnoreList', 'searchProducts', 'getSpecials', 'getHistory',
-  'getCategories', 'getFeatures', 'getSpecialPriceData', 'getProductSetsForFeature',
+  'getCategories', 'getFeatures', 'getSpecialPriceData', 'getSpecialPriceScreen', 'getProductSetsForFeature',
   'searchProductSets', 'getSpecialPriceCurrent', 'getViewFilterCurrent', 'getMembers',
   'getGroupViewInfo', 'getGroupPricePreview', 'getCustomerGroupDuplicatePreview', 'auditSpecialPrices', 'getAuditExclusions', 'auditSalesVsBcart',
   'getProductsForDescription', 'getSimilarProducts', 'getFeatureList', 'getDrafts'
@@ -2644,6 +2644,13 @@ function validateBusinessResponse(action, res) {
       !res.supplierMap || typeof res.supplierMap !== 'object' || Array.isArray(res.supplierMap) ||
       typeof res.totalCsv !== 'number' || typeof res.totalBcart !== 'number' || typeof res.isOld !== 'boolean')) {
     return { ok: false, error: 'BAD_RESPONSE', message: '一覧の付随情報が応答にありません。' };
+  }
+  if (action === 'getSpecialPriceScreen' && (
+      (res.groups !== undefined && !['groups','details','vfDetails','individuals'].every(k => Array.isArray(res[k]))) ||
+      (res.groups === undefined && !res.groupViewInfo) ||
+      (res.groupViewInfo && typeof res.groupViewInfo.ok !== 'boolean') ||
+      (res.features && (typeof res.features.ok !== 'boolean' || (res.features.ok && !Array.isArray(res.features.specials)))))) {
+    return { ok: false, error: 'BAD_RESPONSE', message: '画面情報の応答が不正です。再読み込みしてください。' };
   }
   return res;
 }
@@ -2673,12 +2680,12 @@ function recordClientDiagnostic(entry) {
 
 
 // 同時に走る同一読取だけを共有する。完了済みデータのキャッシュや更新系の共有はしない。
-const API_SHARED_READS = new Set(['getHistory', 'getSpecialPriceData', 'getGroupViewInfo', 'getFeatures']);
+const API_SHARED_READS = new Set(['getHistory', 'getSpecialPriceData', 'getGroupViewInfo', 'getFeatures', 'getSpecialPriceScreen']);
 const apiReadFlights = new Map();
 let apiReadEpoch = 0;
 function apiReadOnce(params, callback) {
   if (!API_SHARED_READS.has(params.action)) throw new Error('読取以外は共有できません');
-  const key = JSON.stringify([params.action, params.group_id || '', apiReadEpoch]);
+  const key = JSON.stringify([params.action, params.group_id || '', params.mode || '', params.include_features === true, apiReadEpoch]);
   const token = session && session.token;
   const old = apiReadFlights.get(key);
   if (old && old.token === token) { old.callbacks.push(callback); return; }
@@ -2689,7 +2696,7 @@ function apiReadOnce(params, callback) {
     if (entry.token !== (session && session.token)) res = { ok: false, error: 'SESSION_CHANGED' };
     // 保存・反映の前に始まった参照結果では、最新の画面を上書きしない。
     else if (entry.epoch !== apiReadEpoch) {
-      entry.callbacks.forEach(cb => apiReadOnce({ action: params.action, group_id: params.group_id }, cb));
+      entry.callbacks.forEach(cb => apiReadOnce({ action: params.action, group_id: params.group_id, mode: params.mode, include_features: params.include_features }, cb));
       return;
     }
     entry.callbacks.forEach(cb => {
@@ -3430,21 +3437,45 @@ function gotoSpSubview(view) {
   if (btn) switchSpSubview(view, btn);
 }
 
+// 画面とグループの世代を分け、切替中に届いた古い応答を採用しない。
+let spScreenReadId = 0, spGroupReadId = 0;
 function loadSpecialPriceData(onDone) {
-  // 初回だけ全面スピナー。保存後などの再読込では今の画面を残したまま差し替える
-  // （通信中であることは画面中央の「通信中…」表示と押したボタンのスピナーで分かる）
-  if (!spData) {
-    document.getElementById('sp-content').innerHTML =
-      '<div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>';
-  }
-  apiReadOnce({ action: 'getSpecialPriceData' }, function(res) {
-    if (!res.ok) { showToast('エラー: ' + res.error, true); if (onDone) onDone(false); return; }
+  if (!spData) document.getElementById('sp-content').innerHTML =
+    '<div class="loading"><div class="spinner"></div><div>読み込み中...</div></div>';
+  const readId = ++spScreenReadId;
+  const groupId = spSubview === 'settings' ? spSelectedGroupId : null;
+  const groupReadId = ++spGroupReadId;
+  if (groupId) { spViewInfo = null; spViewInfoLoading = true; renderSpContent(); }
+  apiReadOnce({ action: 'getSpecialPriceScreen', mode: 'screen', group_id: groupId || '',
+    include_features: Boolean(groupId && !spFeaturesCache) }, function(res) {
+    if (readId !== spScreenReadId) { if (onDone) onDone(false); return; }
+    if (!res.ok || !Array.isArray(res.groups)) {
+      if (groupReadId === spGroupReadId) {
+        spViewInfoLoading = false;
+        if (groupId) spViewInfo = { loadError: res.error || 'BAD_RESPONSE', memberMap: {}, setPrices: {} };
+      }
+      renderSpContent();
+      showToast('エラー: ' + (res.error || 'BAD_RESPONSE'), true);
+      if (onDone) onDone(false); return;
+    }
     spData = res;
+    if (groupReadId === spGroupReadId && groupId === spSelectedGroupId) {
+      spViewInfoLoading = false;
+      if (groupId) acceptSpGroupRead(groupId, res);
+    }
     renderSpContent();
-    // 会員名・標準価格・反映状況は別便で取り直す（画面はもう出ている）
-    if (spSubview === 'settings' && spSelectedGroupId) loadGroupViewInfo(spSelectedGroupId);
     if (onDone) onDone(true);
   });
+}
+
+function acceptSpGroupRead(groupId, res) {
+  const info = res.groupViewInfo;
+  spViewInfo = info && info.ok && info.group_id === groupId ? info :
+    { memberMap: {}, setPrices: {}, loadError: info && info.error || '反映状況を確認できません' };
+  if (res.features) {
+    if (res.features.ok) spFeaturesCache = res.features.specials;
+    else showToast('特集一覧を取得できませんでした。更新で再取得できます。', true);
+  }
 }
 
 function renderSpContent() {
@@ -3788,15 +3819,7 @@ function renderSpSettings() {
     if (spFeaturesCache) {
       populateSpFeatureSelect();
       populateVfFeatureSelect();
-    } else {
-      apiReadOnce({ action: 'getFeatures' }, function(res) {
-        if (res.ok && res.specials) {
-          spFeaturesCache = res.specials;
-          populateSpFeatureSelect();
-          populateVfFeatureSelect();
-        }
-      });
-    }
+    } // 特集一覧は画面/グループ読取に含め、描画から追加通信を起こさない。
     if (spFeatureSets.length > 0) renderSpFeatureSets();
     if (spVfFeatureSets.length > 0) renderVfFeatureSets();
   }
@@ -3824,19 +3847,17 @@ function spStandardPrice(setId) {
 // ①③ 表示中グループの付帯情報を後追いで取得する。
 //     画面はすぐ出して、届いた分だけ差し替える（全体の再描画はしない）
 function loadGroupViewInfo(groupId) {
-  if (!groupId) { spViewInfo = null; return; }
+  const readId = ++spGroupReadId;
   spViewInfo = null;
-  spViewInfoLoading = true;
-  apiReadOnce({ action: 'getGroupViewInfo', group_id: groupId }, function(res) {
-    if (groupId !== spSelectedGroupId) return;
+  spViewInfoLoading = Boolean(groupId);
+  if (spSubview === 'settings') renderSpSettings();
+  if (!groupId) return;
+  apiReadOnce({ action: 'getSpecialPriceScreen', mode: 'group', group_id: groupId,
+    include_features: !spFeaturesCache }, function(res) {
+    if (readId !== spGroupReadId || groupId !== spSelectedGroupId) return;
     spViewInfoLoading = false;
-    if (!res.ok) {
-      spViewInfo = { memberMap: {}, setPrices: {}, loadError: res.error || '取得に失敗しました' };
-    } else if (res.group_id !== spSelectedGroupId) {
-      return;  // 待っている間に別のグループへ切り替わっていたら捨てる
-    } else {
-      spViewInfo = res;
-    }
+    if (!res.ok) spViewInfo = { memberMap: {}, setPrices: {}, loadError: res.error || '取得に失敗しました' };
+    else acceptSpGroupRead(groupId, res);
     if (spSubview === 'settings') renderSpSettings();
   });
 }
@@ -3889,7 +3910,6 @@ function onSpGroupChange(groupId) {
   spSelectedGroupId = groupId || null;
   spFeatureSets = [];
   spVfFeatureSets = [];
-  renderSpSettings();
   loadGroupViewInfo(spSelectedGroupId);
 }
 

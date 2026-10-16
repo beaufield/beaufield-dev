@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.36.2';
+const VERSION = 'v2.37.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -81,8 +81,12 @@ function apiFetch_(url, options) {
   });
 }
 function apiReadFull_(sheet) {
+  // 合成読取の実行中だけ同じシートの値を共有し、別要求・更新処理へ持ち越さない。
+  const values = _apiReadCache && _apiReadCache.values;
+  if (values && values.has(sheet)) { apiCount_('sheetValueReuse', 1); return values.get(sheet); }
   return apiTimed_('sheetFullRead', () => {
     const rows = sheet.getDataRange().getValues();
+    if (values) values.set(sheet, rows);
     apiCount_('sheetCells', rows.reduce((n, row) => n + row.length, 0));
     return rows;
   });
@@ -95,7 +99,7 @@ function doPost(e) {
   try {
     const params = JSON.parse(e.postData.contents);
     const action = params.action;
-    if (['getHistory','getSpecialPriceData','getGroupViewInfo','getFeatures','loadData','searchProductSets'].includes(action)) {
+    if (['getHistory','getSpecialPriceData','getGroupViewInfo','getFeatures','loadData','searchProductSets','getSpecialPriceScreen'].includes(action)) {
       _apiReadCache = { spreadsheet: null, sheets: Object.create(null) };
     }
     _requestMetric = {
@@ -115,7 +119,7 @@ function doPost(e) {
     // 明示した参照系以外はすべて更新系として扱う（未知のactionを誤って一般ユーザーへ開放しない）。
     const sessionReadOnlyActions = [
       'previewLowPriceCampaign', 'loadData', 'getIgnoreList', 'searchProducts', 'getSpecials', 'getHistory',
-      'getCategories', 'getFeatures', 'getSpecialPriceData', 'getProductSetsForFeature',
+      'getCategories', 'getFeatures', 'getSpecialPriceData', 'getSpecialPriceScreen', 'getProductSetsForFeature',
       'searchProductSets', 'getSpecialPriceCurrent', 'getViewFilterCurrent', 'getMembers',
       'getGroupViewInfo', 'getGroupPricePreview', 'getCustomerGroupDuplicatePreview',
       'auditSpecialPrices', 'getAuditExclusions', 'auditSalesVsBcart',
@@ -205,6 +209,7 @@ function doPost(e) {
       case 'bulkRegisterProduct':  return jsonResponse(bulkRegisterProduct(params));
       // 機能B: 特別価格管理
       case 'getSpecialPriceData':       return jsonResponse(getSpecialPriceData());
+      case 'getSpecialPriceScreen':     return jsonResponse(getSpecialPriceScreen_(params));
       case 'getCustomerGroupDuplicatePreview': return jsonResponse(getCustomerGroupDuplicatePreview(params));
       case 'getGroupPricePreview': return jsonResponse(getGroupPricePreview(params));
       case 'getGroupViewInfo':          return jsonResponse(getGroupViewInfo(params));
@@ -2706,6 +2711,32 @@ function getGroupEffectiveMembers(groupId) {
 }
 
 // ③ applied_at列を含めてデータを返す
+// 認証・権限検証後に呼ぶ固定用途の読取。任意actionの一括実行は受け付けない。
+function getSpecialPriceScreen_(params) {
+  const mode = params.mode || 'screen';
+  if (!['screen', 'group'].includes(mode) || (mode === 'group' && !params.group_id)) {
+    return { ok: false, error: 'INVALID_READ_SCOPE' };
+  }
+  const cache = _apiReadCache;
+  if (cache) cache.values = new Map();
+  try {
+    const result = mode === 'screen' ? getSpecialPriceData() : { ok: true };
+    if (!result.ok) return result;
+    // 部分失敗は未反映へ置き換えず、グループの確認不能として返す。
+    if (params.group_id) {
+      try { result.groupViewInfo = getGroupViewInfo({ group_id: params.group_id }); }
+      catch (_) { result.groupViewInfo = { ok: false, error: 'GROUP_READ_FAILED' }; }
+    }
+    if (params.include_features === true) {
+      try { result.features = getSpecials(); }
+      catch (_) { result.features = { ok: false, error: 'FEATURE_READ_FAILED' }; }
+    }
+    return result;
+  } finally {
+    if (cache) delete cache.values;
+  }
+}
+
 function getSpecialPriceData() {
   return apiTimed_('specialData', () => {
   const groupSheet = getOrCreateSheet(SHEET_SP_GROUPS);
