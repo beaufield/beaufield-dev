@@ -315,6 +315,8 @@
   .rowSaveMark { font-size: 12px; margin-left: 6px; color: #16a34a; }
   .rowSaveMark.err { color: var(--error); }
   .rowSaveMark.busy { color: #888; }
+  .salesCustomerCode { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .salesCustomerName { min-width: 180px; max-width: 260px; white-space: normal; overflow-wrap: anywhere; }
   select.tantouSelect { padding: 4px 6px; font-size: 13px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
   select.tantouSelect.unassigned { color: #b45309; }
   .badge {
@@ -543,7 +545,8 @@
           <span class="statusLine" id="fetchStatusLine"></span>
         </div>
         <div class="warnLine" id="fetchWarning"></div>
-        <div class="errLine" id="fetchError"></div>
+        <div class="statusLine" id="customerLinkStatusLine" aria-live="polite"></div>
+      <div class="errLine" id="fetchError"></div>
       </div>
     </div>
 
@@ -642,7 +645,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.15.2';
+const APP_VERSION = '0.16.0';
 const GAS_URL = 'TEST_ENV_NO_GAS';
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
@@ -1044,6 +1047,134 @@ function validAdminBootstrap(data, requireApplications) {
   return Array.isArray(b.sessions) && Array.isArray(b.reservations) && b.by_app && typeof b.by_app === 'object';
 }
 
+// 申込番号で確定済み得意先を読む。氏名・店舗からコードを推測しない。
+const CUSTOMER_LINK_API = 'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/office-api';
+let customerLinkGeneration = 0;
+
+function customerIdentityText(value) {
+  return String(value || '').normalize('NFKC').replace(/[\s　]+/g, '').toLowerCase();
+}
+
+function customerLinkMap(payload, apps) {
+  if (!payload || payload.schema_version !== 1 || !Array.isArray(payload.rows)) throw new Error('CUSTOMER_SCHEMA');
+  const requested = new Map();
+  apps.forEach(function (a) {
+    if (!a.app_id || requested.has(a.app_id)) throw new Error('CUSTOMER_DUPLICATE_APP');
+    requested.set(a.app_id, a);
+  });
+  if (payload.rows.length !== requested.size) throw new Error('CUSTOMER_INCOMPLETE');
+  const found = Object.create(null);
+  payload.rows.forEach(function (row) {
+    if (!row || !requested.has(row.app_id) || found[row.app_id]) throw new Error('CUSTOMER_UNEXPECTED_APP');
+    const app = requested.get(row.app_id);
+    if (!['linked','unassigned','master_missing','not_synced'].includes(row.state)) throw new Error('CUSTOMER_STATE');
+    if (row.state === 'not_synced') {
+      if (row.customer_code != null || row.customer_name != null) throw new Error('CUSTOMER_SCHEMA');
+      found[row.app_id] = {state:app.status === 'cancelled' ? 'cancelled' : 'not_synced'};
+      return;
+    }
+    if (typeof row.subject_name !== 'string' || typeof row.subject_salon !== 'string') throw new Error('CUSTOMER_SCHEMA');
+    // 申込内容が後から変わった場合、古い別人・別店舗のコードを表示しない。
+    if (customerIdentityText(row.subject_name) !== customerIdentityText(app.staff_name) ||
+        customerIdentityText(row.subject_salon) !== customerIdentityText(app.salon_name)) {
+      found[row.app_id] = {state:'needs_review'};
+      return;
+    }
+    if (row.state === 'unassigned') {
+      if (row.customer_code != null || row.customer_name != null) throw new Error('CUSTOMER_SCHEMA');
+      found[row.app_id] = {state:'unassigned'};
+      return;
+    }
+    if (typeof row.customer_code !== 'string' || !/^\d{6}(?:-\d{4})?$/.test(row.customer_code)) throw new Error('CUSTOMER_CODE');
+    if (row.state === 'linked' && (typeof row.customer_name !== 'string' || !row.customer_name.trim())) throw new Error('CUSTOMER_NAME');
+    if (row.state === 'master_missing' && row.customer_name != null) throw new Error('CUSTOMER_SCHEMA');
+    found[row.app_id] = {state:row.state,code:row.customer_code,name:row.customer_name || ''};
+  });
+  return found;
+}
+
+function customerCellValues(app) {
+  const links = state.customerLinks || {state:'loading',byApp:{}};
+  if (links.state === 'loading') return ['確認中…','確認中…'];
+  if (links.state !== 'ready') return ['取得失敗','取得失敗'];
+  const row = links.byApp[app.app_id];
+  if (!row) return ['取得失敗','取得失敗'];
+  if (row.state === 'linked') return [row.code,row.name];
+  if (row.state === 'master_missing') return [row.code,'マスター名未登録'];
+  if (row.state === 'needs_review') return ['要確認','申込情報が更新されています'];
+  if (row.state === 'not_synced') return ['未同期','—'];
+  if (row.state === 'cancelled') return ['対象外（取消）','—'];
+  return ['未設定','—'];
+}
+
+function appendCustomerCells(tr, app) {
+  const values = customerCellValues(app);
+  tr.appendChild(tdText(values[0], 'salesCustomerCode'));
+  tr.appendChild(tdText(values[1], 'salesCustomerName'));
+}
+
+function mockCustomerLinks(apps) {
+  // 公開コードに実参加者・販売管理マスターを含めない。
+  return {schema_version:1,rows:apps.map(function (a,i) {
+    const code = a.has_transaction === 'no' ? null : String(900001+i).padStart(6,'0');
+    return {app_id:a.app_id,state:code ? 'linked' : 'unassigned',customer_code:code,
+      customer_name:code ? '【見本】販売管理得意先'+(i+1) : null,
+      subject_name:a.staff_name,subject_salon:a.salon_name};
+  })};
+}
+
+function customerLinkRequestCurrent(run, sourceGeneration, token) {
+  if (run !== customerLinkGeneration || sourceGeneration !== adminRequestGeneration) return false;
+  if (isMock()) return true;
+  const current = getSession();
+  return !!current && current.token === token;
+}
+
+async function loadCustomerLinks() {
+  const run = ++customerLinkGeneration;
+  const sourceGeneration = adminRequestGeneration;
+  const apps = state.apps.slice();
+  const session = isMock() ? {token:'mock'} : getSession();
+  const token = session && session.token;
+  const hint = el('customerLinkStatusLine');
+  state.customerLinks = {state:'loading',byApp:Object.create(null)};
+  if (hint) hint.textContent = '販売管理の得意先情報を確認中…';
+  renderTable();
+  const controller = new AbortController();
+  const timer = setTimeout(function () {controller.abort();},12000);
+  try {
+    if (!token) throw new Error('CUSTOMER_SESSION');
+    let data;
+    if (isMock()) {
+      data = mockCustomerLinks(apps);
+    } else {
+      const ids = apps.map(function (a) {return a.app_id;});
+      if (ids.length > 500 || new Set(ids).size !== ids.length || ids.some(function (id) {return !/^F\d{4}-\d{4}$/.test(id);})) throw new Error('CUSTOMER_REQUEST');
+      if (!ids.length) data = {schema_version:1,rows:[]};
+      else {
+        // 一覧取得ごとに1回だけ。氏名・店舗・連絡先は送らず、既存ポータルの本人認証を使用する。
+        const response = await fetch(CUSTOMER_LINK_API,{method:'POST',cache:'no-store',
+          headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
+          body:JSON.stringify({action:'application_customers',body:{app_ids:ids}}),signal:controller.signal});
+        if (!response.ok) throw new Error('CUSTOMER_UNAVAILABLE');
+        data = await response.json();
+      }
+    }
+    const byApp = customerLinkMap(data,apps);
+    if (!customerLinkRequestCurrent(run,sourceGeneration,token)) return;
+    state.customerLinks = {state:'ready',byApp:byApp};
+    if (hint) hint.textContent = '販売管理の得意先情報を確認しました。';
+  } catch (error) {
+    if (!customerLinkRequestCurrent(run,sourceGeneration,token)) return;
+    state.customerLinks = {state:'unavailable',byApp:Object.create(null)};
+    if (hint) hint.textContent = '販売管理の得意先情報を取得できませんでした。「データ再取得」から再確認してください。';
+  } finally {
+    clearTimeout(timer);
+    if (customerLinkRequestCurrent(run,sourceGeneration,token)) renderTable();
+  }
+}
+
+
 function applyFetchResult(data) {
   stopFetchTicker(); // 「全N件を取得」を経過秒数の表示で上書きさせない
   state.apps = Array.isArray(data.applications) ? data.applications : [];
@@ -1072,7 +1203,9 @@ function applyFetchResult(data) {
     hint.style.display = 'none';
   }
 
+  state.customerLinks = {state:'loading',byApp:Object.create(null)};
   applyFilters();
+  void loadCustomerLinks();
 }
 
 function nowLabel() {
@@ -1692,7 +1825,9 @@ const COLUMNS = [
   { key: 'note',          label: '備考',     sortable: false },
   { key: 'app_id',        label: '受付番号', sortable: true },
   { key: 'status',        label: '状態',     sortable: true },
-  { key: '__ops',         label: '操作',     sortable: false }   // 🆕 v0.3.0 当日機能
+  { key: '__ops',         label: '操作',     sortable: false },
+  { key: '__sales_code', label: '販売管理 得意先コード', sortable: false },
+  { key: '__sales_name', label: '販売管理 得意先名', sortable: false }   // 🆕 v0.3.0 当日機能
 ];
 
 function renderHead() {
@@ -1921,6 +2056,7 @@ function renderTable() {
       tdOps.title = 'この機能はGAS v' + DAY_FEATURES_MIN_GAS + ' 以降で使えます（いまのサーバー: v'
                   + (state.serverVersion || '不明') + '）';
       tr.appendChild(tdOps);
+      appendCustomerCells(tr, a);
       frag.appendChild(tr);
       return;
     }
@@ -1945,6 +2081,7 @@ function renderTable() {
     tdOps.appendChild(bMail);
 
     tr.appendChild(tdOps);
+    appendCustomerCells(tr, a);
 
     frag.appendChild(tr);
   });
