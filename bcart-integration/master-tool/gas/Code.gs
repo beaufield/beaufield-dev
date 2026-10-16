@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.36.0';
+const VERSION = 'v2.36.1';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -2739,6 +2739,63 @@ function getSpecialPriceData() {
 // ・会員名（ids指定でその会員だけ）
 // ・標準価格（ids指定でそのグループの商品セットだけ）
 // ・会員のBCART反映状況（未反映＝追加したがまだ反映していない／取り残し＝外したがBCARTに特価が残っている）
+
+function spBeginApplyHistory_(params, group, targets) {
+  const sheet = getOrCreateSheet(SHEET_HISTORY);
+  const marker = '特価処理ID:' + Utilities.getUuid();
+  const codes = targets.map(s => s.productNo || s.setId);
+  const runId = safeMetricField_(params.apply_run_id || params.operation_id, 80);
+  sheet.appendRow([new Date().toLocaleString('ja-JP'), params._userName || '不明', codes.join(','), group.name,
+    '特別価格反映・途中経過', marker + (runId ? ' / 操作:' + runId : ''),
+    '対象' + targets.length + '件 / 完了0件 / 未確認:' + codes.join(','), '開始・完了未確認']);
+  SpreadsheetApp.flush();
+  // appendRowと同時に他機能が追記しても、自分の行だけを更新する。
+  const last = sheet.getLastRow(), first = Math.max(2, last - 99);
+  const rows = sheet.getRange(first, 6, last - first + 1, 1).getValues();
+  const index = rows.findIndex(r => String(r[0]).split(' / ')[0] === marker);
+  if (index < 0) throw new Error('反映の開始履歴を確認できないため、価格は変更していません');
+  return { sheet: sheet, row: first + index, marker: marker, targets: targets };
+}
+
+function spCheckpointApplyHistory_(record, completed, error, finished) {
+  const marker = String(record.sheet.getRange(record.row, 6).getValue()).split(' / ')[0];
+  if (marker !== record.marker) throw new Error('反映履歴の位置が変わりました。価格を再送せず確認してください');
+  const done = new Set(completed.map(String));
+  const remaining = record.targets.filter(s => !done.has(s.setId)).map(s => s.productNo || s.setId);
+  const text = '対象' + record.targets.length + '件 / 完了' + done.size + '件' +
+    (remaining.length ? ' / 未完了・要確認:' + remaining.join(',') : ' / この処理分は全件完了') +
+    (error ? ' / 停止:' + String(error).slice(0, 240) : '');
+  const status = error ? (done.size ? '一部完了・停止' : '停止・要確認') :
+    (finished ? '成功' : (done.size ? '途中完了・残り未確認' : '開始・完了未確認'));
+  record.sheet.getRange(record.row, 7, 1, 2).setValues([[text, status]]);
+  SpreadsheetApp.flush();
+}
+
+// 反映日時だけでなく、承認・保存した会員と価格が現設定に一致するかを確認する。
+function spSourceIsCurrent_(source) {
+  return source.ready && !!source.appliedAt && !(source.unresolved || []).length &&
+    spHash_(source.members) === spHash_(source.currentMembers) &&
+    source.price === (source.currentMembers.length ? Number(source.currentPrice) : null);
+}
+
+function spDetailReflection_(row, currentMembers, unresolved) {
+  const base = { product_set_id: String(row[2]), product_no: String(row[3]), appliedAt: String(row[7] || '') };
+  try {
+    const current = spIds_(currentMembers.join(','));
+    if (unresolved) return Object.assign(base, { state: 'unknown', missingMemberIds: [], removedMemberIds: [] });
+    const ready = row[10] === 'v1';
+    const prior = ready ? spIds_(row[8]) : [];
+    const missing = current.filter(id => !prior.includes(id));
+    const removed = prior.filter(id => !current.includes(id));
+    const samePrice = ready && (current.length ? Number(row[9]) === spPrice_(row[5]) : row[9] === '');
+    return Object.assign(base, { state: ready && base.appliedAt && !missing.length && !removed.length && samePrice ? 'complete' : 'pending',
+      missingMemberIds: missing, removedMemberIds: removed, priceChanged: !samePrice, initialized: ready });
+  } catch (error) {
+    return Object.assign(base, { state: 'unknown', missingMemberIds: [], removedMemberIds: [] });
+  }
+}
+
+
 function getGroupViewInfo(params) {
   const groupId = String(params.group_id || '');
   if (!groupId) return { ok: false, error: 'group_idが必要です' };
@@ -2778,12 +2835,25 @@ function getGroupViewInfo(params) {
     Logger.log('getGroupViewInfo memberMap error: ' + e.message);
   }
 
+
+  const reflectionBySet = {};
+  const reflectionRows = detailRows.slice(1).filter(row => row[0] && String(row[1]) === groupId)
+    .map(row => spDetailReflection_(row, current, eff.apiError || eff.unresolvedCodes.length > 0));
+  reflectionRows.forEach(row => { reflectionBySet[row.product_set_id] = row; });
+  const pendingRows = reflectionRows.filter(row => row.state !== 'complete');
+  const reflectionSummary = { total: reflectionRows.length, completed: reflectionRows.length - pendingRows.length,
+    pending: pendingRows.length, unknown: reflectionRows.filter(row => row.state === 'unknown').length,
+    missingMemberIds: [...new Set(pendingRows.flatMap(row => row.missingMemberIds))],
+    missingAssignments: pendingRows.reduce((n, row) => n + row.missingMemberIds.length, 0),
+    removedAssignments: pendingRows.reduce((n, row) => n + row.removedMemberIds.length, 0) };
+
   const pendingMemberIds = current.filter(id => applied.indexOf(id) < 0);
   const staleMemberIds   = applied.filter(id => current.indexOf(id) < 0);
 
   return {
     ok: true,
     group_id: groupId,
+    reflectionBySet: reflectionBySet, reflectionSummary: reflectionSummary,
     memberIds: current,
     appliedMemberIds: applied,
     pendingMemberIds: pendingMemberIds,
@@ -2974,7 +3044,7 @@ function spReadModel_(recoveryWrites) {
         rowIdx: index + 2, setId: setId, groupId: group ? group.id : '', type: group ? 'group' : 'individual',
         label: group ? group.name : '個別特価', productNo: String(row[group ? 3 : 5] || ''), name: String(row[group ? 4 : 6] || ''),
         currentMembers: currentMembers, currentPrice: row[group ? 5 : 7], unresolved: unresolved,
-        ready: ready, members: members, price: price, legacyMembers: group ? group.appliedMembers : spIds_(row[2]) });
+        ready: ready, members: members, price: price, appliedAt: String(row[group ? 7 : 9] || ''), legacyMembers: group ? group.appliedMembers : spIds_(row[2]) });
     });
   });
   const keys = new Set();
@@ -3228,7 +3298,9 @@ function getGroupPricePreview(params) {
     if (PropertiesService.getScriptProperties().getProperty(SP_COPY_PENDING_KEY_)) return { ok: false, copyPending: true, error: '前回のグループ複製が未完了です。複製元の「複製」から保存を完了してください' };
     if (PropertiesService.getScriptProperties().getProperty(SP_PENDING_KEY_)) return { ok: false, recoveryRequired: true, error: '前回の結果を確認してからプレビューしてください' };
     const model = spReadModel_();
-    const targets = spGroupTargets_(model, params.group_id);
+    const allTargets = spGroupTargets_(model, params.group_id);
+    const targets = params.pending_only === true && params.initialize !== true
+      ? allTargets.filter(source => !spSourceIsCurrent_(source)) : allTargets;
     const group = model.groups[String(params.group_id)];
     const sets = bcartGetSetsByIds_(targets.map(s => s.setId));
     if (!sets.ok) return sets;
@@ -3241,7 +3313,7 @@ function getGroupPricePreview(params) {
       return { product_set_id: s.setId, product_no: s.productNo, product_set_name: s.name, unit_price: spPrice_(s.currentPrice),
         rows: plan.rows, token: plan.token, initialSources: plan.initialSources };
     });
-    return { ok: true, results: results, initialize: initialize, memberCount: group.members.length, unresolvedCodes: group.unresolved,
+    return { ok: true, results: results, skippedAppliedCount: allTargets.length - targets.length, totalCount: allTargets.length, initialize: initialize, memberCount: group.members.length, unresolvedCodes: group.unresolved,
       rule: 'グループ間は最安値。個別特価は優先。保存のみの他グループ変更は未反映のまま保持。' };
   } catch (e) { return { ok: false, initializationRequired: e.message.includes('SP_INITIALIZE_REQUIRED'), error: e.message }; }
   finally { lock.releaseLock(); }
@@ -3251,8 +3323,10 @@ function applyGroupPrices(params) {
   const model = spReadModel_();
   const targets = spGroupTargets_(model, params.group_id, params.items);
   const group = model.groups[String(params.group_id)];
-  let successCount = 0, failCount = 0, removedPriceCount = 0;
-  const errors = [];
+  // 履歴が保存できなければ、Bカートへは1件も送信しない。
+  const record = spBeginApplyHistory_(params, group, targets);
+  let successCount = 0, failCount = 0, removedPriceCount = 0, historyError = false;
+  const errors = [], completedSetIds = [];
   for (const source of targets) {
     try {
       const current = bcartGet('/product_sets/' + source.setId);
@@ -3261,18 +3335,25 @@ function applyGroupPrices(params) {
       const plan = spPlanSet_(spReadModel_(), current.data, changes, params.initialize === true);
       removedPriceCount += spApplyPlan_(plan, (params.preview_tokens || {})[source.setId]);
       successCount++;
-    } catch (e) {
+      completedSetIds.push(source.setId);
+      // 次の商品へ進む前に、価格再読とスナップショット保存済みの結果を残す。
+      try { spCheckpointApplyHistory_(record, completedSetIds, '', false); }
+      catch (error) { historyError = true; throw new Error('価格反映は確認済みですが、履歴保存に失敗しました。再送せず確認してください'); }
+    } catch (error) {
       failCount = targets.length - successCount;
-      errors.push(source.productNo + ': ' + e.message);
+      errors.push(source.productNo + ': ' + error.message);
       break;
     }
   }
-  if (!PropertiesService.getScriptProperties().getProperty(SP_PENDING_KEY_)) spRefreshGroupMarkers_();
-  if (isFinalChunk_(params) || failCount) addHistory({ userName: params._userName, code: '', name: group.name,
-    type: params.initialize === true ? '特価の初回条件反映' : '特別価格適用', before: '',
-    after: '成功: ' + (Number(params.prior_success || 0) + successCount) + '件 / 失敗: ' + (Number(params.prior_fail || 0) + failCount) + '件', result: failCount ? '一部失敗' : '成功' });
-  return { ok: true, successCount: successCount, failCount: failCount, errors: errors, removedPriceCount: removedPriceCount,
-    memberCount: group.members.length, unresolvedCodes: group.unresolved, recoveryRequired: !!PropertiesService.getScriptProperties().getProperty(SP_PENDING_KEY_), appliedRecorded: !failCount };
+  try {
+    if (!PropertiesService.getScriptProperties().getProperty(SP_PENDING_KEY_)) spRefreshGroupMarkers_();
+  } catch (error) { errors.push('反映記録の集計: ' + error.message); }
+  try { spCheckpointApplyHistory_(record, completedSetIds, errors.join(' / '), !errors.length); }
+  catch (error) { historyError = true; errors.push('履歴保存を確認できません。価格を再送せず一覧を確認してください'); }
+  return { ok: true, successCount: successCount, failCount: failCount, errors: errors, completedSetIds: completedSetIds,
+    stopped: errors.length > 0, historyError: historyError, removedPriceCount: removedPriceCount,
+    memberCount: group.members.length, unresolvedCodes: group.unresolved,
+    recoveryRequired: !!PropertiesService.getScriptProperties().getProperty(SP_PENDING_KEY_), appliedRecorded: !failCount && !errors.length };
 }
 
 function spDeleteSources_(keys) {

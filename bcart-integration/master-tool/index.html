@@ -1413,7 +1413,7 @@ body:has(#busyOverlay.open, #progressOverlay.open) #netBusy { display: none; }
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = 'v2.22.1';
+const APP_VERSION = 'v2.22.2';
 // 画面で新しく選べる表示方法。保存済みの旧設定は勝手に変換しない。
 const JODAI_DISPLAY_TYPES = ['メーカー希望小売価格', '非表示', 'オープン'];
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
@@ -1452,6 +1452,8 @@ let spGroupFilterKw = '';
 //     重いので getSpecialPriceData には含めず、グループを選んだ時だけ後追いで取る
 let spViewInfo = null;
 let spViewInfoLoading = false;
+// 途中停止後も残対象を確認できる案内を保持する。再開時は必ず新しいプレビューを取る。
+let spApplyResumeNotice = null;
 // ② 会員管理モーダルの選択状態（DOMではなくここを唯一の正とする。
 //    検索で絞り込んでも選択が消えないようにするため）
 let memberSelIds = [];
@@ -3583,11 +3585,14 @@ function renderSpSettings() {
       '</div>';
     html += '<div class="sp-section-desc">複数グループに所属する会員は<strong>最も安いグループ価格</strong>を適用します。個別特価は優先します。各グループの条件は独立して保持します。</div>';
     html += '<div style="margin-bottom:20px;">';
+    if (spApplyResumeNotice && spApplyResumeNotice.groupId === spSelectedGroupId) {
+      html += '<div class="warn-bar" style="margin-bottom:10px;">' + esc(spApplyResumeNotice.message) + '</div>';
+    }
     html += '<div class="sp-subhead">アプリ内保存済みの特別価格</div>';
     if (details.length === 0) {
       html += '<div style="font-size:13px;color:#9ca3af;padding:8px 0;">まだ特別価格が設定されていません。</div>';
     } else {
-      const unappliedSpCount = details.filter(d => !d.applied_at).length;
+      const unappliedSpCount = details.filter(d => spDetailApplyState(d).state !== 'complete').length;
       if (unappliedSpCount > 0) {
         html += '<div class="warn-bar" style="margin-bottom:10px;">⚠️ ' + unappliedSpCount + '件がアプリ保存済みですが、BCARTにはまだ反映されていません。</div>';
       }
@@ -3596,9 +3601,11 @@ function renderSpSettings() {
         '</tr></thead><tbody>';
       details.forEach(d => {
         const appliedAt = String(d.applied_at || '');
-        const reflectBadge = appliedAt === ''
-          ? '<span style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:700;">⚠️ 未反映</span>'
-          : '<span style="color:#059669;font-size:10px;">✅ ' + esc(appliedAt.substring(0, 16)) + '</span>';
+        const reflectState = spDetailApplyState(d);
+        const reflectBadge = reflectState.state === 'complete'
+          ? '<span style="color:#059669;font-size:11px;">✅ 現在の会員・価格へ反映済み<br>' + esc(appliedAt) + '</span>'
+          : '<span style="color:#92400e;font-size:11px;">⚠️ ' + esc(reflectState.label) +
+            (appliedAt ? '<br>前回反映: ' + esc(appliedAt) : '') + '</span>';
         // ③ 標準価格はBカートの現在値（getSpecialPriceDataがsetPricesで返す）
         const stdPrice = spStandardPrice(d.product_set_id);
         const stdCell = stdPrice === undefined
@@ -3623,7 +3630,10 @@ function renderSpSettings() {
         (((spViewInfo.pendingMemberIds || []).length > 0) || ((spViewInfo.staleMemberIds || []).length > 0));
       html += '<div style="margin-top:10px;display:flex;align-items:center;gap:10px;justify-content:flex-end;">' +
         (needMemberApply ? '<span style="font-size:12px;color:#92400e;">⚠️ 会員の変更が未反映です</span>' : '') +
-        '<button class="btn btn-success" onclick="openSpApplyPreview()">💎 BCARTに反映する（' + details.length + '件）</button>' +
+        '<button class="btn btn-success" onclick="openSpApplyPreview()"' +
+          (!spViewInfo || spViewInfo.loadError || !spViewInfo.reflectionSummary || spViewInfo.reflectionSummary.pending === 0 ? ' disabled' : '') + '>' +
+          (!spViewInfo || !spViewInfo.reflectionSummary ? '反映状況を確認中' : spViewInfo.reflectionSummary.pending === 0
+            ? '✅ ' + details.length + '件すべて反映済み' : '💎 未反映だけを確認（' + spViewInfo.reflectionSummary.pending + '件）') + '</button>' +
         '</div>';
     }
     html += '</div>';
@@ -3796,46 +3806,28 @@ function spKakeritsuBadge(stdPrice, spPrice) {
 // ② 会員のBCART反映状況。
 //    会員をグループに足しただけではBCARTは変わらない（変わるのは「BCARTに反映する」を押したとき）。
 //    その差を可視化しないと更新漏れになるので、ここで必ず出す。
+
+function spDetailApplyState(detail) {
+  const row = spViewInfo && spViewInfo.reflectionBySet && spViewInfo.reflectionBySet[String(detail.product_set_id)];
+  if (!row) return { state: 'unknown', label: '現在の会員への反映を確認中' };
+  if (row.state === 'complete') return { state: 'complete', label: '現在の会員・価格へ反映済み' };
+  if (row.state === 'unknown') return { state: 'unknown', label: '反映記録を確認できません。再読み込みしてください' };
+  return { state: 'pending', label: row.missingMemberIds.length ? '追加' + row.missingMemberIds.length + '名が未反映'
+    : row.removedMemberIds.length ? '外した会員の価格が未解除' : '現在の価格・条件は未反映' };
+}
+
 function spMemberApplyStatusHtml(detailCount) {
-  if (!spViewInfo) {
-    return '<div style="margin-top:8px;font-size:12px;color:#6b7280;">' +
-      '<span class="val-loading">BCARTへの反映状況を確認中</span></div>';
-  }
-  if (spViewInfo.loadError) {
-    return '<div style="margin-top:8px;font-size:12px;color:#b45309;">⚠️ 反映状況を確認できませんでした（' +
-      esc(spViewInfo.loadError) + '）</div>';
-  }
-  const pending = spViewInfo.pendingMemberIds || [];
-  const stale   = spViewInfo.staleMemberIds || [];
-  const nameOf  = id => spMemberLabel(id);
-
-  if (detailCount === 0) {
-    return '<div style="margin-top:8px;font-size:12px;color:#6b7280;">' +
-      'このグループにはまだ特別価格がありません（会員だけではBCARTには何も入りません）。</div>';
-  }
-
-  if (pending.length === 0 && stale.length === 0) {
-    return '<div style="margin-top:8px;font-size:12px;color:#047857;">' +
-      '✅ 会員 ' + (spViewInfo.memberIds || []).length + '名ぶん、BCARTへ反映済みです。</div>';
-  }
-
-  let h = '<div class="warn-bar" style="margin-top:10px;">';
-  if (pending.length > 0) {
-    h += '<div><strong>⚠️ ' + pending.length + '名がBCARTに未反映です。</strong>' +
-      'グループに会員を追加しても、それだけではBCARTの特別価格は入りません。' +
-      '下の「💎 BCARTに反映する」を押してください。</div>' +
-      '<div style="margin-top:4px;font-size:12px;">未反映: ' +
-      pending.map(id => esc(nameOf(id))).join('、') + '</div>';
-  }
-  if (stale.length > 0) {
-    h += '<div style="margin-top:' + (pending.length ? '8px' : '0') + ';">' +
-      '<strong>🧹 ' + stale.length + '名はグループから外れましたが、BCARTに特別価格が残っています。</strong>' +
-      '「💎 BCARTに反映する」を押すと削除されます。</div>' +
-      '<div style="margin-top:4px;font-size:12px;">取り残し: ' +
-      stale.map(id => esc(nameOf(id))).join('、') + '</div>';
-  }
-  h += '</div>';
-  return h;
+  if (spViewInfo && spViewInfo.loadError) return '<div class="warn-bar">反映状況を確認できません。再読み込みしてください。</div>';
+  if (!spViewInfo || !spViewInfo.reflectionSummary) return '<div style="margin-top:8px;">反映状況を確認中です。</div>';
+  const s = spViewInfo.reflectionSummary;
+  if (!detailCount) return '<div style="margin-top:8px;">このグループにはまだ特別価格がありません。</div>';
+  if (!s.pending) return '<div style="margin-top:8px;color:#047857;">✅ ' + s.total + '商品すべて、現在の会員 ' +
+    (spViewInfo.memberIds || []).length + '名・価格へ反映済みです。</div>';
+  return '<div class="warn-bar" style="margin-top:10px;"><strong>⚠️ ' + s.completed + '/' + s.total + '商品が反映済み。残り' + s.pending + '商品です。</strong>' +
+    (s.missingAssignments ? '<div>追加' + s.missingMemberIds.length + '名について、未反映は合計' + s.missingAssignments + '設定です。</div>' : '') +
+    (s.removedAssignments ? '<div>グループから外した会員の価格に、未解除の設定があります。</div>' : '') +
+    (s.unknown ? '<div>' + s.unknown + '商品は反映記録の確認が必要です。</div>' : '') +
+    '<div>完了済みの商品は送り直しません。「未反映だけを確認」から内容を確認できます。</div></div>';
 }
 
 function spToggleMemberNames() {
@@ -4237,7 +4229,7 @@ function openSpApplyPreview(initialize) {
   button.disabled = true;
   button.textContent = '✅ BCARTに反映する';
   document.getElementById('spApplyPreviewModal').classList.add('open');
-  gasPost({ action: 'getGroupPricePreview', group_id: groupId, initialize: initialize === true }, function(res) {
+  gasPost({ action: 'getGroupPricePreview', group_id: groupId, pending_only: initialize !== true, initialize: initialize === true }, function(res) {
     if (groupId !== spSelectedGroupId) { closeModal('spApplyPreviewModal'); return; }
     if (!res.ok) {
       title.textContent = res.error || 'プレビュー取得に失敗しました';
@@ -4247,7 +4239,7 @@ function openSpApplyPreview(initialize) {
       return;
     }
     title.innerHTML = '<strong>' + esc(selGroup ? selGroup.group_name : '') + '</strong>　会員 ' + res.memberCount + '名<br>' + esc(res.rule) +
-      (initialize === true ? '<div class="warn-bar">初回のみ、対象商品に保存されている他グループ・個別特価の未反映条件も含めて確認・反映します。</div>' : '') +
+      (initialize === true ? '<div class="warn-bar">初回のみ、対象商品に保存されている他グループ・個別特価の未反映条件も含めて確認・反映します。</div>' : '<div>今回の対象 ' + (res.results || []).length + '商品 / 完了済み ' + (res.skippedAppliedCount || 0) + '商品は対象外です。</div>') +
       ((res.unresolvedCodes || []).length ? '<div>未登録の得意先コード ' + res.unresolvedCodes.length + '件は保留します。</div>' : '');
     const priceLabel = value => value === null ? '特価なし（通常価格）' : '¥' + Number(value).toLocaleString();
     body.innerHTML = (res.results || []).map(item => {
@@ -4277,66 +4269,44 @@ function recoverSpOperation() {
 
 // BCARTへ実際に反映（差異一覧のまとめて更新と同じ進捗表示を使う）
 async function executeBcartApply() {
-  if (spPendingApplyItems.length === 0) return;
-  const items = spPendingApplyItems.slice();
-  const groupId = spPendingGroupId;
-  const initialize = spPendingInitialize;
-  if (!groupId) return;
+  if (!spPendingApplyItems.length || !spPendingGroupId) return;
+  const items = spPendingApplyItems.slice(), groupId = spPendingGroupId, initialize = spPendingInitialize;
   const btn = document.getElementById('spApplyConfirmBtn');
-  btn.textContent = '反映中...';
-  btn.disabled = true;
+  btn.textContent = '反映中...'; btn.disabled = true;
   closeModal('spApplyPreviewModal');
-
   const chunks = chunkArray(items, progressChunkSize(items.length));
-  showProgressOverlay(items.length, '💎 特別価格をBCARTに反映中...');
-
-  let done = 0, success = 0, fail = 0, removedPrice = 0;
-  let unresolved = [];
-  const failedItems = [];
-
+  const runId = makeDiagnosticId(), completed = new Set(), failedItems = [];
+  let removedPrice = 0, stopReason = '';
+  showProgressOverlay(items.length, '💎 未反映の商品をBCARTに反映中...');
   for (let ci = 0; ci < chunks.length; ci++) {
     const chunk = chunks[ci];
-    const isLast = ci === chunks.length - 1;
-    updateProgressOverlay(done + chunk.length, items.length, spApplyChunkLabel(chunk));
+    updateProgressOverlay(completed.size + chunk.length, items.length, spApplyChunkLabel(chunk));
     try {
-      const res = await gasPostAsync({
-        action: 'applyGroupPrices', group_id: groupId, items: chunk, initialize: initialize,
-        preview_tokens: Object.fromEntries(chunk.map(it => [String(it.product_set_id), it.preview_token])),
-        is_final: isLast, prior_success: success, prior_fail: fail
-      });
-      if (!res.ok) {
-        // グループ設定そのものが不正（会員未設定など）は全体を止める
-        fail += chunk.length;
-        chunk.forEach(it => failedItems.push({ code: it.product_no, name: it.product_set_name, error: res.error || '' }));
-        break;
-      }
-      success += res.successCount || 0;
-      fail += res.failCount || 0;
+      const res = await gasPostAsync({ action: 'applyGroupPrices', group_id: groupId, items: chunk, initialize: initialize,
+        apply_run_id: runId, preview_tokens: Object.fromEntries(chunk.map(it => [String(it.product_set_id), it.preview_token])),
+        is_final: ci === chunks.length - 1, prior_success: completed.size, prior_fail: 0 });
+      if (!res.ok) { stopReason = res.error || '処理を開始できませんでした'; break; }
+      (res.completedSetIds || []).forEach(id => completed.add(String(id)));
       removedPrice += res.removedPriceCount || 0;
-      if (res.unresolvedCodes && res.unresolvedCodes.length) unresolved = res.unresolvedCodes;
-      (res.errors || []).forEach(e => failedItems.push({ code: '', name: '', error: e }));
-      if (res.failCount || res.recoveryRequired) break;
-    } catch (e) {
-      fail += chunk.length;
-      chunk.forEach(it => failedItems.push({ code: it.product_no, name: it.product_set_name, error: e.message || '' }));
-      break;
-    }
-    done += chunk.length;
+      (res.errors || []).forEach(error => failedItems.push({ code: '', name: '', error: error }));
+      if (res.failCount || res.recoveryRequired || res.historyError || res.stopped) {
+        stopReason = (res.errors || []).join(' / ') || '残りの結果確認が必要です'; break;
+      }
+    } catch (error) { stopReason = error.message || '応答を確認できませんでした'; break; }
   }
-
-  btn.textContent = '✅ BCARTに反映する';
-  btn.disabled = false;
-
-  let msg = fail > 0 ? success + '件成功、' + fail + '件失敗' : items.length + '件をBCARTに反映しました';
-  const notAttempted = Math.max(0, items.length - success - fail);
-  if (notAttempted > 0) msg += '（残り' + notAttempted + '件は未実行）';
-  if (removedPrice > 0) msg += '（グループから外れた会員の特価 ' + removedPrice + '件を削除）';
-  if (unresolved.length > 0) {
-    msg += '（未登録の得意先コード ' + unresolved.length + '件は保留: ' +
-      unresolved.slice(0, 5).join(', ') + (unresolved.length > 5 ? ' 他' : '') + '）';
-  }
+  const remaining = items.filter(it => !completed.has(String(it.product_set_id)));
+  let msg = completed.size + '/' + items.length + '商品が完了しました';
+  if (remaining.length || stopReason) {
+    msg += '。残り' + remaining.length + '商品は未完了・結果確認が必要です。完了分は再送しません。';
+    if (stopReason) msg += ' ' + stopReason;
+    remaining.forEach(it => failedItems.push({code:it.product_no,name:it.product_set_name,error:'一覧を再取得して結果確認'}));
+    spApplyResumeNotice = { groupId: groupId, message: msg + ' 一覧を再取得し、新しい確認画面から未反映分だけ再開してください。' };
+  } else { spApplyResumeNotice = null; }
+  if (removedPrice) msg += '（外した会員の特価を' + removedPrice + '件解除）';
+  // 古い承認トークンは再利用しない。未反映範囲はサーバーの記録から再構成する。
   spPendingApplyItems = []; spPendingGroupId = null; spPendingInitialize = false;
-  finishProgressOverlay(msg, fail > 0, failedItems, function() { loadSpecialPriceData(); });
+  btn.textContent = '✅ BCARTに反映する'; btn.disabled = false;
+  finishProgressOverlay(msg, !!remaining.length || !!stopReason, failedItems, function() { loadSpecialPriceData(); });
 }
 
 // 進捗の「いま何を処理しているか」欄。1件なら品番＋名前、複数なら先頭＋他N件
