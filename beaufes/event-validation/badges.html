@@ -321,14 +321,14 @@ await window.BFEventCandidate.ready;
 // 設計は 名札印刷_badges設計.md を正とする（本ファイルは実装のみ・設計は変更しない）
 // 版数の定義はこの APP_VERSION 1箇所だけ（AGENTS.md バージョン管理ルール）
 // ============================================================
-const APP_VERSION = '0.3.3';
+const APP_VERSION = '0.3.4';
 const GAS_URL = window.BFEventCandidate.endpoint;
 const PORTAL_URL = './login.html';
 const SESSION_KEY = 'bf_event_candidate_session'; // ポータルと共通（§2-4）
 const BUSINESS_TYPE_OPTIONS = ['美容室', '理容室', 'エステサロン', 'ネイルサロン', 'アイサロン', 'その他'];
 
 // GAS通信ルール（§2-5をそのまま移植。REQUEST_ID/client_attemptは持ち込まない＝§7 S4）
-const FETCH_TIMEOUT_MS = 10000;
+const FETCH_TIMEOUT_MS = 45000;
 const MAX_ATTEMPTS     = 6;
 const RETRY_WAIT_MS    = [1000, 2000, 3000, 5000, 8000];
 const TRANSPORT_ERROR_PATTERN = /^(不明なアクション|INVALID_REQUEST)/;

@@ -1,5 +1,5 @@
 // 日本語コメント: 既存画面の要求に新しい版数・操作ID・社員Bearerを付ける。旧認証へフォールバックしない。
-export const VERSION='0.3.0';
+export const VERSION='0.3.1';
 const mutations=new Set(['apply','applyLiff','updateApplication','setTantou','adminCreateApplication','assignSpare','releaseSpare','resendPass','adminResendPass']);
 const staffActions=new Set(['staffSession','adminBootstrap','listApplications','applicationCustomers','listBadges','listSpareBadges','listReservations','staffGetReservations','staffChangeReservation','setTantou','adminCreateApplication','assignSpare','releaseSpare','adminResendPass','scanRoster','scanCheckedIn','scanCheckin']);
 export function createClient({endpoint,fetchImpl=fetch,getStaffToken,uuid=()=>crypto.randomUUID()}={}){
@@ -40,7 +40,7 @@ export function createClient({endpoint,fetchImpl=fetch,getStaffToken,uuid=()=>cr
    if(action==='updateApplication'&&Number.isSafeInteger(json.data?.revision))applicationVersions.set(body.ticket_token,json.data.revision);
    if(action==='liffPrefill')lineProfiles.set(body.id_token,json.data);
    if(action==='applyLiff')lineProfiles.delete(body.id_token);
-  }else if(json?.error&&json.error!=='BACKEND_FAILED'&&json.error!=='BACKEND_NOT_CONFIGURED'){
+  }else if(response.status<500&&json?.error&&json.error!=='AUTH_TRANSIENT'&&json.error!=='BACKEND_FAILED'&&json.error!=='BACKEND_NOT_CONFIGURED'){
    pending.delete(key);
    if(['APPLICATION_CONFLICT','APPLICATION_REFRESH_REQUIRED'].includes(json.error))applicationVersions.delete(body.ticket_token);
   }

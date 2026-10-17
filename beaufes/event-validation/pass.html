@@ -233,7 +233,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.27.3';
+const APP_VERSION = '0.27.4';
 const GAS_URL = window.BFEventCandidate.endpoint;
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
@@ -245,7 +245,7 @@ document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 //（誤記訂正・v0.8.0: 以前「0.12%」としていたが計算誤り。詳細はindex.htmlの同じ箇所を参照）。
 // 失敗は連続する傾向があるため、再試行の間隔を徐々に広げる。
 // updateApplicationはticket_tokenで冪等なため、applyのようなrequest_idは不要。
-const FETCH_TIMEOUT_MS = 10000;
+const FETCH_TIMEOUT_MS = 45000;
 const MAX_ATTEMPTS     = 6;
 const RETRY_WAIT_MS    = [1000, 2000, 3000, 5000, 8000];
 

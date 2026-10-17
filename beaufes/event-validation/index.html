@@ -279,7 +279,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.28.3';
+const APP_VERSION = '0.28.4';
 const GAS_URL = window.BFEventCandidate.endpoint;
 
 let bookingForm = null;
@@ -300,7 +300,7 @@ document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 //（GAS配送障害_調査レポート.md §5-2。失敗は独立でない可能性があるため保証値ではない）。
 // 🔴 失敗は連続して起きる傾向があるため（同じ不調な時間帯に固まる）、
 // 再試行の間隔を徐々に広げて別の時間帯に当てる。
-const FETCH_TIMEOUT_MS = 10000;
+const FETCH_TIMEOUT_MS = 45000;
 const MAX_ATTEMPTS     = 6;
 const RETRY_WAIT_MS    = [1000, 2000, 3000, 5000, 8000];
 

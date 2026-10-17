@@ -1,11 +1,11 @@
 // 日本語コメント: UIは氏名等をtextContentで表示し、サーバー操作・復旧は状態機械へ委譲する。
 import {createWalkin,BUSINESS_TYPES,possibleMatches} from './walkin.mjs';
-export const VERSION='0.1.0';
+export const VERSION='0.1.1';
 export async function mountWalkin({enqueue,stopScan}={}){
  const el=id=>document.getElementById(id),candidate=window.BFEventCandidate,config=window.BF_EVENT_CANDIDATE_CONFIG||{};
  const call=async(action,data)=>{
   // 通信が返らないまま別タブのロックも保持し続けない。中断後も操作IDは台帳に残る。
-  const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),15000);
+  const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),50000);
   try{const r=await candidate.call(action,data,{signal:abort.signal});let json;try{json=await r.json();}catch{throw Error('NETWORK_RESPONSE_UNKNOWN');}if(!json.success)throw Error(json.error||'BACKEND_FAILED');return json.data;}finally{clearTimeout(timer);}
  };
  const errors={WALKIN_OWNER_CHANGED:'前の担当者による処理が残っています。前の担当者でログインし直すか、責任者に引き継いでください。',WALKIN_STORAGE_FAILED:'端末に進捗を保存できません。この端末を消去せず、責任者へ。',WALKIN_RECOVERY_INVALID:'保存済みの進捗を読み取れません。消去せず責任者へ引き継いでください。',WALKIN_EXISTING_REVIEW_REQUIRED:'同じお名前の登録が見つかりました。候補をご確認ください。',SPARE_ALREADY_ASSIGNED:'その名札は他の方に割り当てられました。別の未使用名札を選んでください。',SPARE_UNAVAILABLE:'その名札は使えません。名札一覧を更新してください。',WALKIN_ROSTER_NOT_READY:'割当を名簿で確認できません。登録し直さず、少し待って同じ入場操作を再開してください。',INVALID_APPLICANT:'お名前・サロン名・業態を確認してください。',WALKIN_QUEUE_FAILED:'入場記録を端末に保存できませんでした。登録と名札の割当は保持しています。',WALKIN_IN_PROGRESS:'途中の当日登録があります。続きから進めてください。',VALIDATION_READ_ONLY:'この検証接続は保存停止中です。',FORBIDDEN:'この操作の権限がありません。進捗を消さず責任者へ。'};
