@@ -287,7 +287,7 @@ await window.BFEventCandidate.ready;
 //    予備名札は朝の名簿に載らない）。最終的な照合はサーバーが行う。
 // ============================================================
 
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.4.1';
 
 // 本番GAS（HTML=GitHub Pages / GAS=版番号固定の分離型。ローカル検証はモックに差し替える）
 const GAS_URL = window.BFEventCandidate.endpoint;
@@ -301,7 +301,7 @@ const K_QUEUE     = 'bf_event_candidate_scan_queue';
 const K_REMOTE    = 'bf_event_candidate_scan_remote';
 const K_EVACUATED = 'bf_event_candidate_scan_evacuated_at';
 
-const FETCH_TIMEOUT_MS = 10000;
+const FETCH_TIMEOUT_MS = 45000;
 const SEND_BATCH       = 25;                                  // 1回のPOSTで送るチェックイン数
 const BACKOFF_SEC      = [1, 2, 3, 5, 8, 13, 21, 34, 55, 60];
 const PUMP_TICK_MS     = 3000;
