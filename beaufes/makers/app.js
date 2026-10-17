@@ -1,5 +1,7 @@
 // 業務データは社員認証後にだけ取得する。接続キーや価格をブラウザーの永続領域へ保存しない。
-const APP_VERSION='v0.2.1';
+const APP_VERSION='v0.2.2';
+// 表示用だけ0埋めを除き、検索・送信・既存注文の識別子は維持する。
+const displayProductCode=value=>String(value??'').replace(/^0+(?=\d+$)/,'');
 const API_URL=document.querySelector('meta[name=directory-api]').content;
 const ORDER_URL='https://beaufield.github.io/beaufield-dev/beaufes/order/refresh.html';
 const $=id=>document.getElementById(id);
@@ -37,7 +39,7 @@ async function choose(id){
  if(detail.notice){const notice=create('p',detail.notice);notice.className='questions';$('offers').append(notice);}
  for(const offer of detail.offers){const block=create('article');block.className='offer';block.append(create('h3',offer.title),create('p',offer.condition));if(offer.questions?.length){const questions=create('ul');questions.className='questions';for(const q of offer.questions)questions.append(create('li',q));block.append(questions);}
   const table=create('table'),head=create('thead'),hr=create('tr');for(const title of ['商品コード','商品名・容量','種別','税抜単価'])hr.append(create('th',title));head.append(hr);table.append(head);const tbody=create('tbody');
-  for(const product of offer.products){const row=create('tr');for(const [label,text] of [['商品コード',product.code||'商品確認待ち'],['商品名・容量',product.name],['種別',product.role],['税抜単価',offer.print_mode==='set'&&product.role==='購入'?'セット価格に含む':yen(product.event_price)]]){const td=create('td',text);td.dataset.label=label;if(label==='税抜単価')td.className='price';row.append(td);}tbody.append(row);}table.append(tbody);block.append(table);$('offers').append(block);
+  for(const product of offer.products){const row=create('tr');for(const [label,text] of [['商品コード',product.code?displayProductCode(product.code):'商品確認待ち'],['商品名・容量',product.name],['種別',product.role],['税抜単価',offer.print_mode==='set'&&product.role==='購入'?'セット価格に含む':yen(product.event_price)]]){const td=create('td',text);td.dataset.label=label;if(label==='税抜単価')td.className='price';row.append(td);}tbody.append(row);}table.append(tbody);block.append(table);$('offers').append(block);
  }
  $('status').textContent=`${detail.name}のキャンペーン内容です。`;
 }
