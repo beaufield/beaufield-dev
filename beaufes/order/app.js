@@ -1,6 +1,6 @@
 import {get,set,records,update as storageUpdate,mergeReceipt,sanitizeLegacyQr,clearMakerConnection,storageMode} from './storage.js';
-import {buildWorkbook} from './export.js';
-const APP_VERSION='v0.15.0';
+import {buildWorkbook,displayProductCode} from './export.js';
+const APP_VERSION='v0.15.1';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -88,7 +88,7 @@ function selectedOffer(offer){return draft.form.offers[offer.offer_id];}
 function addSelectedProduct(group,offer,kind,code,quantity){
  const product=info.catalog.products.find(p=>p.product_code===code);if(!product)return;
  const row=element('div',undefined,'selected-product');const name=element('div',product.product_name,'product-name');
- name.append(element('small',kind==='paid'?yen(offerPrice(offer,code)):'サービス品・0円'));
+ name.append(element('small',`商品コード ${displayProductCode(code)} ／ ${kind==='paid'?yen(offerPrice(offer,code)):'サービス品・0円'}`));
  const input=numberInput(quantity,10000,`${product.product_name} ${kind==='paid'?'購入':'サービス'}数`);
  input.dataset.offer=offer.offer_id;input.dataset.kind=kind;input.dataset.code=code;
  if(automaticKind(offer,kind)){input.readOnly=true;input.classList.add('gift-auto');input.setAttribute('aria-label',`${product.product_name} ${kind==='paid'?'購入':'サービス'}数（自動計算）`);}
@@ -113,7 +113,7 @@ function renderOffer(offer){
  countRow.append(chips);card.append(countRow);
  if(offer.product_codes.length===1){
   const p=info.catalog.products.find(item=>item.product_code===offer.product_codes[0]);
-  if(p)card.append(element('p',`${p.product_name} ／ 税抜単価 ${yen(offerPrice(offer,p.product_code))}。${offer.gift_per_set>0?'サービス品は同じ商品です。':''}`,'muted'));
+  if(p)card.append(element('p',`${p.product_name} ／ 商品コード ${displayProductCode(p.product_code)} ／ 税抜単価 ${yen(offerPrice(offer,p.product_code))}。${offer.gift_per_set>0?'サービス品は同じ商品です。':''}`,'muted'));
  }else{
   for(const kind of ['paid','gift']){
    if(kind==='gift'&&!(offer.gift_codes||offer.product_codes).length)continue;

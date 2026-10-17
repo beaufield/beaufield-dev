@@ -1,4 +1,5 @@
-// アプリ組込みのExcel出力。識別コードは文字列セルにし、先頭0を維持する。
+// 商品コードは表示時だけ0埋めを外す。得意先コードや注文の内部キーは変更しない。
+export const displayProductCode=value=>String(value??'').replace(/^0+(?=\d+$)/,'');
 export async function buildWorkbook(ExcelJS, data) {
  const workbook=new ExcelJS.Workbook();workbook.creator='BEAU Fes';
  const headings=['出力番号','注文番号','メーカー','得意先コード','サロン名','お客様名','商品コード','商品名','区分','数量','税抜単価','税抜金額','受渡方法','売上日','確認事項','備考'];
@@ -6,7 +7,7 @@ export async function buildWorkbook(ExcelJS, data) {
  for(const order of data.rows){
   const notes=[order.state==='cancelled'?'取消・入力対象外':'',!order.customer.customer_code?'得意先コード要確認':'',order.posting.state!=='ready'?`台帳:${({claimed:'入力中',entered:'入力済み',unknown:'入力結果が不明',correction_required:'訂正必要',resolved_cancelled:'取消・売上なし照合完了'}[order.posting.state]||order.posting.state)}・再入力禁止`:''].filter(Boolean).join('／');
   const sheet=sheets[notes?1:0];
-  for(const line of order.lines||[]){const row=sheet.addRow([data.batch_id,order.request_id,order.booth,String(order.customer.customer_code||''),order.customer.salon,order.customer.name,String(line.product_code),line.product_name,line.kind==='gift'?'サービス（0円）':'購入',line.qty,line.unit_price_yen,line.qty*line.unit_price_yen,order.delivery==='later'?'後日納品':'当日持ち帰り',order.posting.sales_date||'',notes,order.remarks||'']);
+  for(const line of order.lines||[]){const row=sheet.addRow([data.batch_id,order.request_id,order.booth,String(order.customer.customer_code||''),order.customer.salon,order.customer.name,displayProductCode(line.product_code),line.product_name,line.kind==='gift'?'サービス（0円）':'購入',line.qty,line.unit_price_yen,line.qty*line.unit_price_yen,order.delivery==='later'?'後日納品':'当日持ち帰り',order.posting.sales_date||'',notes,order.remarks||'']);
    row.alignment={vertical:'top',wrapText:true};row.height=42;for(const index of [4,7])row.getCell(index).numFmt='@';for(const index of [10,11,12])row.getCell(index).numFmt='#,##0';if(line.kind==='gift')row.getCell(9).font={color:{argb:'FF246753'},bold:true};
   }
  }
