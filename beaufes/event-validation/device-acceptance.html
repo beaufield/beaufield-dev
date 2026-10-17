@@ -1,0 +1,30 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>新受付の実機確認</title><script src="candidate-config.js"></script><script src="lib/qrcode.min.js"></script>
+<style>body{margin:0;background:#eef5f6;color:#183743;font:16px/1.8 system-ui,sans-serif}main{max-width:820px;margin:auto;padding:24px}section{padding:22px;background:white;border:1px solid #cbdfe2;border-radius:14px;margin:18px 0}button,.button{display:inline-block;padding:12px 18px;margin:5px 4px;background:#126677;color:white;border:0;border-radius:8px;font:inherit;min-height:48px;text-decoration:none}input,select{font:inherit;padding:10px;max-width:100%;box-sizing:border-box}label{display:block;margin:12px 0}input[type=checkbox]{width:22px;height:22px;vertical-align:middle;margin-right:10px}aside{background:#fff0c9;padding:16px;border-radius:10px}#qr{max-width:280px;background:white;margin:12px auto}#qr img{display:block;width:100%;height:auto}pre{white-space:pre-wrap;overflow-wrap:anywhere}p,li{overflow-wrap:anywhere}footer{font-size:13px}@media print{button,.button{display:none}body{background:white}section{break-inside:avoid}}</style></head>
+<body><main><h1>新受付の実機確認</h1><aside>架空データ専用です。本番のお客様の名前・QRは入力しないでください。本番の受付はまだ切り替えていません。</aside>
+<section><h2>最初の準備</h2><p>当日使うiPhone・iPadを合計3〜5台用意します。各端末の普段使うSafari等でポータルへログインします。プライベートブラウズは使いません。</p><a class="button" href="https://beaufield.github.io/beaufield-dev/" target="_blank" rel="noopener">ポータル</a><a class="button" href="scan.html" target="_blank" rel="noopener">新受付を開く</a><label>端末の呼び名 <input id="device" maxlength="40" placeholder="受付1 iPhone"></label><p>下の確認は端末ごとに行います。QR表示用のPCは、このページを開いたままにします。</p></section>
+<section><h2>1. QR・番号で受付する</h2><p>「検証QRを表示」を押し、各端末の「QRを読む」でこのQRを読みます。カメラを許可し、名前と番号が表示されること、送信待ちが0へ戻ることを確認します。受付番号でも同じ人を検索します。</p><button id="loadQr">検証QRを表示</button><div id="qr" aria-label="検証用QR"></div><p id="qrName" role="status">QRは未取得です。</p><label><input type="checkbox" id="d1">QR・受付番号で同じ架空の人を受付できた</label><label><input type="checkbox" id="d2">別端末でも同じ人を読み、最長30秒程度の更新後に受付済みが分かった</label></section>
+<section><h2>2. 同じ画面で当日登録する</h2><ol><li>新受付の「未申込の方を登録」を押す。</li><li>お名前は「実機検証01」等、端末ごとに違う番号。サロン名は「架空検証サロン」、業態は「美容室」。</li><li>「登録済みか確認」→候補を確認→確認チェック→「この内容で当日登録」。</li><li>端末1はP-02、端末2はP-03のように、別の未使用札を選び「この名札を割り当てる」。</li><li>「この方を入場受付」→送信待ち0を確認。途中で再読込しても同じ受付番号から続けられることを確認。</li></ol><label><input type="checkbox" id="d3">登録・札割当・入場まで完了し、再読込しても二重登録されなかった</label></section>
+<section><h2>3. 通信断と札の競合</h2><p><strong>通信断：</strong>名簿取得後にWi-Fiとモバイル通信をOFFにし、既存の架空の受付番号を入力して2件受付します。送信待ちが残ることを確認します。Safariを閉じて開き直し、記録が残ることを確認。通信を戻し、送信待ち0になるまで待ちます。通信断中に新規登録・札割当は行いません。</p><label><input type="checkbox" id="d4">通信断の未送信が再読込・再開後も残り、再接続で0になった</label><p><strong>札の競合（2台）：</strong>別々の架空の人を登録し、両端末で未使用のP-10を選んでから同時に割当を押します。成功するのは一人だけ。もう一台は競合の案内が出て、同じ申込のまま別の未使用札へ進めることを確認します。</p><label><input type="checkbox" id="d5">同じ札を2人に割り当てず、失敗側は同じ申込から別札で続行できた</label><label><input type="checkbox" id="d6">端末ロック・Safari再開後も途中の登録と未送信を失わなかった</label></section>
+<section><h2>結果を渡す</h2><p>分かる範囲で端末の呼び名とOSを記載し、合格した項目にチェックして保存します。失敗・試していない項目はチェックしません。結果には名前・QR・ログイン情報を含めません。</p><label>OS・補足 <input id="note" maxlength="200" placeholder="iOSの版、失敗した項目など"></label><button id="export">この端末の結果を書き出す</button><pre id="result" role="status"></pre></section><footer id="version"></footer></main>
+<script type="module">
+// 日本語コメント: 名簿は検証接続からだけ読み、結果に人物・QR・セッションを出力しない。
+import {createPortalStaffProvider} from './portal-auth.mjs';
+import {createClient} from './client.mjs';
+const APP_VERSION='0.1.0';document.getElementById('version').textContent='v'+APP_VERSION+' ／ 実機確認・本番未切替';
+const config=window.BF_EVENT_CANDIDATE_CONFIG;
+const allowed=config?.environment==='isolated'&&config.eventId==='validation-beaufes'&&config.endpoint==='https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/beaufes-event-validation';
+document.getElementById('loadQr').addEventListener('click',async()=>{
+ const status=document.getElementById('qrName');status.textContent='確認中…';
+ try{if(!allowed)throw Error('WRONG_ENVIRONMENT');const provider=createPortalStaffProvider({storage:localStorage,origin:location.origin,portalUrl:config.portalUrl,endpoint:config.endpoint});
+  const client=createClient({endpoint:config.endpoint,getStaffToken:async()=>{const s=await provider.getSession();return s?.access_token||null;}});
+  const response=await client('scanRoster'),body=await response.json();if(!body.success)throw Error('READ_FAILED');
+  const person=body.data.roster?.find(p=>p.app_id==='F2026-0002'&&p.staff_name==='受付クラウド検証01');if(!person?.ticket_token)throw Error('FIXTURE_NOT_READY');
+  const qr=qrcode(0,'M');qr.addData(person.ticket_token);qr.make();const image=document.createElement('img');image.src=qr.createDataURL(6,4);image.alt='架空来場者の検証用QR';document.getElementById('qr').replaceChildren(image);status.textContent='架空の受付クラウド検証01 ／ '+person.app_id;
+ }catch{status.textContent='取得できません。ポータルのログインと通信状態を確認してください。';}
+});
+document.getElementById('export').addEventListener('click',()=>{
+ const device=document.getElementById('device').value.trim();if(!device){document.getElementById('result').textContent='端末の呼び名を入力してください。';return;}
+ const result={version:APP_VERSION,at:new Date().toISOString(),device,note:document.getElementById('note').value.trim(),environment:'validation-beaufes',web_locks:!!navigator.locks,secure_context:window.isSecureContext,checks:Object.fromEntries(['d1','d2','d3','d4','d5','d6'].map(id=>[id,document.getElementById(id).checked])),source:'owner-reported-device-check',production_cutover:false};
+ const blob=new Blob([JSON.stringify(result,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='reception-device-result.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);document.getElementById('result').textContent='結果を保存しました。未チェック項目は未確認です。';
+});
+</script></body></html>
