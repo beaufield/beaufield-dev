@@ -1,11 +1,11 @@
 <!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>新受付の接続確認</title><script src="candidate-config.js"></script>
 <style>body{margin:0;background:#f3f7f8;color:#173543;font:16px/1.8 system-ui,sans-serif}main{max-width:720px;margin:auto;padding:24px}section{padding:22px;border:1px solid #d3e2e5;background:white;border-radius:16px;margin:18px 0}button,a{font:inherit}button,.button{display:inline-block;padding:12px 18px;margin:6px 4px;background:#176677;color:white;border:0;border-radius:9px;min-height:48px;text-decoration:none}pre{white-space:pre-wrap;overflow-wrap:anywhere}aside{padding:15px;background:#fff0c9;border-radius:10px}footer{font-size:13px}</style></head>
-<body><main><h1>新受付の接続確認</h1><aside>検証専用です。架空の当日登録・名札割当・入場を保存できます。一般申込・メール送信は停止。本番名簿は切り替えていません。</aside><section><h2>1. ログインを確認する</h2><p>いつものポータルにログインしてから確認します。PINやログイン情報の入力・コピーは不要です。</p><a class="button" href="https://beaufield.github.io/beaufield-dev/" target="_blank" rel="noopener">ポータルを開く</a><button id="check">ログインと検証名簿を確認</button><pre id="result" role="status">未確認</pre></section><section><h2>2. 検証画面を見る</h2><p>架空データだけで操作してください。本番のお客様の名前・QRは入力しないでください。</p><a class="button" href="scan.html">受付</a><a class="button" href="admin.html">管理</a><a class="button" href="badges.html">名札</a><a class="button" href="index.html">申込フォーム</a></section><section><h2>3. アクセス制限を確認する</h2><p>ログインなし・無効な認証情報を拒否し、公開申込・通知依頼を停止していることを確認します。</p><button id="denial">アクセス制限を確認</button><pre id="denialResult" role="status">未確認</pre></section><footer id="version"></footer></main>
+<body><main><h1>新受付の接続確認</h1><aside>検証専用です。架空の当日登録・名札割当・入場を保存できます。一般申込・メール送信は停止。本番名簿は切り替えていません。</aside><section><h2>1. ログインを確認する</h2><p>いつものポータルにログインしてから確認します。PINやログイン情報の入力・コピーは不要です。</p><a class="button" href="https://beaufield.github.io/beaufield-dev/" target="_blank" rel="noopener">ポータルを開く</a><button id="check">ログインと検証名簿を確認</button><pre id="result" role="status">未確認</pre></section><section><h2>2. 検証画面を見る</h2><p>架空データだけで操作してください。本番のお客様の名前・QRは入力しないでください。</p><a class="button" href="scan.html">受付</a><a class="button" href="admin.html">管理</a><a class="button" href="badges.html">名札</a><a class="button" href="index.html">申込フォーム</a></section><section><h2>3. アクセス制限を確認する</h2><p>ログインなし・無効な認証情報を拒否し、公開申込・通知依頼を停止していることを確認します。</p><button id="denial">アクセス制限を確認</button><pre id="denialResult" role="status">未確認</pre></section><section><h2>4. 本人1通のメール試験</h2><p>準備・認可済みの本人宛通知1件だけを送ります。一般送信は開放しません。既に送信済みなら再送しません。</p><button id="mailTest">承認済み1通のメール経路を確認</button><pre id="mailResult" role="status">未実行</pre></section><section><h2>5. 実機確認</h2><p>iPhone・iPadでの確認手順と検証QRです。</p><a class="button" href="device-acceptance.html">実機確認の手順・検証QR</a></section><footer id="version"></footer></main>
 <script type="module">
 // 日本語コメント: セッションは既存ポータルから読むだけ。試験結果に氏名・トークン・QRを含めない。
 import {createPortalStaffProvider} from './portal-auth.mjs';
 import {createClient} from './client.mjs';
-const APP_VERSION='0.2.0';document.getElementById('version').textContent='v'+APP_VERSION+' ／ 本番未切替';
+const APP_VERSION='0.3.0';document.getElementById('version').textContent='v'+APP_VERSION+' ／ 本番未切替';
 const config=window.BF_EVENT_CANDIDATE_CONFIG;
 const provider=createPortalStaffProvider({storage:localStorage,origin:location.origin,portalUrl:config.portalUrl,endpoint:config.endpoint,navigate:url=>location.assign(url)});
 const client=createClient({endpoint:config.endpoint,getStaffToken:async()=>{const s=await provider.getSession();return s?.access_token||null;}});
@@ -24,5 +24,11 @@ document.getElementById('denial').addEventListener('click',async()=>{
   const ok=anonymous.status===403&&invalid.status===401&&write.status===409&&staffWrite.status===403;
   text('denialResult',ok?'ログインなし：拒否\n無効な認証情報：拒否\n匿名の社員操作：拒否\n一般申込：停止を確認':'確認結果が想定と異なります。担当者の確認が必要です。');
  }catch{text('denialResult','通信に失敗しました。時間をおいて再度確認してください。');}
+});
+document.getElementById('mailTest').addEventListener('click',async()=>{
+ const button=document.getElementById('mailTest');button.disabled=true;text('mailResult','確認中…');
+ try{const session=await provider.getSession();if(!session)throw Error('SESSION_INVALID');const response=await fetch(config.endpoint+'/mail-test',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+session.access_token},body:'{}',cache:'no-store',redirect:'error',signal:AbortSignal.timeout(60000)});const body=await response.json();if(!response.ok||!body.success)throw Error('MAIL_NOT_READY');const state=body.data?.state;
+  text('mailResult',state==='sent'?'Gmailへの送信受付・DBへの結果記録済みです。受信と差出人は別途ご本人に確認します。':state==='unknown'?'結果不明です。再送せず、送信履歴を確認します。':state==='record_pending'?'結果の保存待ちです。再送は行いません。':'現在の状態：'+String(state||'未確認')+'。担当者が確認します。');
+ }catch{text('mailResult','確認できませんでした。再送せず、担当者がDBの状態を確認します。');}finally{button.disabled=false;}
 });
 </script></body></html>
