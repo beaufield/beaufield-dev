@@ -163,6 +163,35 @@
 
   <!-- ② 受付（名簿を取得したら出る） -->
   <div id="scanSection" style="display:none;">
+<style>
+/* 日本語コメント: 受付の中で開く当日登録。画面遷移や別の社員ログインを要求しない。 */
+#walkinCard [hidden]{display:none!important}#walkinCard label{display:block;font-size:14px;margin:12px 0 4px}#walkinCard select{width:100%;padding:11px;font:inherit;border:1px solid #ccd7da;border-radius:8px;background:white}#walkinCard .wiButtons{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}#walkinCard .wiButtons button{flex:1;min-width:130px}#walkinCard .wiMatch{border-top:1px solid #dde5e6;margin-top:10px;padding-top:10px}#walkinCard .wiMatch button{margin-top:5px}#walkinCard input[type=checkbox]{width:20px;height:20px;vertical-align:middle}#walkinMessage{white-space:pre-line;overflow-wrap:anywhere}#walkinCard .wiSummary{white-space:pre-line;background:#edf5f3;padding:12px;border-radius:9px;margin:12px 0}#walkinCard .wiStatus{font-size:13px;font-weight:bold;color:#10617c;margin:8px 0}
+</style>
+<div class="card" id="walkinCard" style="overflow-wrap:anywhere">
+ <h2>当日登録・予備名札</h2>
+ <button class="ghost" id="walkinOpen" type="button">未申込の方を登録</button>
+ <div id="walkinPanel" hidden>
+  <div class="wiStatus" id="walkinStatus" role="status"></div>
+  <div id="walkinSummary" class="wiSummary" hidden></div>
+  <div id="walkinForm">
+   <p class="hint">お名前・サロン名・業態の3項目で登録します。メール・電話は不要です。控えメールは送りません。</p>
+   <label for="walkinName">お名前（必須）</label><input id="walkinName" type="text" maxlength="60" autocomplete="off">
+   <label for="walkinSalon">サロン名（必須）</label><input id="walkinSalon" type="text" maxlength="100" autocomplete="off">
+   <label for="walkinBusiness">業態（必須）</label><select id="walkinBusiness"><option value="">選んでください</option></select>
+   <div class="wiButtons"><button id="walkinSearch" type="button" class="ghost">登録済みか確認</button></div>
+   <div id="walkinMatches" aria-live="polite"></div>
+   <div id="walkinConfirm" hidden><label><input id="walkinReviewed" type="checkbox">候補を確認し、新しく登録する方だと確認しました</label><div class="wiButtons"><button id="walkinRegister" type="button">この内容で当日登録</button></div></div>
+  </div>
+  <div id="walkinSparePanel" hidden><p class="hint">渡す札のお名前と番号を確認します。使用済み・解除済みの札は選べません。</p><label for="walkinSpare">手元の予備名札</label><select id="walkinSpare"></select><div class="wiButtons"><button id="walkinAssign" type="button">この名札を割り当てる</button><button id="walkinReloadSpares" type="button" class="ghost">名札一覧を更新</button></div></div>
+  <div id="walkinResumePanel" hidden><div class="wiButtons"><button id="walkinResume" type="button">同じ操作を再確認する</button></div></div>
+  <div id="walkinCheckinPanel" hidden><p>予備名札を確認して、下のボタンで入場を記録してください。QRをもう一度読む必要はありません。</p><div class="wiButtons"><button id="walkinCheckin" type="button">この方を入場受付</button></div></div>
+  <div id="walkinDonePanel" hidden><p>端末に入場記録を残しました。送信は自動で行います。上部の「送信待ち」と「直近の受付」で状況を確認してください。</p><div class="wiButtons"><button id="walkinNext" type="button">次の当日登録へ</button></div></div>
+  <div id="walkinMessage" class="err" role="alert"></div>
+  <div class="wiButtons"><button id="walkinClose" type="button" class="ghost">QR受付へ戻る</button></div>
+  <p class="hint">途中で閉じても進捗は残ります。通信・認証のエラーは続きを再開し、最初から作り直しません。</p>
+ </div>
+</div>
+
 
     <div class="card">
       <h2>② 受付</h2>
@@ -258,7 +287,7 @@ await window.BFEventCandidate.ready;
 //    予備名札は朝の名簿に載らない）。最終的な照合はサーバーが行う。
 // ============================================================
 
-const APP_VERSION = '0.3.3';
+const APP_VERSION = '0.4.0';
 
 // 本番GAS（HTML=GitHub Pages / GAS=版番号固定の分離型。ローカル検証はモックに差し替える）
 const GAS_URL = window.BFEventCandidate.endpoint;
@@ -560,13 +589,20 @@ function checkIn(input) {
   if (entry && !tt && !ec) ec = entry.app_id;   // 名前検索から来た場合
 
   const key   = subjectKey(entry ? entry.app_id : '', tt || ec);
+  if (input.checkin_id) {
+    const existing = queue.find(q => q.checkin_id === input.checkin_id);
+    if (existing) {
+      if (existing.entry_code !== ec || existing.checked_in_at !== input.checked_in_at || existing.key !== key) throw Error('WALKIN_QUEUE_CONFLICT');
+      return {checkin_id:existing.checkin_id};
+    }
+  }
   const prior = findPriorCheckin(key);
 
   const item = {
-    checkin_id:    uuid(),                 // 🔴 冪等キー。再送しても行は増えない
+    checkin_id:    input.checkin_id || uuid(),                 // 🔴 冪等キー。再送しても行は増えない
     ticket_token:  tt,
     entry_code:    tt ? '' : ec,
-    checked_in_at: nowStr(),               // 🔴 端末側の時刻（§3-5）。送信時刻ではない
+    checked_in_at: input.checked_in_at || nowStr(),               // 🔴 端末側の時刻（§3-5）。送信時刻ではない
     device_id:     deviceId,
     note:          entry ? '' : 'local_unknown',
     key:           key,
@@ -595,6 +631,7 @@ function checkIn(input) {
   showVerdict(prior ? 'dup' : (entry ? 'ok' : 'miss'), '', { item: item, prior: prior });
   render();
   pump();
+  return {checkin_id:item.checkin_id};
 }
 
 function showVerdict(kind, title, opt) {
@@ -995,10 +1032,14 @@ function exportQueue() {
   alert('書き出しました（未送信 ' + pending.length + '件）。\nこの画面のテキストを社員にお渡しいただいても構いません。');
 }
 
-function wipeAll() {
+async function wipeAll() {
+  try {
+    if (window.BFEventWalkin && window.BFEventWalkin.hasUnfinished()) { alert('途中の当日登録があります。記録を消さず、続きを完了するか責任者へ引き継いでください。'); return; }
+  } catch (_) { alert('当日登録の進捗を確認できません。消去せず責任者へ。'); return; }
   const c = counts();
   if (!confirm('この端末の名簿と記録をすべて消去します。\n' +
                '未送信 ' + (c.wait + c.warn) + '件\n\n社員の確認は済んでいますか？')) return;
+  try { if (window.BFEventWalkin) await window.BFEventWalkin.clearFinished(); } catch (_) { alert('当日登録の進捗を確認できません。消去しないでください。'); return; }
   lsDel(K_ROSTER); lsDel(K_QUEUE); lsDel(K_REMOTE); lsDel(K_EVACUATED);
   roster = null; queue = []; remote = [];
   byToken = {}; byCode = {};
@@ -1090,7 +1131,13 @@ async function boot() {
   if (roster) refreshRemote();
 }
 
-boot();
+await boot();
+const {mountWalkin} = await import('./walkin-ui.mjs');
+await mountWalkin({stopScan,enqueue:async input=>{
+  if (!lsSet(K_ROSTER,input.roster)) throw Error('WALKIN_STORAGE_FAILED');
+  roster=input.roster;indexRoster();renderPrep();
+  return checkIn(input);
+}});
 
 })();
 </script>

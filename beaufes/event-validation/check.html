@@ -1,11 +1,11 @@
 <!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>新受付の接続確認</title><script src="candidate-config.js"></script>
 <style>body{margin:0;background:#f3f7f8;color:#173543;font:16px/1.8 system-ui,sans-serif}main{max-width:720px;margin:auto;padding:24px}section{padding:22px;border:1px solid #d3e2e5;background:white;border-radius:16px;margin:18px 0}button,a{font:inherit}button,.button{display:inline-block;padding:12px 18px;margin:6px 4px;background:#176677;color:white;border:0;border-radius:9px;min-height:48px;text-decoration:none}pre{white-space:pre-wrap;overflow-wrap:anywhere}aside{padding:15px;background:#fff0c9;border-radius:10px}footer{font-size:13px}</style></head>
-<body><main><h1>新受付の接続確認</h1><aside>検証専用です。保存・メール送信は停止中。本番の受付・名簿は切り替えていません。</aside><section><h2>1. ログインを確認する</h2><p>いつものポータルにログインしてから確認します。PINやログイン情報の入力・コピーは不要です。</p><a class="button" href="https://beaufield.github.io/beaufield-dev/" target="_blank" rel="noopener">ポータルを開く</a><button id="check">ログインと検証名簿を確認</button><pre id="result" role="status">未確認</pre></section><section><h2>2. 検証画面を見る</h2><p>架空データを表示します。保存操作は停止しています。</p><a class="button" href="scan.html">受付</a><a class="button" href="admin.html">管理</a><a class="button" href="badges.html">名札</a><a class="button" href="index.html">申込フォーム</a></section><section><h2>3. アクセス制限を確認する</h2><p>ログインなし・無効な認証情報で名簿を取得できず、書込みが止まっていることを確認します。</p><button id="denial">アクセス制限を確認</button><pre id="denialResult" role="status">未確認</pre></section><footer id="version"></footer></main>
+<body><main><h1>新受付の接続確認</h1><aside>検証専用です。架空の当日登録・名札割当・入場を保存できます。一般申込・メール送信は停止。本番名簿は切り替えていません。</aside><section><h2>1. ログインを確認する</h2><p>いつものポータルにログインしてから確認します。PINやログイン情報の入力・コピーは不要です。</p><a class="button" href="https://beaufield.github.io/beaufield-dev/" target="_blank" rel="noopener">ポータルを開く</a><button id="check">ログインと検証名簿を確認</button><pre id="result" role="status">未確認</pre></section><section><h2>2. 検証画面を見る</h2><p>架空データだけで操作してください。本番のお客様の名前・QRは入力しないでください。</p><a class="button" href="scan.html">受付</a><a class="button" href="admin.html">管理</a><a class="button" href="badges.html">名札</a><a class="button" href="index.html">申込フォーム</a></section><section><h2>3. アクセス制限を確認する</h2><p>ログインなし・無効な認証情報を拒否し、公開申込・通知依頼を停止していることを確認します。</p><button id="denial">アクセス制限を確認</button><pre id="denialResult" role="status">未確認</pre></section><footer id="version"></footer></main>
 <script type="module">
 // 日本語コメント: セッションは既存ポータルから読むだけ。試験結果に氏名・トークン・QRを含めない。
 import {createPortalStaffProvider} from './portal-auth.mjs';
 import {createClient} from './client.mjs';
-const APP_VERSION='0.1.0';document.getElementById('version').textContent='v'+APP_VERSION+' ／ 本番未切替';
+const APP_VERSION='0.2.0';document.getElementById('version').textContent='v'+APP_VERSION+' ／ 本番未切替';
 const config=window.BF_EVENT_CANDIDATE_CONFIG;
 const provider=createPortalStaffProvider({storage:localStorage,origin:location.origin,portalUrl:config.portalUrl,endpoint:config.endpoint,navigate:url=>location.assign(url)});
 const client=createClient({endpoint:config.endpoint,getStaffToken:async()=>{const s=await provider.getSession();return s?.access_token||null;}});
@@ -14,15 +14,15 @@ document.getElementById('check').addEventListener('click',async()=>{
  text('result','確認中…');try{if(!await provider.getSession()){text('result','ポータルでログインしてください。');return;}
   const response=await client('scanRoster'),result=await response.json();
   if(!response.ok||!result.success)throw Error('BACKEND_NOT_READY');
-  text('result','社員認証：成功\n新API→検証DB：成功\n検証名簿：'+result.data.total+'件\n保存・メール送信：停止中');
+  text('result','社員認証：成功\n新API→検証DB：成功\n検証名簿：'+result.data.total+'件\n検証の当日登録・名札割当・入場：保存可能\n一般申込・メール送信：停止中');
  }catch{text('result','確認できませんでした。時間をおいて再度確認してください。');}
 });
 document.getElementById('denial').addEventListener('click',async()=>{
  text('denialResult','確認中…');try{
   const call=(action,token)=>fetch(config.endpoint,{method:'POST',headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},body:JSON.stringify({action,data:{}}),cache:'no-store',redirect:'error'});
-  const anonymous=await call('scanRoster'),invalid=await call('scanRoster','X'.repeat(48)),write=await call('adminCreateApplication');
-  const ok=anonymous.status===403&&invalid.status===401&&write.status===409;
-  text('denialResult',ok?'ログインなし：拒否\n無効な認証情報：拒否\n検証APIの書込み：停止を確認':'確認結果が想定と異なります。担当者の確認が必要です。');
+  const anonymous=await call('scanRoster'),invalid=await call('scanRoster','X'.repeat(48)),write=await call('apply'),staffWrite=await call('adminCreateApplication');
+  const ok=anonymous.status===403&&invalid.status===401&&write.status===409&&staffWrite.status===403;
+  text('denialResult',ok?'ログインなし：拒否\n無効な認証情報：拒否\n匿名の社員操作：拒否\n一般申込：停止を確認':'確認結果が想定と異なります。担当者の確認が必要です。');
  }catch{text('denialResult','通信に失敗しました。時間をおいて再度確認してください。');}
 });
 </script></body></html>
