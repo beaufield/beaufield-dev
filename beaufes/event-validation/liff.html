@@ -241,7 +241,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.21.7';
+const APP_VERSION = '0.21.8';
 const GAS_URL = window.BFEventCandidate.endpoint;
 const LIFF_ID = window.BFEventCandidate.lineLiffId;
 
@@ -614,6 +614,18 @@ document.getElementById('eventLpLink').addEventListener('click', function (event
 });
 
 // 日本語コメント: 顧客本人の新しいLIFFログインから検証対象のhashだけを表示する。DB/業務管理権限には触れない。
+function candidateLineIdentityRequested(search) {
+  // LIFFの一次リダイレクトでは追加クエリがliff.stateへ包まれる。遷移先としては使わない。
+  const params = new URLSearchParams(search);
+  if (params.get('identityOnly') === '1') return true;
+  const state = params.get('liff.state');
+  if (!state || state.length > 2048 || !/^(?:\?|\/\?)/.test(state)) return false;
+  try {
+    const nested = new URL(state, 'https://candidate.invalid/');
+    return nested.origin === 'https://candidate.invalid' && nested.searchParams.get('identityOnly') === '1';
+  } catch { return false; }
+}
+
 async function showCandidateLineIdentity() {
   // この表示は本人が検証対象を指定するための準備。サーバーのLINE署名検証を置き換えない。
   const subject = liff.getDecodedIDToken()?.sub;
@@ -656,7 +668,7 @@ async function showCandidateLineIdentity() {
 }
 
 async function boot() {
-  const identityOnly = new URLSearchParams(location.search).get('identityOnly') === '1';
+  const identityOnly = candidateLineIdentityRequested(location.search);
   if (!LIFF_ID || (!window.BFEventCandidate.lineEnabled && !identityOnly)) { el('bootText').textContent='LINE連携は隔離環境での設定待ちです。'; return; }
   if (bookingApi.isMock()) { currentIdToken='MOCK'; await loadLineRegisteredInfo(currentIdToken); return; }
   // 1) LIFF SDKをCDNから読み込む（失敗時は通常フォームへ逃がす・§2-7）
