@@ -30,6 +30,12 @@
   window.BFEventCandidate.call=call;
   window.fetch=async(url,options={})=>{
    const actual=new URL(typeof url==='string'?url:url.url,location.href);
+   // LINE公式SDK自身のログイン通信だけは元のfetchへ渡す。GASやメッセージ送信APIは許可しない。
+   const lineApiPaths=['/oauth2/v2.1/token','/oauth2/v2.1/certs','/oauth2/v2.1/verify','/v2/profile'];
+   const lineAccessPaths=['/.well-known/openid-configuration','/liff/v1/authorize'];
+   const lineAppPath='/liff/v2/apps/'+lineLiffId;
+   const lineSdkRequest=lineLiffId&&(actual.origin==='https://api.line.me'&&(lineApiPaths.includes(actual.pathname)||actual.pathname===lineAppPath||actual.pathname.startsWith(lineAppPath+'/'))||actual.origin==='https://access.line.me'&&lineAccessPaths.includes(actual.pathname));
+   if(lineSdkRequest)return nativeFetch(url,options);
    if(actual.href.split('?')[0]!==target.split('?')[0])return new Response(JSON.stringify({success:false,error:'CANDIDATE_EXTERNAL_ROUTE_BLOCKED'}),{status:503});
    let input;
    if((options.method||'GET').toUpperCase()==='GET')input={action:actual.searchParams.get('action'),data:actual.searchParams.get('data')||'{}'};
