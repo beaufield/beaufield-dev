@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="style.css">
   <script src="jsQR.js" defer></script>
   <script src="exceljs.min.js" defer></script>
-  <script src="app.js?build=20261017-product-code-display" type="module"></script>
+  <script src="app.js?build=20261018-app-primary" type="module"></script>
 </head>
 <body>
 <header id="app-header"><div class="header-top"><div><small>BEAU Fes 2026</small><h1>ブース注文 <span id="version"></span></h1></div><span id="network" class="network-badge"></span></div><div id="maker-banner" class="maker-banner" hidden><span class="maker-label">メーカー</span><strong id="maker"></strong></div></header>
@@ -39,9 +39,16 @@
       <fieldset class="delivery-field"><legend>受け渡し方法 <span class="required">必須</span></legend>
         <div class="delivery-options">
           <label class="delivery-choice"><input type="radio" name="delivery" value="later"><span>後日納品</span></label>
-          <label class="delivery-choice"><input type="radio" name="delivery" value="takeaway"><span>当日持ち帰り</span></label>
+          <label class="delivery-choice"><input type="radio" name="delivery" value="takeaway"><span>当日お渡し済み</span></label>
         </div>
       </fieldset>
+      <p class="muted">お渡し済みと後日納品は注文を分けてください。予約商品は後日納品です。</p>
+      <details id="handling-panel" class="customer-search-panel"><summary>個人請求・配送先の変更・紙からの転記</summary>
+        <label>請求先<select id="billing"><option value="salon">サロン（通常）</option><option value="personal">個人（事務確認）</option><option value="review">事務で確認</option></select></label>
+        <label><input id="contact-check" type="checkbox"> 配送・連絡を事務で確認する（新規・変更・一部先渡し）</label>
+        <label>紙から転記する場合だけ：紙受付No<input id="paper-number" maxlength="32" autocomplete="off" placeholder="メーカー略号-001"></label>
+        <p class="muted">住所・連絡先は登録情報を使います。変更内容は受付で確認してください。紙にアプリ注文番号を記入し、転記済みとして保管します。企画セットの一部を先にお渡しした場合は後日納品とし、この確認欄にチェックして、備考に商品コードと先渡し数を記入してください。</p>
+      </details>
       <label class="remarks-field" for="remarks">備考・コメント <span class="muted">任意</span></label>
       <textarea id="remarks" rows="3" aria-describedby="remarks-help remarks-count" placeholder="納品時の連絡事項などを入力してください"></textarea>
       <div class="remarks-help"><span id="remarks-help" class="muted">注文内容と一緒に送信されます。</span><span id="remarks-count" class="muted">0 / 1,000文字</span></div>
@@ -53,7 +60,7 @@
     <section id="history-section" class="history-section" aria-labelledby="history-title"><div class="row section-heading"><h2 id="history-title">この端末の未送信・下書き <span id="order-count" class="count-badge"></span></h2><button id="retry" class="secondary small-action">未送信を再送・状態確認</button></div><p class="muted">この端末に残っている注文です。未送信・取消待ちは通信が戻った状態で再送してください。</p><div id="orders"></div></section>
     <section id="shared-history-section" class="history-section" aria-labelledby="shared-history-title"><div class="row section-heading"><h2 id="shared-history-title">メーカーの注文履歴</h2><button id="history-refresh" class="secondary small-action">更新する</button></div><p class="muted">同じメーカーの全端末で登録した注文です。行をタップすると商品明細が開きます。他の端末の注文は閲覧のみです。</p><p id="history-status" class="muted" role="status" aria-live="polite">まだ取得していません。</p><div id="shared-orders"></div><button id="history-more" class="secondary" type="button" hidden>以前の注文をもっと見る</button></section>
   </div>
-  <section id="admin" hidden><h2>事務用の出力</h2><p>受付を締めた後、入力用Excelを出力できます。全端末の未送信がないことは、別途確認が必要です。</p><button id="close" class="secondary">試験受付を締める</button><button id="export">入力用Excelを作る</button><p>サービス品は数量付き・単価0円。未入力の売上日は空欄、確認した売上日は記録どおり出力します。得意先未対応・取消・入力済み等は要確認に分けます。</p><div id="export-status"></div></section>
+  <section id="admin" hidden><h2>事務用の出力</h2><p>受付を締めた後、入力用Excelを出力できます。全端末の未送信がないことは、別途確認が必要です。</p><button id="close" class="secondary">試験受付を締める</button><button id="export">入力用Excelを作る</button><p>個人請求・配送先確認・仮商品コードは要確認へ分けます。販売管理入力前に照合してください。サービス品は数量付き・単価0円。未入力の売上日は空欄、確認した売上日は記録どおり出力します。得意先未対応・取消・入力済み等は要確認に分けます。</p><div id="export-status"></div></section>
   <section id="identity" hidden><h2>得意先コードの確認</h2><p>名札からの注文は得意先コードが未確定でも受け付けます。名称・電話・メールの一致は候補です。販売管理へ入力する前に確認してください。</p><div class="search"><label>得意先・申込の同期ファイル（bundle.json）<input id="identity-file" type="file" accept=".json,application/json"></label><button id="identity-sync" class="secondary">同期データを一括反映</button></div><p id="sync-status" class="muted">初回・更新時に、確認済みの完全スナップショットを選択します。</p><button id="identity-refresh" class="secondary">未確定のお客様を表示</button><div id="identity-list"></div><div class="search"><label>得意先マスターを検索<input id="identity-query" placeholder="名称またはコードを2文字以上" autocomplete="off"></label><button id="identity-search" class="secondary">検索</button></div><p id="identity-selected" class="muted">先にお客様を選択してください。</p><div id="identity-results"></div></section>
   <section id="ledger" hidden><h2>事務用の入力台帳</h2><p>入力結果が不明な注文は、販売管理の伝票を照合するまで再入力しません。</p><button id="admin-refresh" class="secondary">台帳を表示・更新</button><div id="admin-orders"></div></section>
 </main>
