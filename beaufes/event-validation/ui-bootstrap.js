@@ -39,7 +39,9 @@
    return call(input.action,data,options);
   };
  });
- window.BFEventCandidate={endpoint:target,ready,storage,lineEnabled:config.enableLine===true,signIn:async()=>{
+ // 検証LIFFには別の登録先が必要。既存本番IDへ黙って戻さない。
+ const lineLiffId=typeof config.lineLiffId==='string'&&/^2010404613-[A-Za-z0-9]+$/.test(config.lineLiffId)?config.lineLiffId:'';
+ window.BFEventCandidate={endpoint:target,ready,storage,lineEnabled:config.enableLine===true&&!!lineLiffId,lineLiffId,signIn:async()=>{
   if(typeof staffProvider?.signIn!=='function')throw Error('社員認証はまだ設定されていません。');
   return staffProvider.signIn();
  }};
