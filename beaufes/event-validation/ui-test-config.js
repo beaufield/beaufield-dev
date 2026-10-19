@@ -1,0 +1,2 @@
+// 日本語コメント: 検証専用・架空イベント固定。秘密なし。社員認証が全要求に必要。
+window.BF_EVENT_CANDIDATE_CONFIG=Object.freeze({"environment":"isolated","authSource":"portal","portalUrl":"https://beaufield.github.io/beaufield-dev/","eventId":"validation-full-ui-20261019","backendGeneration":"staff-full-ui-20261019","endpoint":"https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/beaufes-staff-ui-validation","enableLine":false,"lineLiffId":""});
