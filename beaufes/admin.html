@@ -1,6 +1,9 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
+<meta name="robots" content="noindex,nofollow">
+<script src="candidate-config.js?b=3debf1542ecb"></script>
+<script src="ui-bootstrap.js?b=40aeb3ead80d"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- 🔴 名簿画面なので検索エンジンに拾わせない（badges.html と同じ扱い） -->
@@ -370,7 +373,7 @@
 </style>
 <link rel="stylesheet" href="lib/booking-v1.3.2.css">
 <script src="lib/booking-v1.4.6.js"></script>
-<script src="lib/gas-relay-v1.0.0.js"></script>
+
 </head>
 <body>
 
@@ -532,7 +535,7 @@
       <div id="filterBody">
       <div class="row">
         <label class="rowLabel" for="q">検索（サロン名・お名前・メール・電話・住所・紹介者・備考）</label>
-        <input type="search" id="q" placeholder="例: 青島 / tanaka@ / 090">
+        <input type="search" id="q" placeholder="氏名・サロン名・メールで検索">
       </div>
 
       <div class="row">
@@ -605,6 +608,9 @@
 
 <script src="lib/qrcode.min.js"></script>
 <script>
+(async function(){
+await window.BFEventCandidate.ready;
+
 // ============================================================
 // admin.html（申込者一覧・社員用・閲覧＋担当欄のみ）
 // 認証・GAS通信ルールは badges.html からそのまま移植している（自分で別方式にしないこと）
@@ -618,15 +624,15 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.16.0';
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
-const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
+const APP_VERSION = '0.17.7';
+const GAS_URL = window.BFEventCandidate.endpoint;
+const PORTAL_URL = './login.html';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
-const FORM_URL = 'https://beaufield.github.io/beaufield-dev/beaufes/';
-const SESSION_KEY = 'bf_session'; // ポータルと共通
+const FORM_URL = './index.html';
+const SESSION_KEY = 'bf_event_candidate_session'; // ポータルと共通
 
 // GAS通信ルール（badges.html §2-5 と同じ）
-const FETCH_TIMEOUT_MS = 10000;
+const FETCH_TIMEOUT_MS = 45000;
 const MAX_ATTEMPTS     = 6;
 const RETRY_WAIT_MS    = [1000, 2000, 3000, 5000, 8000];
 const TRANSPORT_ERROR_PATTERN = /^(不明なアクション|INVALID_REQUEST)/;
@@ -636,17 +642,17 @@ const UNASSIGNED = '__unassigned__';
 function el(id) { return document.getElementById(id); }
 function qs(name) { return new URLSearchParams(location.search).get(name); }
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
-function isMock() { return qs('mock') === '1'; }
+function isMock() { return false; }
 
 // ------------------------------------------------------------
 // セッション（beaufield-authの共通セッションを読むだけ。発行はポータル側の役目）
 // ------------------------------------------------------------
 function getSession() {
   try {
-    const raw = localStorage.getItem(SESSION_KEY);
+    const raw = window.BFEventCandidate.storage.getItem(SESSION_KEY);
     if (!raw) return null;
     const s = JSON.parse(raw);
-    if (Date.now() > s.expires) { localStorage.removeItem(SESSION_KEY); return null; }
+    if (Date.now() > s.expires) { window.BFEventCandidate.storage.removeItem(SESSION_KEY); return null; }
     return s;
   } catch (e) { return null; }
 }
@@ -719,7 +725,7 @@ function postReadWithRetry(params, onProgress, options) {
 //    中継で読んだ予約状況も30秒以内なら編集に使う（保存時に本番GASが版番号・定員・受付可否を検査する）。
 //    🔴 予約受付の開閉（SEMINAR_BOOKING_ENABLED）は中継GASにも別に持っている。変えるときは両方変えること。
 //    🔴 中継GASは本番GASの読み込み処理の写し。本番GASを更新したら tools/build_staff_read_gas.py で作り直すこと。
-const STAFF_READ_URL = 'https://script.google.com/macros/s/AKfycbxzOmgV1l8f8HCfxnbdxceLRL2_rPuz-vxmTwsSjLA_z9WYaVhXFA7G460algrEB24/exec';
+const STAFF_READ_URL = '';
 const RELAY_WAIT_MS = 3000;
 const RELAY_CALL_TIMEOUT_MS = 30000;
 let staffRelay = null;
@@ -793,15 +799,15 @@ const LOGIN_REQUIRED_HTML =
 const AUTH_ERROR_HTML = {
   NO_TOKEN:
     'ログイン情報がサーバーに届きませんでした。ポータルからログインし直してください。<br><br>' +
-    '<b>ログインし直しても同じ表示が出る場合は不具合です</b>（前島さんに連絡してください）。',
+    '<b>ログインし直しても同じ表示が出る場合は不具合です</b>（管理担当者に連絡してください）。',
   SESSION_INVALID:
     'ログインの有効期限が切れています。ポータルからログインし直してください。',
   USER_INACTIVE:
-    'このアカウントは現在利用停止になっています（前島さんに連絡してください）。',
+    'このアカウントは現在利用停止になっています（管理担当者に連絡してください）。',
   NO_ROLE:
     '<b>ログインは有効ですが、この画面を使う権限がありません。</b><br><br>' +
     '権限管理アプリで、ご自分の <code>beaufes</code> を <code>user</code>（または <code>admin</code>）に' +
-    'してください（前島さんに連絡してください）。'
+    'してください（管理担当者に連絡してください）。'
 };
 
 // 認証エラーならゲートを出して true を返す。それ以外は false（呼び出し側が通常のエラー表示をする）
@@ -844,9 +850,7 @@ function versionAtLeast(actual, required) {
   return true;
 }
 function dayFeaturesReady() {
-  if (isMock()) return true;                 // モックは常に出す（レイアウト検証のため）
-  if (!state.serverVersion) return false;    // 取得前・版が読めないうちは出さない
-  return versionAtLeast(state.serverVersion, DAY_FEATURES_MIN_GAS);
+  return Array.isArray(state.serverCapabilities) && ['staff_reception','pass_resend'].every(x=>state.serverCapabilities.includes(x));
 }
 
 // ------------------------------------------------------------
@@ -1021,7 +1025,7 @@ function validAdminBootstrap(data, requireApplications) {
 }
 
 // 申込番号で確定済み得意先を読む。氏名・店舗からコードを推測しない。
-const CUSTOMER_LINK_API = 'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/office-api';
+const CUSTOMER_LINK_API = './__office_not_configured__';
 let customerLinkGeneration = 0;
 
 function customerIdentityText(value) {
@@ -1122,15 +1126,14 @@ async function loadCustomerLinks() {
       data = mockCustomerLinks(apps);
     } else {
       const ids = apps.map(function (a) {return a.app_id;});
-      if (ids.length > 500 || new Set(ids).size !== ids.length || ids.some(function (id) {return !/^F\d{4}-\d{4}$/.test(id);})) throw new Error('CUSTOMER_REQUEST');
+      if (ids.length > 500 || new Set(ids).size !== ids.length || ids.some(function (id) {return !/^F\d{4}-\d{4,}$/.test(id);})) throw new Error('CUSTOMER_REQUEST');
       if (!ids.length) data = {schema_version:1,rows:[]};
       else {
         // 一覧取得ごとに1回だけ。氏名・店舗・連絡先は送らず、既存ポータルの本人認証を使用する。
-        const response = await fetch(CUSTOMER_LINK_API,{method:'POST',cache:'no-store',
-          headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
-          body:JSON.stringify({action:'application_customers',body:{app_ids:ids}}),signal:controller.signal});
-        if (!response.ok) throw new Error('CUSTOMER_UNAVAILABLE');
-        data = await response.json();
+        const response = await window.BFEventCandidate.call('applicationCustomers',{app_ids:ids},{signal:controller.signal});
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error('CUSTOMER_UNAVAILABLE');
+        data = json.data;
       }
     }
     const byApp = customerLinkMap(data,apps);
@@ -1154,6 +1157,7 @@ function applyFetchResult(data) {
   state.tantouList = Array.isArray(data.tantou_list) ? data.tantou_list : [];
   state.businessTypes = Array.isArray(data.business_types) ? data.business_types : [];
   state.serverVersion = String(data.server_version || '');
+  state.serverCapabilities = Array.isArray(data.capabilities) ? data.capabilities : [];
   state.selected = {};
 
   // 🔴 サーバーが当日機能に対応していなければボタンごと隠す（押せる=動く、を崩さない）
@@ -1296,11 +1300,11 @@ function closeQrModal() {
 // ------------------------------------------------------------
 // 検索・絞り込みパネルの開閉（既定はスマホ=畳む・PC=開く。以後は端末ごとに記憶する）
 // ------------------------------------------------------------
-const FILTER_OPEN_KEY = 'bf_admin_filter_open';
+const FILTER_OPEN_KEY = 'bf_event_candidate_admin_filter_open';
 
 function defaultFilterOpen() {
   try {
-    const v = localStorage.getItem(FILTER_OPEN_KEY);
+    const v = window.BFEventCandidate.storage.getItem(FILTER_OPEN_KEY);
     if (v === '1') return true;
     if (v === '0') return false;
   } catch (e) {} // プライベートブラウズ等で読めなくても既定値で動く
@@ -1312,7 +1316,7 @@ function setFilterOpen(open, persist) {
   el('filterToggle').textContent = '🔎 検索・絞り込み ' + (open ? '▾' : '▸');
   el('filterToggle').setAttribute('aria-expanded', open ? 'true' : 'false');
   if (persist) {
-    try { localStorage.setItem(FILTER_OPEN_KEY, open ? '1' : '0'); } catch (e) {}
+    try { window.BFEventCandidate.storage.setItem(FILTER_OPEN_KEY, open ? '1' : '0'); } catch (e) {}
   }
 }
 
@@ -2026,8 +2030,7 @@ function renderTable() {
     if (!dayFeaturesReady()) {
       // サーバーが古い。ボタンを出さず、理由が分かる印だけ置く
       tdOps.textContent = '—';
-      tdOps.title = 'この機能はGAS v' + DAY_FEATURES_MIN_GAS + ' 以降で使えます（いまのサーバー: v'
-                  + (state.serverVersion || '不明') + '）';
+      tdOps.title = '受付機能が有効なサーバーへの接続を確認してください。';
       tr.appendChild(tdOps);
       appendCustomerCells(tr, a);
       frag.appendChild(tr);
@@ -2222,51 +2225,7 @@ function downloadCsv() {
 // ------------------------------------------------------------
 // モック（?mock=1・ログイン不要・GAS未接続で画面だけ確認する用）
 // ------------------------------------------------------------
-function generateMockData() {
-  const bts = ['美容室', '理容室', 'エステサロン', 'ネイルサロン', 'アイサロン', 'その他'];
-  // 🔴 実在の社員名は書かない（GITHUB-RULES.md）。担当欄の見た目確認はこれで足りる
-  const tantou = ['担当A', '担当B', '担当C'];
-  const apps = [];
-  for (let i = 1; i <= 37; i++) {
-    const day = 1 + (i % 20);
-    const key = '2026-09-' + ('0' + day).slice(-2);
-    apps.push({
-      // 🔴 F2026-形式にしない（本物との混同防止。badges.html のモックと同じ方針）
-      app_id: 'MOCK-' + ('000' + i).slice(-3),
-      created_at: key + ' 10:' + ('0' + (i % 60)).slice(-2) + ':00',
-      created_key: key,
-      updated_at: key + ' 10:00:00',
-      source: (i % 5 === 0) ? 'liff' : 'web',
-      salon_name: '【見本】サンプルサロン' + i,
-      staff_name: 'テスト 太郎' + i,
-      email: 'sample' + i + '@example.com',
-      phone: '0000-00-' + ('0000' + i).slice(-4),
-      has_transaction: (i % 3 === 0) ? 'no' : 'yes',
-      address: (i % 3 === 0) ? '宮崎市青島2-12-11' : '',
-      referrer: (i % 3 === 0) ? '紹介元サロン' + i : '',
-      has_line: (i % 5 === 0),
-      status: (i % 11 === 0) ? 'cancelled' : 'confirmed',
-      checked_in_at: '',
-      note: (i % 7 === 0) ? '駐車場について問い合わせあり' : '',
-      business_type: (i % 9 === 0) ? '' : bts[i % bts.length],
-      tantou: (i % 4 === 0) ? '' : tantou[i % tantou.length]
-    });
-  }
-  // textContent で描画していること（HTMLとして解釈されないこと）の確認用。
-  // 🔴 スクリプト終了タグの文字列そのものはインラインscriptを閉じてしまうため <\/ でエスケープ必須
-  apps.push({
-    app_id: 'MOCK-999',
-    created_at: '2026-09-21 10:00:00', created_key: '2026-09-21', updated_at: '2026-09-21 10:00:00',
-    source: 'web',
-    salon_name: '<script>alert(1)<\/script>サロン',
-    staff_name: '<b>危険太郎</b>',
-    email: 'xss@example.com', phone: '0000-00-9999',
-    has_transaction: 'yes', address: '', referrer: '', has_line: false,
-    status: 'confirmed', checked_in_at: '', note: '', business_type: '美容室',
-    tantou: ''
-  });
-  return { total: apps.length, tantou_list: tantou, business_types: bts, applications: apps, viewer: 'モック' };
-}
+function generateMockData() { throw Error('MOCK_DISABLED'); }
 
 // ------------------------------------------------------------
 // 🆕 v0.3.0 当日機能（代理登録・予備名札の割当・パス再送）
@@ -2432,7 +2391,7 @@ async function openSpareModal(app, lead) {
 function renderSpareList() {
   const box = el('spList');
   box.textContent = '';
-  const free = spareRows.filter(function (r) { return !r.assigned_app_id; });
+  const free = spareRows.filter(function (r) { return !r.assigned_app_id && !r.retired; });
   if (!free.length) {
     // 🔴 ここで return しない。割当済みの行を出しておかないと「間違えた1枚」を取り消せなくなる
     setMsg('spMsg', '未割当の予備名札がありません。' +
@@ -2440,13 +2399,13 @@ function renderSpareList() {
   }
   spareRows.forEach(function (r) {
     const lab = document.createElement('label');
-    if (r.assigned_app_id) {
+    if (r.retired || r.assigned_app_id) {
       // 🔴 割当済みは選べない。サーバーも拒否するが、押せてしまう時点で受付が迷う。
       //    ただし「渡す相手を間違えた」直後だけは取り消せる（releaseSpare がサーバー側で判定する）
       const row = document.createElement('div');
       row.className = 'takenRow';
       const txt = document.createElement('span');
-      txt.textContent = r.spare_no + '（' + r.assigned_app_id + ' に割当済み）';
+      txt.textContent = r.retired ? r.spare_no + '（解除済み・再配布不可）' : r.spare_no + '（' + r.assigned_app_id + ' に割当済み）';
       row.appendChild(txt);
       const undo = document.createElement('button');
       undo.type = 'button';
@@ -2537,7 +2496,7 @@ async function doReleaseSpare(row, btn) {
   try {
     if (isMock()) {
       await sleep(200);
-      row.assigned_app_id = '';
+      row.assigned_app_id = ''; row.retired = true;
       setMsg('spMsg', row.spare_no + ' の割当を取り消しました。', 'ok');
       renderSpareList();
       return;
@@ -2577,7 +2536,7 @@ async function doReleaseSpare(row, btn) {
       setMsg('spMsg', row.spare_no + ' の割当を取り消しました。' +
              (d.staff_name || d.app_id) + ' 様は元のQRに戻っています。', 'ok');
     }
-    row.assigned_app_id = '';
+    row.assigned_app_id = ''; row.retired = true;
     renderSpareList();
   } catch (e) {
     setMsg('spMsg', '通信できませんでした: ' + (e && e.message ? e.message : String(e)), 'err');
@@ -2588,6 +2547,7 @@ async function doReleaseSpare(row, btn) {
 }
 
 const SPARE_ERROR_TEXT = {
+  SPARE_RETIRED: '解除済みの予備札は再配布できません。別の札を選んでください。',
   SPARE_NOT_FOUND: 'その予備番号は登録されていません。',
   SPARE_NO_TOKEN:  'その予備名札はまだ発行されていません（名札印刷で刷ってから使ってください）。',
   APP_NOT_FOUND:   'この申込が見つかりませんでした。一覧を取り直してください。',
@@ -2607,7 +2567,7 @@ async function doResendPass(app, btn) {
     let data;
     if (isMock()) {
       await sleep(200);
-      data = { sent: true, to: 'te***@example.com', remaining_quota: 96 };
+      data = { sent: true, to: '', remaining_quota: 96 };
     } else {
       const session = getSession();
       if (!session) { showGate(LOGIN_REQUIRED_HTML); return; }
@@ -2628,7 +2588,9 @@ async function doResendPass(app, btn) {
       // 🔴 メール枠は100通/日（2026-09-04 実測）。残りを毎回見せて、当日に枯らさないようにする
       alert('送信しました（' + data.to + '）。\n本日の残りメール枠: ' +
             (data.remaining_quota == null ? '不明' : data.remaining_quota + '通'));
-    } else if (data.reason === 'RECENTLY_SENT') {
+    } else if (data.queued) {
+      alert('再送依頼を保存しました。まだ送信は完了していません。');
+    } else if (data.reason === 'RECENTLY_SENT' || data.reason === 'RECENTLY_REQUESTED') {
       alert('直近10分に同じ宛先へ送っているため、重ねて送りませんでした（' + data.to + '）。\n' +
             '届いていない場合は迷惑メールフォルダをご確認ください。');
     } else {
@@ -2646,7 +2608,7 @@ const RESEND_ERROR_TEXT = {
   NO_EMAIL:         'この方はメールアドレスが未登録です（飛び込み登録など）。',
   APP_CANCELLED:    'キャンセル済みの申込には送れません。',
   APP_NOT_FOUND:    'この申込が見つかりませんでした。一覧を取り直してください。',
-  NO_TICKET_TOKEN:  '入場トークンがありません（データ不整合・前島さんに連絡してください）。'
+  NO_TICKET_TOKEN:  '入場トークンがありません（データ不整合・管理担当者に連絡してください）。'
 };
 
 // ------------------------------------------------------------
@@ -3083,6 +3045,8 @@ async function loadBookingSummary(options) {
   }
 }
 
+
+})();
 </script>
 </body>
 </html>

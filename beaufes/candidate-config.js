@@ -1,0 +1,2 @@
+// 日本語コメント: 本番の公開接続設定。保存開放は固定APIのhealthで確認する。秘密を置かない。
+window.BF_EVENT_CANDIDATE_CONFIG=Object.freeze({"environment":"production-candidate","releaseEnabled":true,"authSource":"portal","portalUrl":"https://beaufield.github.io/beaufield-dev/","eventId":"beaufes2026","backendGeneration":"production-20261020-retry1","endpoint":"https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/beaufes-event","enableLine":true,"lineLiffId":"2010404613-cwHA5B0U"});

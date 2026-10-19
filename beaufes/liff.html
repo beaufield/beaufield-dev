@@ -1,6 +1,9 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
+<meta name="robots" content="noindex,nofollow">
+<script src="candidate-config.js?b=3debf1542ecb"></script>
+<script src="ui-bootstrap.js?b=40aeb3ead80d"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ビューフェス2026 お申し込み（LINE）</title>
@@ -226,6 +229,9 @@
 <div id="loadingOverlay">送信中…</div>
 
 <script>
+(async function(){
+await window.BFEventCandidate.ready;
+
 const IS_MOCK = new URLSearchParams(location.search).get('mock') === '1';
 // 予約部品が読めない場合も、来場申込・入場パス・社員一覧は継続する。
 const bookingApi = window.BeaufesBooking || {
@@ -235,9 +241,9 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.20.0';
-const GAS_URL  = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
-const LIFF_ID  = '2010404613-cwHA5B0U';
+const APP_VERSION = '0.21.11';
+const GAS_URL = window.BFEventCandidate.endpoint;
+const LIFF_ID = window.BFEventCandidate.lineLiffId;
 
 let bookingForm = null;
 try { bookingForm = bookingApi.mount({root:'#bookingForm',mode:'form',url:GAS_URL}); }
@@ -251,7 +257,7 @@ document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 //（誤記訂正・v0.3.0: 以前「0.12%」としていたが計算誤り。詳細はindex.htmlの同じ箇所を参照）。
 // 失敗は連続する傾向があるため、再試行の間隔を徐々に広げる。
 // applyLiff/liffPrefillはline_user_idで冪等なため、applyのようなrequest_idは不要。
-const FETCH_TIMEOUT_MS = 10000;
+const FETCH_TIMEOUT_MS = 45000;
 const MAX_ATTEMPTS     = 6;
 const RETRY_WAIT_MS    = [1000, 2000, 3000, 5000, 8000];
 
@@ -607,7 +613,63 @@ document.getElementById('eventLpLink').addEventListener('click', function (event
   }
 });
 
+// 日本語コメント: 顧客本人の新しいLIFFログインから検証対象のhashだけを表示する。DB/業務管理権限には触れない。
+function candidateLineIdentityRequested(search) {
+  // LIFFの一次リダイレクトでは追加クエリがliff.stateへ包まれる。遷移先としては使わない。
+  const params = new URLSearchParams(search);
+  if (params.get('identityOnly') === '1') return true;
+  const state = params.get('liff.state');
+  if (!state || state.length > 2048 || !/^(?:\?|\/\?)/.test(state)) return false;
+  try {
+    const nested = new URL(state, 'https://candidate.invalid/');
+    return nested.origin === 'https://candidate.invalid' && nested.searchParams.get('identityOnly') === '1';
+  } catch { return false; }
+}
+
+async function showCandidateLineIdentity() {
+  // この表示は本人が検証対象を指定するための準備。サーバーのLINE署名検証を置き換えない。
+  const subject = liff.getDecodedIDToken()?.sub;
+  if (typeof subject !== 'string' || !/^U[0-9a-f]{32}$/.test(subject)) throw new Error('LINE_IDENTITY_UNAVAILABLE');
+  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(subject)));
+  const hash = Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('');
+  const main = document.createElement('main');
+  main.style.cssText = 'max-width:640px;margin:28px auto;padding:20px;font:16px/1.7 sans-serif;';
+  const heading = document.createElement('h1');
+  heading.textContent = 'LINE本人確認の準備';
+  const note = document.createElement('p');
+  note.textContent = 'いつものLINEでログインできました。以下の準備番号をコピーして、Codexのチャットへお知らせください。この画面では申込・受付の登録やメッセージ送信は行いません。';
+  const label = document.createElement('label');
+  label.textContent = '検証用の準備番号';
+  const code = document.createElement('textarea');
+  code.readOnly = true;
+  code.value = hash;
+  code.setAttribute('aria-label', '検証用の準備番号');
+  code.style.cssText = 'display:block;width:100%;min-height:6em;margin:12px 0;font:16px/1.6 monospace;overflow-wrap:anywhere;';
+  label.append(code);
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = '準備番号をコピー';
+  button.style.cssText = 'padding:12px 20px;font:inherit;';
+  button.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(hash);
+      button.textContent = 'コピーしました';
+    } catch {
+      code.focus(); code.select();
+      button.textContent = '番号を長押ししてコピーしてください';
+    }
+  });
+  const privacy = document.createElement('p');
+  privacy.textContent = '個人LINEと会社の管理アカウントは紐付けません。LINEのIDやログイン用トークンは表示・保存しません。';
+  const version = document.createElement('small');
+  version.textContent = 'v' + APP_VERSION;
+  main.append(heading, note, label, button, privacy, version);
+  document.body.replaceChildren(main);
+}
+
 async function boot() {
+  const identityOnly = candidateLineIdentityRequested(location.search);
+  if (!LIFF_ID || (!window.BFEventCandidate.lineEnabled && !identityOnly)) { el('bootText').textContent='LINE連携は隔離環境での設定待ちです。'; return; }
   if (bookingApi.isMock()) { currentIdToken='MOCK'; await loadLineRegisteredInfo(currentIdToken); return; }
   // 1) LIFF SDKをCDNから読み込む（失敗時は通常フォームへ逃がす・§2-7）
   try {
@@ -642,6 +704,10 @@ async function boot() {
     return;
   }
 
+  if (identityOnly) {
+    try { await showCandidateLineIdentity(); } catch { el('bootText').textContent='LINE本人確認の準備に失敗しました。再読み込みしてください。'; }
+    return;
+  }
   currentIdToken = idToken;
   await loadLineRegisteredInfo(idToken);
   // 🔴 ここに submit ハンドラを戻さないこと（v0.5.0で上のトップレベルへ移した）。
@@ -649,6 +715,8 @@ async function boot() {
 }
 
 boot();
+
+})();
 </script>
 
 </body>
