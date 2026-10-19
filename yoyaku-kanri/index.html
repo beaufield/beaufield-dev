@@ -792,7 +792,7 @@
 </div>
 
 <script>
-const APP_VERSION = 'v1.25.0';
+const APP_VERSION = 'v1.25.1';
 document.getElementById('headerVersion').textContent = APP_VERSION;
 // ============================================================
 // 設定（デプロイ後に GAS_URL を変更すること）
@@ -1201,21 +1201,23 @@ function _updateProductFilter(status) {
 // ============================================================
 
 /** 商品マスターが変わったときだけ呼ぶ（saveProduct/toggleProduct 後） */
-async function loadProducts() {
+// opts.afterUnknown（v1.25.1）: loadReservations と同じ。戻り値は読めたら true
+async function loadProducts(opts = {}) {
   let res;
   try {
     res = await gasGet('getProducts', {}, { onProgress: _setLoadingMessage });
   } catch(e) {
+    if (opts.afterUnknown) return false;
     // v1.24.4: 保存は成功済み。取り直しの失敗を保存の失敗に見せない（入れ直し＝二重登録の防止）
     _showNotice('保存は完了しています。商品一覧の更新だけ失敗しました', '商品一覧を更新', async () => {
       _hideNotice();
       showLoading();
       try { await loadProducts(); renderProducts(); } finally { hideLoading(); }
     }, 'warning');
-    return;
+    return false;
   }
-  _hideNotice();
-  if (!res.success) return;
+  if (!opts.afterUnknown) _hideNotice();
+  if (!res.success) return false;
   products = res.data;
   // GASが返す products は reserved_total=0/remaining=stock_limit のため
   // ローカルの reservations と突き合わせて再集計する
@@ -1232,6 +1234,7 @@ async function loadProducts() {
       }
     }
   } catch(e) {}
+  return true;
 }
 
 /** 保存応答の1件を予約一覧にマージ（新規なら追加・既存なら置換）して再描画する
@@ -1260,12 +1263,14 @@ function _mergeReservation(rec) {
 }
 
 /** 予約一覧を再取得（変更操作後に呼ぶ） */
-async function loadReservations() {
+// opts.afterUnknown（v1.25.1）: 保存の結果不明の後に呼ぶ。失敗時に「保存は完了しています」と
+// 断定せず、呼び出し元が案内を出す。戻り値は読めたら true
+async function loadReservations(opts = {}) {
   showLoading();
   try {
     const res = await gasGet('getReservations', {}, { onProgress: _setLoadingMessage });
     if (!res.success) throw new Error(res.error);
-    _hideNotice();
+    if (!opts.afterUnknown) _hideNotice();
     reservations = res.data;
     // 商品残数もローカルで更新（GAS 追加呼び出し不要）
     _refreshProductCounts();
@@ -1283,13 +1288,16 @@ async function loadReservations() {
         }
       }
     } catch(e) {}
+    return true;
   } catch(e) {
+    if (opts.afterUnknown) return false;
     // v1.24.4: この関数は保存・削除などが成功した後にだけ呼ばれる。
     // 取り直しの失敗を保存の失敗に見せない（入れ直し＝二重登録の防止）
     _showNotice('保存は完了しています。予約一覧の更新だけ失敗しました', '一覧を更新', () => {
       _hideNotice();
       loadReservations();
     }, 'warning');
+    return false;
   } finally {
     hideLoading();
   }
@@ -1382,7 +1390,7 @@ async function registerReservation() {
     }
 
   } catch(e) {
-    showToast(e.message, 'error');
+    await _onWriteError(e, 'reservations');  // v1.25.1: 結果不明は一覧を読み直して確認
   } finally {
     hideLoading();
   }
@@ -1792,7 +1800,7 @@ async function saveEditReservation() {
     await loadReservations();
 
   } catch(e) {
-    showToast(e.message, 'error');
+    await _onWriteError(e, 'reservations');  // v1.25.1: 結果不明は一覧を読み直して確認
   } finally {
     hideLoading();
   }
@@ -1814,7 +1822,7 @@ function confirmDelete(reservationNo) {
         showToast('削除しました', 'success');
         await loadReservations();
       } catch(e) {
-        showToast(e.message, 'error');
+        await _onWriteError(e, 'reservations');  // v1.25.1: 結果不明は一覧を読み直して確認
       } finally {
         hideLoading();
       }
@@ -1839,7 +1847,7 @@ function confirmStatus(reservationNo, newStatus) {
         showToast(`ステータスを「${newStatus}」に変更しました`, 'success');
         await loadReservations();
       } catch(e) {
-        showToast(e.message, 'error');
+        await _onWriteError(e, 'reservations');  // v1.25.1: 結果不明は一覧を読み直して確認
       } finally {
         hideLoading();
       }
@@ -1930,7 +1938,7 @@ function executeBulkDelete() {
         selectedNos.clear();
         await loadReservations();
       } catch(e) {
-        showToast(e.message, 'error');
+        await _onWriteError(e, 'reservations');  // v1.25.1: 結果不明は一覧を読み直して確認
       } finally {
         hideLoading();
       }
@@ -1960,7 +1968,7 @@ function executeBulkDeliveryChange() {
         selectedNos.clear();
         await loadReservations();
       } catch(e) {
-        showToast(e.message, 'error');
+        await _onWriteError(e, 'reservations');  // v1.25.1: 結果不明は一覧を読み直して確認
       } finally {
         hideLoading();
       }
@@ -1992,7 +2000,7 @@ function executeBulkConfirm() {
         selectedNos.clear();
         await loadReservations();
       } catch(e) {
-        showToast(e.message, 'error');
+        await _onWriteError(e, 'reservations');  // v1.25.1: 結果不明は一覧を読み直して確認
       } finally {
         hideLoading();
       }
@@ -2179,10 +2187,53 @@ async function executeArrival() {
     switchTab('list');
 
   } catch(e) {
-    showToast(e.message, 'error');
+    if (e instanceof ResultUnknownError) {
+      await _confirmArrivalAfterUnknown(e, targets);
+    } else {
+      showToast(e.message, 'error');
+    }
   } finally {
     hideLoading();
   }
+}
+
+/** v1.25.1: 入荷処理の返事が届かなかったとき、一覧を読み直して反映を自動で確かめる。
+ *  再送はしない（一部だけ確定した予約は、もう一度実行すると二重に分割されるため） */
+async function _confirmArrivalAfterUnknown(e, targets) {
+  console.warn('入荷処理の結果不明:', e.detail);
+  showToast(RESULT_UNKNOWN_MSG, 'warning');
+  const reloaded = await _reloadAfterUnknown('reservations');
+  if (!reloaded) { _showUnknownNotice(false); return; }
+
+  const { done, notDone } = _arrivalApplied(targets, reservations);
+  if (notDone.length === 0) {
+    closeModal('arrivalModal');
+    showToast(`入荷処理が完了しました（${done.length}件）`, 'success');
+    _showNotice('入荷処理の返事は届きませんでしたが、一覧を読み直して全件の反映を確認しました', '確認しました', _hideNotice, 'info');
+    document.getElementById('filterStatus').value = '確定';
+    switchTab('list');
+  } else if (done.length === 0) {
+    _showNotice('入荷処理は反映されていませんでした（一覧を読み直して確認済み）。内容を確かめてから、もう一度「実行する」を押してください',
+      '確認しました', _hideNotice, 'warning');
+  } else {
+    closeModal('arrivalModal');
+    _showNotice(`入荷処理が一部だけ反映されています（反映済み${done.length}件・未反映 No.${notDone.join(', No.')}）。一覧で確認してから、未反映の分だけ入荷処理をやり直してください`,
+      '確認しました', _hideNotice, 'error');
+    switchTab('list');
+  }
+}
+
+/** 入荷処理の割り当てが一覧に反映されたかを判定する（全数確定＝確定に変わった／一部確定＝元の予約の数が減った） */
+function _arrivalApplied(targets, list) {
+  const done = [], notDone = [];
+  targets.forEach(t => {
+    const row = list.find(r => Number(r.reservation_no) === Number(t.reservation_no));
+    const ok = t.confirm_qty >= t.quantity
+      ? !!row && row.status === '確定'
+      : !!row && row.status === '予約' && Number(row.quantity) === t.quantity - t.confirm_qty;
+    (ok ? done : notDone).push(t.reservation_no);
+  });
+  return { done, notDone };
 }
 
 // ============================================================
@@ -2978,7 +3029,7 @@ async function saveProduct() {
     await loadProducts();
     renderProducts();
   } catch(e) {
-    showToast(e.message, 'error');
+    await _onWriteError(e, 'products');  // v1.25.1: 結果不明は一覧を読み直して確認
   } finally {
     hideLoading();
   }
@@ -2993,7 +3044,7 @@ async function toggleProduct(productId) {
     await loadProducts();
     renderProducts();
   } catch(e) {
-    showToast(e.message, 'error');
+    await _onWriteError(e, 'products');  // v1.25.1: 結果不明は一覧を読み直して確認
   } finally {
     hideLoading();
   }
@@ -3150,18 +3201,79 @@ function _hideNotice() {
   if (bar) bar.style.display = 'none';
 }
 
+// ------------------------------------------------------------
+// v1.25.1: 保存の返事が届かなかったとき（結果不明）の扱い
+// GASは処理を終えてから、数秒で切れる受け渡しURLで結果を返す。URLが切れると
+// 返事だけが消え、画面には doGet の USE_POST や Googleのエラーページが届く。
+// このときサーバー側の処理は済んでいることが多いので、自動で再送はしない（二重登録の防止）。
+// 一覧を読み直して、反映されたかを利用者（入荷処理は画面）が確かめる。
+// ------------------------------------------------------------
+const RESULT_UNKNOWN_MSG = '結果を受け取れませんでした。処理は完了している可能性が高いので、もう一度押さずにお待ちください';
+
+class ResultUnknownError extends Error {
+  constructor(detail) {
+    super(RESULT_UNKNOWN_MSG);
+    this.name   = 'ResultUnknownError';
+    this.code   = 'RESULT_UNKNOWN';
+    this.detail = detail;  // 調査用（NETWORK / NOT_JSON_404 / POST_BODY_LOST など）
+  }
+}
+
 async function gasPost(action, data = {}) {
   const body = new URLSearchParams({
     action,
     session_token: token,
     data: JSON.stringify(data)
   });
-  const res = await fetch(GAS_URL, {
-    method: 'POST',
-    body,
-    redirect: 'follow'
-  });
-  return res.json();
+  let res;
+  try {
+    res = await fetch(GAS_URL, {
+      method: 'POST',
+      body,
+      redirect: 'follow'
+    });
+  } catch (e) {
+    throw new ResultUnknownError('NETWORK');
+  }
+  let payload;
+  try { payload = await res.json(); } catch (e) { throw new ResultUnknownError('NOT_JSON_' + res.status); }
+  // POSTの中身が消えてGETとして届いた印（doGetが返す）。処理自体は済んでいることが多い
+  if (payload && payload.error === 'USE_POST') throw new ResultUnknownError('POST_BODY_LOST');
+  return payload;
+}
+
+/** 保存系の失敗表示。結果不明なら一覧を読み直して、反映を確かめてもらう（再送はしない） */
+async function _onWriteError(e, target = 'reservations') {
+  if (!(e instanceof ResultUnknownError)) {
+    showToast(e.message, 'error');
+    return;
+  }
+  console.warn('保存の結果不明:', e.detail);
+  showToast(RESULT_UNKNOWN_MSG, 'warning');
+  const ok = await _reloadAfterUnknown(target);
+  _showUnknownNotice(ok);
+}
+
+/** 結果不明の後に一覧を読み直す。読めたら true */
+async function _reloadAfterUnknown(target) {
+  showLoading();
+  try {
+    return target === 'products'
+      ? await loadProducts({ afterUnknown: true }).then(ok => { if (ok) renderProducts(); return ok; })
+      : await loadReservations({ afterUnknown: true });
+  } finally {
+    hideLoading();
+  }
+}
+
+function _showUnknownNotice(reloaded) {
+  if (reloaded) {
+    _showNotice('保存の返事が届きませんでしたが、処理は済んでいる可能性が高いです。最新の一覧を読み込んだので、反映されているか確認してください（反映されていないときだけ、もう一度操作してください）',
+      '確認しました', _hideNotice, 'warning');
+  } else {
+    _showNotice('保存の返事が届かず、一覧の読み直しもできませんでした。もう一度押さずに、少し待ってから画面を再読み込みして確認してください',
+      '再読み込み', () => location.reload(), 'error');
+  }
 }
 
 // ============================================================
