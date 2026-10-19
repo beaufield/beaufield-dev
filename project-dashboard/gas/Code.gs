@@ -12,7 +12,7 @@
  *   SYNC_TOKEN    … 同期スクリプト用の共有シークレット（ランダム長文字列）
  */
 
-const VERSION = 'v1.12.0';
+const VERSION = 'v1.13.0';
 const APP_NAME = 'project-dashboard';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 let _requestMetric = null;
@@ -325,6 +325,13 @@ function doPost(e) {
           return jsonResponse({ success: false, error: 'SYNC_TOKEN_INVALID' });
         }
         return jsonResponse(reportJobHealth_(p));
+      }
+      case 'getHandoffCheckStatus':
+      case 'reportHandoffCheck': {
+        if (String(p.token || '') !== prop_('SYNC_TOKEN')) {
+          return jsonResponse({ success: false, error: 'SYNC_TOKEN_INVALID' });
+        }
+        return jsonResponse(p.action === 'getHandoffCheckStatus' ? getHandoffCheckStatus_() : reportHandoffCheck_(p));
       }
       case 'updateMeta': {
         const guard = authGuard_(p.session_token || '');
@@ -856,5 +863,112 @@ function reportJobHealth_(p) {
       }
     }
     return {success: true, sent: sent, suppressed: suppressed, unknown: unknown};
+  } finally { lock.releaseLock(); }
+}
+
+// 週1回の引き継ぎ確認。送信先は既存の本人用設定に固定する。
+function handoffWeek_(now) {
+  const shifted = new Date(now + 9 * 3600000 - (6 * 60 + 10) * 60000);
+  const days = (shifted.getUTCDay() + 5) % 7; // 火曜6:10を週の開始とする。
+  shifted.setUTCDate(shifted.getUTCDate() - days);
+  const week = shifted.toISOString().slice(0, 10);
+  const next = new Date(Date.parse(week + 'T06:10:00+09:00') + 7 * 86400000);
+  return {week_id: week, next_due_jst: new Date(next.getTime() + 9 * 3600000).toISOString().slice(0, 16).replace('T', ' ')};
+}
+
+function getHandoffCheckStatus_() {
+  const props = PropertiesService.getScriptProperties();
+  const state = JSON.parse(props.getProperty('HANDOFF_WEEK_STATE') || '{}');
+  const period = handoffWeek_(Date.now());
+  return {success: true, initialized: !!state.initialized, week_id: period.week_id,
+    due: !state.initialized || state.week_id !== period.week_id || state.delivery === 'rejected',
+    next_due_jst: period.next_due_jst, delivery: state.delivery || 'none'};
+}
+
+function reportHandoffCheck_(p) {
+  const now = Date.now();
+  const period = handoffWeek_(now);
+  const observed = syncTimestamp_(p.observed_at);
+  if (!Number.isFinite(observed) || observed > now + 300000 || observed < now - 3600000 ||
+      p.week_id !== period.week_id || !Number.isInteger(p.documents) || p.documents < 1 || p.documents > 500 ||
+      p.read_errors !== 0 || !Array.isArray(p.items) || p.items.length > 50 ||
+      !Number.isInteger(p.format_review) || p.format_review < 0 || p.format_review > p.documents) {
+    return {success: false, error: 'INVALID_HANDOFF_REPORT'};
+  }
+  const ids = new Set();
+  for (const item of p.items) {
+    if (!item || !/^[a-f0-9]{64}$/.test(item.id) || ids.has(item.id) ||
+        !['dated_action', 'owner_wait'].includes(item.kind) ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(item.date) ||
+        typeof item.project !== 'string' || !item.project || item.project.length > 60 ||
+        typeof item.text !== 'string' || !item.text || item.text.length > 160 ||
+        /[\x00-\x1f\x7f]|https?:|webhook|token[=:]/i.test(item.project + item.text)) {
+      return {success: false, error: 'INVALID_HANDOFF_REPORT'};
+    }
+    ids.add(item.id);
+  }
+  const props = PropertiesService.getScriptProperties();
+  const endpoint = props.getProperty('JOB_ALERT_PRIVATE_WEBHOOK');
+  if (!endpoint || !/^https:\/\/webhook\.worksmobile\.com\//.test(endpoint)) {
+    return {success: false, error: 'PRIVATE_ALERT_NOT_CONFIGURED'};
+  }
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(2000)) return {success: false, error: 'ALERT_BUSY'};
+  try {
+    const state = JSON.parse(props.getProperty('HANDOFF_WEEK_STATE') || '{}');
+    if (state.initialized && state.week_id === period.week_id && state.delivery !== 'rejected') {
+      return {success: true, sent: 0, new_items: 0, mode: 'already_checked', delivery: state.delivery};
+    }
+    const saved = props.getProperties();
+    const keys = Object.keys(saved).filter(key => key.indexOf('HANDOFF_SEEN_') === 0);
+    const fresh = p.items.filter(item => !saved['HANDOFF_SEEN_' + item.id]);
+    // 履歴は消さない。容量上限では黙って古い案件を再通知せず停止する。
+    if (keys.length + fresh.length > 512) return {success: false, error: 'HANDOFF_HISTORY_FULL'};
+    const stamp = new Date(now).toISOString();
+    const nextState = {initialized: true, week_id: period.week_id, checked_at: stamp,
+      documents: p.documents, format_review: p.format_review, new_items: fresh.length, delivery: 'none'};
+    const additions = {};
+    fresh.forEach(item => additions['HANDOFF_SEEN_' + item.id] = stamp);
+    if (!state.initialized) {
+      // 既に本人へ説明した項目は初期記録に登録し、開始通知で送り直さない。
+      if (fresh.length) props.setProperties(additions, false);
+      props.setProperty('HANDOFF_WEEK_STATE', JSON.stringify(nextState));
+      return {success: true, sent: 0, new_items: 0, baseline_items: p.items.length, mode: 'baseline'};
+    }
+    if (!fresh.length) {
+      props.setProperty('HANDOFF_WEEK_STATE', JSON.stringify(nextState));
+      return {success: true, sent: 0, new_items: 0, mode: 'quiet'};
+    }
+    let message = '【週1回・引き継ぎの確認】新しい確認候補 ' + fresh.length + '件\n';
+    message += '記録上の確認候補です。未完了や障害の断定ではありません。\n';
+    fresh.slice(0, 5).forEach(item => {
+      message += '\n・' + item.project + '（' + (item.kind === 'dated_action' ? '予定日経過 ' + item.date : '本人確認待ち') + '）\n' + item.text + '\n';
+    });
+    if (fresh.length > 5) message += '\nほか' + (fresh.length - 5) + '件。';
+    message += '\n詳細: ai-batch/out/handoff-weekly/ の最新レポート。\n同じ内容の再通知はしません。';
+    // 先に記録し、応答不明でも同じ通知を盲目的に再送しない。
+    props.setProperties(additions, false);
+    nextState.delivery = 'attempting';
+    props.setProperty('HANDOFF_WEEK_STATE', JSON.stringify(nextState));
+    let response;
+    try {
+      response = UrlFetchApp.fetch(endpoint, {method: 'post', contentType: 'application/json',
+        payload: JSON.stringify({body: {text: message}}), muteHttpExceptions: true, followRedirects: false});
+    } catch (_) {
+      nextState.delivery = 'unknown';
+      props.setProperty('HANDOFF_WEEK_STATE', JSON.stringify(nextState));
+      return {success: false, error: 'ALERT_DELIVERY_UNKNOWN'};
+    }
+    const code = response.getResponseCode();
+    if (code < 200 || code >= 300) {
+      // 明示的な拒否だけは次の通常起動で再確認できるようにする。
+      Object.keys(additions).forEach(key => props.deleteProperty(key));
+      nextState.delivery = 'rejected';
+      props.setProperty('HANDOFF_WEEK_STATE', JSON.stringify(nextState));
+      return {success: false, error: 'ALERT_REJECTED'};
+    }
+    nextState.delivery = 'accepted';
+    props.setProperty('HANDOFF_WEEK_STATE', JSON.stringify(nextState));
+    return {success: true, sent: 1, new_items: fresh.length, mode: 'notified', delivery: 'accepted'};
   } finally { lock.releaseLock(); }
 }
