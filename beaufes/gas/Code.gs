@@ -186,7 +186,7 @@
 //   詳細・実装計画は `名札印刷_badges設計.md`（総チェック3周・25件の落とし穴を反映済み）。
 // ============================================================
 
-const VERSION  = '0.44.0';
+const VERSION = '0.45.2';
 const APP_NAME = 'beaufes';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -773,7 +773,7 @@ function _alertOncePerDay(propKey, text) {
 //    email+氏名判定より必ず先に見て、新規登録もexisting_notifiedもどちらにも入らせず
 //    その場でapp_id/pass_urlを返す（メール再送はしない・行も書き換えない）。
 // ============================================================
-function applyApplication(data, clientAttempt) {
+function _eventOriginal_applyApplication_(data, clientAttempt) {
   _checkProps();
 
   const v = _validateApplicationFields(data, { requireAgree: true });
@@ -960,7 +960,7 @@ function applyApplication(data, clientAttempt) {
 //    🔴 ticket_token（列17）・app_id（列1）・status（列18）は絶対に書き換えない。
 //    🔴 重複判定は行わない（token を持っている時点で本人の編集と確定しているため）。
 // ============================================================
-function updateApplication(data) {
+function _eventOriginal_updateApplication_(data) {
   _checkProps();
 
   const token = String(data.ticket_token || '').trim();
@@ -1118,7 +1118,7 @@ function _updateLineLockedApplicationRow(sh, rowNumber, row, fields) {
   sh.getRange(rowNumber, 20).setValue(_applicationCellValue(fields.note));
 }
 
-function liffPrefill(data) {
+function _eventOriginal_liffPrefill_(data) {
   _checkProps();
   let actor;
   try { actor = _verifyLineIdToken(String(data.id_token || '').trim()); }
@@ -1155,7 +1155,7 @@ function liffPrefill(data) {
 //    duplicate_found / mode / target_app_id は存在しない（L0-Xで廃止済み。Web版と同じ）。
 //    🔴 §2-2のメール＋氏名一致ロジックはLIFFでは使わない（line_user_idが本人確認そのものなので不要）。
 // ============================================================
-function applyLiff(data) {
+function _eventOriginal_applyLiff_(data) {
   _checkProps();
 
   const idToken = String(data.id_token || '').trim();
@@ -1431,7 +1431,7 @@ function _buildBandsFromConfig(cfg) {
 
 // 来場者名札の名簿を返す（doPost: action=listBadges）。
 // data: { session_token, business_types?, date_field?, created_from?, created_to? }
-function listBadges(data) {
+function _eventOriginal_listBadges_(data) {
   const auth = _requireSession(data);
   if (!auth.ok) return _err(auth.error);
   _checkProps();
@@ -1502,7 +1502,7 @@ function listBadges(data) {
 
 // 予備名札の一覧を返す（doPost: action=listSpareBadges）。data: { session_token }
 // 未割当のみ/すべての絞り込みは画面側で行う（§5-4。既定＝未割当のみ）。
-function listSpareBadges(data) {
+function _eventOriginal_listSpareBadges_(data) {
   const auth = _requireSession(data);
   if (!auth.ok) return _err(auth.error);
   _checkProps();
@@ -1588,7 +1588,7 @@ function getPass(data) {
 //    🔴 メールアドレスの存在有無を応答で区別しない（該当が無くても success を返す）。
 //    そうしないと「このメールアドレスは申込済みか」を外部から総当たりで調べられてしまう。
 // ============================================================
-function resendPass(data) {
+function _eventOriginal_resendPass_(data) {
   _checkProps();
   const email = String(data.email || '').trim();
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -1955,7 +1955,7 @@ function _ensureLineFriendsCacheSheet(ss) {
 
 // LINE Harnessから全友だちを取得し、line_friends_cacheシートを全書き換えする。
 // 時間トリガーで6時間ごとに実行する想定（GASエディタのトリガー画面から手動設定。§4 L1-a）。
-function syncLineFriends() {
+function _eventOriginal_syncLineFriends_() {
   _checkProps();
   const friends = _lhFetchAllFriends();
 
@@ -2033,7 +2033,7 @@ function _findFriendByLineUserId(lineUserId) {
 
 // 診断用（GASエディタから手動実行）。1ページ目だけ取得し、件数・キー名・lineUserIdの
 // 有無をログ出力する。L0-1（GAS→LINE Harness疎通）の完了条件確認に使う。
-function probeLineHarness() {
+function _eventOriginal_probeLineHarness_() {
   const json  = _lhReq('GET', '/api/friends?limit=1&offset=0', null);
   const data  = (json && json.data) ? json.data : {};
   const items = data.items || [];
@@ -2380,7 +2380,7 @@ function _reservedSessionLabels(appId) {
 //    ticket_token を添えると「その人の現在の予約」も一緒に返す（pass.html用）。
 //    🔴 氏名・メール等の個人情報は返さない。返すのは枠の情報と自分の予約だけ。
 // ============================================================
-function listSessions(data) {
+function _eventOriginal_listSessions_(data) {
   _checkProps();
   const ss=SpreadsheetApp.openById(SPREADSHEET_ID);
   const token=String((data && data.ticket_token)||'').trim();
@@ -2400,7 +2400,7 @@ function listSessions(data) {
 //    🔴 キャンセル済み申込の予約は `app_status='cancelled'` を付けて返し、
 //       件数（reserved_count）には数えない。画面側で「席は戻っている」と分かるようにするため。
 // ============================================================
-function listReservations(data) {
+function _eventOriginal_listReservations_(data) {
   const auth = _requireSession(data);
   if (!auth.ok) return _err(auth.error);
 
@@ -2471,7 +2471,7 @@ function listReservations(data) {
 //    席の計算は _countReserved が毎回除外するので**実行しなくても定員は正しい**。
 //    reservations シートを人が見たときに紛らわしくないよう整えるためだけのもの。
 // ============================================================
-function releaseCancelledReservations() {
+function _eventOriginal_releaseCancelledReservations_() {
   _checkProps();
   const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sh  = ss.getSheetByName(SHEET_RESERVATIONS);
@@ -2536,7 +2536,7 @@ function _parseSessionIds(v) {
 //    updateApplication と同じ考え方）。pass.html の予約UIから呼ばれる。
 //    sessions: [] を送ると全て取消になる。
 // ============================================================
-function reserveSessions(data) {
+function _eventOriginal_reserveSessions_(data) {
   _checkProps();
 
   const token = String(data.ticket_token || '').trim();
@@ -2603,7 +2603,7 @@ function reserveSessions(data) {
 //    【本番シートに対して一度だけ手動実行する】GASエディタで migrateAddSessionDetailColumns
 //    を選び▷実行。2回実行しても冪等。
 // ============================================================
-function migrateAddSessionDetailColumns() {
+function _eventOriginal_migrateAddSessionDetailColumns_() {
   _checkProps();
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sh = ss.getSheetByName(SHEET_SESSIONS);
@@ -2620,7 +2620,7 @@ function migrateAddSessionDetailColumns() {
 }
 
 // sessions に予約経路（L列）と共有定員グループ（M列）を追加する。既存値は上書きしない。
-function migrateAddSessionBookingColumns() {
+function _eventOriginal_migrateAddSessionBookingColumns_() {
   _checkProps();
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sh = ss.getSheetByName(SHEET_SESSIONS);
@@ -2646,7 +2646,7 @@ function migrateAddSessionBookingColumns() {
 //    🔴 slot（B列）が同じ枠どうしは排他になる（お客様は1つしか選べない）。
 //       バランス革命の計測会は7枠すべて同じ slot なので、1人1枠しか取れない。
 // ============================================================
-function seedSeminarSessions() {
+function _eventOriginal_seedSeminarSessions_() {
   _checkProps();
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   let sh = ss.getSheetByName(SHEET_SESSIONS);
@@ -2759,7 +2759,7 @@ function seedSeminarSessions() {
 // スプレッドシート初期セットアップ
 // GASエディタから手動で一度だけ実行すること
 // ============================================================
-function setupSheets() {
+function _eventOriginal_setupSheets_() {
   _checkProps();
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
 
@@ -2900,7 +2900,7 @@ function setupSheets() {
 // シートが既に存在する場合は何もしないため、既存シートへの列追加はこの関数が担う）。
 // 新規にsetupSheetsでシートを作る場合はヘッダーに最初から含まれるため実行不要。
 // ============================================================
-function migrateAddBusinessType() {
+function _eventOriginal_migrateAddBusinessType_() {
   _checkProps();
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sh = _getSheet(ss, SHEET_APPLICATIONS);
@@ -2924,7 +2924,7 @@ function migrateAddBusinessType() {
 // 自動で列が増えないため）。新規にsetupSheetsでシートを作る場合はヘッダーに
 // 最初から含まれるため実行不要。2回実行しても冪等（既にV1にあれば何もしない）。
 // ============================================================
-function migrateAddRequestIdColumn() {
+function _eventOriginal_migrateAddRequestIdColumn_() {
   _checkProps();
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sh = _getSheet(ss, SHEET_APPLICATIONS);
@@ -2952,7 +2952,7 @@ function migrateAddRequestIdColumn() {
 // 【本番シートに対して一度だけ手動実行すること】GASエディタの関数選択で
 // migrateFixPhoneColumn を選び、▷実行する。
 // ============================================================
-function migrateFixPhoneColumn() {
+function _eventOriginal_migrateFixPhoneColumn_() {
   _checkProps();
   const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sh  = _getSheet(ss, SHEET_APPLICATIONS);
@@ -2993,7 +2993,7 @@ function _ensureSpareBadgesSheet(ss) {
 
 // 予備名札を count 件（既定20）発行する。【本番シートに対して手動実行すること】
 // 🔴 既存行は絶対に上書きしない。P-01が既にあればP-21から続けて追加する（冪等）。
-function setupSpareBadges(count) {
+function _eventOriginal_setupSpareBadges_(count) {
   _checkProps();
   count = count || 20;
 
@@ -3027,7 +3027,7 @@ function setupSpareBadges(count) {
 // 【本番シートに対して手動実行すること】badges.html §5-6・§14-3。
 // 🔴 色はコードに直書きしない方針の実体化。A/B/Cの実際の色は用紙が決まってから
 // たかしさんがconfigシートを書き換えるだけで変わる。ここに入れるのは仮置きの既定値。
-function seedBadgeConfig() {
+function _eventOriginal_seedBadgeConfig_() {
   _checkProps();
   const ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sh  = _getSheet(ss, SHEET_CONFIG);
@@ -3343,7 +3343,7 @@ function _adminBookingSnapshot(appRows, resRows, sessionRows, operationRows, boo
 }
 
 // 社員ページの一覧・設定・予約snapshotを1往復で返す。業務データは一切書き換えない。
-function adminBootstrap(data) {
+function _eventOriginal_adminBootstrap_(data) {
   const started = Date.now();
   const authStarted = Date.now();
   const auth = _requireSession(data);
@@ -3448,7 +3448,7 @@ function adminBootstrap(data) {
 // 申込一覧を返す（doPost: action=listApplications）。data: { session_token }
 // 🔴 絞り込み・集計は画面側で行う（件数が数百なので全件返して即時フィルタするほうが速く、
 //    GAS側の分岐も増えない）。ticket_token は返さない（入場パスの鍵そのものなので一覧に不要）。
-function listApplications(data) {
+function _eventOriginal_listApplications_(data) {
   const auth = _requireSession(data);
   if (!auth.ok) return _err(auth.error);
   _checkProps();
@@ -3473,7 +3473,7 @@ function listApplications(data) {
 // 担当をまとめて設定する（doPost: action=setTantou）。
 // data: { session_token, app_ids: 'F2026-0001,F2026-0002', tantou: '前島' }
 // tantou が空文字なら「未割当に戻す」。app_id は F2026-0001 形式でカンマを含まない。
-function setTantou(data) {
+function _eventOriginal_setTantou_(data) {
   const auth = _requireSession(data);
   if (!auth.ok) return _err(auth.error);
   _checkProps();
@@ -3530,7 +3530,7 @@ function setTantou(data) {
 // GASエディタの関数選択で seedTantouList を選び ▷実行（引数なしなら既定値が入る）。
 // 既に値が入っている場合は上書きしない（運用中の設定を潰さないため）。
 // 担当者の増減はスプレッドシートの config シートを直接編集すればよい。
-function seedTantouList(namesCsv) {
+function _eventOriginal_seedTantouList_(namesCsv) {
   _checkProps();
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sh = _getSheet(ss, SHEET_CONFIG);
@@ -3651,7 +3651,7 @@ function _ensureBoothSheets(ss) {
 }
 
 // 【本番シートに対して手動実行する】booth用シート4枚を作る（STEP 1）。冪等。
-function setupBoothSheets() {
+function _eventOriginal_setupBoothSheets_() {
   _checkProps();
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   _ensureBoothSheets(ss);
@@ -3660,7 +3660,7 @@ function setupBoothSheets() {
 
 // 【手動実行】動作確認用のテストブース1件と商品3件を入れる（STEP 1）。
 // 既に B99 があれば何もしない。🔴 本番のブースは B01〜 を手で作る。
-function seedTestBooth() {
+function _eventOriginal_seedTestBooth_() {
   _checkProps();
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sheets = _ensureBoothSheets(ss);
@@ -3701,7 +3701,7 @@ function seedTestBooth() {
 // ============================================================
 const TEST_APP_ID = 'TEST-RES';
 
-function seedTestApplication() {
+function _eventOriginal_seedTestApplication_() {
   _checkProps();
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
 
@@ -3754,7 +3754,7 @@ function seedTestApplication() {
 }
 
 // テスト申込と、その予約行を消す。何度実行しても安全。
-function deleteTestApplication() {
+function _eventOriginal_deleteTestApplication_() {
   _checkProps();
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
 
@@ -4096,7 +4096,7 @@ function _boothSyncItems(sheets, orderId, boothId, snapItems, delivery) {
 // ------------------------------------------------------------
 // boothInit（GET・認証なし・booth_token で認可・§4-1）
 // ------------------------------------------------------------
-function boothInit(data) {
+function _eventOriginal_boothInit_(data) {
   _checkProps();
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sheets = _ensureBoothSheets(ss);
@@ -4174,7 +4174,7 @@ function _boothParseSubmit(data) {
   };
 }
 
-function boothSubmit(data) {
+function _eventOriginal_boothSubmit_(data) {
   _checkProps();
 
   // ===== ロックの外（重い読み取りは全部ここ・§5-2）=====
@@ -4403,7 +4403,7 @@ function _boothNotifyLine(sheets, rowNum, appRec, makerName, snapItems, validati
 // ------------------------------------------------------------
 // boothVoid（POST・認証なし・§4-3/§2-2）
 // ------------------------------------------------------------
-function boothVoid(data) {
+function _eventOriginal_boothVoid_(data) {
   _checkProps();
   const d = data || {};
 
@@ -4485,7 +4485,7 @@ function boothVoid(data) {
 // boothRecent（POST・認証なし・§4-4）
 // 🔴 氏名・サロン名は返さない。entry_label は「解決済みなら app_id、未解決なら生の入力値」
 // ------------------------------------------------------------
-function boothRecent(data) {
+function _eventOriginal_boothRecent_(data) {
   _checkProps();
   const d = data || {};
   const limit = Math.min(Math.max(parseInt(d.limit, 10) || 10, 1), 50);
@@ -4535,7 +4535,7 @@ function boothRecent(data) {
 // ------------------------------------------------------------
 
 // 撤収照合用。ブース別に COMPLETE&active / PENDING / unresolved の件数を返す（§15-5-4）
-function boothSummary(data) {
+function _eventOriginal_boothSummary_(data) {
   const authz = _requireSession(data);
   if (!authz.ok) return _err(authz.error);
   _checkProps();
@@ -4590,7 +4590,7 @@ function boothSummary(data) {
 // unresolved 行の一括再解決（§4-5）。🔴 mail_merge 生成の直前に必ず実行する（§7ルール6）
 // ロックは取らない: 書き込むのは該当行の H〜J・S だけで、boothSubmit の再送が同時に書いても
 // 同じ値になる（解決は生の入力キーから決まる）。当日終了後に社員が回す想定。
-function boothResolveUnresolved(data) {
+function _eventOriginal_boothResolveUnresolved_(data) {
   const authz = _requireSession(data);
   if (!authz.ok) return _err(authz.error);
   _checkProps();
@@ -4643,7 +4643,7 @@ function boothResolveUnresolved(data) {
 
 // メーカー別・商品別の集計CSV（§4-5）。母集団は COMPLETE かつ active。
 // 🔴 subject_cancelled は**含める**（実際に発生した注文なので・§2-5）
-function boothExportCsv(data) {
+function _eventOriginal_boothExportCsv_(data) {
   const authz = _requireSession(data);
   if (!authz.ok) return _err(authz.error);
   _checkProps();
@@ -4719,7 +4719,7 @@ function _boothCsvCell(v) {
 // 端末の書き出しJSONは { idempotency_key, type:'submit'|'void', payload } の配列。
 // 🔴 payload をそのまま boothSubmit / boothVoid へ流すので、投入は冪等
 //   （同じものを端末が後から送っても二重にならない）
-function boothImportQueue(data) {
+function _eventOriginal_boothImportQueue_(data) {
   const authz = _requireSession(data);
   if (!authz.ok) return _err(authz.error);
   _checkProps();
@@ -4800,7 +4800,7 @@ function _ensureCheckinsSheet(ss) {
 // 名簿取得（doPost: action=scanRoster）。当日朝に各端末で1回だけ叩く。
 // data: { session_token }
 // ------------------------------------------------------------
-function scanRoster(data) {
+function _eventOriginal_scanRoster_(data) {
   const auth = _requireSession(data);
   if (!auth.ok) return _err(auth.error);
   _checkProps();
@@ -4870,7 +4870,7 @@ function scanRoster(data) {
 //    checkins は監査用の生ログであり、重複入場の判断材料そのものを消してはいけない。
 //    画面へは already_checked_in で知らせる。
 // ------------------------------------------------------------
-function scanCheckin(data) {
+function _eventOriginal_scanCheckin_(data) {
   const auth = _requireSession(data);
   if (!auth.ok) return _err(auth.error);
   _checkProps();
@@ -4999,7 +4999,7 @@ function _scanSubjectKey(appId, raw) {
 // data: { session_token }
 // 🔴 これが取れなくても受付は止まらない。失われるのは「重複入場の検知」だけ（§3-2）。
 // ------------------------------------------------------------
-function scanCheckedIn(data) {
+function _eventOriginal_scanCheckedIn_(data) {
   const auth = _requireSession(data);
   if (!auth.ok) return _err(auth.error);
   _checkProps();
@@ -5079,7 +5079,7 @@ function _validateAdminApplication(data) {
 //    行は増えない（配送障害の実測: 書けたのに返事が来ない・調査レポート §3-2）。
 // 🔴 控えメールは送らない（2026-09-06 確定）。目の前にいる人にパスURLを送っても使わず、
 //    メール枠100通/日を当日の他の用途のために残す。
-function adminCreateApplication(data) {
+function _eventOriginal_adminCreateApplication_(data) {
   const auth = _requireSession(data);
   if (!auth.ok) return _err(auth.error);
   _checkProps();
@@ -5139,7 +5139,7 @@ function adminCreateApplication(data) {
 //    未解決注文の自己修復は「生トークン → applications.ticket_token を検索」で行うため、
 //    同じ spare_no を別人に割り当て直せると、先に記録された未解決注文が後の別人に紐づく。
 //    誤紐づけの唯一の経路なので入口で塞ぐ。
-function assignSpare(data) {
+function _eventOriginal_assignSpare_(data) {
   const auth = _requireSession(data);
   if (!auth.ok) return _err(auth.error);
   _checkProps();
@@ -5227,7 +5227,7 @@ function assignSpare(data) {
 //
 // 公開の resendPass（メールアドレス指定・該当の有無を隠して常に同じ応答を返す）とは別物。
 // 社員用なので「送ったのか、抑止されたのか、メールが無いのか」を正直に返す。
-function adminResendPass(data) {
+function _eventOriginal_adminResendPass_(data) {
   const auth = _requireSession(data);
   if (!auth.ok) return _err(auth.error);
   _checkProps();
@@ -5349,7 +5349,7 @@ function _spareTokenInUse(ss, token) {
 
 // 予備名札の割当を取り消す（doPost: action=releaseSpare）。
 // data: { session_token, spare_no }
-function releaseSpare(data) {
+function _eventOriginal_releaseSpare_(data) {
   const auth = _requireSession(data);
   if (!auth.ok) return _err(auth.error);
   _checkProps();
@@ -5617,7 +5617,7 @@ function _bookingView(ss,appId,actorKind) {
     return {app_id:appId,sessions:sessions,reserved:reserved,booking_revision:_bookingRevision(ss,appId),booking_open:_bookingOpen()};
   } finally {lock.releaseLock();}
 }
-function staffGetReservations(data) {
+function _eventOriginal_staffGetReservations_(data) {
   const auth=_requireSession(data);if(!auth.ok)return _err(auth.error);
   const ss=SpreadsheetApp.openById(SPREADSHEET_ID),appId=String(data.app_id||'');
   const lock=LockService.getScriptLock();if(!lock.tryLock(10000))return _err('LOCK_BUSY');
@@ -5641,7 +5641,7 @@ function staffGetReservations(data) {
     return _err(String(e&&e.message||e)==='BOOKING_RECOVERY_REQUIRED'?'BOOKING_RECOVERY_REQUIRED':'INTERNAL_ERROR');
   } finally {lock.releaseLock();}
 }
-function staffChangeReservation(data) {
+function _eventOriginal_staffChangeReservation_(data) {
   const auth=_requireSession(data);if(!auth.ok)return _err(auth.error);
   if(!Array.isArray(data.sessions))return _err('INVALID_REQUEST');
   const lock=LockService.getScriptLock();if(!lock.tryLock(10000))return _err('LOCK_BUSY');
@@ -5736,7 +5736,7 @@ function _duplicateRejectPending(ss, appId) {
 // GASエディタ／認可済み運用ツールからのみ実行。doGet/doPostには接続しない。
 // 指定例: {old_app_id:'...',canonical_app_id:'...',retain_old_session_ids:['F1'],
 //         cancel_old_session_ids:[],cancel_new_session_ids:[]}
-function mergeApplicationDuplicate(input) {
+function _eventOriginal_mergeApplicationDuplicate_(input) {
   _checkProps();
   const d=input||{},oldId=String(d.old_app_id||'').trim(),newId=String(d.canonical_app_id||'').trim();
   const retain=d.retain_old_session_ids,cancelOld=d.cancel_old_session_ids,cancelNew=d.cancel_new_session_ids;
@@ -5843,7 +5843,7 @@ function mergeApplicationDuplicate(input) {
   } finally {lock.releaseLock();}
 }
 // 管理用の移行はGASエディタだけから実行し、公開doGet/doPostには接続しない。
-function prepareFemcareBooking() {
+function _eventOriginal_prepareFemcareBooking_() {
   const lock=LockService.getScriptLock();lock.waitLock(30000);
   try {
     const ss=SpreadsheetApp.openById(SPREADSHEET_ID),sh=ss.getSheetByName(SHEET_SESSIONS);
@@ -5864,7 +5864,7 @@ function prepareFemcareBooking() {
     Logger.log('READY: S1 only, booking disabled, '+ids.length+' session rows retained');
   } finally {lock.releaseLock();}
 }
-function openFemcareBooking() {
+function _eventOriginal_openFemcareBooking_() {
   const lock=LockService.getScriptLock();lock.waitLock(30000);
   try {
     const ss=SpreadsheetApp.openById(SPREADSHEET_ID),all=_readSessions(ss);
@@ -5873,7 +5873,7 @@ function openFemcareBooking() {
     _bookingRecover(ss);_PROPS.setProperty('SEMINAR_BOOKING_ENABLED','true');Logger.log('OPEN: S1');
   } finally {lock.releaseLock();}
 }
-function pauseSeminarBooking() { _PROPS.setProperty('SEMINAR_BOOKING_ENABLED','false');Logger.log('PAUSED: existing reservations retained'); }
+function _eventOriginal_pauseSeminarBooking_() { _PROPS.setProperty('SEMINAR_BOOKING_ENABLED','false');Logger.log('PAUSED: existing reservations retained'); }
 
 const EXPANDED_BOOKING_S2_OVERVIEW =
   '「整形級！」とも言われ有名芸能人の愛用者も多い炭酸ガスパック。\n' +
@@ -5962,7 +5962,7 @@ function _expandedBookingRules() {
 }
 
 // 本番反映時だけGASエディタから実行する。まず全予約受付を止め、16枠を照合してから設定する。
-function prepareExpandedSeminarBooking() {
+function _eventOriginal_prepareExpandedSeminarBooking_() {
   const lock=LockService.getScriptLock();lock.waitLock(30000);
   try {
     const ss=SpreadsheetApp.openById(SPREADSHEET_ID),sh=ss.getSheetByName(SHEET_SESSIONS);
@@ -5991,7 +5991,7 @@ function prepareExpandedSeminarBooking() {
 }
 
 // prepareExpandedSeminarBooking後の設定を再照合し、問題が無いときだけ受付を再開する。
-function openExpandedSeminarBooking() {
+function _eventOriginal_openExpandedSeminarBooking_() {
   const lock=LockService.getScriptLock();lock.waitLock(30000);
   try {
     const ss=SpreadsheetApp.openById(SPREADSHEET_ID),rules=_expandedBookingRules();
@@ -6010,7 +6010,7 @@ function openExpandedSeminarBooking() {
 // S1/S2/B/Fの16枠に、シンビシン3機種18枠を追加する。
 // シンビシン3機種はそれぞれ単独枠にする。
 // 本番反映時だけGASエディタから実行する。処理中は予約受付を停止し、再実行しても同じ状態になる。
-function prepareShinbishinExperienceBooking() {
+function _eventOriginal_prepareShinbishinExperienceBooking_() {
   const lock=LockService.getScriptLock();lock.waitLock(30000);
   try {
     const ss=SpreadsheetApp.openById(SPREADSHEET_ID),sh=ss.getSheetByName(SHEET_SESSIONS);
@@ -6051,7 +6051,7 @@ function prepareShinbishinExperienceBooking() {
 
 // 既存34枠と予約を維持し、M/N各6枠のresource_group(M列)だけを空欄にする。
 // 受付を止めた状態で実行し、固定版切替後は openShinbishinStandaloneBooking で再開する。
-function prepareShinbishinStandaloneBooking() {
+function _eventOriginal_prepareShinbishinStandaloneBooking_() {
   const lock=LockService.getScriptLock();lock.waitLock(30000);
   try {
     const ss=SpreadsheetApp.openById(SPREADSHEET_ID),sh=ss.getSheetByName(SHEET_SESSIONS);
@@ -6085,7 +6085,7 @@ function prepareShinbishinStandaloneBooking() {
 }
 
 // 34枠の内容とM/N/Hの独立設定を照合して受付を再開する。
-function openShinbishinStandaloneBooking() {
+function _eventOriginal_openShinbishinStandaloneBooking_() {
   const lock=LockService.getScriptLock();lock.waitLock(30000);
   try {
     const ss=SpreadsheetApp.openById(SPREADSHEET_ID),baseRules=_expandedBookingRules(),newRules=_shinbishinExperienceRules();
@@ -6108,7 +6108,7 @@ function openShinbishinStandaloneBooking() {
 
 // 本番の既存34枠を維持し、H1〜H6のresource_groupだけを空欄にして単独枠へ移行する。
 // Mico Stella/NOVELUXEの共有設定・予約行・時刻・説明・定員には触れない。再実行しても同じ状態になる。
-function prepareHifaceStandaloneBooking() {
+function _eventOriginal_prepareHifaceStandaloneBooking_() {
   const lock=LockService.getScriptLock();lock.waitLock(30000);
   try {
     const ss=SpreadsheetApp.openById(SPREADSHEET_ID),sh=ss.getSheetByName(SHEET_SESSIONS);
@@ -6141,7 +6141,7 @@ function prepareHifaceStandaloneBooking() {
 }
 
 // HIFace単独6枠とMico Stella/NOVELUXE共有6組を含む全34枠を照合して受付を再開する。
-function openHifaceStandaloneBooking() {
+function _eventOriginal_openHifaceStandaloneBooking_() {
   const lock=LockService.getScriptLock();lock.waitLock(30000);
   try {
     const ss=SpreadsheetApp.openById(SPREADSHEET_ID),baseRules=_expandedBookingRules(),newRules=_shinbishinExperienceRules();
@@ -6165,6 +6165,118 @@ function openHifaceStandaloneBooking() {
 }
 
 // 旧運用手順から呼ばれても、新しい単独枠仕様を照合してから再開する互換入口。
-function openShinbishinExperienceBooking() {
+function _eventOriginal_openShinbishinExperienceBooking_() {
   return openShinbishinStandaloneBooking();
 }
+
+// 日本語コメント: 旧GASの新規書込みを閉じ、開始済みの操作が終わるまで切替を待つ。再開は自動で行わない。
+let _eventMigrationDepth_ = 0;
+function _eventMigrationLeases_() {
+ const raw=_PROPS.getProperty('BF_EVENT_WRITER_LEASES')||'{}';
+ let leases;try{leases=JSON.parse(raw);}catch(_){throw new Error('WRITER_JOURNAL_INVALID');}
+ if(!leases||Array.isArray(leases)||typeof leases!=='object')throw new Error('WRITER_JOURNAL_INVALID');
+ return leases;
+}
+function _eventMigrationRun_(name,task){
+ if(_eventMigrationDepth_>0)return task();
+ const lock=LockService.getScriptLock();let id;
+ lock.waitLock(30000);
+ try{
+  if(_PROPS.getProperty('BF_EVENT_WRITES_CLOSED')==='true')return _err('EVENT_WRITE_CLOSED');
+  const leases=_eventMigrationLeases_();id=Utilities.getUuid();leases[id]={operation:name,started:Date.now()};
+  _PROPS.setProperty('BF_EVENT_WRITER_LEASES',JSON.stringify(leases));
+ }finally{lock.releaseLock();}
+ _eventMigrationDepth_++;
+ try{return task();}
+ finally{
+  _eventMigrationDepth_--;
+  lock.waitLock(30000);
+  try{const leases=_eventMigrationLeases_();delete leases[id];_PROPS.setProperty('BF_EVENT_WRITER_LEASES',JSON.stringify(leases));}
+  finally{lock.releaseLock();}
+ }
+}
+function freezeEventWritesForSupabase(){
+ const lock=LockService.getScriptLock();lock.waitLock(30000);
+ try{
+  _eventMigrationLeases_();
+  if(_PROPS.getProperty('BF_EVENT_WRITES_CLOSED')!=='true'){
+   _PROPS.setProperty('BF_EVENT_WRITES_CLOSED','true');
+   _PROPS.setProperty('BF_EVENT_WRITES_CLOSED_AT',String(Date.now()));
+  }
+ }finally{lock.releaseLock();}
+ return eventMigrationWriterStatus();
+}
+function eventMigrationWriterStatus(){
+ const closed=_PROPS.getProperty('BF_EVENT_WRITES_CLOSED')==='true';
+ const at=Number(_PROPS.getProperty('BF_EVENT_WRITES_CLOSED_AT')||0),leases=_eventMigrationLeases_();
+ const operations=Object.keys(leases).map(id=>({operation:leases[id].operation,age_ms:Math.max(0,Date.now()-Number(leases[id].started))}));
+ // 配備前の旧コードで開始した要求は台帳に無いため、GASの6分上限が過ぎるまで待つ。
+ return {closed:closed,active_count:operations.length,operations:operations,old_execution_drain_elapsed:closed&&at>0&&Date.now()-at>=360000,ready_for_final_capture:closed&&at>0&&Date.now()-at>=360000&&operations.length===0};
+}
+
+// 日本語コメント: 所有者のGAS実行ログ用。秘密や顧客行を出さず、停止・待機・予約公開状態だけ確認する。
+function inspectEventMigrationForSupabase(){
+ const result={version:VERSION,writer_status:eventMigrationWriterStatus(),booking_enabled:_PROPS.getProperty('SEMINAR_BOOKING_ENABLED')==='true'};
+ console.log(JSON.stringify(result));
+ return result;
+}
+
+function adminBootstrap(...args){return _eventMigrationRun_("adminBootstrap",()=>_eventOriginal_adminBootstrap_(...args));}
+function adminCreateApplication(...args){return _eventMigrationRun_("adminCreateApplication",()=>_eventOriginal_adminCreateApplication_(...args));}
+function adminResendPass(...args){return _eventMigrationRun_("adminResendPass",()=>_eventOriginal_adminResendPass_(...args));}
+function applyApplication(...args){return _eventMigrationRun_("applyApplication",()=>_eventOriginal_applyApplication_(...args));}
+function applyLiff(...args){return _eventMigrationRun_("applyLiff",()=>_eventOriginal_applyLiff_(...args));}
+function assignSpare(...args){return _eventMigrationRun_("assignSpare",()=>_eventOriginal_assignSpare_(...args));}
+function boothExportCsv(...args){return _eventMigrationRun_("boothExportCsv",()=>_eventOriginal_boothExportCsv_(...args));}
+function boothImportQueue(...args){return _eventMigrationRun_("boothImportQueue",()=>_eventOriginal_boothImportQueue_(...args));}
+function boothInit(...args){return _eventMigrationRun_("boothInit",()=>_eventOriginal_boothInit_(...args));}
+function boothRecent(...args){return _eventMigrationRun_("boothRecent",()=>_eventOriginal_boothRecent_(...args));}
+function boothResolveUnresolved(...args){return _eventMigrationRun_("boothResolveUnresolved",()=>_eventOriginal_boothResolveUnresolved_(...args));}
+function boothSubmit(...args){return _eventMigrationRun_("boothSubmit",()=>_eventOriginal_boothSubmit_(...args));}
+function boothSummary(...args){return _eventMigrationRun_("boothSummary",()=>_eventOriginal_boothSummary_(...args));}
+function boothVoid(...args){return _eventMigrationRun_("boothVoid",()=>_eventOriginal_boothVoid_(...args));}
+function deleteTestApplication(...args){return _eventMigrationRun_("deleteTestApplication",()=>_eventOriginal_deleteTestApplication_(...args));}
+function liffPrefill(...args){return _eventMigrationRun_("liffPrefill",()=>_eventOriginal_liffPrefill_(...args));}
+function listApplications(...args){return _eventMigrationRun_("listApplications",()=>_eventOriginal_listApplications_(...args));}
+function listBadges(...args){return _eventMigrationRun_("listBadges",()=>_eventOriginal_listBadges_(...args));}
+function listReservations(...args){return _eventMigrationRun_("listReservations",()=>_eventOriginal_listReservations_(...args));}
+function listSessions(...args){return _eventMigrationRun_("listSessions",()=>_eventOriginal_listSessions_(...args));}
+function listSpareBadges(...args){return _eventMigrationRun_("listSpareBadges",()=>_eventOriginal_listSpareBadges_(...args));}
+function mergeApplicationDuplicate(...args){return _eventMigrationRun_("mergeApplicationDuplicate",()=>_eventOriginal_mergeApplicationDuplicate_(...args));}
+function migrateAddBusinessType(...args){return _eventMigrationRun_("migrateAddBusinessType",()=>_eventOriginal_migrateAddBusinessType_(...args));}
+function migrateAddRequestIdColumn(...args){return _eventMigrationRun_("migrateAddRequestIdColumn",()=>_eventOriginal_migrateAddRequestIdColumn_(...args));}
+function migrateAddSessionBookingColumns(...args){return _eventMigrationRun_("migrateAddSessionBookingColumns",()=>_eventOriginal_migrateAddSessionBookingColumns_(...args));}
+function migrateAddSessionDetailColumns(...args){return _eventMigrationRun_("migrateAddSessionDetailColumns",()=>_eventOriginal_migrateAddSessionDetailColumns_(...args));}
+function migrateFixPhoneColumn(...args){return _eventMigrationRun_("migrateFixPhoneColumn",()=>_eventOriginal_migrateFixPhoneColumn_(...args));}
+function openExpandedSeminarBooking(...args){return _eventMigrationRun_("openExpandedSeminarBooking",()=>_eventOriginal_openExpandedSeminarBooking_(...args));}
+function openFemcareBooking(...args){return _eventMigrationRun_("openFemcareBooking",()=>_eventOriginal_openFemcareBooking_(...args));}
+function openHifaceStandaloneBooking(...args){return _eventMigrationRun_("openHifaceStandaloneBooking",()=>_eventOriginal_openHifaceStandaloneBooking_(...args));}
+function openShinbishinExperienceBooking(...args){return _eventMigrationRun_("openShinbishinExperienceBooking",()=>_eventOriginal_openShinbishinExperienceBooking_(...args));}
+function openShinbishinStandaloneBooking(...args){return _eventMigrationRun_("openShinbishinStandaloneBooking",()=>_eventOriginal_openShinbishinStandaloneBooking_(...args));}
+function pauseSeminarBooking(...args){return _eventMigrationRun_("pauseSeminarBooking",()=>_eventOriginal_pauseSeminarBooking_(...args));}
+function prepareExpandedSeminarBooking(...args){return _eventMigrationRun_("prepareExpandedSeminarBooking",()=>_eventOriginal_prepareExpandedSeminarBooking_(...args));}
+function prepareFemcareBooking(...args){return _eventMigrationRun_("prepareFemcareBooking",()=>_eventOriginal_prepareFemcareBooking_(...args));}
+function prepareHifaceStandaloneBooking(...args){return _eventMigrationRun_("prepareHifaceStandaloneBooking",()=>_eventOriginal_prepareHifaceStandaloneBooking_(...args));}
+function prepareShinbishinExperienceBooking(...args){return _eventMigrationRun_("prepareShinbishinExperienceBooking",()=>_eventOriginal_prepareShinbishinExperienceBooking_(...args));}
+function prepareShinbishinStandaloneBooking(...args){return _eventMigrationRun_("prepareShinbishinStandaloneBooking",()=>_eventOriginal_prepareShinbishinStandaloneBooking_(...args));}
+function probeLineHarness(...args){return _eventMigrationRun_("probeLineHarness",()=>_eventOriginal_probeLineHarness_(...args));}
+function releaseCancelledReservations(...args){return _eventMigrationRun_("releaseCancelledReservations",()=>_eventOriginal_releaseCancelledReservations_(...args));}
+function releaseSpare(...args){return _eventMigrationRun_("releaseSpare",()=>_eventOriginal_releaseSpare_(...args));}
+function resendPass(...args){return _eventMigrationRun_("resendPass",()=>_eventOriginal_resendPass_(...args));}
+function reserveSessions(...args){return _eventMigrationRun_("reserveSessions",()=>_eventOriginal_reserveSessions_(...args));}
+function scanCheckedIn(...args){return _eventMigrationRun_("scanCheckedIn",()=>_eventOriginal_scanCheckedIn_(...args));}
+function scanCheckin(...args){return _eventMigrationRun_("scanCheckin",()=>_eventOriginal_scanCheckin_(...args));}
+function scanRoster(...args){return _eventMigrationRun_("scanRoster",()=>_eventOriginal_scanRoster_(...args));}
+function seedBadgeConfig(...args){return _eventMigrationRun_("seedBadgeConfig",()=>_eventOriginal_seedBadgeConfig_(...args));}
+function seedSeminarSessions(...args){return _eventMigrationRun_("seedSeminarSessions",()=>_eventOriginal_seedSeminarSessions_(...args));}
+function seedTantouList(...args){return _eventMigrationRun_("seedTantouList",()=>_eventOriginal_seedTantouList_(...args));}
+function seedTestApplication(...args){return _eventMigrationRun_("seedTestApplication",()=>_eventOriginal_seedTestApplication_(...args));}
+function seedTestBooth(...args){return _eventMigrationRun_("seedTestBooth",()=>_eventOriginal_seedTestBooth_(...args));}
+function setTantou(...args){return _eventMigrationRun_("setTantou",()=>_eventOriginal_setTantou_(...args));}
+function setupBoothSheets(...args){return _eventMigrationRun_("setupBoothSheets",()=>_eventOriginal_setupBoothSheets_(...args));}
+function setupSheets(...args){return _eventMigrationRun_("setupSheets",()=>_eventOriginal_setupSheets_(...args));}
+function setupSpareBadges(...args){return _eventMigrationRun_("setupSpareBadges",()=>_eventOriginal_setupSpareBadges_(...args));}
+function staffChangeReservation(...args){return _eventMigrationRun_("staffChangeReservation",()=>_eventOriginal_staffChangeReservation_(...args));}
+function staffGetReservations(...args){return _eventMigrationRun_("staffGetReservations",()=>_eventOriginal_staffGetReservations_(...args));}
+function syncLineFriends(...args){return _eventMigrationRun_("syncLineFriends",()=>_eventOriginal_syncLineFriends_(...args));}
+function updateApplication(...args){return _eventMigrationRun_("updateApplication",()=>_eventOriginal_updateApplication_(...args));}
