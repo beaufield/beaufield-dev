@@ -1,6 +1,8 @@
 // 例外時だけ使う受付情報。既存の備考・購入控え・出力経路で同じ内容を保持する。
 const START='【受付情報】\n', END='\n【連絡事項】\n';
 export const emptyHandling=()=>({billing:'salon',contact:'registered',paper:''});
+// 新しい入力は2択。過去の未確定記録はサロン扱いへ変えず、そのまま識別する。
+export const billingLabel=value=>({salon:'サロン',personal:'個人',review:'未確定（以前の受付）'}[value]||'未確定');
 export function packRemarks(remarks='',value={}){
  const h={...emptyHandling(),...value};
  const paper=String(h.paper||'').normalize('NFKC').trim().toUpperCase();
@@ -39,7 +41,7 @@ export async function buildWorkbook(ExcelJS, data) {
   const handling=unpackRemarks(order.remarks||'');
   const notes=[...handlingWarnings(order),order.state==='cancelled'?'取消・入力対象外':'',!order.customer.customer_code?'得意先コード要確認':'',order.posting.state!=='ready'?`台帳:${({claimed:'入力中',entered:'入力済み',unknown:'入力結果が不明',correction_required:'訂正必要',resolved_cancelled:'取消・売上なし照合完了'}[order.posting.state]||order.posting.state)}・再入力禁止`:''].filter(Boolean).join('／');
   const sheet=sheets[notes?1:0];
-  for(const line of order.lines||[]){const row=sheet.addRow([data.batch_id,order.request_id,order.booth,handling.billing==='salon'?String(order.customer.customer_code||''):'',order.customer.salon,order.customer.name,displayProductCode(line.product_code),line.product_name,line.kind==='gift'?'サービス（0円）':'購入',line.qty,line.unit_price_yen,line.qty*line.unit_price_yen,order.delivery==='later'?'後日納品':'当日お渡し済み',order.posting.sales_date||'',notes,order.remarks||'',order.customer.id||'',{salon:'サロン',personal:'個人（事務確認）',review:'事務確認'}[handling.billing],handling.paper]);
+  for(const line of order.lines||[]){const row=sheet.addRow([data.batch_id,order.request_id,order.booth,handling.billing==='salon'?String(order.customer.customer_code||''):'',order.customer.salon,order.customer.name,displayProductCode(line.product_code),line.product_name,line.kind==='gift'?'サービス（0円）':'購入',line.qty,line.unit_price_yen,line.qty*line.unit_price_yen,order.delivery==='later'?'後日納品':'当日お渡し済み',order.posting.sales_date||'',notes,order.remarks||'',order.customer.id||'',billingLabel(handling.billing),handling.paper]);
    row.alignment={vertical:'top',wrapText:true};row.height=42;for(const index of [4,7])row.getCell(index).numFmt='@';for(const index of [10,11,12])row.getCell(index).numFmt='#,##0';if(line.kind==='gift')row.getCell(9).font={color:{argb:'FF246753'},bold:true};
   }
  }

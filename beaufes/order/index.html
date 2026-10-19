@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="style.css">
   <script src="jsQR.js" defer></script>
   <script src="exceljs.min.js" defer></script>
-  <script src="app.js?build=20261018-app-primary" type="module"></script>
+  <script src="app.js?build=20261019-paper-simplify" type="module"></script>
 </head>
 <body>
 <header id="app-header"><div class="header-top"><div><small>BEAU Fes 2026</small><h1>ブース注文 <span id="version"></span></h1></div><span id="network" class="network-badge"></span></div><div id="maker-banner" class="maker-banner" hidden><span class="maker-label">メーカー</span><strong id="maker"></strong></div></header>
@@ -43,11 +43,12 @@
         </div>
       </fieldset>
       <p class="muted">お渡し済みと後日納品は注文を分けてください。予約商品は後日納品です。</p>
-      <details id="handling-panel" class="customer-search-panel"><summary>個人請求・配送先の変更・紙からの転記</summary>
-        <label>請求先<select id="billing"><option value="salon">サロン（通常）</option><option value="personal">個人（事務確認）</option><option value="review">事務で確認</option></select></label>
-        <label><input id="contact-check" type="checkbox"> 配送・連絡を事務で確認する（新規・変更・一部先渡し）</label>
-        <label>紙から転記する場合だけ：紙受付No<input id="paper-number" maxlength="32" autocomplete="off" placeholder="メーカー略号-001"></label>
-        <p class="muted">住所・連絡先は登録情報を使います。変更内容は受付で確認してください。紙にアプリ注文番号を記入し、転記済みとして保管します。企画セットの一部を先にお渡しした場合は後日納品とし、この確認欄にチェックして、備考に商品コードと先渡し数を記入してください。</p>
+      <details id="handling-panel" class="customer-search-panel"><summary>個人請求・配送先の確認</summary>
+        <label>請求先<select id="billing" aria-describedby="billing-help"><option value="" disabled>選択してください</option><option value="salon">サロン</option><option value="personal">個人</option></select></label>
+        <p id="billing-help" class="muted" hidden>以前の下書きでは請求先が未確定でした。サロンか個人を選んでください。</p>
+        <label><input id="contact-check" type="checkbox"> 配送先の変更・一部お渡しがある（備考に記入）</label>
+        <label id="legacy-paper-field" hidden>以前の下書きの紙照合番号<input id="paper-number" maxlength="32" autocomplete="off"></label>
+        <p class="muted">住所・連絡先は登録情報を使います。変更がある場合は受付へお知らせください。一部だけお渡しした企画セットは「後日納品」を選び、上の確認欄と備考の商品コード・お渡し数量で残りを照合します。</p>
       </details>
       <label class="remarks-field" for="remarks">備考・コメント <span class="muted">任意</span></label>
       <textarea id="remarks" rows="3" aria-describedby="remarks-help remarks-count" placeholder="納品時の連絡事項などを入力してください"></textarea>
