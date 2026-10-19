@@ -489,16 +489,17 @@
 <!-- ============================================================ -->
 <div id="tab-list" class="tab content">
   <div class="filter-row">
+    <!-- v1.25.0: 状態を第一条件として一番左に置く。商品の選択肢はこの状態に連動する -->
+    <select id="filterStatus" onchange="renderList()">
+      <option value="">すべて</option>
+      <option value="予約" selected>予約</option>
+      <option value="確定">確定</option>
+    </select>
     <select id="filterProduct" onchange="renderList()">
       <option value="">すべての商品</option>
     </select>
     <select id="filterStaff" onchange="renderList()">
       <option value="">すべての担当</option>
-    </select>
-    <select id="filterStatus" onchange="renderList()">
-      <option value="">すべて</option>
-      <option value="予約" selected>予約</option>
-      <option value="確定">確定</option>
     </select>
     <select id="filterDelivery" onchange="renderList()">
       <option value="">すべての発送</option>
@@ -791,7 +792,7 @@
 </div>
 
 <script>
-const APP_VERSION = 'v1.24.4';
+const APP_VERSION = 'v1.25.0';
 document.getElementById('headerVersion').textContent = APP_VERSION;
 // ============================================================
 // 設定（デプロイ後に GAS_URL を変更すること）
@@ -1170,14 +1171,29 @@ function _updateProductDropdowns() {
     sel.value = cur;
   });
 
+  _updateProductFilter(document.getElementById('filterStatus').value);
+
+}
+
+/** 商品フィルタを状態フィルタに連動させる（v1.25.0）
+ *  「予約」「確定」: その状態の予約がある商品だけ（過去分を隠している間は過去分の確定を数えない）
+ *  「すべて」: 登録済みの商品を全部（従来どおり）
+ *  選んでいた商品が選択肢から消えたら「すべての商品」に戻す */
+function _updateProductFilter(status) {
   const fp = document.getElementById('filterProduct');
   const fpVal = fp.value;
+  let list = products;
+  if (status) {
+    const ids = new Set(reservations
+      .filter(r => r.status === status && (showStored || !isStored(r)))
+      .map(r => String(r.product_id)));
+    list = products.filter(p => ids.has(String(p.product_id)));
+  }
   fp.innerHTML = '<option value="">すべての商品</option>';
-  products.forEach(p => {
+  list.forEach(p => {
     fp.innerHTML += `<option value="${p.product_id}">${esc(p.name)}</option>`;
   });
-  fp.value = fpVal;
-
+  fp.value = list.some(p => String(p.product_id) === fpVal) ? fpVal : '';
 }
 
 // ============================================================
@@ -1380,13 +1396,16 @@ function renderList() {
   selectedNos.clear();
   updateBulkBar();
 
+  // v1.25.0: 状態が第一条件。状態に応じて商品の選択肢を先に作り直す（fpid はその後で読む）
+  const fst        = document.getElementById('filterStatus').value;
+  _updateProductFilter(fst);
+
   const fpid = document.getElementById('filterProduct').value;
 
   // 商品フィルタに応じて担当ドロップダウンを先に更新（fstaff はその後で読む）
   _updateStaffFilter(fpid);
 
   const fstaff     = document.getElementById('filterStaff').value;
-  const fst        = document.getElementById('filterStatus').value;
   const fdelivery  = document.getElementById('filterDelivery').value;
 
   // 商品サマリー表示
