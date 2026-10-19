@@ -12,7 +12,7 @@
  *   SYNC_TOKEN    … 同期スクリプト用の共有シークレット（ランダム長文字列）
  */
 
-const VERSION = 'v1.11.6';
+const VERSION = 'v1.12.0';
 const APP_NAME = 'project-dashboard';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 let _requestMetric = null;
@@ -318,6 +318,13 @@ function doPost(e) {
           return jsonResponse({ success: false, error: 'SYNC_TOKEN_INVALID' });
         }
         return jsonResponse(syncJobs_(p));
+      }
+      case 'reportJobHealth': {
+        // 既存の同期認証を使い、通知先・本文をHTTP入力から指定させない。
+        if (String(p.token || '') !== prop_('SYNC_TOKEN')) {
+          return jsonResponse({ success: false, error: 'SYNC_TOKEN_INVALID' });
+        }
+        return jsonResponse(reportJobHealth_(p));
       }
       case 'updateMeta': {
         const guard = authGuard_(p.session_token || '');
@@ -756,4 +763,98 @@ function jsonResponse(obj) {
   }
   return ContentService.createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+// 自動ジョブの失敗通知。IDと理由は固定し、自由文・顧客データは受け付けない。
+const JOB_ALERT_NAMES = Object.freeze({
+  'project-dashboard-sync': 'ダッシュボード同期',
+  'sales-db-import': '売上DB日次取り込み',
+  'order-app-weekly-analysis': '発注提案の週次需要分析',
+  'bmall-calendar-update': 'Bモール営業日カレンダー更新'
+});
+
+// エディタから本人が実行する初回の認可・個人宛1通の設定テスト専用。
+function testPrivateJobAlert() {
+  const endpoint = PropertiesService.getScriptProperties().getProperty('JOB_ALERT_PRIVATE_WEBHOOK');
+  if (!endpoint || !/^https:\/\/webhook\.worksmobile\.com\//.test(endpoint)) {
+    throw new Error('PRIVATE_ALERT_NOT_CONFIGURED');
+  }
+  let response;
+  try {
+    response = UrlFetchApp.fetch(endpoint, {method: 'post', contentType: 'application/json',
+      payload: JSON.stringify({body: {text: '【設定テスト】自動処理の失敗通知です。\nこれは通知先の確認であり、業務処理の障害ではありません。\n正常時は通知せず、対象4ジョブの失敗を検出した場合だけ通知します。'}}),
+      muteHttpExceptions: true, followRedirects: false});
+  } catch (err) { throw new Error('ALERT_DELIVERY_UNKNOWN'); }
+  if (response.getResponseCode() < 200 || response.getResponseCode() >= 300) {
+    throw new Error('ALERT_REJECTED');
+  }
+  Logger.log('個人向けの設定テスト通知を受け付けました。端末への到達は本人が確認してください。');
+}
+
+function reportJobHealth_(p) {
+  const observedAt = syncTimestamp_(p.observed_at);
+  const now = Date.now();
+  if (!Number.isFinite(observedAt) || observedAt > now + 300000 || observedAt < now - 86400000 ||
+      !Array.isArray(p.jobs) || !p.jobs.length || p.jobs.length > 4) {
+    return {success: false, error: 'INVALID_JOB_REPORT'};
+  }
+  const seen = new Set();
+  for (const job of p.jobs) {
+    if (!job || !Object.prototype.hasOwnProperty.call(JOB_ALERT_NAMES, job.id) || seen.has(job.id) ||
+        !['ok', 'failed', 'unknown'].includes(job.state) ||
+        !['execution', 'result'].includes(job.kind) ||
+        (job.run_at !== '' && !Number.isFinite(syncTimestamp_(job.run_at)))) {
+      return {success: false, error: 'INVALID_JOB_REPORT'};
+    }
+    seen.add(job.id);
+  }
+  const props = PropertiesService.getScriptProperties();
+  const endpoint = props.getProperty('JOB_ALERT_PRIVATE_WEBHOOK');
+  // 送信先の任意指定や、全体用通知設定へのフォールバックは禁止。
+  if (!endpoint || !/^https:\/\/webhook\.worksmobile\.com\//.test(endpoint)) {
+    return {success: false, error: 'PRIVATE_ALERT_NOT_CONFIGURED'};
+  }
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(2000)) return {success: false, error: 'ALERT_BUSY'};
+  let sent = 0, suppressed = 0, unknown = 0;
+  try {
+    for (const job of p.jobs) {
+      const key = 'JOB_ALERT_STATE_' + job.id;
+      const previous = JSON.parse(props.getProperty(key) || '{}');
+      if (previous.observedAt > observedAt) { suppressed++; continue; }
+      if (job.state === 'unknown') { unknown++; continue; }
+      if (job.state === 'ok') {
+        props.setProperty(key, JSON.stringify({observedAt: observedAt, state: 'ok'}));
+        continue;
+      }
+      const event = job.run_at + ':' + job.kind;
+      if (previous.state === 'failed' && previous.event === event && previous.delivery !== 'rejected') { suppressed++; continue; }
+      // 送信前に記録する。応答不明でも同じ失敗を盲目的に再送しない。
+      props.setProperty(key, JSON.stringify({observedAt: observedAt, state: 'failed',
+        event: event, delivery: 'attempting'}));
+      const runText = job.run_at ? Utilities.formatDate(new Date(syncTimestamp_(job.run_at)),
+        'Asia/Tokyo', 'yyyy/MM/dd HH:mm') : '日時不明';
+      const text = '【自動処理の失敗通知】\n' + JOB_ALERT_NAMES[job.id] + '\n' +
+        (job.kind === 'result' ? '結果の検証で異常を検出しました。' : '処理の失敗を検出しました。') +
+        '\n実行: ' + runText + '（日本時間）\nログまたはプロジェクトダッシュボードを確認してください。';
+      try {
+        const response = UrlFetchApp.fetch(endpoint, {method: 'post', contentType: 'application/json',
+          payload: JSON.stringify({body: {text: text}}), muteHttpExceptions: true, followRedirects: false});
+        const code = response.getResponseCode();
+        if (code < 200 || code >= 300) {
+          props.setProperty(key, JSON.stringify({observedAt: observedAt, state: 'failed',
+            event: event, delivery: 'rejected'}));
+          return {success: false, error: 'ALERT_REJECTED', sent: sent};
+        }
+        props.setProperty(key, JSON.stringify({observedAt: observedAt, state: 'failed',
+          event: event, delivery: 'accepted'}));
+        sent++;
+      } catch (err) {
+        props.setProperty(key, JSON.stringify({observedAt: observedAt, state: 'failed',
+          event: event, delivery: 'unknown'}));
+        return {success: false, error: 'ALERT_DELIVERY_UNKNOWN', sent: sent};
+      }
+    }
+    return {success: true, sent: sent, suppressed: suppressed, unknown: unknown};
+  } finally { lock.releaseLock(); }
 }
