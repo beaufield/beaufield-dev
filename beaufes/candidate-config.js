@@ -1,0 +1,2 @@
+// 日本語コメント: 本番画面の公開接続設定。秘密や社員セッションは含めない。
+window.BF_EVENT_CANDIDATE_CONFIG=Object.freeze({"environment":"production-candidate","releaseEnabled":true,"authSource":"portal","portalUrl":"https://beaufield.github.io/beaufield-dev/","eventId":"beaufes2026","backendGeneration":"production-20261020","endpoint":"https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/beaufes-event","enableLine":true,"lineLiffId":"2010404613-cwHA5B0U"});
