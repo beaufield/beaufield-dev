@@ -12,7 +12,7 @@
 //
 // ============================================================
 
-const VERSION  = '1.14.0';
+const VERSION  = '1.14.1';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
@@ -224,6 +224,10 @@ function doPost(e) {
 
   const auth = validateAndGetUser(token);
   if (!auth.valid) return _jsonResponse(_err('SESSION_INVALID'));
+  // アプリ別ロールの確認は全actionで行う（initAppだけでは、APIを直接呼べば
+  // 権限「なし」の社員でも全予約の閲覧・新規登録ができた）。getUserInfoは
+  // 権限の有無を画面に返すための入口なので対象外
+  if (action !== 'getUserInfo' && !auth.yoyaku_role) return _jsonResponse(_err('ACCESS_DENIED'));
 
   data._userId   = auth.user_id;
   data._userInfo = auth;
@@ -584,7 +588,7 @@ function saveReservation(data) {
   const productId      = String(data.product_id      || '');
   const quantity       = Number(data.quantity)       || 0;
   const staffId        = String(data.staff_id        || '');
-  const staffName      = String(data.staff_name      || '');
+  let   staffName      = String(data.staff_name      || '');
   const deliveryMethod = String(data.delivery_method || '未定');
   const notes          = String(data.notes           || '').trim();  // 備考（任意）
 
@@ -592,6 +596,14 @@ function saveReservation(data) {
   if (!productId)   return _err('商品を選択してください');
   if (quantity < 1) return _err('数量は1以上を指定してください');
   if (!staffId)     return _err('担当者を選択してください');
+
+  // 新規登録の担当者: admin以外は画面と同じく「自分」か「その他」だけ。
+  // 担当者名もサーバー側で決め、他人名義の予約をAPI経由で入れられないようにする
+  if (!data.reservation_no && userInfo.yoyaku_role !== 'admin') {
+    if (staffId === String(data._userId)) staffName = String(userInfo.name || '');
+    else if (staffId === 'OTHER')         staffName = 'その他';
+    else return _err('担当者は自分か「その他」を選んでください');
+  }
 
   _checkProps();
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
