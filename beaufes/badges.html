@@ -1,6 +1,9 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
+<meta name="robots" content="noindex,nofollow">
+<script src="candidate-config.js?b=e81308447b2e"></script>
+<script src="ui-bootstrap.js?b=b5a321ef3096"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- 🔴 名簿画面なので検索エンジンに拾わせない（名札印刷_badges設計.md §4-7） -->
@@ -310,19 +313,22 @@
 
 <script src="lib/qrcode.min.js"></script>
 <script>
+(async function(){
+await window.BFEventCandidate.ready;
+
 // ============================================================
 // badges.html（名札印刷・社員用）
 // 設計は 名札印刷_badges設計.md を正とする（本ファイルは実装のみ・設計は変更しない）
 // 版数の定義はこの APP_VERSION 1箇所だけ（AGENTS.md バージョン管理ルール）
 // ============================================================
-const APP_VERSION = '0.2.0';
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
-const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const SESSION_KEY = 'bf_session'; // ポータルと共通（§2-4）
+const APP_VERSION = '0.3.6';
+const GAS_URL = window.BFEventCandidate.endpoint;
+const PORTAL_URL = './login.html';
+const SESSION_KEY = 'bf_event_candidate_session'; // ポータルと共通（§2-4）
 const BUSINESS_TYPE_OPTIONS = ['美容室', '理容室', 'エステサロン', 'ネイルサロン', 'アイサロン', 'その他'];
 
 // GAS通信ルール（§2-5をそのまま移植。REQUEST_ID/client_attemptは持ち込まない＝§7 S4）
-const FETCH_TIMEOUT_MS = 10000;
+const FETCH_TIMEOUT_MS = 45000;
 const MAX_ATTEMPTS     = 6;
 const RETRY_WAIT_MS    = [1000, 2000, 3000, 5000, 8000];
 const TRANSPORT_ERROR_PATTERN = /^(不明なアクション|INVALID_REQUEST)/;
@@ -344,15 +350,15 @@ function isMock() { return qs('mock') === '1'; }
 // ------------------------------------------------------------
 function getSession() {
   try {
-    const raw = localStorage.getItem(SESSION_KEY);
+    const raw = window.BFEventCandidate.storage.getItem(SESSION_KEY);
     if (!raw) return null;
     const s = JSON.parse(raw);
-    if (Date.now() > s.expires) { localStorage.removeItem(SESSION_KEY); return null; }
+    if (Date.now() > s.expires) { window.BFEventCandidate.storage.removeItem(SESSION_KEY); return null; }
     return s;
   } catch (e) { return null; }
 }
 function clearSession() {
-  try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+  try { window.BFEventCandidate.storage.removeItem(SESSION_KEY); } catch (e) {}
 }
 
 // ------------------------------------------------------------
@@ -858,7 +864,7 @@ function toSpareBadge(s) {
 // 「未割当のみ/すべて」の絞り込みは画面側で行う（設計 §5-4。既定＝未割当のみ）
 function filterSpares(spares, spareFilter) {
   return spares.filter(function (s) {
-    return (spareFilter === 'all') || !s.assigned_app_id;
+    return !s.retired && ((spareFilter === 'all') || !s.assigned_app_id);
   });
 }
 
@@ -1065,6 +1071,8 @@ function init() {
 }
 
 init();
+
+})();
 </script>
 
 </body>

@@ -1,6 +1,9 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
+<meta name="robots" content="noindex,nofollow">
+<script src="candidate-config.js?b=e81308447b2e"></script>
+<script src="ui-bootstrap.js?b=b5a321ef3096"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ビューフェス2026 入場パス</title>
@@ -218,6 +221,9 @@
 
 <script src="lib/qrcode.min.js"></script>
 <script>
+(async function(){
+await window.BFEventCandidate.ready;
+
 const IS_MOCK = new URLSearchParams(location.search).get('mock') === '1';
 // 予約部品が読めない場合も、来場申込・入場パス・社員一覧は継続する。
 const bookingApi = window.BeaufesBooking || {
@@ -227,8 +233,8 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.26.0';
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbyD21TC3rHv25Qeor5BCj7lB7qi0t3zTUmVFPWfv5ozGntKwQHMoSiGFpg26LRoepyF/exec';
+const APP_VERSION = '0.27.6';
+const GAS_URL = window.BFEventCandidate.endpoint;
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
 // 通信の設定（GASの結果配信は逐次でも約7%失敗するため、リトライは必須。
@@ -239,7 +245,7 @@ document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 //（誤記訂正・v0.8.0: 以前「0.12%」としていたが計算誤り。詳細はindex.htmlの同じ箇所を参照）。
 // 失敗は連続する傾向があるため、再試行の間隔を徐々に広げる。
 // updateApplicationはticket_tokenで冪等なため、applyのようなrequest_idは不要。
-const FETCH_TIMEOUT_MS = 10000;
+const FETCH_TIMEOUT_MS = 45000;
 const MAX_ATTEMPTS     = 6;
 const RETRY_WAIT_MS    = [1000, 2000, 3000, 5000, 8000];
 
@@ -354,14 +360,14 @@ function renderDetail(d) {
 // ------------------------------------------------------------
 // キャッシュ（一度表示できた内容は端末に残し、圏外・通信失敗でも出せるようにする）
 // ------------------------------------------------------------
-function cacheKey(token) { return 'beaufes_pass_' + token; }
+function cacheKey(token) { return 'bf_event_candidate_pass_' + token; }
 
 function saveCache(token, d) {
-  try { localStorage.setItem(cacheKey(token), JSON.stringify(d)); } catch (e) { /* 保存できなくても致命的ではない */ }
+  try { window.BFEventCandidate.storage.setItem(cacheKey(token), JSON.stringify(d)); } catch (e) { /* 保存できなくても致命的ではない */ }
 }
 function loadCache(token) {
   try {
-    const s = localStorage.getItem(cacheKey(token));
+    const s = window.BFEventCandidate.storage.getItem(cacheKey(token));
     return s ? JSON.parse(s) : null;
   } catch (e) { return null; }
 }
@@ -661,7 +667,7 @@ el('editForm').addEventListener('submit', async function (ev) {
     }
 
     // 表示・キャッシュを更新する。ticket_tokenは変わらないのでQRはそのまま。
-    const updated = Object.assign({}, lastDetail, payload);
+    const updated = Object.assign({}, lastDetail, payload, {application_revision:json.data.revision});
     renderDetail(updated);
     saveCache(token, updated);
 
@@ -674,6 +680,8 @@ el('editForm').addEventListener('submit', async function (ev) {
 });
 
 init();
+
+})();
 </script>
 
 </body>
