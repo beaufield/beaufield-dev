@@ -8,7 +8,7 @@
  let staffProvider=window.BF_EVENT_STAFF_PROVIDER;
  const banner=document.createElement('div');
  banner.style.cssText='position:sticky;top:0;z-index:20000;padding:9px 15px;background:#fff0c9;color:#684213;font:13px/1.6 sans-serif;text-align:center';
- banner.textContent=endpoint?(config.fixture===true?'架空データの画面操作試験 ／ 実社員認証・メール送信なし':'検証用の新受付 ／ 架空データのみ。当日登録・札割当・入場の保存可。一般メール停止・本番未切替'):'未公開の隔離候補 ／ 保存先は未設定です';
+ banner.textContent=endpoint?(config.fixture===true?'架空データの画面操作試験 ／ 実社員認証・メール送信なし':'検証用の新受付 ／ 検証DBに保存。LINE申込は許可した本人のみ。一般メール停止・本番未切替'):'未公開の隔離候補 ／ 保存先は未設定です';
  const mount=()=>document.body.prepend(banner);
  if(document.body)mount();else document.addEventListener('DOMContentLoaded',mount,{once:true});
  const namespace='bf-event-candidate::'+encodeURIComponent([target,config.eventId||'unset',config.backendGeneration||'unset'].join('|'))+'::';
