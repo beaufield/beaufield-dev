@@ -1,6 +1,6 @@
 import {get,set,records,update as storageUpdate,mergeReceipt,sanitizeLegacyQr,clearMakerConnection,storageMode} from './storage.js';
-import {buildWorkbook,displayProductCode,emptyHandling,packRemarks,unpackRemarks,handlingWarnings,deliveryLabel} from './export.js';
-const APP_VERSION='v0.16.0';
+import {buildWorkbook,displayProductCode,emptyHandling,packRemarks,unpackRemarks,handlingWarnings,deliveryLabel,billingLabel} from './export.js';
+const APP_VERSION='v0.16.1';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -33,7 +33,7 @@ const scopeKey=()=>JSON.stringify(info.scope);
 const message=text=>{$('message').textContent=text;};
 // 接続処理の仕組みではなく、利用者が次にできる操作を案内する。
 const readyMessage=value=>value.event_state==='closed'?'注文の受付は終了しました。履歴を確認できます。':'注文を入力できます。お客様を選んでください。';
-const errorText=e=>({PAPER_ALREADY_REGISTERED:'この紙受付Noは登録済みです。メーカー履歴と紙の注文番号を確認し、番号を変えて再登録しないでください。',INVALID_PAPER_NUMBER:'紙受付Noは半角英数字・ハイフン32文字以内で入力してください。',INVALID_HANDLING:'受付情報を確認してください。',RESERVED_REMARKS:'受付情報は補助欄へ入力してください。',RESERVATION_DELIVERY_REQUIRED:'予約商品は後日納品です。お渡し済みの商品とは注文を分けてください。',ORDER_CHANGED_RECHECK_REQUIRED:'注文または台帳が変わりました。最新の控えと販売管理を照合し直してください。',NOT_UNRESOLVED:'この注文の確認待ちは既に解決しています。台帳を更新してください。',RESOLUTION_CONFLICT:'この照合操作は別の内容または担当者で記録されています。操作番号を変えて再送せず、事務に確認してください。',OFFICE_RESOLUTION_STORAGE_REQUIRED:'照合操作を端末に保存できません。ブラウザーの保存を許可した端末で操作してください。',SEARCH_INCOMPLETE:'販売管理の照合が終わっていません。確認待ちを維持します。',PRIOR_CORRECTION_NOT_RESOLVED:'古い誤入力・重複の解消と訂正記録を確認してください。',DRAFT_CHANGED:'別のタブで入力が変更されました。最新の氏名・商品・数量を確認してから操作してください。',PURCHASE_CONTENT_CONFLICT:'このお客様の登録確認中の注文と内容が違います。再登録せず、メーカー履歴を確認してください。',STALE_PURCHASE:'別の画面で購入が進んでいます。履歴を更新して確認してください。',ORDER_INTENT_EXPIRED:'確認待ちの注文番号の期限が切れました。再登録せず事務へ確認してください。',CUSTOMER_CHANGED:'申込情報が変わりました。再登録せず受付へ確認してください。',INVALID_REMARKS:'備考は1,000文字以内の文章で入力してください。',OFFER_PERSON_LIMIT:'この企画はお一人様1セットです。登録済みの注文を確認してください。',OFFER_EXCLUSIVE:'この2つの企画は併用できません。どちらかを選んでください。',FIXED_COMPONENT_REQUIRED:'固定セットの構成を確認してください。',LINKED_SKU_REQUIRED:'同じ種類のサービス品と数量を確認してください。',EVENT_CLOSED:'受付は締められています。未送信注文は事務に連絡してください。',QR_NOT_FOUND:'この名札を照合できません。受付情報の同期を確認してください。',SESSION_INVALID:'メーカー接続が無効です。メーカーQRを読み直してください。未送信注文は端末に残っています。',SUBJECT_NOT_FOUND:'このお客様の最新情報を確認できません。もう一度検索するか受付に確認してください。',INVALID_CUSTOMER_CODE:'得意先コードを確認してください。',ORDER_NOT_FOUND:'この注文を確認できません。履歴を更新してください。',PORTAL_SESSION_INVALID:'社内ポータルへログインしてください。',OFFICE_ROLE_REQUIRED:'事務画面の管理者権限がありません。',PORTAL_UNAVAILABLE:'社内ポータルに接続できません。時間をおいて再試行してください。',INVALID_BUNDLE:'同期ファイルが不正です。3種類のデータを作り直してください。',STALE_MASTER_GENERATION:'得意先マスターより古い同期ファイルです。作り直してください。',OLD_GENERATION:'申込データより古い同期ファイルです。作り直してください。',IDEMPOTENCY_CONFLICT:'同じ注文番号で内容が異なります。再登録せず事務に連絡してください。',SET_QUANTITY_MISMATCH:'購入数とサービス数が条件に合っていません。',SCOPE_MISMATCH:'この端末の所属が変わっています。元の接続先で再送してください。'}[e.message]||`処理を完了できませんでした：${e.message}`);
+const errorText=e=>({PAPER_ALREADY_REGISTERED:'同じ紙からの注文が登録済みです。メーカーの注文履歴でお客様と明細を確認し、番号を変えて再登録しないでください。',INVALID_PAPER_NUMBER:'紙受付Noは半角英数字・ハイフン32文字以内で入力してください。',INVALID_HANDLING:'受付情報を確認してください。',RESERVED_REMARKS:'受付情報は補助欄へ入力してください。',RESERVATION_DELIVERY_REQUIRED:'予約商品は後日納品です。お渡し済みの商品とは注文を分けてください。',ORDER_CHANGED_RECHECK_REQUIRED:'注文または台帳が変わりました。最新の控えと販売管理を照合し直してください。',NOT_UNRESOLVED:'この注文の確認待ちは既に解決しています。台帳を更新してください。',RESOLUTION_CONFLICT:'この照合操作は別の内容または担当者で記録されています。操作番号を変えて再送せず、事務に確認してください。',OFFICE_RESOLUTION_STORAGE_REQUIRED:'照合操作を端末に保存できません。ブラウザーの保存を許可した端末で操作してください。',SEARCH_INCOMPLETE:'販売管理の照合が終わっていません。確認待ちを維持します。',PRIOR_CORRECTION_NOT_RESOLVED:'古い誤入力・重複の解消と訂正記録を確認してください。',DRAFT_CHANGED:'別のタブで入力が変更されました。最新の氏名・商品・数量を確認してから操作してください。',PURCHASE_CONTENT_CONFLICT:'このお客様の登録確認中の注文と内容が違います。再登録せず、メーカー履歴を確認してください。',STALE_PURCHASE:'別の画面で購入が進んでいます。履歴を更新して確認してください。',ORDER_INTENT_EXPIRED:'確認待ちの注文番号の期限が切れました。再登録せず事務へ確認してください。',CUSTOMER_CHANGED:'申込情報が変わりました。再登録せず受付へ確認してください。',INVALID_REMARKS:'備考は1,000文字以内の文章で入力してください。',OFFER_PERSON_LIMIT:'この企画はお一人様1セットです。登録済みの注文を確認してください。',OFFER_EXCLUSIVE:'この2つの企画は併用できません。どちらかを選んでください。',FIXED_COMPONENT_REQUIRED:'固定セットの構成を確認してください。',LINKED_SKU_REQUIRED:'同じ種類のサービス品と数量を確認してください。',EVENT_CLOSED:'受付は締められています。未送信注文は事務に連絡してください。',QR_NOT_FOUND:'この名札を照合できません。受付情報の同期を確認してください。',SESSION_INVALID:'メーカー接続が無効です。メーカーQRを読み直してください。未送信注文は端末に残っています。',SUBJECT_NOT_FOUND:'このお客様の最新情報を確認できません。もう一度検索するか受付に確認してください。',INVALID_CUSTOMER_CODE:'得意先コードを確認してください。',ORDER_NOT_FOUND:'この注文を確認できません。履歴を更新してください。',PORTAL_SESSION_INVALID:'社内ポータルへログインしてください。',OFFICE_ROLE_REQUIRED:'事務画面の管理者権限がありません。',PORTAL_UNAVAILABLE:'社内ポータルに接続できません。時間をおいて再試行してください。',INVALID_BUNDLE:'同期ファイルが不正です。3種類のデータを作り直してください。',STALE_MASTER_GENERATION:'得意先マスターより古い同期ファイルです。作り直してください。',OLD_GENERATION:'申込データより古い同期ファイルです。作り直してください。',IDEMPOTENCY_CONFLICT:'同じ注文番号で内容が異なります。再登録せず事務に連絡してください。',SET_QUANTITY_MISMATCH:'購入数とサービス数が条件に合っていません。',SCOPE_MISMATCH:'この端末の所属が変わっています。元の接続先で再送してください。'}[e.message]||`処理を完了できませんでした：${e.message}`);
 function on(id,event,fn){$(id).addEventListener(event,async e=>{try{await fn(e);}catch(error){const detail=errorText(error);message(detail);if(id==='submit'){const status=$('submit-status');status.hidden=false;status.className='error';status.textContent=detail;}}});}
 async function requestApi(action,body,token){
  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),action==='sync_bundle'?60000:12000);
@@ -129,11 +129,20 @@ function renderOffer(offer){
  return card;
 }
 // 備考は注文単位で保存し、次のお客様には引き継がない。
-function showRemarks(parent,text){if(text)parent.append(element('p',`備考：${text}`,'order-remarks'));}
-function readHandling(){return {billing:$('billing').value,contact:$('contact-check').checked?'review':'registered',paper:$('paper-number').value};}
+function showRemarks(parent,text,{includeBilling=true}={}){
+ if(!text)return;const h=unpackRemarks(text);
+ if(h.invalid){parent.append(element('p',`備考：${text}`,'order-remarks'));return;}
+ if(h.encoded){
+  if(includeBilling&&h.billing!=='salon')parent.append(element('p',`請求先：${billingLabel(h.billing)}`));
+  if(h.contact==='review')parent.append(element('p','配送・連絡：受付で確認'));
+  if(h.paper)parent.append(element('p',`以前の紙照合番号：${h.paper}`,'muted'));
+ }
+ if(h.remarks)parent.append(element('p',`備考：${h.remarks}`,'order-remarks'));
+}
+function readHandling(){return {billing:$('billing').value||'review',contact:$('contact-check').checked?'review':'registered',paper:$('paper-number').value};}
 function remarksCount(){let count;try{count=[...packRemarks($('remarks').value,readHandling())].length;}catch{count='要確認';}$('remarks-count').textContent=`${count} / 1,000文字（受付情報を含む）`;}
 function renderForm(){
- $('remarks').value=draft.form.remarks||'';const handling={...emptyHandling(),...draft.form.handling};$('billing').value=handling.billing;$('contact-check').checked=handling.contact==='review';$('paper-number').value=handling.paper;$('handling-panel').open=handling.billing!=='salon'||handling.contact!=='registered'||!!handling.paper;remarksCount();$('another-purchase').hidden=!draft.form.saved_request_id;
+ $('remarks').value=draft.form.remarks||'';const handling={...emptyHandling(),...draft.form.handling};$('billing').value=['salon','personal'].includes(handling.billing)?handling.billing:'';$('billing-help').hidden=['salon','personal'].includes(handling.billing)||draft.stage!=='draft';$('contact-check').checked=handling.contact==='review';$('paper-number').value=handling.paper;$('legacy-paper-field').hidden=!handling.paper;$('handling-panel').open=handling.billing!=='salon'||handling.contact!=='registered'||!!handling.paper;remarksCount();$('another-purchase').hidden=!draft.form.saved_request_id;
  $('draft-id').textContent=`注文番号 ${draft.id}`;$('customer').textContent=draft.form.customer||'';showConnection();
  for(const radio of document.querySelectorAll('input[name=delivery]'))radio.checked=(draft.stage!=='draft'||!!draft.form.delivery_confirmed)&&radio.value===draft.form.delivery;
  $('offers').replaceChildren();
@@ -414,13 +423,14 @@ on('picker-search','input',renderPicker);
 on('picker-close','click',closePicker);
 on('demo','click',()=>readBadge('https://example.invalid/pass.html?t=demo-ticket'));
 on('new','click',async()=>{if(draft.stage==='draft'&&bundles().length&&!confirm('現在の未登録の選択を残して、新しい注文を開きますか？'))return;closeCamera();await saveForm();await fresh();await renderOrders();message('新しい注文を開きました。');});
-for(const id of ['billing','contact-check','paper-number'])on(id,id==='paper-number'?'input':'change',async()=>{remarksCount();await saveForm();});
+for(const id of ['billing','contact-check','paper-number'])on(id,id==='paper-number'?'input':'change',async()=>{if(id==='billing')$('billing-help').hidden=['salon','personal'].includes($('billing').value);remarksCount();await saveForm();});
 on('remarks','input',async()=>{remarksCount();await saveForm();});
 on('submit','click',async()=>{
  if(submitting||draft.stage!=='draft')return;
  submitting=true;
  try{
   await saveForm();
+  if(!['salon','personal'].includes(draft.form.handling.billing))throw Error('請求先をサロンまたは個人から選んでください。');
   const encodedRemarks=packRemarks(draft.form.remarks||'',draft.form.handling);
   if(unpackRemarks(encodedRemarks).encoded&&!info.order_handling_v1)throw Error('受付情報の更新を確認できません。オンラインで画面を開き直してください。');
   if(!draft.form.resolved||!(draft.form.qr_hash||draft.form.subject_id))throw Error('先に名札QRまたはコード・名前検索でお客様を選んでください。');
@@ -468,10 +478,10 @@ function showReceipt(receipt){
  const target=$('receipt-content');target.replaceChildren();
  target.append(element('h2','購入控え'),element('p',receipt.state==='cancelled'?'取消済み':'登録済み','receipt-state'),element('p',`注文番号 ${receipt.request_id}`));
  const customer=receipt.customer||{};target.append(element('p',`${customer.salon||''} ／ ${customer.name||''}`),element('p',`申込番号 ${customer.id||''}`));
- const handling=unpackRemarks(receipt.remarks||'');target.append(element('p',`名札の得意先 ${customer.customer_code||'事務確認'} ／ 請求先：${{salon:'サロン',personal:'個人（事務確認）',review:'事務確認'}[handling.billing]}`));
+ const handling=unpackRemarks(receipt.remarks||'');target.append(element('p',`名札の得意先 ${customer.customer_code||'事務確認'} ／ 請求先：${billingLabel(handling.billing)}`));
  if(receipt.received_at)target.append(element('p',new Date(receipt.received_at).toLocaleString('ja-JP')));
  target.append(element('p',`受け渡し：${receipt.delivery==='later'?'後日納品':receipt.delivery==='takeaway'?'当日お渡し済み':'要確認'}`),orderDetails({receipt}),element('strong',`税抜合計 ${yen(receipt.total_yen)}`));
- showRemarks(target,receipt.remarks);target.append(element('p','サービス品は0円です。メール送付を保証する画面ではありません。必要な場合はこの控えを撮影し、注文番号をお控えください。'));
+ showRemarks(target,receipt.remarks,{includeBilling:false});target.append(element('p','サービス品は0円です。メール送付を保証する画面ではありません。必要な場合はこの控えを撮影し、注文番号をお控えください。'));
  $('receipt-modal').hidden=false;$('receipt-close').focus();
 }
 on('receipt-close','click',()=>{$('receipt-modal').hidden=true;});
