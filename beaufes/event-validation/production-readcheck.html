@@ -1,8 +1,8 @@
 <!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>本番候補API・社員読取確認</title><style>body{margin:0;background:#f2f6f7;color:#193c46;font:16px/1.8 system-ui,sans-serif}main{max-width:760px;margin:auto;padding:28px 20px}section{background:white;border:1px solid #dbe5e7;border-radius:14px;padding:22px;margin:18px 0}button,a{font:inherit}button{padding:12px 20px;border:0;border-radius:8px;background:#087f91;color:white;cursor:pointer}button:disabled{opacity:.6;cursor:default}.tag{background:#fff0c9;padding:10px 15px;border-radius:8px}#result{white-space:pre-line}footer{font-size:13px;color:#5c7278}</style></head><body><main><p class="tag">切替前の読取確認専用 ／ 登録・予約・受付保存・通知は行いません</p><h1>社員ログインと名簿の接続確認</h1><section><p>先に、普段のポータルへログインしてください。この画面では本人・権限を確認し、本番候補の名簿と受付記録の件数だけを表示します。氏名・連絡先・QRは表示・保存しません。</p><p><a href="https://beaufield.github.io/beaufield-dev/" target="_blank" rel="noopener">ポータルを開く</a></p><button id="run" type="button">読取だけ確認する</button><p id="result" role="status" aria-live="polite">まだ確認していません。</p></section><p>本番候補APIが停止中の場合や、検証の許可前は確認できません。失敗しても自動再送しません。ログイン情報をチャットに貼る必要はありません。</p><footer id="version"></footer></main><script type="module">
 import {createPortalStaffProvider} from './portal-auth.mjs';
 import {createClient} from './client.mjs';
-// 日本語コメント: 読取3操作だけ。本人トークンはメモリー内で既存APIへ渡し、記録しない。
-const APP_VERSION='0.1.0';
+// 日本語コメント: 読取3操作と空の保存拒否試験1回。本人トークンは記録しない。
+const APP_VERSION='0.2.0';
 const endpoint='https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/beaufes-event';
 const result=document.getElementById('result'),button=document.getElementById('run');
 document.getElementById('version').textContent='v'+APP_VERSION;
@@ -21,7 +21,12 @@ button.addEventListener('click',async()=>{
    if(!Number.isSafeInteger(value.data?.total)||value.data.total<0||!Array.isArray(rows)||rows.length!==value.data.total)throw Error('READ_NOT_READY');
    counts.push(value.data.total);
   }
-  result.textContent='社員ログイン・権限確認：成功\n名簿：'+counts[0]+'件\n保存済み受付：'+counts[1]+'件\n確認時刻：'+new Date().toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})+'\n登録・予約・受付保存・通知の実行：0件';
+  // 個人情報や登録必須項目を送らず、社員の保存要求がAPIで拒否されることを確認。
+  // 万一読取専用でなければ成功表示せず停止。DBもstagingのため実登録は成立しない。
+  const denied=await call('adminCreateApplication',{request_id:'readonly-deny-'+crypto.randomUUID()});
+  const denial=await denied.json();
+  if(denial?.success!==false||denial.error!=='EVENT_WRITE_CLOSED')throw Error('WRITE_GUARD_NOT_CONFIRMED');
+  result.textContent='社員ログイン・権限確認：成功\n名簿：'+counts[0]+'件\n保存済み受付：'+counts[1]+'件\n保存要求：APIで拒否を確認\n確認時刻：'+new Date().toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})+'\n登録・予約・受付保存・通知の実行：0件';
  }catch{result.textContent='まだ読取確認を完了できません。APIの停止状態・検証許可・ポータルのログイン・通信を確認してください。自動再送はしていません。';}
  finally{button.disabled=false;}
 });
