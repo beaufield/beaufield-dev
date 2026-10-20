@@ -1538,7 +1538,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.86.0-db';
+const APP_VERSION    = 'v1.87.0-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -7714,7 +7714,8 @@ function renderPropItem(p, code, delayedByCode, orderedByCode) {
     : '';
   // まとめ発注グループの行は数量の刻みを商品単位（6本 / 1ケース分の入数）にし、配分理由のバッジを出す
   const mgCfg  = p.groupId ? mgConfigById(p.groupId) : null;
-  const caseRule = ProposalAdjust.ruleFor(masters.suppliers.find(s=>ProposalAdjust.same(s.code,code))?.name)?.kind==='case';
+  const adjustmentRule = ProposalAdjust.ruleFor(masters.suppliers.find(s=>ProposalAdjust.same(s.code,code))?.name);
+  const caseRule = adjustmentRule?.kind==='case';
   const caseOverride = caseRule ? lotFind(proposalsData.lotOverrides,p.code) : null;
   const caseLot = caseRule ? Number(caseOverride?caseOverride.lot:p.lot) : 0;
   const step   = mgCfg ? mgUnitFor(mgCfg, p.name) : caseLot>0 ? caseLot : 1;
@@ -7761,7 +7762,7 @@ function renderPropItem(p, code, delayedByCode, orderedByCode) {
     ${stockNeg ? `<div class="prop-pending-warn">⚠️ 在庫マイナス（${p.stock}）：欠品・バックオーダー中の可能性</div>` : ''}
     <div class="prop-item-stats">
       <span>在庫 <b style="${stockNeg ? 'color:var(--danger)' : ''}">${p.stock}</b> ${onOrder}→ 推奨 <b>${p.recommended}</b></span>
-      <span>発注数 <input type="number" class="prop-qty" value="${qty}" min="0" step="${step}">${caseRule?`（1ケース=${step}個）`:''}</span>
+      <span>発注数 <input type="number" class="prop-qty" value="${qty}" min="0" step="${step}">${caseRule?`（1${adjustmentRule.unitLabel||'ケース'}=${step}個）`:''}</span>
       <span class="prop-qty-chips">${chips}</span>
       <button type="button" class="prop-lot-btn" ${orderAction('openLotModal', p.code, p.name)}>最低発注数 ${p.lot} ✏️</button>
       <span class="prop-item-amount">${formatItemAmount(unitCost, qty)}</span>
@@ -10874,6 +10875,8 @@ const ProposalAdjust = (() => {
   function ruleFor(name, metrics=[]) {
     const n=norm(name);
     if(n==='ソフジャパン') return {kind:'case',minimum:6,increment:1,label:'合計6ケース以上',codes:metrics.map(r=>code(r.code))};
+    // 送料無料の目安。通常の発注では6箱未満も許可し、ボタンでの補充時だけ6箱を目指す。
+    if(n==='パシフィックプロダクツ') return {kind:'case',minimum:6,increment:1,freeShipping:true,unitLabel:'箱',label:'内箱6箱以上で送料無料',codes:metrics.map(r=>code(r.code))};
     if(n==='earthwalkrepublic') return {kind:'core',increment:30,pack:5,label:'オキシロンコア2L：5本刻み・合計30本単位',
       codes:metrics.filter(r=>norm(r.name).includes('オキシロンコア2l')).map(r=>code(r.code))};
     return null;
@@ -10985,9 +10988,9 @@ const ProposalAdjust = (() => {
     } else best=topUp();
     if(!best) {
       const possible=rows.reduce((s,r)=>s+(r.eligible?r.max*r.cents:0),0)/100;
-      const detail=rule?` 現在${baseBlocks*(rule.kind==='core'?5:1)}${rule.kind==='core'?'本':'ケース'}、必要な単位は${rule.label}。`:
+      const detail=rule?` 現在${baseBlocks*(rule.kind==='core'?5:1)}${rule.kind==='core'?'本':rule.unitLabel||'ケース'}、${rule.freeShipping?'送料無料の目安は':'必要な単位は'}${rule.label}。`:
         ` 最低金額${minYen.toLocaleString()}円に対し、現在の上限内で注文できる対象額は最大${possible.toLocaleString()}円です。`;
-      throw Error('現在の選択と在庫上限では発注単位・最低金額を満たせません。'+detail+'上限を見直すか、必要な商品の選択・仕入条件を確認してください。');
+      throw Error((rule?.freeShipping?'現在の選択と在庫上限では送料無料の6箱以上を見繕えません。6箱未満でも送料ありで発注できます。':'現在の選択と在庫上限では発注単位・最低金額を満たせません。')+detail+'上限を見直すか、必要な商品の選択・仕入条件を確認してください。');
     }
     const allResults=rows.map((r,i)=>({...r,qty:best.quantities[i],addedQty:best.quantities[i]-r.original,amount:best.quantities[i]*r.cents/100,
       daysBefore:r.demand>0?r.pos*30.4/r.demand:null,daysAfter:r.demand>0?(r.pos+best.quantities[i])*30.4/r.demand:null,
@@ -11010,7 +11013,9 @@ function propAdjustmentControls(supplierCode) {
   const supplier=masters.suppliers.find(s=>ProposalAdjust.same(s.code,supplierCode));
   const rule=ProposalAdjust.ruleFor(supplier?.name);
   if(!rule && !minOrderSetting(supplierCode))return '';
-  return `<div class="prop-adjust-controls"><b>${escHtml(rule?.label||'最低発注金額への補充')}</b><p>提案にない商品も追加し、数量を手動で調整できます。${rule?.kind==='case'?'1ケースは各商品の最低発注数です。7ケース・13ケースなども発注できます。':''}自動調整は選択数量を保持し、チェックを外した商品は今回の補充から除きます。</p><div class="prop-case-status" aria-live="polite"></div><button class="btn btn-outline" ${orderAction('openPropProductPicker',supplierCode)}>＋ ほかの商品を追加</button> <button class="btn btn-outline" ${orderAction('openPropAdjustment',supplierCode)}>🧮 発注条件に合わせて調整</button></div>`;
+  const caseLabel=rule?.unitLabel||'ケース';
+  const caseHelp=rule?.freeShipping?'1箱は各商品の最低発注数です。6箱未満でも送料ありで発注できます。7箱・13箱などもそのまま発注できます。':rule?.kind==='case'?`1${caseLabel}は各商品の最低発注数です。7${caseLabel}・13${caseLabel}なども発注できます。`:'';
+  return `<div class="prop-adjust-controls"><b>${escHtml(rule?.label||'最低発注金額への補充')}</b><p>提案にない商品も追加し、数量を手動で調整できます。${caseHelp}自動調整は選択数量を保持し、チェックを外した商品は今回の補充から除きます。</p><div class="prop-case-status" aria-live="polite"></div><button class="btn btn-outline" ${orderAction('openPropProductPicker',supplierCode)}>＋ ほかの商品を追加</button> <button class="btn btn-outline" ${orderAction('openPropAdjustment',supplierCode)}>${rule?.freeShipping?'6箱以上を見繕う':'🧮 発注条件に合わせて調整'}</button></div>`;
 }
 function propAdjustmentSelection(supplierCode) {
   const root=document.getElementById('prop-group-'+supplierCode);
@@ -11096,6 +11101,8 @@ function propAdjustmentEnsureModal() {
 function closePropAdjustment() {++propAdjustment.epoch;propAdjustment.preview=null;closeModal('modal-prop-adjust');}
 function openPropAdjustment(supplierCode) {
   propAdjustmentEnsureModal();++propAdjustment.epoch;propAdjustment.preview=null;propAdjustment.supplierCode=supplierCode;
+  const rule=ProposalAdjust.ruleFor(masters.suppliers.find(s=>ProposalAdjust.same(s.code,supplierCode))?.name);
+  document.getElementById('prop-adjust-title').textContent=rule?.freeShipping?'6箱以上を見繕う（送料無料）':'発注条件に合わせて調整';
   document.getElementById('prop-adjust-days').value=propAdjustment.maxDays;
   document.getElementById('prop-adjust-apply').disabled=true;openModal('modal-prop-adjust');calculatePropAdjustment();
 }
@@ -11121,9 +11128,10 @@ async function calculatePropAdjustment() {
 }
 function propAdjustmentResultHtml(result) {
   const days=v=>v===null?'需要なし':v.toFixed(1)+'日';
+  const caseLabel=result.rule?.unitLabel||'ケース';
   // 帳簿在庫と未入荷分を分け、注文0の行も同じ在庫表示にする。
   const stockHtml=r=>{const unit=result.rule?.kind==='core'&&r.inRule?'本':'個';return `<div class="prop-adjust-stock">現在在庫：<b>${Number(r.stock).toLocaleString('ja-JP')}${unit}</b></div>${Number(r.onOrder)>0?`<small>未入荷：${Number(r.onOrder).toLocaleString('ja-JP')}${unit}（現在在庫に含まず）</small>`:''}`;};
-  return `<p><b>${escHtml(result.rule?.label||'最低金額への補充')} ／ ${result.totalCases!==null?result.totalCases+'ケース':result.coreQty!==null?result.coreQty+'本':''} 合計 ${formatYen(result.totalAmount)}</b></p>${result.minimumAmount?`<p>最低金額対象 ${formatYen(result.eligibleAmount)} / ${formatYen(result.minimumAmount)}（税抜）</p>`:''}<p>候補と指定上限の範囲で、不足日数→追加在庫の金額×保有日数→購入金額の順に比較。${!result.rule?'金額の超過は候補の最大1発注単位分まで。':''}将来の販売や納期を保証するものではありません。</p><p>現在在庫は商品マスターの帳簿在庫です（未入荷分は含みません）。在庫日数は未入荷分を含みます。</p>${result.warnings.map(w=>`<p class="prop-pending-warn">${escHtml(w)}</p>`).join('')}<div class="prop-adjust-table"><table><thead><tr><th>商品</th><th>数量<br>現在→調整</th><th>在庫日数<br>現在→発注後</th><th>金額</th></tr></thead><tbody>${[...result.rows,...(result.zeroRows||[])].map(r=>`<tr><td>${escHtml(r.name)}<small>${escHtml(r.code)} ／ ${r.lot}${result.rule?.kind==='case'?'個/ケース':'個単位'}<br>${escHtml(r.reason)}</small>${stockHtml(r)}</td><td>${r.original} → <b>${r.qty}</b>${result.rule?.kind==='case'&&r.inRule?`<small>${r.qty/r.lot}ケース</small>`:''}</td><td>${days(r.daysBefore)} → <b>${days(r.daysAfter)}</b></td><td>${formatYen(r.amount)}</td></tr>`).join('')}</tbody></table></div><p>自動追加対象から除外 ${result.ignoredCodes.length}品。反映後も数量を確認し、発注画面で出力・保存してください。</p>`;
+  return `<p><b>${escHtml(result.rule?.label||'最低金額への補充')} ／ ${result.totalCases!==null?result.totalCases+caseLabel:result.coreQty!==null?result.coreQty+'本':''} 合計 ${formatYen(result.totalAmount)}</b></p>${result.rule?.freeShipping?'<p>1箱は各商品の最低発注数です。6箱未満でも送料ありで発注できます。</p>':''}${result.minimumAmount?`<p>最低金額対象 ${formatYen(result.eligibleAmount)} / ${formatYen(result.minimumAmount)}（税抜）</p>`:''}<p>候補と指定上限の範囲で、不足日数→追加在庫の金額×保有日数→購入金額の順に比較。${!result.rule?'金額の超過は候補の最大1発注単位分まで。':''}将来の販売や納期を保証するものではありません。</p><p>現在在庫は商品マスターの帳簿在庫です（未入荷分は含みません）。在庫日数は未入荷分を含みます。</p>${result.warnings.map(w=>`<p class="prop-pending-warn">${escHtml(w)}</p>`).join('')}<div class="prop-adjust-table"><table><thead><tr><th>商品</th><th>数量<br>現在→調整</th><th>在庫日数<br>現在→発注後</th><th>金額</th></tr></thead><tbody>${[...result.rows,...(result.zeroRows||[])].map(r=>`<tr><td>${escHtml(r.name)}<small>${escHtml(r.code)} ／ ${r.lot}${result.rule?.kind==='case'?'個/'+caseLabel:'個単位'}<br>${escHtml(r.reason)}</small>${stockHtml(r)}</td><td>${r.original} → <b>${r.qty}</b>${result.rule?.kind==='case'&&r.inRule?`<small>${r.qty/r.lot}${caseLabel}</small>`:''}</td><td>${days(r.daysBefore)} → <b>${days(r.daysAfter)}</b></td><td>${formatYen(r.amount)}</td></tr>`).join('')}</tbody></table></div><p>自動追加対象から除外 ${result.ignoredCodes.length}品。反映後も数量を確認し、発注画面で出力・保存してください。</p>`;
 }
 async function applyPropAdjustment() {
   const preview=propAdjustment.preview;if(!preview)return;
@@ -11185,11 +11193,12 @@ async function openPropProductPicker(supplierCode) {
 }
 function renderPropProductPicker() {
   const snapshot=propProductPicker.snapshot;if(!snapshot)return;
-  const query=ProposalAdjust.norm(document.getElementById('prop-products-search').value),isCase=ProposalAdjust.ruleFor(snapshot.supplier.name)?.kind==='case';
+  const rule=ProposalAdjust.ruleFor(snapshot.supplier.name),caseLabel=rule?.unitLabel||'ケース';
+  const query=ProposalAdjust.norm(document.getElementById('prop-products-search').value),isCase=rule?.kind==='case';
   const rows=(snapshot.catalog||snapshot.metrics).filter(r=>!query||ProposalAdjust.norm(r.name+' '+r.code).includes(query));
-  document.getElementById('prop-products-list').innerHTML=`<p>${rows.length}商品${rows.length>80?'（先頭80件。検索で絞り込んでください）':''}。数量は${isCase?'ケース数':'個数'}で指定します。</p>`+rows.slice(0,80).map(r=>{
+  document.getElementById('prop-products-list').innerHTML=`<p>${rows.length}商品${rows.length>80?'（先頭80件。検索で絞り込んでください）':''}。数量は${isCase?caseLabel+'数':'個数'}で指定します。</p>`+rows.slice(0,80).map(r=>{
     const reason=propProductPickerReason(r,snapshot),lot=Number(r.lot),step=isCase?1:lot;
-    return `<div class="prop-picker-row"><b>${escHtml(r.name)}</b><small>${escHtml(r.code)} ／ 現在在庫 ${escHtml(r.stock)}個 ／ 未入荷 ${escHtml(r.onOrder)}個 ／ ${lot>0?lot+'個'+(isCase?'/ケース':'単位'):'最低発注数未設定'}${r.manualOnly?' ／ 需要分析なし・手動追加のみ':''}</small>${reason?`<p>${escHtml(reason)}</p>${!lot&&!r.excluded&&!r.eolFlagged?`<button class="btn btn-outline" ${orderAction('configurePropProductLot',r.code,r.name)}>最低発注数を設定</button><p>設定後に商品一覧を開き直してください。</p>`:''}`:`<label>追加する${isCase?'ケース数':'個数'} <input id="prop-product-qty-${r.code}" aria-label="${escHtml(r.name)}の追加数量" type="number" min="${step}" step="${step}" value="${step}"></label> <button class="btn btn-outline" ${orderAction('addPropProduct',r.code)}>提案へ追加</button>`}</div>`;
+    return `<div class="prop-picker-row"><b>${escHtml(r.name)}</b><small>${escHtml(r.code)} ／ 現在在庫 ${escHtml(r.stock)}個 ／ 未入荷 ${escHtml(r.onOrder)}個 ／ ${lot>0?lot+'個'+(isCase?'/'+caseLabel:'単位'):'最低発注数未設定'}${r.manualOnly?' ／ 需要分析なし・手動追加のみ':''}</small>${reason?`<p>${escHtml(reason)}</p>${!lot&&!r.excluded&&!r.eolFlagged?`<button class="btn btn-outline" ${orderAction('configurePropProductLot',r.code,r.name)}>最低発注数を設定</button><p>設定後に商品一覧を開き直してください。</p>`:''}`:`<label>追加する${isCase?caseLabel+'数':'個数'} <input id="prop-product-qty-${r.code}" aria-label="${escHtml(r.name)}の追加数量" type="number" min="${step}" step="${step}" value="${step}"></label> <button class="btn btn-outline" ${orderAction('addPropProduct',r.code)}>提案へ追加</button>`}</div>`;
   }).join('');
 }
 async function addPropProduct(rawCode) {
@@ -11219,12 +11228,14 @@ function configurePropProductLot(code,name){closePropProductPicker();openLotModa
 function updatePropCaseStatus(group) {
   const el=group.querySelector('.prop-case-status');if(!el)return;
   const supplierCode=group.id.replace('prop-group-',''),supplier=masters.suppliers.find(s=>ProposalAdjust.same(s.code,supplierCode));
-  if(ProposalAdjust.ruleFor(supplier?.name)?.kind!=='case')return;
+  const rule=ProposalAdjust.ruleFor(supplier?.name);if(rule?.kind!=='case')return;
   const metrics=proposalsData.proposals.filter(p=>ProposalAdjust.same(p.supplierCode,supplierCode));
   const selection=propAdjustmentSelection(supplierCode).filter(r=>r.checked&&r.qty>0);
   const error=propAdjustmentUnitError(supplier?.name,selection,metrics);
   const total=selection.reduce((sum,r)=>{const p=metrics.find(p=>ProposalAdjust.code(p.code)===r.code),override=lotFind(proposalsData.lotOverrides,r.code);return sum+r.qty/Number(override?override.lot:p?.lot);},0);
-  el.textContent=`選択中：${Number.isFinite(total)?Math.round(total*100)/100:'未確認'}ケース ／ ${selection.length?(error||'合計6ケース以上を満たしています'):'商品を選択してください'}`;
+  // 送料無料は表示と任意の補充だけに使い、6箱未満でも通常の発注へ進める。
+  const status=error||(!Number.isFinite(total)?'最低発注数を確認してください':rule.freeShipping?(total>=rule.minimum?'送料無料の6箱以上を満たしています':`送料無料まであと${rule.minimum-total}箱（6箱未満でも送料ありで発注できます）`):'合計6ケース以上を満たしています');
+  el.textContent=`選択中：${Number.isFinite(total)?Math.round(total*100)/100:'未確認'}${rule.unitLabel||'ケース'} ／ ${selection.length?status:'商品を選択してください'}`;
 }
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.getElementById('modal-prop-products')?.classList.contains('open'))closePropProductPicker();});
 function propAdjustmentUnitError(supplierName,selected,metrics) {
@@ -11235,9 +11246,10 @@ function propAdjustmentUnitError(supplierName,selected,metrics) {
   for(const row of rows) {
     const metric=metrics.find(p=>ProposalAdjust.code(p.code)===ProposalAdjust.code(row.code));
     const override=lotFind(proposalsData.lotOverrides,row.code),lot=rule.kind==='core'?5:Number(override?override.lot:metric.lot);
-    if(!Number.isSafeInteger(lot)||lot<1||!Number.isSafeInteger(row.qty)||row.qty%lot)return rule.label+'になるように調整してください。';
+    if(!Number.isSafeInteger(lot)||lot<1||!Number.isSafeInteger(row.qty)||row.qty<1||row.qty%lot)return rule.freeShipping?'最低発注数（1箱）の単位になるように数量を確認してください。':rule.label+'になるように調整してください。';
     total+=rule.kind==='case'?row.qty/lot:row.qty;
   }
+  if(rule.freeShipping)return '';
   return total<(rule.minimum||rule.increment)||total%rule.increment?rule.label+'になるように調整してください。':'';
 }
 
