@@ -1538,7 +1538,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.87.0-db';
+const APP_VERSION    = 'v1.87.1-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -4527,8 +4527,8 @@ function renderConfirmPage() {
     <div class="confirm-header-box">
       <div class="confirm-supplier">${escHtml(currentOrder.supplierName)}</div>
       <div class="confirm-meta">
-        ${dateHtml} / 担当: ${currentOrder.staff}
-        ${currentOrder.fax ? ' / FAX: ' + currentOrder.fax : ''}
+        ${dateHtml} / 担当: ${escHtml(currentOrder.staff)}
+        ${currentOrder.fax ? ' / FAX: ' + escHtml(currentOrder.fax) : ''}
       </div>
       ${!SatoOxOrderForm.contains(cartItems) && confirmSup && confirmSup.deadline ? `<div class="order-summary-deadline" style="margin-top:8px">⏰ 発注限 ${escHtml(confirmSup.deadline)}</div>` : ''}
       ${!SatoOxOrderForm.contains(cartItems) && confirmSup && confirmSup.note ? `<div class="order-summary-note" style="margin-top:8px">📌 ${escHtml(confirmSup.note)}</div>` : ''}
