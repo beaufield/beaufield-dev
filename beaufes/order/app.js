@@ -1,6 +1,6 @@
 import {get,set,records,update as storageUpdate,mergeReceipt,sanitizeLegacyQr,clearMakerConnection,storageMode} from './storage.js';
 import {buildWorkbook,displayProductCode,emptyHandling,packRemarks,unpackRemarks,handlingWarnings,deliveryLabel,billingLabel} from './export.js';
-const APP_VERSION='v0.16.1';
+const APP_VERSION='v0.17.0';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -622,6 +622,8 @@ on('export','click',async()=>{const batch_id=crypto.randomUUID();const data=awai
 async function start(){
  // 固定ヘッダーの実寸に合わせ、スクロール先がメーカー名の下へ隠れないようにする。
  const header=$('app-header');const fitHeader=()=>document.documentElement.style.setProperty('--header-height',`${header.getBoundingClientRect().height+12}px`);new ResizeObserver(fitHeader).observe(header);fitHeader();
+ // 更新中に旧HTMLが残っていても、注文画面の起動を止めない。
+ const makerHelp=$('maker-help');if(makerHelp)makerHelp.hidden=officeMode;
  $('version').textContent=APP_VERSION;if(!localDemo){$('demo').hidden=true;if(!officeMode){$('token-label').hidden=true;$('connect').hidden=true;$('login-title').textContent='メーカー用QRを読み取ってください';}}
  const network=()=>{$('network').textContent=navigator.onLine?'オンライン':'オフライン';};network();window.addEventListener('online',()=>{network();showConnection();pump().catch(e=>message(errorText(e)));});window.addEventListener('offline',()=>{network();showConnection();});
  await sanitizeLegacyQr();
