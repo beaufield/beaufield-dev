@@ -166,3 +166,9 @@ section{scroll-margin-top:12px}
 
 .receipt-panel{max-height:90vh;overflow:auto}.receipt-state{font-weight:bold}
 @media print{body>*{display:none!important}body>#receipt-modal:not([hidden]){display:block!important;position:static;background:white;padding:0}.receipt-panel{max-height:none;overflow:visible;box-shadow:none;width:100%;max-width:none}.receipt-actions{display:none!important}}
+
+/* 入力画面を保ったまま操作ガイドを別画面で開く。 */
+.header-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.manual-link{display:inline-flex;align-items:center;min-height:44px;padding:7px 10px;border:1px solid #94bdd2;border-radius:8px;background:white;color:#174a68;font-size:13px;font-weight:700;text-decoration:none;white-space:nowrap}
+.manual-link:hover{background:#e7f4fc}.manual-link:focus-visible{outline:3px solid #e2a64b;outline-offset:2px}
+@media(max-width:370px){.header-actions{gap:5px;flex-direction:column;align-items:flex-end}.manual-link{min-height:36px;padding:5px 8px}}
