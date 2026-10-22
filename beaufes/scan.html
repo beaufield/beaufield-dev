@@ -207,7 +207,7 @@
         <button class="bigBtn" id="btnScan">QRを読む</button>
         <div class="btnRow" style="margin-top:10px;">
           <button class="ghost" id="btnManual">受付番号で検索</button>
-          <button class="ghost" id="btnName">お名前で検索</button>
+          <button class="ghost" id="btnName">名前・サロン名・コードで検索</button>
         </div>
       </div>
 
@@ -222,7 +222,7 @@
       </div>
 
       <div id="nameArea" style="display:none; margin-top:12px;">
-        <input type="text" id="nameInput" placeholder="お名前・サロン名の一部" autocomplete="off">
+        <input type="text" id="nameInput" placeholder="お名前・サロン名・得意先コード" autocomplete="off">
         <div class="btnRow" style="margin-top:10px;">
           <button class="ghost" id="btnNameClose">閉じる</button>
         </div>
@@ -287,7 +287,7 @@ await window.BFEventCandidate.ready;
 //    予備名札は朝の名簿に載らない）。最終的な照合はサーバーが行う。
 // ============================================================
 
-const APP_VERSION = '0.4.3';
+const APP_VERSION = '0.5.0';
 
 // 本番GAS（HTML=GitHub Pages / GAS=版番号固定の分離型。ローカル検証はモックに差し替える）
 const GAS_URL = window.BFEventCandidate.endpoint;
@@ -956,23 +956,53 @@ function stopScan() {
 // ------------------------------------------------------------
 // 名前検索（名簿の中だけ・通信しない）
 // ------------------------------------------------------------
+// 日本語コメント: 検索対象は取得済み来場者と、確定コードで結び付いたマスターの別表記だけ。
+function normalizeReceptionName(value) {
+  return String(value == null ? '' : value).normalize('NFKC').toLowerCase()
+    .replace(/[ぁ-ゖ]/g, function (ch) { return String.fromCharCode(ch.charCodeAt(0) + 0x60); })
+    .replace(/\s+/g, '');
+}
+function receptionCode(value) {
+  const text = String(value || '').normalize('NFKC').trim().replace(/[‐‑‒–—―−ー]/g, '-');
+  const match = /^(\d{1,6})(?:-(\d{1,4}))?$/.exec(text);
+  if (!match) return null;
+  const parent = match[1].padStart(6, '0');
+  const child = (match[2] || '0').padStart(4, '0');
+  return { parent: parent, code: child === '0000' ? parent : parent + '-' + child,
+    hasChild: Boolean(match[2]) };
+}
+function receptionMatches(entry, query) {
+  const words = String(query || '').normalize('NFKC').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return false;
+  const fields = [entry.staff_name, entry.salon_name, entry.app_id, entry.customer_name]
+    .concat(Array.isArray(entry.customer_search_aliases) ? entry.customer_search_aliases : [])
+    .map(normalizeReceptionName).filter(Boolean);
+  const code = receptionCode(entry.customer_code);
+  return words.every(function (word) {
+    const needle = normalizeReceptionName(word);
+    const requested = receptionCode(word);
+    // 親コード検索は同じ親の全支店、子付き検索はその支店だけ。部分数字では別コードに当てない。
+    if (requested && code && (requested.hasChild ? requested.code === code.code : requested.parent === code.parent)) return true;
+    return fields.some(function (field) { return field.indexOf(needle) >= 0; });
+  });
+}
 function searchByName(q) {
   const box = el('nameResults');
-  const s = String(q || '').trim().normalize('NFKC').replace(/\s+/g, '').toLowerCase();
-  if (!s || !roster) { box.innerHTML = ''; return; }
-  const hits = (roster.roster || []).filter(function (r) {
-    const hay = (String(r.staff_name) + String(r.salon_name) + String(r.app_id))
-      .normalize('NFKC').replace(/\s+/g, '').toLowerCase();
-    return hay.indexOf(s) >= 0;
-  }).slice(0, 12);
-
-  if (!hits.length) { box.innerHTML = '<li><span class="recMeta">見つかりませんでした。</span></li>'; return; }
+  if (!String(q || '').trim() || !roster) { box.innerHTML = ''; return; }
+  const matches = (roster.roster || []).filter(function (r) { return receptionMatches(r, q); });
+  const hits = matches.slice(0, 12);
+  if (!hits.length) {
+    box.innerHTML = '<li><span class="recMeta">見つかりませんでした。別の表記・氏名・得意先コードでもお試しください。</span></li>';
+    return;
+  }
   box.innerHTML = hits.map(function (r) {
+    const master = [r.customer_name, r.customer_code].filter(Boolean);
     return '<li><div class="recBody">' +
       '<div class="recHead">' + esc(r.staff_name) + '</div>' +
       '<div class="recMeta">' + esc(r.salon_name) + ' ・ ' + esc(r.app_id) + '</div>' +
+      (master.length ? '<div class="recMeta">販売管理：' + master.map(esc).join(' ・ ') + '</div>' : '') +
       '</div><button data-pick="' + esc(r.app_id) + '">受付</button></li>';
-  }).join('');
+  }).join('') + (matches.length > 12 ? '<li><span class="recMeta">' + matches.length + '名が該当しました。先頭12名を表示しています。氏名などを追加して絞り込んでください。</span></li>' : '');
   box.querySelectorAll('[data-pick]').forEach(function (b) {
     b.onclick = function () {
       const entry = byCode[b.getAttribute('data-pick')];
