@@ -41,6 +41,10 @@ button:disabled{opacity:.55;cursor:default}
 .selected-product small{display:block;color:#557181}
 .selected-product input{width:75px;padding:8px}
 .selected-product button{padding:5px 8px;min-height:36px}
+/* 色番と合計本数を横に並べ、長い共通商品名の繰返しを省く。 */
+.color-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+.color-grid .selected-product{margin:0;gap:5px;padding:7px}.color-grid .product-name{font-size:14px;font-weight:650}.color-grid .selected-product input{width:62px;min-width:0;min-height:44px}
+@media(max-width:650px){.color-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .quantity-progress{font-size:14px;font-weight:700;line-height:1.5;margin:6px 0 10px;padding:9px 10px;border-radius:8px}
 .quantity-neutral{background:#edf5fa;color:#42647a}
 .quantity-error{background:#fff0ed;color:#a32f24;border:1px solid #e9ada5}
