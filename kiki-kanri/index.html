@@ -647,7 +647,7 @@
 
 <script>
 // ========== APP VERSION ==========
-const APP_VERSION = 'v1.14.1';
+const APP_VERSION = 'v1.14.2';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
 const PORTAL_API_URL = 'https://script.google.com/macros/s/AKfycbzNVW7AaPUTuwneE-M40DTN1clO5VT2yLCHq7cjYvaHqfMfXgVi38UAOsDZQbmmN3wOzw/exec';
 
@@ -1676,7 +1676,10 @@ async function submitLoan(deviceId) {
     viewData = {};
     viewStack = [];
     navigate('deviceDetail', { deviceId });
-  } catch(e) { showToast('保存結果を確認できません: ' + e.message, 'error'); } finally {
+  } catch(e) {
+    // 画像の段階で止まった場合は、まだ何も保存していないので文言を分ける
+    showToast(e && e.imageError ? e.message : '保存結果を確認できません: ' + e.message, 'error');
+  } finally {
     hideLoading();
   }
 }
@@ -1841,10 +1844,32 @@ function renderImageSlots(type, existingUrls) {
   return html;
 }
 
+// 画像の制限はサーバー（GAS uploadImage）と同じ条件にする。
+// 送信してから弾かれるのではなく、選んだ時点で気づけるようにするための事前チェック。
+const UPLOAD_MAX_BYTES = 8 * 1024 * 1024;
+const UPLOAD_ALLOWED_MIME = ['image/jpeg','image/jpg','image/png','image/webp','image/gif','image/heic','image/heif'];
+const IMAGE_ERROR_TEXT = {
+  UNSUPPORTED_IMAGE_TYPE: '対応していない画像形式です（JPEG / PNG / WebP / GIF / HEIC）',
+  IMAGE_TOO_LARGE: '画像が大きすぎます（8MBまで）。別の写真を選ぶか、画像なしで登録してください',
+  INVALID_IMAGE: '画像を読み取れませんでした。別の画像でお試しください'
+};
+
 function handleImageSelect(type, input, index) {
   const file = input.files[0];
   if (!file) { console.log('[IMAGE] ファイル未選択'); return; }
   console.log('[IMAGE] ファイル選択:', file.name, file.type, file.size, 'bytes');
+  // type が空になる端末があるため、取れたときだけ形式を判定する（実体はサーバーが確認する）
+  const mime = String(file.type || '').toLowerCase().split(';')[0].trim();
+  if (mime && UPLOAD_ALLOWED_MIME.indexOf(mime) < 0) {
+    showToast(IMAGE_ERROR_TEXT.UNSUPPORTED_IMAGE_TYPE, 'error');
+    input.value = '';
+    return;
+  }
+  if (file.size > UPLOAD_MAX_BYTES) {
+    showToast(IMAGE_ERROR_TEXT.IMAGE_TOO_LARGE, 'error');
+    input.value = '';
+    return;
+  }
   const reader = new FileReader();
   reader.onload = function(e) {
     const dataUrl = e.target.result;
@@ -1911,6 +1936,9 @@ async function uploadPendingImage(type) {
     return url;
   } catch(e) {
     console.error('[IMAGE] アップロードエラー:', e.message);
+    // サーバーの定型コードは画面向けの日本語に置き換える（原因が伝わらないと放置されるため）
+    const friendly = IMAGE_ERROR_TEXT[e.message];
+    if (friendly) { const err = new Error(friendly); err.imageError = true; throw err; }
     throw e;
   }
 }

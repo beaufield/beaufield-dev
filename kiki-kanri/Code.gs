@@ -2,7 +2,7 @@
 // ビューフィールド 貸出管理アプリ — バックエンド
 // ============================================================
 
-const VERSION  = 'v1.12.1';
+const VERSION  = 'v1.12.2';
 const SHEET_ID      = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
 const AUTH_SHEET_ID = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID');
 // SHEET_ID / AUTH_SHEET_ID / LINEWORKS_WEBHOOK はスクリプトプロパティで管理
@@ -116,9 +116,11 @@ function doPost(e) {
     if (!auth.valid) {
       return _respond({ status: 'error', error: 'SESSION_INVALID' });
     }
+      // uploadImage は貸出登録（営業が使う）からも呼ばれるため管理者限定にしない。
+      // 代わりに uploadImage 側で MIME・サイズ・実体を検証する。
       const adminActions = [
         'saveDevice', 'registerDevice', 'saveSalesRep', 'deleteSalesRep',
-        'uploadImage', 'saveMaker', 'deleteMaker', 'issueLabel',
+        'saveMaker', 'deleteMaker', 'issueLabel',
         'updatePrintStatus', 'assignLabel'
       ];
       const role = String(auth.role || '').toLowerCase();
@@ -389,18 +391,67 @@ function deleteSalesRep(id) {
 }
 
 // ─── 画像アップロード（Google Drive） ───────────────────────
+// 貸出登録（営業）からも呼ばれるため管理者限定にしない。その代わり、
+// 受け取ったデータが本当に画像か・大きすぎないかをここで必ず確かめる。
+const UPLOAD_MAX_BYTES = 8 * 1024 * 1024; // 原本8MB（スマホ写真は通常2〜5MB）
+const UPLOAD_MIME_EXT = {
+  'image/jpeg': '.jpg',
+  'image/jpg' : '.jpg',
+  'image/png' : '.png',
+  'image/webp': '.webp',
+  'image/gif' : '.gif',
+  'image/heic': '.heic',
+  'image/heif': '.heif'
+};
+
 function uploadImage(data) {
+  if (!data || typeof data.base64 !== 'string' || !data.base64) {
+    return { success: false, error: 'INVALID_IMAGE' };
+  }
+
+  // 申告MIMEは許可リストで絞る（charset等が付く場合に備えて先頭だけ見る）
+  const mimeType = String(data.mimeType || '').toLowerCase().split(';')[0].trim();
+  const ext = UPLOAD_MIME_EXT[mimeType];
+  if (!ext) return { success: false, error: 'UNSUPPORTED_IMAGE_TYPE' };
+
+  let bytes;
+  try { bytes = Utilities.base64Decode(data.base64); }
+  catch (e) { return { success: false, error: 'INVALID_IMAGE' }; }
+  if (!bytes || !bytes.length) return { success: false, error: 'INVALID_IMAGE' };
+  if (bytes.length > UPLOAD_MAX_BYTES) return { success: false, error: 'IMAGE_TOO_LARGE' };
+
+  // 申告MIMEは詐称できるので、先頭バイトが実際に画像であることも確かめる
+  if (!isImageBytes_(bytes)) return { success: false, error: 'INVALID_IMAGE' };
+
+  // ファイル名はクライアント入力を使わず、サーバー側で組み立てる
+  const fileName = 'loan_'
+    + Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyyMMdd_HHmmss') + '_'
+    + Utilities.getUuid().slice(0, 8) + ext;
+
   const folder = getOrCreateFolder('貸出管理_画像');
-  const blob = Utilities.newBlob(
-    Utilities.base64Decode(data.base64),
-    data.mimeType,
-    data.fileName
-  );
-  const file = folder.createFile(blob);
+  const file = folder.createFile(Utilities.newBlob(bytes, mimeType, fileName));
   file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-  const fileId = file.getId();
-  const imageUrl = 'https://drive.google.com/uc?export=view&id=' + fileId;
+  const imageUrl = 'https://drive.google.com/uc?export=view&id=' + file.getId();
   return { success: true, imageUrl };
+}
+
+// 先頭バイトのシグネチャで画像かどうかを判定する
+// base64Decode は符号付きバイトを返すため、比較前に & 0xff で符号を落とす
+function isImageBytes_(b) {
+  const at = function(i) { return b.length > i ? (b[i] & 0xff) : -1; };
+  // JPEG: FF D8 FF
+  if (at(0) === 0xff && at(1) === 0xd8 && at(2) === 0xff) return true;
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (at(0) === 0x89 && at(1) === 0x50 && at(2) === 0x4e && at(3) === 0x47 &&
+      at(4) === 0x0d && at(5) === 0x0a && at(6) === 0x1a && at(7) === 0x0a) return true;
+  // GIF: 'GIF8'
+  if (at(0) === 0x47 && at(1) === 0x49 && at(2) === 0x46 && at(3) === 0x38) return true;
+  // WebP: 'RIFF' + 4バイト長 + 'WEBP'
+  if (at(0) === 0x52 && at(1) === 0x49 && at(2) === 0x46 && at(3) === 0x46 &&
+      at(8) === 0x57 && at(9) === 0x45 && at(10) === 0x42 && at(11) === 0x50) return true;
+  // HEIC / HEIF: 5〜8バイト目が 'ftyp'
+  if (at(4) === 0x66 && at(5) === 0x74 && at(6) === 0x79 && at(7) === 0x70) return true;
+  return false;
 }
 
 function getOrCreateFolder(name) {
