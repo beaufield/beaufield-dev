@@ -392,6 +392,7 @@
     <div class="modalNote">お客様にこの画面を読み取ってもらってください</div>
     <div id="qrBox"></div>
     <div class="qrUrl" id="qrUrl"></div>
+    <p><a id="qrFormLink" href="./index.html" target="_blank" rel="noopener noreferrer">申込フォームを開く（別タブ）</a></p>
     <button type="button" id="qrCloseBtn">閉じる</button>
   </div>
 </div>
@@ -623,7 +624,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.17.8';
+const APP_VERSION = '0.17.9';
 const GAS_URL = window.BFEventCandidate.endpoint;
 const PORTAL_URL = './login.html';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
@@ -1276,12 +1277,15 @@ function sortFiltered() {
 let qrRendered = false;
 
 function openQrModal() {
+  // QRとリンクには、同じ申込フォームの絶対URLを使う。
+  const formUrl = new URL(FORM_URL, location.href).href;
+  el('qrFormLink').href = formUrl;
   if (!qrRendered) {
     const qr = qrcode(0, 'M'); // 0=自動バージョン・'M'は pass.html / badges.html と同じ設定
-    qr.addData(FORM_URL);
+    qr.addData(formUrl);
     qr.make();
     el('qrBox').innerHTML = qr.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
-    el('qrUrl').textContent = FORM_URL;
+    el('qrUrl').textContent = formUrl;
     qrRendered = true;
   }
   el('qrModal').hidden = false;
