@@ -57,8 +57,9 @@
   .btnRow { display: flex; gap: 10px; }
   .btnRow button { flex: 1; }
   /* 長い名前検索ボタンへ幅を多く配分する。 */
-  #btnManual { flex: 2 1 0; min-width: 0; padding-inline: 8px; }
-  #btnName { flex: 3 1 0; min-width: 0; padding-inline: 8px; }
+  #btnManual { flex: 2 1 0; min-width: 0; padding-inline: 8px; font-size: 14px; white-space: nowrap; }
+  #btnName { flex: 3 1 0; min-width: 0; padding-inline: 8px; font-size: 14px; }
+  #btnName span { display: inline-block; white-space: nowrap; }
   .bigBtn { width: 100%; font-size: 20px; padding: 20px 16px; font-weight: bold; }
 
   input[type="text"] {
@@ -235,7 +236,7 @@ body.camera-open { overflow: hidden; }
         <button class="bigBtn" id="btnScan">QRを読む</button>
         <div class="btnRow" style="margin-top:10px;">
           <button class="ghost" id="btnManual">受付番号で検索</button>
-          <button class="ghost" id="btnName">名前・サロン名・コードで検索</button>
+          <button class="ghost" id="btnName"><span>名前・サロン名・</span><span>コードで検索</span></button>
         </div>
       </div>
 
@@ -315,7 +316,7 @@ await window.BFEventCandidate.ready;
 //    予備名札は朝の名簿に載らない）。最終的な照合はサーバーが行う。
 // ============================================================
 
-const APP_VERSION = '0.7.1';
+const APP_VERSION = '0.7.2';
 
 // 本番GAS（HTML=GitHub Pages / GAS=版番号固定の分離型。ローカル検証はモックに差し替える）
 const GAS_URL = window.BFEventCandidate.endpoint;
