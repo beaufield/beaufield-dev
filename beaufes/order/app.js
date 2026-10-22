@@ -1,6 +1,6 @@
 import {get,set,records,update as storageUpdate,mergeReceipt,sanitizeLegacyQr,clearMakerConnection,storageMode} from './storage.js';
 import {buildWorkbook,displayProductCode,emptyHandling,packRemarks,unpackRemarks,handlingWarnings,deliveryLabel,billingLabel} from './export.js';
-const APP_VERSION='v0.17.0';
+const APP_VERSION='v0.17.1';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -436,7 +436,7 @@ on('submit','click',async()=>{
   if(!draft.form.resolved||!(draft.form.qr_hash||draft.form.subject_id))throw Error('先に名札QRまたはコード・名前検索でお客様を選んでください。');
   const b=bundles(true);if(!b.length)throw Error('商品を1セット以上選択してください。');
   if(!draft.form.delivery_confirmed||!['later','takeaway'].includes(draft.form.delivery))throw Error('受け渡し方法を選んでください。');
-  if(draft.form.delivery==='takeaway'&&b.some(x=>[...(x.paid||[]),...(x.gift||[])].some(l=>/^ACT26-/.test(l.code))))throw Error('RESERVATION_DELIVERY_REQUIRED');
+  if(draft.form.delivery==='takeaway'&&b.some(x=>[...(x.paid||[]),...(x.gift||[])].some(l=>/^(?:ACT26-|012693$)/.test(l.code))))throw Error('RESERVATION_DELIVERY_REQUIRED');
   const body={request_id:draft.id,scope:info.scope,catalog_version:info.catalog.version,...(draft.form.subject_id?{subject_id:draft.form.subject_id}:{token_hash:draft.form.qr_hash}),delivery:draft.form.delivery,bundles:b,...(encodedRemarks.trim()?{remarks:encodedRemarks}:{})};
   renderForm();
   if(info.server_order_recovery){
