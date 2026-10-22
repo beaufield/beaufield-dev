@@ -111,6 +111,31 @@
   footer { text-align: center; font-size: 11px; color: #999; padding: 16px; }
   textarea { width: 100%; height: 120px; font-size: 12px; font-family: monospace; }
   details summary { cursor: pointer; color: var(--main-dark); font-size: 14px; }
+/* 日本語コメント: スクロール位置に依存せず中央へ。縦横の小さいスマートフォンにも収める。 */
+body.camera-open { overflow: hidden; }
+#scanArea {
+  position: fixed; inset: 0; margin: auto;
+  width: min(560px, calc(100vw - 24px)); height: fit-content;
+  max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px);
+  border: 0; border-radius: 16px; padding: 18px;
+  color: #222; background: #fff; overflow: auto;
+  box-shadow: 0 16px 60px rgba(0,0,0,.3); z-index: 30000;
+}
+#scanArea:not([open]) { display: none; }
+#scanArea::backdrop { background: rgba(7,27,36,.65); }
+#scanArea .scanDialogTop { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
+#scanArea .scanDialogTop h2 { margin: 0; font-size: 18px; }
+#scanArea #btnStopScan { flex: none; min-height: 44px; padding: 8px 14px; }
+#scanArea #camWrap { width: 100%; height: min(52vh, 400px); height: min(52dvh, 400px); }
+#scanArea #cam { width: 100%; height: 100%; object-fit: contain; background: #000; }
+#scanHint { margin: 10px 0 0; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+@media(max-height: 500px) {
+  #scanArea { padding: 10px; }
+  #scanArea #camWrap { height: 43vh; height: 43dvh; }
+  #scanArea .scanDialogTop { margin-bottom: 8px; }
+  #scanHint { margin-top: 6px; font-size: 12px; }
+}
+
 </style>
 </head>
 <body>
@@ -186,6 +211,7 @@
   <div id="walkinResumePanel" hidden><div class="wiButtons"><button id="walkinResume" type="button">同じ操作を再確認する</button></div></div>
   <div id="walkinCheckinPanel" hidden><p>予備名札を確認して、下のボタンで入場を記録してください。QRをもう一度読む必要はありません。</p><div class="wiButtons"><button id="walkinCheckin" type="button">この方を入場受付</button></div></div>
   <div id="walkinDonePanel" hidden><p>端末に入場記録を残しました。送信は自動で行います。上部の「送信待ち」と「直近の受付」で状況を確認してください。</p><div class="wiButtons"><button id="walkinNext" type="button">次の当日登録へ</button></div></div>
+  <div class="wiButtons"><button id="walkinCancel" type="button" class="ghost">この当日登録を取り消す</button></div>
   <div id="walkinMessage" class="err" role="alert"></div>
   <div class="wiButtons"><button id="walkinClose" type="button" class="ghost">QR受付へ戻る</button></div>
   <p class="hint">途中で閉じても進捗は残ります。通信・認証のエラーは続きを再開し、最初から作り直しません。</p>
@@ -195,12 +221,11 @@
 
     <div class="card">
       <h2>② 受付</h2>
-      <div id="scanArea" style="display:none;">
+      <dialog id="scanArea" aria-labelledby="scanDialogTitle" aria-describedby="scanHint">
+        <div class="scanDialogTop"><h2 id="scanDialogTitle">QRコードを読む</h2><button class="ghost" id="btnStopScan" type="button" autofocus>閉じる</button></div>
         <div id="camWrap"><video id="cam" muted playsinline></video><div id="camGuide"></div></div>
-        <div class="btnRow" style="margin-top:10px;">
-          <button class="ghost" id="btnStopScan">閉じる</button>
-        </div>
-      </div>
+        <p id="scanHint" role="status" aria-live="polite"></p>
+      </dialog>
       <div id="scanErr" class="err"></div>
 
       <div id="scanButtons">
@@ -287,7 +312,7 @@ await window.BFEventCandidate.ready;
 //    予備名札は朝の名簿に載らない）。最終的な照合はサーバーが行う。
 // ============================================================
 
-const APP_VERSION = '0.5.0';
+const APP_VERSION = '0.7.0';
 
 // 本番GAS（HTML=GitHub Pages / GAS=版番号固定の分離型。ローカル検証はモックに差し替える）
 const GAS_URL = window.BFEventCandidate.endpoint;
@@ -888,70 +913,121 @@ function renderRecent() {
 // ------------------------------------------------------------
 // QRスキャン（BarcodeDetector優先・無ければ jsQR）
 // ------------------------------------------------------------
+// 日本語コメント: カメラを中央のdialogで開き、終了後や遅着した映像/読取結果を使わない。
+let cameraRun = 0, cameraOpening = false, cameraFocus = null;
+function openCameraDialog() {
+  const dialog = el('scanArea');
+  cameraFocus = document.activeElement;
+  document.body.classList.add('camera-open');
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+  else dialog.setAttribute('open', '');
+  el('btnStopScan').focus({ preventScroll: true });
+}
 async function startScan() {
+  if (cameraOpening || scanStream) return;
+  const run = ++cameraRun;
+  cameraOpening = true;
   el('manualArea').style.display = 'none';
   el('nameArea').style.display = 'none';
   el('scanErr').textContent = '';
-  el('scanArea').style.display = 'block';
+  el('scanHint').textContent = 'カメラを準備しています。許可の確認が出たら「許可」を選んでください。';
   el('scanButtons').style.display = 'none';
-
   const video = el('cam');
   try {
-    scanStream = await navigator.mediaDevices.getUserMedia({
+    openCameraDialog();
+    const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: 'environment' } }, audio: false
     });
+    // 閉じた後に許可された映像を裏で動かさない。新しい撮影にも混ぜない。
+    if (run !== cameraRun || !el('scanArea').hasAttribute('open')) {
+      stream.getTracks().forEach(function (t) { t.stop(); });
+      return;
+    }
+    scanStream = stream;
+    video.srcObject = stream;
+    video.setAttribute('playsinline', 'true');
+    await video.play();
+    if (run !== cameraRun) return;
+    cameraOpening = false;
+    el('scanHint').textContent = 'お客様のQRコードを枠の中に入れてください。読み取ると自動で閉じます。';
   } catch (e) {
-    el('scanErr').innerHTML = 'カメラを使えませんでした。<b>「受付番号で検索」</b>でお通しください。' +
-      '<span class="hint">（カメラの利用を「許可」にすると使えます）</span>';
+    if (run !== cameraRun) return;
+    el('scanErr').textContent = e?.name === 'NotAllowedError'
+      ? 'カメラの利用が許可されていません。受付サイトのカメラ設定を「許可」にしてから、もう一度お試しください。受付番号・名前での検索も使えます。'
+      : 'カメラを起動できませんでした。カメラを使用中の別のアプリを閉じて再度お試しください。受付番号・名前での検索も使えます。';
     stopScan();
     return;
   }
-  video.srcObject = scanStream;
-  video.setAttribute('playsinline', 'true');
-  await video.play();
-
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  let detector = null;
+  let detector = null, detecting = false;
   if (window.BarcodeDetector) {
-    try { detector = new BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { detector = null; }
+    try { detector = new BarcodeDetector({ formats: ['qr_code'] }); } catch (_) { detector = null; }
   }
-
   scanTimer = setInterval(async function () {
-    if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
+    if (run !== cameraRun || detecting || video.readyState !== video.HAVE_ENOUGH_DATA) return;
+    detecting = true;
     let text = '';
     try {
       if (detector) {
         const found = await detector.detect(video);
-        if (found && found.length) text = found[0].rawValue || '';
-      } else if (window.jsQR) {
-        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        if (found?.length) text = found[0].rawValue || '';
+      } else if (window.jsQR && ctx) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const r = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
-        if (r) text = r.data || '';
+        const result = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+        if (result) text = result.data || '';
       } else {
-        el('scanErr').innerHTML = 'QRの読み取り部品を読み込めませんでした。' +
-          '<b>「受付番号で検索」</b>をお使いください。';
+        el('scanErr').textContent = 'QRの読み取り部品を読み込めませんでした。受付番号・名前で検索してください。';
         stopScan();
         return;
       }
-    } catch (e) { return; }
-    if (!text) return;
+    } catch (_) { return; }
+    finally { detecting = false; }
+    if (run !== cameraRun || !text) return;
     const parsed = parseBadgeQr(text);
-    if (!parsed) { el('scanErr').textContent = 'この名札のQRではないようです。もう一度お試しください。'; return; }
+    if (!parsed) {
+      el('scanHint').textContent = 'この名札のQRではないようです。お客様の入場QRをお試しください。';
+      return;
+    }
     stopScan();
     checkIn({ ticket_token: parsed.t });
   }, 250);
 }
-
 function stopScan() {
+  ++cameraRun;
+  cameraOpening = false;
   if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
-  if (scanStream) { scanStream.getTracks().forEach(function (t) { t.stop(); }); scanStream = null; }
-  el('cam').srcObject = null;
-  el('scanArea').style.display = 'none';
+  if (scanStream) {
+    scanStream.getTracks().forEach(function (t) { t.stop(); });
+    scanStream = null;
+  }
+  const video = el('cam'), dialog = el('scanArea');
+  video.pause();
+  video.srcObject = null;
+  if (dialog.hasAttribute('open')) {
+    if (typeof dialog.close === 'function') dialog.close();
+    else dialog.removeAttribute('open');
+  }
+  document.body.classList.remove('camera-open');
   el('scanButtons').style.display = 'block';
+  if (cameraFocus?.isConnected) cameraFocus.focus({ preventScroll: true });
+  cameraFocus = null;
 }
+function wireCameraDialog() {
+  const dialog = el('scanArea');
+  dialog.addEventListener('cancel', function (event) { event.preventDefault(); stopScan(); });
+  dialog.addEventListener('close', function () {
+    if (!dialog.hasAttribute('open') && (scanStream || cameraOpening)) stopScan();
+  });
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden && (scanStream || cameraOpening)) stopScan();
+  });
+  window.addEventListener('pagehide', stopScan);
+}
+
 
 // ------------------------------------------------------------
 // 名前検索（名簿の中だけ・通信しない）
@@ -1087,6 +1163,7 @@ function wireUi() {
   el('btnRoster').onclick = fetchRoster;
   el('btnScan').onclick = startScan;
   el('btnStopScan').onclick = stopScan;
+  wireCameraDialog();
 
   el('btnManual').onclick = function () {
     el('manualArea').style.display = 'block';
@@ -1162,7 +1239,7 @@ async function boot() {
 }
 
 await boot();
-const {mountWalkin} = await import('./walkin-ui.mjs');
+const {mountWalkin} = await import('./walkin-ui.mjs?b=33f01d58c7d6');
 await mountWalkin({stopScan,enqueue:async input=>{
   if (!lsSet(K_ROSTER,input.roster)) throw Error('WALKIN_STORAGE_FAILED');
   roster=input.roster;indexRoster();renderPrep();
