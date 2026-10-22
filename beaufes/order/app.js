@@ -1,6 +1,6 @@
 import {get,set,records,update as storageUpdate,mergeReceipt,sanitizeLegacyQr,clearMakerConnection,storageMode} from './storage.js';
 import {buildWorkbook,displayProductCode,emptyHandling,packRemarks,unpackRemarks,handlingWarnings,deliveryLabel,billingLabel} from './export.js';
-const APP_VERSION='v0.18.1';
+const APP_VERSION='v0.18.2';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -102,7 +102,16 @@ function selectedCount(offer,selected){
 function automaticKind(offer,kind){return !!offer[`${kind}_components`]||kind==='gift'&&['same_sku_groups','linked_sku_groups','threshold_gift'].includes(offer.gift_rule);}
 function selectedOffer(offer){return draft.form.offers[offer.offer_id];}
 // 内部の仮商品IDと照合情報は保持し、メーカー向けの表示だけ簡潔にする。
-const makerText=value=>officeMode?String(value||''):String(value||'').replace(/仮ID・予約/g,'予約').replace(/仮ID ACT26-[A-Z]+ で受付し、販売管理入力前に正式商品コードを照合してください。/g,'').replace(/（販売管理コード要照合）/g,'').trim();
+function makerText(value){
+ const text=String(value||'');if(officeMode)return text;
+ return text.replace(/仮ID・予約/g,'予約')
+  .replace(/仮ID ACT26-[A-Z]+ で受付し、販売管理入力前に正式商品コードを照合してください。/g,'')
+  .replace(/（販売管理コード要照合）/g,'')
+  .replace(/[^。！？\n]*(?:マスター未登録|商品に統合|商品マスターの正式表記)[^。！？\n]*[。！？]?/g,'')
+  .replace(/[^。！？\n]*通常売上単価×6÷7[^。！？\n]*[。！？]?/g,'')
+  .replace(/本人指定により/g,'')
+  .replace(/マスター売上単価|通常売上単価/g,'通常価格').trim();
+}
 function addSelectedProduct(group,offer,kind,code,quantity){
  const product=info.catalog.products.find(p=>p.product_code===code);if(!product)return;
  const row=element('div',undefined,'selected-product');const name=element('div',makerText(product.product_name),'product-name');
@@ -118,7 +127,7 @@ function renderOffer(offer){
  const selected=selectedOffer(offer);const card=element('div',undefined,'offer-card');card.dataset.offerCard=offer.offer_id;
  const head=element('div',undefined,'offer-head');const title=element('div');title.append(element('h3',makerText(offer.label)),element('p',offerSummary(offer),'muted'));
  const remove=element('button','条件を外す','secondary small-action');remove.type='button';remove.onclick=()=>removeOffer(offer.offer_id).catch(e=>message(errorText(e)));head.append(title,remove);card.append(head);
- if(offer.description)card.append(element('p',makerText(offer.description),'muted'));
+ const description=makerText(offer.description);if(description)card.append(element('p',description,'muted'));
  if(offer.customer_kind){const label=element('label',undefined,'eligibility');const checkbox=element('input');checkbox.type='checkbox';checkbox.dataset.eligibility=offer.offer_id;checkbox.checked=selected.eligibility===offer.customer_kind;checkbox.addEventListener('change',()=>saveForm().catch(e=>message(errorText(e))));label.append(checkbox,element('span',`${offer.brand==='nei'?'NEi':'hyumy'}の${offer.customer_kind==='new'?'新規':'既存取扱'}サロンであることを確認しました`));card.append(label);}
  if(!quantityByProduct(offer)){
  const countRow=element('div',undefined,'set-row');countRow.append(element('span',countLabel(offer),'set-label'));
