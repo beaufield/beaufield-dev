@@ -26,7 +26,7 @@ const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
 const DB_URL          = _PROPS.getProperty('DB_URL');          // §8: SupabaseプロジェクトURL（例 https://xxxx.supabase.co）
 const DB_SECRET_KEY   = _PROPS.getProperty('DB_SECRET_KEY');   // §8: service_role相当のsecret key（apikeyヘッダーにのみ使う）
-const VERSION         = 'v1.40.4';
+const VERSION         = 'v1.40.5';
 const APP_NAME        = 'order-app';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 let _requestMetric = null;
@@ -223,13 +223,15 @@ function _normalizePemKey_(raw) {
   for (let i = 0; i < body.length; i += 64) lines.push(body.slice(i, i + 64));
   return '-----BEGIN ' + label + '-----\n' + lines.join('\n') + '\n-----END ' + label + '-----\n';
 }
-// auth = validateSession() の戻り値（expiresAt必須）。app は 'order-app' か 'stock-report'
+// auth = validateSession() の戻り値（expiresAt必須）。app は 'order-app'・'stock-report'・'stocktake'
+// stocktake のときだけ、棚卸しの役割（user/admin）を app_role として載せる（棚卸しアプリ 仕様書 §4.2）
 function issueDbJwt_(auth, app, sessionExpiresAt) {
   const now = Math.floor(Date.now() / 1000);
   const exp = Math.min(Math.floor(sessionExpiresAt / 1000), now + DB_JWT_TTL_SEC);
   const header  = { alg: 'RS256', typ: 'JWT', kid: _PROPS.getProperty('DB_JWT_KID') };
   const payload = { iss: 'beaufield-order-gas', aud: 'authenticated', role: 'authenticated',
                     sub: uuidFromUserId_(auth.user_id), app: app, user_id: auth.user_id, iat: now, exp: exp };
+  if (app === 'stocktake') payload.app_role = auth.role;
   const input = b64url_(JSON.stringify(header)) + '.' + b64url_(JSON.stringify(payload));
   const pem = _normalizePemKey_(_PROPS.getProperty('DB_JWT_PRIVATE_KEY'));
   const sig = Utilities.computeRsaSha256Signature(input, pem);
@@ -958,16 +960,21 @@ function doPost(e) {
   }
 
   // issueDbToken: Supabase用の通行証(JWT)を発行する（§8 G2）。
-  // app_name が order-app と stock-report のどちらでもありうるため、
+  // app_name が order-app・stock-report・stocktake のいずれでもありうるため、
   // getStockReport と同じ位置（固定 'order-app' 検証より前）で特別扱いする
   if (action === 'issueDbToken') {
-    const dbApp = (p.app === 'stock-report') ? 'stock-report' : 'order-app';
+    const DB_TOKEN_APPS = ['order-app', 'stock-report', 'stocktake'];
+    const dbApp = DB_TOKEN_APPS.indexOf(p.app) !== -1 ? p.app : 'order-app';
     const dbAuth = validateSession(p.session_token || '', dbApp);
     if (!dbAuth.valid) {
       if (dbAuth.transient) {
         return jsonResponse({ success: false, error: 'AUTH_UNAVAILABLE', message: '認証確認に失敗しました。もう一度お試しください。' });
       }
       return jsonResponse({ success: false, error: 'SESSION_INVALID', message: '認証が必要です。ポータルからログインし直してください。' });
+    }
+    // 棚卸しは user/admin 以外の役割（旧語彙など）には発行しない
+    if (dbApp === 'stocktake' && dbAuth.role !== 'user' && dbAuth.role !== 'admin') {
+      return jsonResponse({ success: false, error: 'SESSION_INVALID', message: '棚卸しの権限がありません。' });
     }
     // expiresAt（G1でキャッシュ/シートから持たせた値）が数値でなければ発行しない
     if (typeof dbAuth.expiresAt !== 'number') {
