@@ -380,9 +380,8 @@
 <header class="appHeader">
   <h1>ビューフェス2026 申込者一覧（社員用）</h1>
   <div class="headActions">
-    <a class="navLink" href="makers/">メーカー別キャンペーン・注文QR</a><a class="navLink" href="badges.html">🖨 名札印刷へ</a>
+    <a class="navLink" href="makers/">メーカー別キャンペーン・注文QR</a>
     <button type="button" class="navLink" id="qrBtn">📱 申込フォームQR</button>
-    <button type="button" class="navLink" id="walkInBtn">➕ 飛び込み登録</button>
   </div>
 </header>
 
@@ -624,7 +623,7 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.17.7';
+const APP_VERSION = '0.17.8';
 const GAS_URL = window.BFEventCandidate.endpoint;
 const PORTAL_URL = './login.html';
 // お客様向けの申込フォーム（公開・認証なし）。QRはこのURLをその場で生成する
@@ -1159,9 +1158,6 @@ function applyFetchResult(data) {
   state.serverVersion = String(data.server_version || '');
   state.serverCapabilities = Array.isArray(data.capabilities) ? data.capabilities : [];
   state.selected = {};
-
-  // 🔴 サーバーが当日機能に対応していなければボタンごと隠す（押せる=動く、を崩さない）
-  el('walkInBtn').style.display = dayFeaturesReady() ? '' : 'none';
 
   buildBusinessTypeChoices(state.businessTypes);
   fillTantouFilter();
@@ -2630,9 +2626,7 @@ function init() {
     if (ev.key === 'Escape' && !el('qrModal').hidden) closeQrModal();
   });
 
-  // 🆕 v0.3.0 当日機能。🔴 サーバーの版が分かるまでは出さない（applyFetchResult で出し直す）
-  el('walkInBtn').style.display = 'none';
-  el('walkInBtn').addEventListener('click', openWalkIn);
+  // 予備名札など、既存の管理機能の操作を登録する。
   el('wiSubmit').addEventListener('click', submitWalkIn);
   el('wiClose').addEventListener('click', function () { closeModal('walkInModal'); });
   el('spSubmit').addEventListener('click', doAssignSpare);
