@@ -1,0 +1,1416 @@
+<!-- 自動生成: tanaoroshi-app/tools/build_pages.cjs が web/index.html から作る。直接編集しない -->
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>棚卸し</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+" crossorigin="anonymous" defer></script>
+<script src="core.js"></script>
+<style>
+  :root {
+    --primary: #C9A96E; --primary-dark: #A87C3E; --header-bg: #1C1C1E;
+    --danger: #FF3B30; --success: #34C759; --warning: #FF9500;
+    --text: #1C1C1E; --text-light: #8E8E93; --border: #E5E5EA; --bg: #F2F2F7; --card: #fff; --radius: 12px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Kaku Gothic Pro', 'Meiryo', sans-serif; font-size: 16px; }
+  button { font: inherit; cursor: pointer; }
+  .hidden { display: none !important; }
+
+  /* ヘッダー */
+  .hd { position: sticky; top: 0; z-index: 20; display: grid; grid-template-columns: 88px 1fr 88px; align-items: center;
+    min-height: 52px; padding: 0 8px; padding-top: env(safe-area-inset-top); background: var(--header-bg); color: #fff; }
+  .hd-back { background: none; border: 0; color: var(--primary); text-align: left; padding: 12px 4px; font-size: 16px; }
+  .hd-title { text-align: center; font-weight: 700; font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hd-user { text-align: right; font-size: 13px; color: #c7c7cc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* 送信状態の帯 */
+  .band { position: sticky; top: 52px; z-index: 19; padding: 10px 14px; font-size: 15px; font-weight: 600; }
+  .band.warn { background: #FFF4D6; color: #7A5200; }
+  .band.err { background: #FFE5E3; color: #B3261E; }
+  .band button { margin-left: 8px; background: none; border: 0; text-decoration: underline; color: inherit; font-weight: 700; }
+
+  main { padding: 12px 12px 120px; max-width: 760px; margin: 0 auto; }
+  .ver { text-align: center; color: var(--text-light); font-size: 12px; padding: 4px 0 96px; }
+
+  /* カード・一覧 */
+  .card { background: var(--card); border-radius: var(--radius); padding: 14px; margin-bottom: 12px; }
+  .card h2 { margin: 0 0 6px; font-size: 18px; }
+  .muted { color: var(--text-light); font-size: 14px; }
+  .warnbox { background: #FFF4D6; color: #7A5200; border-radius: 10px; padding: 10px 12px; font-size: 15px; margin: 8px 0; }
+  .errbox { background: #FFE5E3; color: #B3261E; border-radius: 10px; padding: 10px 12px; font-size: 15px; margin: 8px 0; }
+  .okbox { background: #E3F7E8; color: #1E6B32; border-radius: 10px; padding: 10px 12px; font-size: 15px; margin: 8px 0; }
+  .list { background: var(--card); border-radius: var(--radius); overflow: hidden; margin-bottom: 12px; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); min-height: 56px; }
+  .row:last-child { border-bottom: 0; }
+  .row.tap:active { background: #f4f4f6; }
+  .row .main { flex: 1; min-width: 0; }
+  .row .name { font-size: 16px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .row .sub { font-size: 13px; color: var(--text-light); margin-top: 2px; }
+  .row .side { text-align: right; flex-shrink: 0; }
+  .tier { padding: 8px 14px; background: #ECECF0; color: #3A3A3C; font-size: 14px; font-weight: 700; }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 6px; background: #ECECF0; color: #3A3A3C; margin-left: 4px; vertical-align: 1px; }
+  .tag.warn { background: #FFF4D6; color: #7A5200; }
+  .st-none { color: var(--text-light); font-weight: 700; }
+  .st-done { color: #1E8E3E; font-weight: 700; font-size: 17px; }
+  .st-pend { color: var(--warning); font-size: 12px; }
+  .st-other { color: var(--text-light); font-size: 12px; }
+  .bar { height: 6px; background: #E5E5EA; border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  .bar > i { display: block; height: 100%; background: var(--success); }
+
+  /* ボタン */
+  .btn { display: block; width: 100%; min-height: 56px; border: 0; border-radius: var(--radius); font-size: 17px; font-weight: 700; padding: 12px; margin: 8px 0; }
+  .btn.pri { background: var(--primary); color: #fff; }
+  .btn.dark { background: var(--header-bg); color: #fff; }
+  .btn.sec { background: #fff; color: var(--text); border: 1px solid var(--border); }
+  .btn.danger { background: #fff; color: var(--danger); border: 1px solid #f3c1bd; }
+  .btn:disabled { opacity: .45; }
+  .btn.sm { min-height: 44px; font-size: 15px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .toggle { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 2px; font-size: 15px; }
+  .toggle input { width: 22px; height: 22px; }
+  .chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
+  .chip { border: 1px solid var(--border); background: #fff; border-radius: 10px; padding: 10px 4px; text-align: center; min-height: 56px; }
+  .chip b { display: block; font-size: 17px; }
+  .chip small { color: var(--text-light); font-size: 12px; }
+  .chip.on { background: var(--header-bg); color: #fff; border-color: var(--header-bg); }
+  .chip.on small { color: #c7c7cc; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+  .tabs button { flex: 1; min-height: 44px; border: 1px solid var(--border); background: #fff; border-radius: 10px; font-weight: 700; }
+  .tabs button.on { background: var(--header-bg); color: #fff; }
+  input[type=text], textarea, select { width: 100%; font-size: 16px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
+  textarea { min-height: 80px; }
+
+  /* 画面下の固定ボタン */
+  .bottom { position: fixed; left: 0; right: 0; bottom: 0; z-index: 15; background: rgba(242,242,247,.96);
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid var(--border); }
+  .bottom .inner { max-width: 760px; margin: 0 auto; display: flex; gap: 8px; }
+  .bottom .btn { margin: 0; }
+
+  /* 下から出るシート */
+  .sheet { position: fixed; inset: 0; z-index: 60; }
+  .sheet-bg { position: absolute; inset: 0; background: rgba(0,0,0,.35); }
+  .sheet-body { position: absolute; left: 0; right: 0; bottom: 0; max-height: 94vh; overflow-y: auto; background: var(--bg);
+    border-radius: 16px 16px 0 0; padding: 14px 14px calc(14px + env(safe-area-inset-bottom)); max-width: 760px; margin: 0 auto; }
+  .q-name { font-size: 19px; font-weight: 700; line-height: 1.35; }
+  .q-meta { color: var(--text-light); font-size: 14px; margin-top: 4px; }
+  .q-unit { display: inline-block; background: var(--header-bg); color: #fff; border-radius: 8px; padding: 2px 10px; font-size: 18px; font-weight: 700; margin-left: 6px; }
+  .q-have { margin: 8px 0; font-size: 15px; }
+  .q-val { background: #fff; border-radius: 12px; text-align: center; font-size: 44px; font-weight: 800; padding: 6px; min-height: 66px; letter-spacing: 1px; }
+  .q-val.empty { color: #C7C7CC; }
+  .keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 10px 0; }
+  .keys button { min-height: 58px; border: 0; border-radius: 12px; background: #fff; font-size: 24px; font-weight: 700; }
+  .keys button.fn { background: #E5E5EA; font-size: 18px; }
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
+  .modes button { min-height: 54px; border: 2px solid var(--border); background: #fff; border-radius: 12px; font-weight: 700; font-size: 15px; }
+  .modes button.on { border-color: var(--primary-dark); background: #FBF5EA; }
+
+  /* 確認ダイアログ */
+  .modal { position: fixed; inset: 0; z-index: 80; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .modal-box { background: #fff; border-radius: 14px; width: 100%; max-width: 420px; padding: 18px; }
+  .modal-box h3 { margin: 0 0 8px; font-size: 18px; }
+  .modal-box p { margin: 0 0 10px; white-space: pre-wrap; line-height: 1.5; }
+
+  /* スキャン */
+  .scanner { position: fixed; inset: 0; z-index: 50; background: #000; color: #fff; display: flex; flex-direction: column; }
+  .scan-top { padding: calc(10px + env(safe-area-inset-top)) 14px 10px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; }
+  .scan-top button { background: none; border: 1px solid #555; color: #fff; border-radius: 10px; padding: 8px 14px; }
+  #scanBox { flex: 1; position: relative; overflow: hidden; }
+  #scanBox video { width: 100% !important; height: 100% !important; object-fit: cover; }
+  .scan-guide { position: absolute; left: 10%; right: 10%; top: 38%; height: 24%; border: 3px solid rgba(255,255,255,.85); border-radius: 12px; pointer-events: none; }
+  .scan-guide.flash { border-color: #34C759; box-shadow: 0 0 0 9999px rgba(52,199,89,.18); }
+  .scan-tools { display: flex; gap: 8px; padding: 10px 12px calc(12px + env(safe-area-inset-bottom)); }
+  .scan-tools button { flex: 1; min-height: 52px; border-radius: 12px; border: 0; background: #2C2C2E; color: #fff; font-weight: 700; }
+  .scan-tools button.on { background: var(--primary); }
+  .scan-hint { text-align: center; font-size: 13px; color: #aaa; padding: 4px; }
+
+  #toast { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 90; background: rgba(28,28,30,.92); color: #fff;
+    padding: 10px 16px; border-radius: 20px; font-size: 15px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; }
+  #toast.show { opacity: 1; }
+  #toast.error { background: rgba(179,38,30,.95); }
+
+  table.rep { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; }
+  table.rep th, table.rep td { padding: 8px 6px; border-bottom: 1px solid var(--border); text-align: right; }
+  table.rep th { white-space: nowrap; }
+  table.rep th:first-child, table.rep td:first-child { text-align: left; }
+  table.rep td.neg { color: var(--danger); font-weight: 700; }
+  table.rep td.pos { color: #1E6B32; font-weight: 700; }
+  .scrollx { overflow-x: auto; border-radius: var(--radius); }
+
+  #printArea { display: none; }
+  @media print {
+    body > *:not(#printArea) { display: none !important; }
+    #printArea { display: block; font-size: 11px; }
+    #printArea h2 { font-size: 14px; margin: 12px 0 4px; page-break-after: avoid; }
+    #printArea table { width: 100%; border-collapse: collapse; }
+    #printArea th, #printArea td { border: 1px solid #999; padding: 3px 4px; }
+    #printArea td.qty { width: 18%; }
+  }
+</style>
+</head>
+<body>
+<header class="hd">
+  <button class="hd-back" id="hdBack" type="button">‹ 戻る</button>
+  <div class="hd-title" id="hdTitle">棚卸し</div>
+  <div class="hd-user" id="hdUser"></div>
+</header>
+<div id="band" class="band hidden"></div>
+<main id="main"><div class="card"><p class="muted">読み込んでいます…</p></div></main>
+<div class="ver" id="ver"></div>
+<div id="bottom" class="bottom hidden"><div class="inner" id="bottomInner"></div></div>
+<div id="sheet" class="sheet hidden"><div class="sheet-bg" id="sheetBg"></div><div class="sheet-body" id="sheetBody"></div></div>
+<div id="modal" class="modal hidden"><div class="modal-box" id="modalBox"></div></div>
+<div id="scanner" class="scanner hidden">
+  <div class="scan-top"><span id="scanLabel">読み取り中</span><button type="button" id="scanClose">閉じる</button></div>
+  <div id="scanBox"></div>
+  <div class="scan-hint">バーコードを枠に合わせてください。ピントが合わない時は画面をタップ</div>
+  <div class="scan-tools">
+    <button type="button" id="scanTorch" class="hidden">ライト</button>
+    <button type="button" id="scanZoom" class="hidden">2倍</button>
+    <button type="button" id="scanManual">JANを手入力</button>
+  </div>
+</div>
+<div id="toast"></div>
+<div id="printArea"></div>
+
+<script>
+'use strict';
+/* 接続先。公開用は tools/build_pages.cjs が下の1行を本番・試験の値に置き換える（ここ以外に書かない） */
+const ST_CONFIG = /*ST_CONFIG_BEGIN*/{"env":"prod","dbUrl":"https://jlebreiqpqzfsjsunyfw.supabase.co","dbKey":"sb_publishable_YXncOJtKml1dfGRdxHns-w_TcE2-Ypg","gasUrl":"https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec","portalUrl":"https://beaufield.github.io/beaufield-dev/"}/*ST_CONFIG_END*/;
+const APP_VERSION = 'v0.1.0';
+const C = window.StCore;
+const STOCK = C.STOCK;
+const SESSION_KEY = 'bf_session';
+const TOKEN_KEY = 'bf_tanaoroshi_token';
+const DEVICE_KEY = 'bf_tanaoroshi_device';
+const PREF_KEY = 'bf_tanaoroshi_pref';
+
+/* ============================================================
+   状態
+============================================================ */
+const S = {
+  bf: null, me: null, productInfo: null,
+  session: null,            // 実施中の棚卸し（st_get_state / st_get_items の session）
+  index: null,              // 商品の写し（C.buildItems）
+  shelves: [],              // [{shelf,inScope,sort,status,doneAt,doneBy,count}]
+  server: new Map(),        // entryId → 記録（取消済みを含むサーバーの最新状態）
+  seq: 0, users: {},
+  ops: [],                  // 送信待ち（IndexedDB outbox の写し。全棚卸し分、保存順）
+  sent: [],                 // 送信済み・反映待ち（次に st_get_state を受け取るまで表示に重ね続ける。§9.1）
+  rejected: [],             // 送れなかった記録
+  view: null,               // C.computeView の結果
+  stack: [],                // 画面の履歴 [{name, params}]
+  pref: { showBook: false, onlyOpenPlaces: false, onlyUncounted: false },
+  deviceId: '',
+  firstFailAt: 0, flushing: false, retryTimer: null, failCount: 0,
+  metrics: [],
+  report: null,             // 管理画面で最後に読んだ st_get_report
+};
+
+/* ============================================================
+   小道具
+============================================================ */
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const num = n => (n == null || n === '' ? '' : Number(n).toLocaleString('ja-JP'));
+function toast(msg, type) {
+  const t = $('toast'); t.textContent = msg; t.className = 'show' + (type === 'error' ? ' error' : '');
+  clearTimeout(toast._t); toast._t = setTimeout(() => { t.className = ''; }, type === 'error' ? 3500 : 1800);
+}
+let audioCtx = null;
+function beep(ok) {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = ok ? 1320 : 330; g.gain.value = 0.08;
+    o.connect(g); g.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime + (ok ? 0.09 : 0.25));
+  } catch (e) {}
+  try { if (navigator.vibrate) navigator.vibrate(ok ? 40 : [60, 60, 60]); } catch (e) {}
+}
+function savePref() { try { localStorage.setItem(PREF_KEY, JSON.stringify(S.pref)); } catch (e) {} }
+function loadPref() { try { Object.assign(S.pref, JSON.parse(localStorage.getItem(PREF_KEY) || '{}')); } catch (e) {} }
+const isAdmin = () => S.me && S.me.role === 'admin';
+const sid = () => (S.session ? S.session.sessionId : null);
+// 未送信（この棚卸し分）。完了・確定の前に0であることを確かめる
+const sessionOps = () => S.ops.filter(o => o.sessionId === sid());
+// 表示に重ねる操作 = 送信済み・反映待ち → 未送信 の順（保存順）
+const viewOps = () => S.sent.concat(S.ops).filter(o => o.sessionId === sid());
+
+// 確認ダイアログ。buttons: [{key,label,cls}]。input があれば {key, value} を返す
+function ask(title, message, buttons, input) {
+  return new Promise(resolve => {
+    const box = $('modalBox');
+    box.innerHTML = `<h3>${esc(title)}</h3>${message ? `<p>${esc(message)}</p>` : ''}` +
+      (input ? `<input type="text" id="askInput" placeholder="${esc(input.placeholder || '')}" value="${esc(input.value || '')}">` : '') +
+      buttons.map(b => `<button type="button" class="btn sm ${b.cls || 'sec'}" data-k="${esc(b.key)}">${esc(b.label)}</button>`).join('');
+    $('modal').classList.remove('hidden');
+    if (input) setTimeout(() => { const i = $('askInput'); if (i) i.focus(); }, 50);
+    box.querySelectorAll('button[data-k]').forEach(b => b.onclick = () => {
+      const v = input ? ($('askInput').value || '').trim() : undefined;
+      $('modal').classList.add('hidden');
+      resolve(input ? { key: b.dataset.k, value: v } : b.dataset.k);
+    });
+  });
+}
+const confirmYes = async (title, msg, yes, cls) =>
+  (await ask(title, msg, [{ key: 'yes', label: yes || 'はい', cls: cls || 'pri' }, { key: 'no', label: 'やめる' }])) === 'yes';
+
+/* ============================================================
+   端末の保存（IndexedDB）
+============================================================ */
+const IDB = { db: null };
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) return reject(new Error('NO_IDB'));
+    let r;
+    try { r = indexedDB.open('bf_tanaoroshi', 1); } catch (e) { return reject(e); }
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      d.createObjectStore('kv');
+      d.createObjectStore('outbox', { keyPath: 'k' });
+      d.createObjectStore('rejected', { keyPath: 'k' });
+    };
+    r.onsuccess = () => { IDB.db = r.result; resolve(); };
+    r.onerror = () => reject(r.error || new Error('IDB_OPEN'));
+    r.onblocked = () => reject(new Error('IDB_BLOCKED'));
+  });
+}
+function idb(store, mode, fn) {
+  return new Promise((resolve, reject) => {
+    let t, v;
+    try { t = IDB.db.transaction(store, mode); } catch (e) { return reject(e); }
+    const req = fn(t.objectStore(store));
+    if (req) req.onsuccess = () => { v = req.result; };
+    t.oncomplete = () => resolve(v);
+    t.onerror = () => reject(t.error || new Error('IDB'));
+    t.onabort = () => reject(t.error || new Error('IDB_ABORT'));
+  });
+}
+const kvGet = k => idb('kv', 'readonly', s => s.get(k));
+const kvPut = (k, v) => idb('kv', 'readwrite', s => s.put(v, k));
+let opCounter = 0;
+const opKey = () => String(Date.now()).padStart(15, '0') + '-' + String(opCounter++).padStart(6, '0');
+
+/* ============================================================
+   通行証と通信
+============================================================ */
+class NetError extends Error {}
+class AuthError extends Error {}
+
+function readBfSession() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
+    if (!s || !s.token || !s.user_id || !(s.expires > Date.now())) return null;
+    return s;
+  } catch (e) { return null; }
+}
+function cachedToken() {
+  try {
+    const t = JSON.parse(sessionStorage.getItem(TOKEN_KEY) || 'null');
+    if (t && t.userId === S.bf.user_id && t.exp * 1000 - Date.now() > 5 * 60e3) return t;
+  } catch (e) {}
+  return null;
+}
+function clearToken() { try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) {} }
+let tokenPromise = null;
+function getToken() {
+  const c = cachedToken();
+  if (c) return Promise.resolve(c);
+  if (!tokenPromise) tokenPromise = issueToken().finally(() => { tokenPromise = null; });
+  return tokenPromise;
+}
+async function issueToken() {
+  const body = new URLSearchParams({ action: 'issueDbToken', app: 'stocktake', session_token: S.bf.token }).toString();
+  const waits = [0, 2000, 5000];
+  for (let i = 0; i < waits.length; i++) {
+    if (waits[i]) await new Promise(r => setTimeout(r, waits[i]));
+    let data = null;
+    const ctrl = new AbortController(); const tm = setTimeout(() => ctrl.abort(), 20000);
+    try {
+      const res = await fetch(ST_CONFIG.gasUrl, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body, signal: ctrl.signal });
+      data = await res.json();
+    } catch (e) { data = null; } finally { clearTimeout(tm); }
+    if (data && data.success === true && typeof data.token === 'string') {
+      const t = { token: data.token, exp: data.exp, userId: data.userId };
+      try { sessionStorage.setItem(TOKEN_KEY, JSON.stringify(t)); } catch (e) {}
+      return t;
+    }
+    if (data && data.error === 'SESSION_INVALID') throw new AuthError('SESSION_INVALID');
+  }
+  throw new NetError('TOKEN');
+}
+// 棚卸しのDB関数を呼ぶ。通信失敗・5xx は NetError を投げる（書き込みは entryId で二重計上しないので再送してよい）
+async function rpc(name, p, opt) {
+  opt = opt || {};
+  let tok = await getToken();
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let res;
+    const ctrl = new AbortController(); const tm = setTimeout(() => ctrl.abort(), opt.timeout || 15000);
+    try {
+      res = await fetch(ST_CONFIG.dbUrl + '/rest/v1/rpc/' + name, {
+        method: 'POST', signal: ctrl.signal, body: JSON.stringify({ p: p || {} }),
+        headers: { apikey: ST_CONFIG.dbKey, Authorization: 'Bearer ' + tok.token, 'Content-Type': 'application/json',
+          'Content-Profile': 'stocktake_api', 'Accept-Profile': 'stocktake_api' },
+      });
+    } catch (e) { throw new NetError('TRANSPORT'); } finally { clearTimeout(tm); }
+    if (res.status === 401 || res.status === 403) {
+      if (attempt === 0) { clearToken(); tok = await getToken(); continue; }
+      return { success: false, error: 'SESSION_INVALID' };
+    }
+    if (res.status >= 500) throw new NetError('HTTP_' + res.status);
+    if (!res.ok) return { success: false, error: 'DB_ERROR', status: res.status };
+    let data;
+    try { data = await res.json(); } catch (e) { throw new NetError('PARSE'); }
+    // DB側の確認で通らなかった（役割が変わった等）→ 通行証を取り直して1回だけやり直す（何も書き込まれていない）
+    if (data && data.error === 'SESSION_INVALID' && attempt === 0) { clearToken(); tok = await getToken(); continue; }
+    return data;
+  }
+}
+const ERR_TEXT = {
+  SESSION_INVALID: 'ログインの確認ができませんでした', FORBIDDEN: 'この操作は管理者だけができます',
+  NOT_FOUND: '見つかりません', SESSION_NOT_COUNTING: 'この棚卸しは実施中ではありません', BAD_REQUEST: '入力に誤りがあります',
+  ALREADY_ACTIVE: '実施中の棚卸しが既にあります', NO_SHELVES: '棚を1つ以上選んでください', UNKNOWN_SHELF: '存在しない棚が含まれています',
+  NO_PRODUCTS: '商品マスターが空です', OP_CONFLICT: '同じ操作が別の内容で送られました', BAD_ENTRY: '記録の形が正しくありません',
+  QTY_INVALID: '数量が正しくありません', ITEM_UNKNOWN: '商品が見つかりません', PLACE_INVALID: '数えた場所が今回の対象外です',
+  ENTRY_CONFLICT: '同じ記録が別の内容で送られました', NOT_OWNER: '他の人の記録は取り消せません', NOT_IN_SCOPE: '今回の対象の棚ではありません',
+  NOT_COMPLETE: 'まだ数えていない商品があります', NOT_READY: '確定の条件を満たしていません', BAD_STATE: 'この状態ではできません', DB_ERROR: 'サーバーでエラーが起きました',
+};
+const errText = code => ERR_TEXT[code] || ('エラー: ' + code);
+
+/* ============================================================
+   計測（§1.3）
+============================================================ */
+function metric(kind, value, detail) {
+  S.metrics.push({ kind, value: value == null ? null : Number(value), detail: detail || {}, sessionId: sid() });
+  if (S.metrics.length >= 20) sendMetrics();
+}
+async function sendMetrics() {
+  if (!S.metrics.length || !S.me) return;
+  const batch = S.metrics.splice(0, 100);
+  try {
+    const r = await rpc('st_put_metrics', { deviceId: S.deviceId, metrics: batch });
+    if (!r || !r.success) throw new Error('metrics');
+  } catch (e) { S.metrics = batch.concat(S.metrics).slice(-200); }
+}
+
+/* ============================================================
+   データの読み込み
+============================================================ */
+function parseShelves(rows) {
+  return (rows || []).map(r => ({ shelf: r[0], inScope: !!r[1], sort: r[2], status: r[3], doneAt: r[4], doneBy: r[5], count: Number(r[6] || 0) }));
+}
+function rebuildView() { S.view = C.computeView(S.server, viewOps()); }
+
+async function loadWhoami() {
+  const r = await rpc('st_whoami', {});
+  if (!r.success) throw new AuthError(r.error);
+  S.me = { userId: r.userId, name: r.name, role: r.role };
+  S.productInfo = r.productInfo;
+  return r.active;
+}
+// 実施中の棚卸しを読み込む（端末の写しがあれば先に表示）
+// offline=true: 通信せず、端末に残っている写しだけで開く（電波の無い場所で開き直したとき）
+async function loadSession(active, offline) {
+  if (!offline) kvPut('boot', { userId: S.bf.user_id, me: S.me, productInfo: S.productInfo, active: active || null }).catch(() => {});
+  if (!active) { S.session = null; S.index = null; S.server = new Map(); S.seq = 0; rebuildView(); return; }
+  const cachedItems = await kvGet('items').catch(() => null);
+  const cachedState = await kvGet('state').catch(() => null);
+  S.session = active;
+  let haveCache = false;
+  if (cachedItems && cachedItems.sessionId === active.sessionId && cachedItems.role === S.me.role) {
+    S.index = C.buildItems(cachedItems.items); S.shelves = parseShelves(cachedItems.shelves); haveCache = true;
+  }
+  if (cachedState && cachedState.sessionId === active.sessionId) {
+    S.server = new Map(cachedState.entries.map(e => [e.id, e])); S.seq = cachedState.seq; S.users = cachedState.users || {};
+  } else { S.server = new Map(); S.seq = 0; }
+  rebuildView();
+  if (offline) {
+    if (!haveCache) throw new NetError('NO_CACHE');
+    return;
+  }
+  const fetchItems = async () => {
+    const r = await rpc('st_get_items', { sessionId: active.sessionId });
+    if (!r.success) throw new Error(r.error);
+    S.index = C.buildItems(r.items); S.shelves = parseShelves(r.shelves); S.session = r.session;
+    kvPut('items', { sessionId: active.sessionId, role: S.me.role, items: r.items, shelves: r.shelves }).catch(() => {});
+  };
+  if (haveCache) { fetchItems().then(() => { rebuildView(); render(); }).catch(() => {}); }
+  else await fetchItems();
+  await fetchState(S.seq === 0);
+}
+async function fetchState(full) {
+  if (!S.session) return;
+  const s0 = S.session.sessionId;
+  const sentBefore = S.sent.length;  // この取得より前に送り終えた操作は、取得結果に反映済み
+  const r = await rpc('st_get_state', { sessionId: s0, sinceSeq: full ? 0 : S.seq });
+  if (!r.success) { if (r.error === 'FORBIDDEN' || r.error === 'NOT_FOUND') await onSessionEnded(); return; }
+  if (!S.session || S.session.sessionId !== s0) return;
+  if (full) S.server = new Map();
+  for (const row of r.entries) { const e = C.entryFromRow(row); S.server.set(e.id, e); }
+  S.sent.splice(0, sentBefore);
+  S.seq = r.seq; Object.assign(S.users, r.users || {});
+  S.session = r.session; S.shelves = mergeShelves(r.shelves);
+  kvPut('state', { sessionId: s0, seq: S.seq, users: S.users, entries: [...S.server.values()] }).catch(() => {});
+  rebuildView();
+  if (r.session.status !== 'counting') { await onSessionEnded(); return; }
+  renderLight();
+}
+function mergeShelves(rows) {
+  const fresh = parseShelves(rows);
+  return fresh.length ? fresh : S.shelves;
+}
+async function onSessionEnded() {
+  const active = await loadWhoami().catch(() => null);
+  await loadSession(active);
+  S.stack = [{ name: 'home' }];
+  toast('棚卸しの状態が変わりました');
+  render();
+}
+
+/* ============================================================
+   記録の保存と送信（§9）
+============================================================ */
+async function addOp(op) {
+  op.k = opKey(); op.createdAt = Date.now();
+  try { await idb('outbox', 'readwrite', s => s.put(op)); }
+  catch (e) {
+    await ask('保存できませんでした', '端末に記録を保存できませんでした。この記録は保存されていません。\n画面を開き直してから、もう一度入力してください。', [{ key: 'ok', label: '閉じる', cls: 'dark' }]);
+    return false;
+  }
+  S.ops.push(op);
+  rebuildView();
+  renderBand();
+  flush();
+  return true;
+}
+function saveEntry(o) {
+  const e = { id: C.uuid(), kind: o.kind || 'item', code: o.code || null, janRaw: o.janRaw || '', place: o.place, mode: o.mode || 'add',
+    qty: o.qty, inputMethod: o.inputMethod || 'list', memo: o.memo || '', deviceId: S.deviceId, clientAt: new Date().toISOString(),
+    userId: S.me.userId, voided: false };
+  return addOp({ type: 'put', sessionId: sid(), entry: e });
+}
+const voidEntry = entryId => addOp({ type: 'void', sessionId: sid(), entryId });
+const wire = e => ({ entryId: e.id, kind: e.kind, code: e.code, janRaw: e.janRaw, place: e.place, mode: e.mode, qty: e.qty,
+  inputMethod: e.inputMethod, memo: e.memo, deviceId: e.deviceId, clientAt: e.clientAt });
+
+async function removeOps(ops, rejectedWith) {
+  const keys = new Set(ops.map(o => o.k));
+  await idb('outbox', 'readwrite', s => { ops.forEach(o => s.delete(o.k)); return null; });
+  if (rejectedWith) {
+    const recs = ops.map(o => Object.assign({}, o, { error: rejectedWith[o.k] || 'REJECTED', rejectedAt: Date.now() }));
+    await idb('rejected', 'readwrite', s => { recs.forEach(r => s.put(r)); return null; });
+    S.rejected.push(...recs);
+  } else {
+    S.sent.push(...ops);  // サーバーは受け取った。次の取得で反映されるまで表示に重ねる
+  }
+  S.ops = S.ops.filter(o => !keys.has(o.k));
+}
+async function flush() {
+  if (S.flushing || !S.me) return;
+  S.flushing = true; clearTimeout(S.retryTimer);
+  let sent = false;
+  try {
+    while (S.ops.length) {
+      const first = S.ops[0];
+      if (first.type === 'put') {
+        const batch = [];
+        for (const op of S.ops) { if (op.type !== 'put' || op.sessionId !== first.sessionId || batch.length >= 50) break; batch.push(op); }
+        const t0 = Date.now();
+        const r = await rpc('st_put_entries', { sessionId: first.sessionId, entries: batch.map(o => wire(o.entry)) });
+        if (!r.success) {
+          if (r.error === 'SESSION_INVALID') throw new AuthError(r.error);
+          const rej = {}; batch.forEach(o => { rej[o.k] = r.error; });
+          await removeOps(batch, rej); continue;
+        }
+        const byId = new Map(r.results.map(x => [x.entryId, x]));
+        const done = [], bad = [], rej = {};
+        for (const o of batch) {
+          const x = byId.get(o.entry.id);
+          if (x && (x.status === 'ok' || x.status === 'dup')) done.push(o);
+          else { bad.push(o); rej[o.k] = x ? x.error : 'NO_RESULT'; }
+        }
+        done.forEach(o => metric('save_latency', Date.now() - o.createdAt, { send: Date.now() - t0 }));
+        await removeOps(done);
+        if (bad.length) await removeOps(bad, rej);
+      } else {
+        const r = await rpc('st_void_entry', { entryId: first.entryId });
+        if (r.success) await removeOps([first]);
+        else if (r.error === 'SESSION_INVALID') throw new AuthError(r.error);
+        else await removeOps([first], { [first.k]: r.error });
+      }
+      sent = true;
+    }
+    S.firstFailAt = 0; S.failCount = 0;
+    if (sent) await fetchState(false).catch(() => {});
+  } catch (e) {
+    if (e instanceof AuthError) { showAuthProblem(); }
+    else {
+      metric('sync_fail', 1, { pending: S.ops.length });
+      S.failCount++; if (!S.firstFailAt) S.firstFailAt = Date.now();
+      const wait = [2000, 5000, 10000, 30000][Math.min(S.failCount - 1, 3)];
+      S.retryTimer = setTimeout(flush, wait);
+    }
+  } finally {
+    S.flushing = false; rebuildView(); renderBand(); renderLight();
+  }
+}
+// 完了・確定の前: 未送信を送り切る（最大 ms 待つ）。送り切れたら true
+async function ensureFlushed(ms) {
+  const until = Date.now() + (ms || 10000);
+  while (sessionOps().length && Date.now() < until) {
+    if (!S.flushing) flush();
+    await new Promise(r => setTimeout(r, 300));
+  }
+  return sessionOps().length === 0;
+}
+
+/* ============================================================
+   画面の骨組み
+============================================================ */
+function go(name, params) { S.stack.push({ name, params: params || {} }); render(); window.scrollTo(0, 0); }
+function back() { if (S.stack.length > 1) { S.stack.pop(); render(); } }
+function replaceTop(name, params) { S.stack[S.stack.length - 1] = { name, params: params || {} }; render(); }
+const cur = () => S.stack[S.stack.length - 1] || { name: 'home', params: {} };
+
+function renderBand() {
+  const b = $('band');
+  const n = S.ops.length;
+  const rej = S.rejected.length;
+  if (rej) {
+    b.className = 'band err';
+    b.innerHTML = `送れなかった記録が ${rej} 件あります<button type="button" id="bandRej">内容を見る</button>`;
+    $('bandRej').onclick = showRejected;
+  } else if (S.offline || (n && S.firstFailAt && Date.now() - S.firstFailAt > 30000)) {
+    b.className = 'band err';
+    b.textContent = `通信できません。入力は端末に保存されています（未送信 ${n} 件）`;
+  } else if (n) {
+    b.className = 'band warn';
+    b.textContent = `未送信 ${n} 件（送信中）`;
+  } else { b.className = 'band hidden'; b.textContent = ''; }
+}
+function setChrome(title, bottomHtml) {
+  $('hdTitle').textContent = title;
+  $('hdBack').classList.toggle('hidden', S.stack.length <= 1);
+  $('hdUser').textContent = S.me ? S.me.name : '';
+  if (bottomHtml) { $('bottomInner').innerHTML = bottomHtml; $('bottom').classList.remove('hidden'); }
+  else { $('bottomInner').innerHTML = ''; $('bottom').classList.add('hidden'); }
+}
+// 画面全体を描き直す
+function render() {
+  renderBand();
+  const t = cur();
+  const fn = SCREENS[t.name] || SCREENS.home;
+  fn(t.params || {});
+}
+// 自動更新時: シートや入力中の画面は崩さない
+function renderLight() {
+  if (!$('sheet').classList.contains('hidden') || !$('modal').classList.contains('hidden')) return;
+  const n = cur().name;
+  if (['home', 'places', 'shelf', 'stock', 'mylog', 'close'].includes(n)) render();
+}
+function showFatal(title, msg, btn) {
+  setChrome('棚卸し');
+  $('main').innerHTML = `<div class="card"><h2>${esc(title)}</h2><p>${esc(msg)}</p>${btn || ''}</div>`;
+}
+function showAuthProblem() {
+  showFatal('ログインし直してください', 'ログインの確認ができませんでした。ポータルからもう一度開いてください。',
+    `<button class="btn dark" type="button" onclick="location.href=ST_CONFIG.portalUrl">ポータルへ</button>`);
+}
+
+/* ============================================================
+   集計の小道具
+============================================================ */
+function shelfStats(shelf) { return C.shelfProgress(S.index, S.view, shelf); }
+function totals() {
+  let total = 0, counted = 0;
+  for (const it of S.index.list) { if (!it.inScope) continue; total++; if (C.isCounted(it, S.view)) counted++; }
+  const inScope = S.shelves.filter(s => s.inScope);
+  return { total, counted, shelves: inScope.length, done: inScope.filter(s => s.status === 'done').length };
+}
+function statusHtml(it, place) {
+  const here = S.view.byKey.get(it.code + '|' + place);
+  const all = S.view.byCode.get(it.code);
+  const other = all ? all.total - (here ? here.qty : 0) : 0;
+  let h = here ? `<div class="st-done">済 ${num(here.qty)}</div>` : `<div class="st-none">未</div>`;
+  if (all && other && all.n > (here ? here.n : 0)) {
+    const lbl = Object.keys(all.places).filter(p => p !== place).map(p => C.placeLabel(p)).join('・');
+    h += `<div class="st-other">＋${esc(lbl)} ${num(other)}</div>`;
+  }
+  if ((here && here.pending) || (all && all.pending)) h += `<div class="st-pend">未送信</div>`;
+  if (isAdmin() && S.pref.showBook) h += `<div class="st-other">帳簿 ${it.book == null ? '－' : num(it.book)}</div>`;
+  return h;
+}
+
+/* ============================================================
+   画面
+============================================================ */
+const SCREENS = {};
+
+// ---------- S1 ホーム ----------
+SCREENS.home = () => {
+  setChrome('棚卸し');
+  let h = '';
+  if (!S.session) {
+    h += `<div class="card"><h2>実施中の棚卸しはありません</h2><p class="muted">${isAdmin() ? '下のボタンから始めてください。' : '管理者が始めると、ここに表示されます。'}</p></div>`;
+    if (isAdmin()) h += `<button class="btn pri" data-act="goStart">新しい棚卸しを始める</button><button class="btn sec" data-act="goHistory">過去の棚卸し</button>`;
+  } else {
+    const t = totals();
+    const pct = t.total ? Math.round(t.counted / t.total * 100) : 0;
+    h += `<div class="card"><h2>${esc(S.session.name)}</h2>
+      <div class="muted">帳簿在庫の時点: ${esc(C.fmtJst(S.session.baseIngestedAt) || '不明')} の取り込み</div>
+      <div style="margin-top:8px">対象 ${t.shelves} 棚・${num(t.total)} 品　<b>済 ${num(t.counted)} 品</b>　完了 ${t.done}／${t.shelves} 棚</div>
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      <div class="muted" style="margin-top:6px">ストック確認: ${S.session.stockCheckedAt ? '済み' : 'まだ'}</div></div>
+      <button class="btn pri" data-act="goPlaces">数える</button>
+      <button class="btn sec" data-act="goMylog">自分の記録</button>`;
+    if (isAdmin()) {
+      h += `<div class="card"><h2>管理者メニュー</h2>
+        <div class="grid2"><button class="btn sec sm" data-act="goReport">進捗・差異</button><button class="btn sec sm" data-act="goClose">確定へ</button>
+        <button class="btn sec sm" data-act="goAddShelves">棚を追加</button><button class="btn sec sm" data-act="printList">印刷用一覧</button>
+        <button class="btn sec sm" data-act="goHistory">過去の棚卸し</button><button class="btn danger sm" data-act="cancelSession">中止する</button></div>
+        <label class="toggle">画面に帳簿在庫を表示する<input type="checkbox" id="prefBook" ${S.pref.showBook ? 'checked' : ''}></label></div>`;
+    }
+    h += `<div class="card"><h2>気づいたことをメモ</h2><textarea id="memoText" placeholder="迷った場面、読めなかった商品など"></textarea>
+      <button class="btn sec sm" data-act="saveMemo">メモを残す</button></div>`;
+  }
+  $('main').innerHTML = h;
+  const pb = $('prefBook'); if (pb) pb.onchange = () => { S.pref.showBook = pb.checked; savePref(); };
+};
+
+// ---------- S3 場所の一覧 ----------
+SCREENS.places = () => {
+  setChrome('場所を選ぶ');
+  const shelves = S.shelves.filter(s => s.inScope).sort((a, b) => a.sort - b.sort);
+  let rows = '';
+  for (const s of shelves) {
+    const p = shelfStats(s.shelf);
+    if (S.pref.onlyOpenPlaces && s.status === 'done') continue;
+    const pct = p.total ? Math.round(p.counted / p.total * 100) : 0;
+    rows += `<div class="row tap" data-act="openShelf" data-shelf="${esc(s.shelf)}"><div class="main">
+      <div class="name"><b>${esc(C.shelfLabel(s.shelf))}</b>${s.status === 'done' ? ' <span class="tag">完了</span>' : ''}</div>
+      <div class="bar"><i style="width:${pct}%"></i></div></div>
+      <div class="side"><b>${p.counted}</b> / ${p.total}${s.status === 'done' ? '<div class="st-done">✓</div>' : ''}</div></div>`;
+  }
+  const stockN = [...S.view.byKey.keys()].filter(k => k.endsWith('|' + STOCK)).length;
+  rows += `<div class="row tap" data-act="openStock"><div class="main"><div class="name"><b>ストック</b>${S.session.stockCheckedAt ? ' <span class="tag">確認済み</span>' : ''}</div>
+    <div class="sub">ここで数えた商品 ${stockN} 品</div></div><div class="side">›</div></div>`;
+  $('main').innerHTML = `<label class="toggle">完了していない棚だけ表示<input type="checkbox" id="onlyOpen" ${S.pref.onlyOpenPlaces ? 'checked' : ''}></label>
+    <div class="list">${rows}</div>`;
+  $('onlyOpen').onchange = e => { S.pref.onlyOpenPlaces = e.target.checked; savePref(); render(); };
+};
+
+// ---------- S4 棚の商品一覧 ----------
+SCREENS.shelf = ({ shelf }) => {
+  const s = S.shelves.find(x => x.shelf === shelf);
+  const items = S.index.list.filter(it => it.shelf === shelf && it.inScope);
+  const p = shelfStats(shelf);
+  setChrome(`${C.shelfLabel(shelf)}　済 ${p.counted}／${p.total}`);
+  let h = `<label class="toggle">まだ数えていない商品だけ表示<input type="checkbox" id="onlyUnc" ${S.pref.onlyUncounted ? 'checked' : ''}></label><div class="list">`;
+  let tier = null;
+  for (const it of items) {
+    const counted = C.isCounted(it, S.view);
+    if (S.pref.onlyUncounted && counted) continue;
+    if (it.tier !== tier && shelf !== '') { tier = it.tier; h += `<div class="tier">段 ${esc(tier || '－')}</div>`; }
+    h += `<div class="row tap" data-act="tapItem" data-code="${esc(it.code)}"><div class="main">
+      <div class="name">${esc(it.name)}</div>
+      <div class="sub">${esc(it.code)}${it.janKey ? '' : '<span class="tag warn">JANなし</span>'}${it.discontinued ? '<span class="tag">廃番</span>' : ''}</div></div>
+      <div class="side">${statusHtml(it, shelf)}</div></div>`;
+  }
+  h += '</div>';
+  if (!items.length) h = '<div class="card"><p class="muted">この棚の商品はありません。</p></div>';
+  $('main').innerHTML = h;
+  $('onlyUnc') && ($('onlyUnc').onchange = e => { S.pref.onlyUncounted = e.target.checked; savePref(); render(); });
+  const left = p.total - p.counted;
+  const doneBtn = s && s.status === 'done'
+    ? `<button class="btn sec" data-act="reopenShelf" data-shelf="${esc(shelf)}" style="flex:1">完了済み（再開）</button>`
+    : `<button class="btn ${left ? 'sec' : 'pri'}" data-act="completeShelf" data-shelf="${esc(shelf)}" style="flex:1">${left ? `未 ${left} 件` : 'この棚を完了'}</button>`;
+  setChrome(`${C.shelfLabel(shelf)}　済 ${p.counted}／${p.total}`,
+    `<button class="btn dark" data-act="scan" data-place="${esc(shelf)}" style="flex:1.4">スキャン</button>
+     <button class="btn sec" data-act="search" data-place="${esc(shelf)}" style="flex:.8">検索</button>${doneBtn}`);
+};
+
+// ---------- S7 ストック ----------
+SCREENS.stock = () => {
+  const mine = [...S.view.active.values()].filter(e => e.place === STOCK).sort((a, b) => (b.clientAt || '').localeCompare(a.clientAt || ''));
+  let h = `<div class="card"><h2>ストック</h2><p class="muted">ストック置き場の商品を、読んだ順に記録します。対象の棚の商品は、ストックも確認してから確定してください。</p>
+    ${S.session.stockCheckedAt ? '<div class="okbox">ストックの確認は終わっています（追加の入力はできます）</div>' : ''}</div>`;
+  h += mine.length ? '<div class="list">' + mine.map(e => entryRowHtml(e, true)).join('') + '</div>' : '<div class="card"><p class="muted">まだ記録はありません。</p></div>';
+  $('main').innerHTML = h;
+  setChrome('ストック',
+    `<button class="btn dark" data-act="scan" data-place="${STOCK}" style="flex:1.4">スキャン</button>
+     <button class="btn sec" data-act="search" data-place="${STOCK}" style="flex:.8">検索</button>
+     <button class="btn ${S.session.stockCheckedAt ? 'sec' : 'pri'}" data-act="stockChecked" style="flex:1">${S.session.stockCheckedAt ? '確認済み' : '確認を終える'}</button>`);
+};
+function entryRowHtml(e, withUndo) {
+  const it = e.code ? S.index.byCode.get(e.code) : null;
+  const name = it ? it.name : (e.kind === 'unknown' ? `未登録JAN ${e.janRaw}` : e.code);
+  const who = S.users[e.userId] || e.userId;
+  const canUndo = withUndo && !e.voided && S.session && S.session.status === 'counting' && (e.userId === S.me.userId || isAdmin());
+  return `<div class="row"><div class="main"><div class="name">${esc(name)}</div>
+    <div class="sub">${esc(C.fmtJst(e.clientAt))}・${esc(C.placeLabel(e.place))}・${e.mode === 'replace' ? '数え直し' : '追加'}・${esc(who)}${e.pending ? ' <span class="tag warn">未送信</span>' : ''}${e.voided ? ' <span class="tag">取消</span>' : ''}${e.memo ? '・' + esc(e.memo) : ''}</div></div>
+    <div class="side"><b style="font-size:18px">${num(e.qty)}</b>${canUndo ? `<div><button class="btn sec sm" style="min-height:36px;margin:4px 0 0;padding:4px 10px" data-act="undo" data-id="${esc(e.id)}">取消</button></div>` : ''}</div></div>`;
+}
+
+// ---------- S8 検索 ----------
+SCREENS.search = ({ place }) => {
+  setChrome(`検索（${C.placeLabel(place)}）`);
+  $('main').innerHTML = `<input type="text" id="q" placeholder="商品名・かな・商品コード・JAN" autocomplete="off" enterkeyhint="search">
+    <p class="muted">スペースで区切ると、すべてを含む商品を探します。</p><div id="qres"></div>`;
+  const q = $('q');
+  const run = () => {
+    const res = C.searchItems(S.index, q.value, 50);
+    $('qres').innerHTML = res.length ? '<div class="list">' + res.map(it => `<div class="row tap" data-act="pickSearch" data-code="${esc(it.code)}" data-place="${esc(place)}">
+      <div class="main"><div class="name">${esc(it.name)}${it.inScope ? '' : '<span class="tag warn">対象外</span>'}</div>
+      <div class="sub">${esc(it.code)}・${esc(C.shelfLabel(it.shelf))}${it.tier ? '-' + esc(it.tier) : ''}・${esc(it.unit)}</div></div>
+      <div class="side">${statusHtml(it, place)}</div></div>`).join('') + '</div>' : (q.value.trim() ? '<p class="muted">見つかりません。</p>' : '');
+  };
+  q.oninput = run; setTimeout(() => q.focus(), 50);
+};
+
+// ---------- S9 自分の記録 ----------
+SCREENS.mylog = () => {
+  setChrome('自分の記録');
+  const list = [];
+  for (const e of S.server.values()) if (e.userId === S.me.userId) list.push(Object.assign({}, e, S.view.active.has(e.id) ? {} : { voided: true }));
+  for (const op of viewOps()) if (op.type === 'put' && !S.server.has(op.entry.id)) list.push(Object.assign({}, op.entry, { pending: true, voided: !S.view.active.has(op.entry.id) }));
+  list.sort((a, b) => (b.clientAt || '').localeCompare(a.clientAt || ''));
+  $('main').innerHTML = list.length ? '<div class="list">' + list.slice(0, 300).map(e => entryRowHtml(e, true)).join('') + '</div>'
+    : '<div class="card"><p class="muted">まだ記録はありません。</p></div>';
+};
+
+// ---------- S2 開始（管理者） ----------
+SCREENS.start = async (params) => {
+  setChrome('棚卸しを始める');
+  $('main').innerHTML = '<div class="card"><p class="muted">棚の一覧を読み込んでいます…</p></div>';
+  if (!params.opId) params.opId = 'start-' + C.uuid();
+  if (!params.sel) params.sel = {};
+  let r;
+  try { r = await rpc('st_list_shelves', {}); } catch (e) { $('main').innerHTML = '<div class="errbox">通信できません。電波の届く場所で開き直してください。</div>'; return; }
+  if (!r.success) { $('main').innerHTML = `<div class="errbox">${esc(errText(r.error))}</div>`; return; }
+  if (cur().name !== 'start') return;
+  const ing = S.productInfo && S.productInfo.ingestedAt;
+  const fresh = ing && C.jstDate(ing) === C.jstDate();
+  const shelves = r.shelves.map(([s, n]) => ({ s, n: Number(n) }));
+  const named = shelves.filter(x => x.s !== '');
+  const none = shelves.find(x => x.s === '');
+  const draw = () => {
+    const selN = named.filter(x => params.sel[x.s]);
+    const items = selN.reduce((a, x) => a + x.n, 0) + (params.noShelf && none ? none.n : 0);
+    $('main').innerHTML = `<div class="card"><h2>名前</h2><input type="text" id="stName" value="${esc(params.name || C.jstDate() + ' 棚卸し')}" maxlength="60"></div>
+      <div class="card"><h2>帳簿在庫の時点</h2><div>商品マスター ${esc(C.fmtJst(ing) || '不明')} の取り込み（版 ${esc(S.productInfo ? S.productInfo.version : '')}）</div>
+      ${fresh ? '' : '<div class="warnbox">今朝の取り込みがまだです。始めると古い帳簿と比べます。</div>'}</div>
+      <div class="card"><h2>数える棚</h2><div class="grid2" style="margin-bottom:8px"><button class="btn sec sm" data-act="selAll">全部</button><button class="btn sec sm" data-act="selNone">解除</button></div>
+      <div class="chips">${named.map(x => `<button type="button" class="chip ${params.sel[x.s] ? 'on' : ''}" data-act="selShelf" data-shelf="${esc(x.s)}"><b>${esc(x.s)}</b><small>${x.n}品</small></button>`).join('')}</div>
+      ${none ? `<label class="toggle">棚番なし（${none.n}品）も含める<input type="checkbox" id="stNoShelf" ${params.noShelf ? 'checked' : ''}></label>` : ''}</div>
+      <div class="card"><b>${selN.length + (params.noShelf ? 1 : 0)} か所・${num(items)} 品</b>を対象に始めます。</div>`;
+    $('stName').oninput = e => { params.name = e.target.value; };
+    const ns = $('stNoShelf'); if (ns) ns.onchange = e => { params.noShelf = e.target.checked; draw(); };
+    setChrome('棚卸しを始める', `<button class="btn pri" data-act="doStart" ${items ? '' : 'disabled'}>開始する</button>`);
+  };
+  params._draw = draw; params._named = named;
+  draw();
+};
+
+// ---------- 棚の追加（管理者） ----------
+SCREENS.addShelves = (params) => {
+  setChrome('棚を追加');
+  if (!params.sel) params.sel = {};
+  const cand = S.shelves.filter(s => !s.inScope);
+  const named = cand.filter(s => s.shelf !== '');
+  const none = cand.find(s => s.shelf === '');
+  const n = named.filter(s => params.sel[s.shelf]).reduce((a, s) => a + s.count, 0) + (params.noShelf && none ? none.count : 0);
+  $('main').innerHTML = cand.length ? `<div class="card"><h2>追加する棚</h2><div class="chips">${named.map(s => `<button type="button" class="chip ${params.sel[s.shelf] ? 'on' : ''}" data-act="selAdd" data-shelf="${esc(s.shelf)}"><b>${esc(s.shelf)}</b><small>${s.count}品</small></button>`).join('')}</div>
+    ${none ? `<label class="toggle">棚番なし（${none.count}品）<input type="checkbox" id="addNoShelf" ${params.noShelf ? 'checked' : ''}></label>` : ''}</div>
+    <div class="card">${num(n)} 品を対象に加えます。既にその棚の商品を記録していれば、結果に入ります。</div>`
+    : '<div class="card"><p class="muted">追加できる棚はありません（すべて対象です）。</p></div>';
+  const ns = $('addNoShelf'); if (ns) ns.onchange = e => { params.noShelf = e.target.checked; render(); };
+  setChrome('棚を追加', cand.length ? `<button class="btn pri" data-act="doAddShelves" ${n ? '' : 'disabled'}>追加する</button>` : '');
+};
+
+// ---------- S10 進捗・差異（管理者） ----------
+SCREENS.report = async (params) => {
+  const tab = params.tab || 'diff';
+  setChrome('進捗・差異');
+  if (!params.loaded) {
+    $('main').innerHTML = '<div class="card"><p class="muted">集計しています…</p></div>';
+    let r;
+    try { r = await rpc('st_get_report', { sessionId: params.sessionId || sid() }); }
+    catch (e) { $('main').innerHTML = '<div class="errbox">通信できません。電波の届く場所で開き直してください。</div>'; return; }
+    if (!r.success) { $('main').innerHTML = `<div class="errbox">${esc(errText(r.error))}</div>`; return; }
+    S.report = r; params.loaded = true; params.loadedAt = Date.now();
+    if (cur().name !== 'report') return;
+  }
+  const r = S.report;
+  const live = r.session.status === 'counting' && sid() === r.session.sessionId;
+  const sum = r.summary;
+  let h = `<div class="card"><h2>${esc(r.session.name)}</h2><div class="muted">${esc(statusText(r.session.status))}・対象 ${num(sum.inScopeItems)} 品・未 ${num(sum.uncountedItems)} 品・完了 ${sum.shelvesDone}／${sum.shelves} 棚</div></div>
+    <div class="tabs"><button class="${tab === 'progress' ? 'on' : ''}" data-act="repTab" data-tab="progress">進捗</button>
+    <button class="${tab === 'diff' ? 'on' : ''}" data-act="repTab" data-tab="diff">差異</button>
+    <button class="${tab === 'other' ? 'on' : ''}" data-act="repTab" data-tab="other">その他</button></div>`;
+  if (tab === 'progress') {
+    const byShelf = {};
+    r.items.forEach(x => { const k = x.shelf; byShelf[k] = byShelf[k] || { t: 0, c: 0, unc: [] }; byShelf[k].t++; if (x.counted) byShelf[k].c++; else byShelf[k].unc.push(x); });
+    h += `<div class="card">ストック確認: ${r.session.stockCheckedAt ? '済み（' + esc(C.fmtJst(r.session.stockCheckedAt)) + '）' : '<b>まだ</b>'}</div><div class="list">`;
+    Object.keys(byShelf).forEach(k => {
+      const v = byShelf[k];
+      h += `<div class="row"><div class="main"><div class="name"><b>${esc(C.shelfLabel(k))}</b></div>
+        ${v.unc.length ? `<div class="sub">未: ${v.unc.slice(0, 8).map(x => esc(x.name)).join('、')}${v.unc.length > 8 ? ` ほか ${v.unc.length - 8} 品` : ''}</div>` : ''}</div>
+        <div class="side">${v.c}／${v.t}</div></div>`;
+    });
+    h += '</div>';
+  } else if (tab === 'diff') {
+    const sort = params.sort || 'amount';
+    let rows = r.items.filter(x => !params.onlyDiff || (x.diff != null && Number(x.diff) !== 0));
+    const absD = x => (x.diff == null ? -1 : Math.abs(Number(x.diff)));
+    const absA = x => (x.diffAmount == null ? -1 : Math.abs(Number(x.diffAmount)));
+    if (sort === 'diff') rows = rows.slice().sort((a, b) => absD(b) - absD(a));
+    else if (sort === 'amount') rows = rows.slice().sort((a, b) => absA(b) - absA(a));
+    const plus = r.items.reduce((a, x) => a + (x.diffAmount > 0 ? Number(x.diffAmount) : 0), 0);
+    const minus = r.items.reduce((a, x) => a + (x.diffAmount < 0 ? Number(x.diffAmount) : 0), 0);
+    h += `<div class="card">差額合計　<b style="color:#1E6B32">＋${num(plus)}</b>　<b style="color:#B3261E">${num(minus)}</b> 円</div>
+      <div class="grid2"><select id="repSort"><option value="amount" ${sort === 'amount' ? 'selected' : ''}>差額の大きい順</option>
+      <option value="diff" ${sort === 'diff' ? 'selected' : ''}>差の大きい順</option><option value="shelf" ${sort === 'shelf' ? 'selected' : ''}>棚番順</option></select>
+      <label class="toggle" style="padding:0 4px">差がある商品だけ<input type="checkbox" id="repOnly" ${params.onlyDiff ? 'checked' : ''}></label></div>
+      <div class="scrollx" style="margin-top:8px"><table class="rep"><thead><tr><th>商品</th><th>帳簿</th><th>棚</th><th>スト</th><th>実数</th><th>差</th><th>差額</th></tr></thead><tbody>
+      ${rows.slice(0, 400).map(x => `<tr ${live ? `data-act="repItem" data-code="${esc(x.code)}"` : ''}><td>${esc(x.name)}<div class="muted">${esc(x.code)}・${esc(C.shelfLabel(x.shelf))}${x.tier ? '-' + esc(x.tier) : ''}${x.counted ? '' : '・<b>未</b>'}</div></td>
+        <td>${x.bookQty == null ? '－' : num(x.bookQty)}</td><td>${x.shelfQty == null ? '' : num(x.shelfQty)}</td><td>${x.stockQty == null ? '' : num(x.stockQty)}</td>
+        <td><b>${x.actual == null ? '' : num(x.actual)}</b></td><td class="${x.diff < 0 ? 'neg' : x.diff > 0 ? 'pos' : ''}">${x.diff == null ? '' : (x.diff > 0 ? '+' : '') + num(x.diff)}</td>
+        <td class="${x.diffAmount < 0 ? 'neg' : x.diffAmount > 0 ? 'pos' : ''}">${x.diffAmount == null ? '' : num(x.diffAmount)}</td></tr>`).join('')}
+      </tbody></table></div>${rows.length > 400 ? `<p class="muted">先頭400件を表示しています（全${rows.length}件はCSVで）。</p>` : ''}`;
+  } else {
+    h += `<div class="card"><h2>未登録JAN（${r.unknown.length}）</h2>${r.unknown.length ? r.unknown.map(x => `<div class="row"><div class="main"><div class="name">${esc(x.jan)}</div>
+      <div class="sub">${esc(C.placeLabel(x.place))}・${esc(x.userName)}・${esc(C.fmtJst(x.clientAt))}${x.memo ? '・' + esc(x.memo) : ''}</div></div><div class="side"><b>${num(x.qty)}</b></div></div>`).join('') : '<p class="muted">ありません。</p>'}</div>
+      <div class="card"><h2>対象外の記録（${r.outside.length}）</h2>${r.outside.length ? r.outside.map(x => `<div class="row"><div class="main"><div class="name">${esc(x.name)}</div>
+      <div class="sub">${esc(x.code)}・本来 ${esc(C.shelfLabel(x.homeShelf))}・${esc(C.placeLabel(x.place))}で記録・${esc(x.userName)}</div></div><div class="side"><b>${num(x.qty)}</b></div></div>`).join('') : '<p class="muted">ありません。</p>'}</div>`;
+  }
+  h += `<div class="card"><h2>CSV</h2><div class="grid2"><button class="btn sec sm" data-act="csvResult">結果</button><button class="btn sec sm" data-act="csvOther">未登録JAN・対象外</button></div>
+    ${r.session.status === 'closed' ? `<button class="btn danger sm" data-act="reopenSession" data-id="${esc(r.session.sessionId)}">確定を取り消す</button>` : ''}</div>`;
+  $('main').innerHTML = h;
+  const rs = $('repSort'); if (rs) rs.onchange = e => { params.sort = e.target.value; render(); };
+  const ro = $('repOnly'); if (ro) ro.onchange = e => { params.onlyDiff = e.target.checked; render(); };
+  setChrome('進捗・差異', `<button class="btn sec" data-act="repReload">最新にする</button>`);
+};
+const statusText = s => ({ counting: '実施中', closed: '確定済み', cancelled: '中止' }[s] || s);
+
+// ---------- S11 確定（管理者） ----------
+SCREENS.close = () => {
+  setChrome('確定');
+  const inScope = S.shelves.filter(s => s.inScope);
+  const openShelves = inScope.filter(s => s.status !== 'done');
+  const t = totals();
+  const checks = [
+    { ok: !openShelves.length, text: '対象の棚がすべて完了', sub: openShelves.length ? '未完了: ' + openShelves.map(s => C.shelfLabel(s.shelf)).join('、') : '' },
+    { ok: t.counted === t.total, text: 'すべての対象商品を数えた', sub: t.counted === t.total ? '' : `未 ${t.total - t.counted} 品` },
+    { ok: !!S.session.stockCheckedAt, text: 'ストックの確認を終えている', sub: '' },
+    { ok: sessionOps().length === 0, text: 'この端末に未送信が無い', sub: sessionOps().length ? `未送信 ${sessionOps().length} 件` : '' },
+  ];
+  const lastAt = [...S.server.values()].reduce((a, e) => (e.clientAt > a ? e.clientAt : a), '');
+  const allOk = checks.every(c => c.ok);
+  $('main').innerHTML = `<div class="list">${checks.map(c => `<div class="row"><div class="main"><div class="name">${c.ok ? '✅' : '⬜'} ${esc(c.text)}</div>${c.sub ? `<div class="sub">${esc(c.sub)}</div>` : ''}</div></div>`).join('')}</div>
+    <div class="card muted">最後の入力: ${esc(C.fmtJst(lastAt) || 'なし')}（他の端末の未送信が無いか、念のため確かめてください）</div>
+    <div class="card">対象 ${num(t.total)} 品。確定すると、記録の追加・取消はできなくなります（管理者は「確定を取り消す」で戻せます）。</div>`;
+  setChrome('確定', `<button class="btn pri" data-act="doClose" ${allOk ? '' : 'disabled'}>確定する</button>`);
+};
+
+// ---------- 過去の棚卸し（管理者） ----------
+SCREENS.history = async () => {
+  setChrome('過去の棚卸し');
+  $('main').innerHTML = '<div class="card"><p class="muted">読み込んでいます…</p></div>';
+  let r;
+  try { r = await rpc('st_list_sessions', {}); } catch (e) { $('main').innerHTML = '<div class="errbox">通信できません。</div>'; return; }
+  if (!r.success) { $('main').innerHTML = `<div class="errbox">${esc(errText(r.error))}</div>`; return; }
+  if (cur().name !== 'history') return;
+  $('main').innerHTML = r.sessions.length ? '<div class="list">' + r.sessions.map(s => `<div class="row tap" data-act="openHist" data-id="${esc(s.sessionId)}">
+    <div class="main"><div class="name">${esc(s.name)}</div><div class="sub">${esc(statusText(s.status))}・開始 ${esc(C.fmtJst(s.createdAt))}${s.closedAt ? '・終了 ' + esc(C.fmtJst(s.closedAt)) : ''}・${s.inScopeShelves} か所</div></div><div class="side">›</div></div>`).join('') + '</div>'
+    : '<div class="card"><p class="muted">まだありません。</p></div>';
+};
+
+/* ============================================================
+   数量入力（S6）と読み取り後の流れ
+============================================================ */
+function openSheet(html) { $('sheetBody').innerHTML = html; $('sheet').classList.remove('hidden'); }
+function closeSheet() { $('sheet').classList.add('hidden'); $('sheetBody').innerHTML = ''; if (scan.active) scan.resume(); else render(); }
+
+// item を place で数える。method: list/search/scan/manual_jan
+function openQty(item, place, method, janRaw) {
+  const here = S.view.byKey.get(item.code + '|' + place);
+  const all = S.view.byCode.get(item.code);
+  const st = { val: '', mode: here ? null : 'add' };
+  const others = all ? Object.keys(all.places).filter(p => p !== place) : [];
+  const draw = () => {
+    openSheet(`<div class="q-name">${esc(item.name)}</div>
+      <div class="q-meta">${esc(item.code)}${item.jan ? '・JAN ' + esc(item.jan) : '・JANなし'}・${esc(C.shelfLabel(item.shelf))}${item.tier ? '-' + esc(item.tier) : ''}<span class="q-unit">${esc(item.unit || '個')}</span></div>
+      <div class="q-have">${here ? `この場所で記録済み <b>${num(here.qty)}</b>` : 'この場所ではまだ数えていません'}
+      ${others.map(p => `　${esc(C.placeLabel(p))} ${num(all.places[p])}`).join('')}${isAdmin() && S.pref.showBook ? `　<span class="muted">帳簿 ${item.book == null ? '－' : num(item.book)}</span>` : ''}</div>
+      ${here ? `<div class="modes"><button type="button" class="${st.mode === 'add' ? 'on' : ''}" data-m="add">追加で数えた（＋）</button><button type="button" class="${st.mode === 'replace' ? 'on' : ''}" data-m="replace">数え直した（置き換え）</button></div>` : ''}
+      <div class="q-val ${st.val === '' ? 'empty' : ''}" id="qVal">${st.val === '' ? '数量' : esc(st.val)}</div>
+      <div class="keys">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button type="button" data-k="${n}">${n}</button>`).join('')}
+      <button type="button" class="fn" data-k="clr">消去</button><button type="button" data-k="0">0</button><button type="button" class="fn" data-k="bs">⌫</button>
+      <button type="button" class="fn" data-k="m1">−1</button><button type="button" class="fn" data-k="zero">0（無い）</button><button type="button" class="fn" data-k="p1">＋1</button></div>
+      <div class="grid2"><button type="button" class="btn sec" id="qCancel">やめる</button><button type="button" class="btn pri" id="qSave">保存</button></div>`);
+    $('sheetBody').querySelectorAll('[data-m]').forEach(b => b.onclick = () => { st.mode = b.dataset.m; draw(); });
+    $('sheetBody').querySelectorAll('[data-k]').forEach(b => b.onclick = () => {
+      const k = b.dataset.k; let v = st.val;
+      if (/^[0-9]$/.test(k)) v = (v === '0' ? '' : v) + k;
+      else if (k === 'bs') v = v.slice(0, -1);
+      else if (k === 'clr') v = '';
+      else if (k === 'zero') v = '0';
+      else if (k === 'p1') v = String((Number(v) || 0) + 1);
+      else if (k === 'm1') v = String(Math.max(0, (Number(v) || 0) - 1));
+      if (v.length > 5) return;
+      st.val = v; const q = $('qVal'); q.textContent = v === '' ? '数量' : v; q.className = 'q-val' + (v === '' ? ' empty' : '');
+    });
+    $('qCancel').onclick = closeSheet;
+    // 二度押しで2件記録しないよう、保存の処理中は受け付けない
+    $('qSave').onclick = async () => {
+      if (st.saving) return;
+      st.saving = true;
+      try { await saveQty(); } finally { st.saving = false; }
+    };
+    const saveQty = async () => {
+      if (st.val === '') return toast('数量を入れてください', 'error');
+      if (!st.mode) return toast('「追加」か「数え直し」を選んでください', 'error');
+      const qty = Number(st.val);
+      if (qty >= 500 && !(await confirmYes('数量の確認', `${qty} ${item.unit || ''} です。よろしいですか？`, 'このまま保存'))) return;
+      const hereQty = here ? here.qty : 0;
+      const newTotal = (all ? all.total : 0) - (st.mode === 'replace' ? hereQty : 0) + qty;
+      if (!(isAdmin() && S.pref.showBook) && C.needsDiffCheck(item.book, newTotal)) {
+        const k = await ask('もう一度数えますか？', '帳簿と差があるかもしれません。', [{ key: 'save', label: 'このまま保存', cls: 'pri' }, { key: 'again', label: '数え直す' }]);
+        metric('diff_prompt', 1, { choice: k });
+        if (k !== 'save') return;
+      }
+      const ok = await saveEntry({ kind: 'item', code: item.code, place, mode: st.mode, qty, inputMethod: method, janRaw: janRaw || '' });
+      if (!ok) return;
+      metric('input', 1, { method });
+      toast(`保存しました（${qty}）`);
+      closeSheet();
+    };
+  };
+  draw();
+}
+
+// 読み取った（入力した）JANから先へ進む（§10.3）
+async function handleJan(code, method, place) {
+  const res = C.lookupJan(S.index, code);
+  if (res.kind === 'none') { metric('scan_unknown', 1); return openUnknown(code, place, method); }
+  if (res.kind === 'outside') {
+    const it = res.items[0];
+    const k = await ask('今回の対象外の商品です', `${it.name}\n（${C.shelfLabel(it.shelf)}）\n記録だけ残しますか？ 結果には入りません。`, [{ key: 'rec', label: '記録だけ残す', cls: 'pri' }, { key: 'no', label: 'やめる' }]);
+    if (k === 'rec') return openQty(it, place, method, code);
+    if (scan.active) scan.resume();
+    return;
+  }
+  let it = res.items[0];
+  if (res.kind === 'many') {
+    const k = await ask('どの商品ですか？', '同じJANの商品が複数あります。', res.items.map(x => ({ key: x.code, label: x.name + '（' + x.code + '）', cls: 'sec' })).concat([{ key: '', label: 'やめる' }]));
+    it = res.items.find(x => x.code === k);
+    if (!it) { if (scan.active) scan.resume(); return; }
+  }
+  return checkPlaceThenQty(it, place, method, code);
+}
+async function checkPlaceThenQty(it, place, method, janRaw) {
+  if (place !== STOCK && it.shelf !== '' && it.shelf !== place) {
+    const k = await ask('棚番が違います', `${it.name}\nこの商品の棚番は ${it.shelf}-${it.tier || ''} です。この場所（${C.placeLabel(place)}）で数えますか？`,
+      [{ key: 'here', label: 'この場所で数える', cls: 'pri' }, { key: 'no', label: 'やめる' }]);
+    if (k !== 'here') { if (scan.active) scan.resume(); return; }
+  }
+  openQty(it, place, method, janRaw);
+}
+function openUnknown(code, place, method) {
+  const st = { val: '' };
+  const draw = () => {
+    openSheet(`<div class="q-name" style="color:#B3261E">登録のないJANです</div><div class="q-meta">JAN ${esc(code)}・${esc(C.placeLabel(place))}</div>
+      <p class="muted">数量とメモを残すと、管理者が後で商品を確認します（結果には入りません）。商品が分かる場合は「検索して選ぶ」を使ってください。</p>
+      <div class="q-val ${st.val === '' ? 'empty' : ''}" id="uVal">${st.val === '' ? '数量' : esc(st.val)}</div>
+      <div class="keys">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button type="button" data-k="${n}">${n}</button>`).join('')}<button type="button" class="fn" data-k="clr">消去</button><button type="button" data-k="0">0</button><button type="button" class="fn" data-k="bs">⌫</button></div>
+      <input type="text" id="uMemo" maxlength="200" placeholder="メモ（商品名・置き場所など）">
+      <button type="button" class="btn pri" id="uSave">数量とメモを残す</button>
+      <div class="grid2"><button type="button" class="btn sec" id="uSearch">検索して選ぶ</button><button type="button" class="btn sec" id="uCancel">やめる</button></div>`);
+    $('sheetBody').querySelectorAll('[data-k]').forEach(b => b.onclick = () => {
+      const k = b.dataset.k; let v = st.val;
+      if (/^[0-9]$/.test(k)) v = (v === '0' ? '' : v) + k; else if (k === 'bs') v = v.slice(0, -1); else v = '';
+      if (v.length > 5) return; st.val = v; const q = $('uVal'); q.textContent = v === '' ? '数量' : v; q.className = 'q-val' + (v === '' ? ' empty' : '');
+    });
+    $('uCancel').onclick = closeSheet;
+    $('uSearch').onclick = () => { $('sheet').classList.add('hidden'); scan.close(); go('search', { place }); };
+    $('uSave').onclick = async () => {
+      if (st.val === '') return toast('数量を入れてください', 'error');
+      if (st.saving) return;
+      st.saving = true;
+      try {
+        const ok = await saveEntry({ kind: 'unknown', code: null, janRaw: C.digits(code), place, mode: 'add', qty: Number(st.val), inputMethod: method, memo: $('uMemo').value.trim() });
+        if (ok) { toast('記録しました'); closeSheet(); }
+      } finally { st.saving = false; }
+    };
+  };
+  draw();
+}
+// JANの手入力
+function openManualJan(place) {
+  const st = { val: '' };
+  const draw = () => {
+    openSheet(`<div class="q-name">JANを手入力</div><p class="muted">バーコードの下の数字（13桁・12桁・8桁）を入れてください。</p>
+      <div class="q-val ${st.val === '' ? 'empty' : ''}" id="jVal" style="font-size:30px">${st.val === '' ? '数字' : esc(st.val)}</div>
+      <div class="keys">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button type="button" data-k="${n}">${n}</button>`).join('')}<button type="button" class="fn" data-k="clr">消去</button><button type="button" data-k="0">0</button><button type="button" class="fn" data-k="bs">⌫</button></div>
+      <div class="grid2"><button type="button" class="btn sec" id="jCancel">やめる</button><button type="button" class="btn pri" id="jOk">次へ</button></div>`);
+    $('sheetBody').querySelectorAll('[data-k]').forEach(b => b.onclick = () => {
+      const k = b.dataset.k; let v = st.val;
+      if (/^[0-9]$/.test(k)) v += k; else if (k === 'bs') v = v.slice(0, -1); else v = '';
+      if (v.length > 13) return; st.val = v; const q = $('jVal'); q.textContent = v === '' ? '数字' : v; q.className = 'q-val' + (v === '' ? ' empty' : '');
+    });
+    $('jCancel').onclick = closeSheet;
+    $('jOk').onclick = () => {
+      if (!C.eanCheckOk(st.val)) return toast('番号を確認してください（桁数かチェック数字が合いません）', 'error');
+      metric('scan_manual', 1);
+      $('sheet').classList.add('hidden');
+      handleJan(st.val, 'manual_jan', place);
+    };
+  };
+  draw();
+}
+
+/* ============================================================
+   スキャン（S5）
+============================================================ */
+const scan = {
+  active: false, reader: null, track: null, torch: false, zoom2: false, paused: false, last: { v: '', t: 0 }, place: '',
+  async open(place) {
+    this.place = place; this.active = true; this.paused = false;
+    $('scanLabel').textContent = C.placeLabel(place) + 'で読み取り中';
+    $('scanner').classList.remove('hidden');
+    if (!window.Html5Qrcode) { toast('カメラの部品を読み込めませんでした。手入力をお使いください', 'error'); return; }
+    const F = window.Html5QrcodeSupportedFormats;
+    try {
+      this.reader = new window.Html5Qrcode('scanBox', { verbose: false, formatsToSupport: [F.EAN_13, F.UPC_A, F.EAN_8] });
+      await this.reader.start({ facingMode: 'environment' },
+        { fps: 24, videoConstraints: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } },
+        text => this.onDecode(text), () => {});
+      const box = $('scanBox');
+      if (!box.querySelector('.scan-guide')) { const g = document.createElement('div'); g.className = 'scan-guide'; box.appendChild(g); }
+      setTimeout(() => this.setupCamera(), 400);
+    } catch (e) {
+      // 起動できなかった部品は止めずに捨てる（未起動の stop() は例外を投げるため）
+      this.reader = null;
+      metric('camera_fail', 1, { message: String(e && e.message || e).slice(0, 200) });
+      toast('カメラを起動できません。手入力をお使いください', 'error');
+    }
+  },
+  setupCamera() {
+    try {
+      const v = document.querySelector('#scanBox video');
+      const tr = v && v.srcObject && v.srcObject.getVideoTracks()[0];
+      if (!tr || !tr.getCapabilities) return;
+      this.track = tr;
+      const caps = tr.getCapabilities();
+      const zoomOk = caps.zoom && caps.zoom.max >= 2;
+      $('scanZoom').classList.toggle('hidden', !zoomOk);
+      $('scanTorch').classList.toggle('hidden', caps.torch !== true);
+      if (zoomOk) this.setZoom(true);
+    } catch (e) {}
+  },
+  setZoom(on) {
+    try { this.zoom2 = on; this.track.applyConstraints({ advanced: [{ zoom: on ? 2 : 1 }] }); $('scanZoom').classList.toggle('on', on); } catch (e) {}
+  },
+  toggleTorch() {
+    try { this.torch = !this.torch; this.track.applyConstraints({ advanced: [{ torch: this.torch }] }); $('scanTorch').classList.toggle('on', this.torch); } catch (e) {}
+  },
+  refocus() {  // ズーム・解像度をわずかに変えて戻し、ピント合わせをやり直させる（シリアルNo管理アプリと同じ方法）
+    const tr = this.track; if (!tr) return;
+    try {
+      const caps = tr.getCapabilities ? tr.getCapabilities() : {}; const set = tr.getSettings ? tr.getSettings() : {};
+      if (caps.zoom && caps.zoom.max) {
+        const z = set.zoom || caps.zoom.min || 1;
+        tr.applyConstraints({ advanced: [{ zoom: Math.min(caps.zoom.max, z + 0.1) }] }).then(() => setTimeout(() => tr.applyConstraints({ advanced: [{ zoom: z }] }).catch(() => {}), 180)).catch(() => {});
+      }
+    } catch (e) {}
+  },
+  onDecode(text) {
+    if (this.paused || !this.active) return;
+    const d = C.digits(text);
+    if (!C.eanCheckOk(d)) { metric('scan_bad', 1); return; }
+    const now = Date.now();
+    if (d === this.last.v && now - this.last.t < 1500) return;
+    this.last = { v: d, t: now };
+    this.paused = true;
+    const g = document.querySelector('#scanBox .scan-guide');
+    if (g) { g.classList.add('flash'); setTimeout(() => g.classList.remove('flash'), 300); }
+    beep(true);
+    metric('scan_ok', 1);
+    handleJan(d, 'scan', this.place);
+  },
+  resume() { this.paused = false; this.last.t = Date.now(); },
+  close() {
+    this.active = false; this.paused = false;
+    try { if (this.track && this.torch) this.track.applyConstraints({ advanced: [{ torch: false }] }); } catch (e) {}
+    this.track = null; this.torch = false;
+    $('scanner').classList.add('hidden');
+    const r = this.reader; this.reader = null;
+    const clear = () => { $('scanBox').innerHTML = ''; };
+    try { if (r) Promise.resolve(r.stop()).catch(() => {}).then(clear); else clear(); } catch (e) { clear(); }
+    render();
+  },
+};
+$('scanClose').onclick = () => scan.close();
+$('scanTorch').onclick = () => scan.toggleTorch();
+$('scanZoom').onclick = () => scan.setZoom(!scan.zoom2);
+$('scanManual').onclick = () => { scan.paused = true; openManualJan(scan.place); };
+$('scanBox').addEventListener('click', () => scan.refocus());
+
+/* ============================================================
+   出力（CSV・印刷）
+============================================================ */
+function download(name, text) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }));
+  a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+const fileBase = s => '棚卸し_' + C.jstDate(s.createdAt).replace(/-/g, '') + '_' + String(s.name).replace(/[\\/:*?"<>|\s]+/g, '_');
+function csvResult() {
+  const r = S.report; if (!r) return;
+  const rows = [['商品コード', 'JAN', '商品名', '単位', '棚', '段', '帳簿在庫', '棚の数', 'ストックの数', 'その他の場所の数', '実数', '差', '仕入単価', '差額', '数えた人']];
+  r.items.forEach(x => rows.push([x.code, x.jan, x.name, x.unit, x.shelf, x.tier, x.bookQty, x.shelfQty, x.stockQty, x.otherQty, x.actual, x.diff, x.price, x.diffAmount, x.counters]));
+  download(fileBase(r.session) + '_結果' + (r.session.status === 'closed' ? '' : '_途中') + '.csv', C.toCsv(rows));
+}
+function csvOther() {
+  const r = S.report; if (!r) return;
+  const rows = [['種類', 'JAN', '商品コード', '商品名', '本来の棚', '数えた場所', '数量', 'メモ', '記録者', '時刻']];
+  r.unknown.forEach(x => rows.push(['未登録JAN', x.jan, '', '', '', C.placeLabel(x.place), x.qty, x.memo, x.userName, C.fmtJst(x.clientAt)]));
+  r.outside.forEach(x => rows.push(['対象外', '', x.code, x.name, C.shelfLabel(x.homeShelf), C.placeLabel(x.place), x.qty, '', x.userName, C.fmtJst(x.clientAt)]));
+  download(fileBase(r.session) + '_未登録JAN・対象外.csv', C.toCsv(rows));
+}
+function printList() {
+  const shelves = S.shelves.filter(s => s.inScope).sort((a, b) => a.sort - b.sort);
+  let h = `<h1 style="font-size:16px">${esc(S.session.name)}　印刷用一覧</h1>`;
+  for (const s of shelves) {
+    const items = S.index.list.filter(it => it.shelf === s.shelf && it.inScope);
+    h += `<h2>${esc(C.shelfLabel(s.shelf))}（${items.length}品）</h2><table><thead><tr><th>段</th><th>商品コード</th><th>商品名</th><th>単位</th><th>数量</th></tr></thead><tbody>` +
+      items.map(it => `<tr><td>${esc(it.tier)}</td><td>${esc(it.code)}</td><td>${esc(it.name)}</td><td>${esc(it.unit)}</td><td class="qty"></td></tr>`).join('') + '</tbody></table>';
+  }
+  $('printArea').innerHTML = h;
+  window.print();
+}
+function showRejected() {
+  openSheet(`<div class="q-name">送れなかった記録</div><p class="muted">サーバーが受け取らなかった記録です。内容を確かめ、必要なら入力し直してください。</p>
+    <div class="list">${S.rejected.map(o => {
+      const e = o.entry; const it = e && e.code && S.index ? S.index.byCode.get(e.code) : null;
+      return `<div class="row"><div class="main"><div class="name">${o.type === 'void' ? '取消の操作' : esc(it ? it.name : (e ? (e.code || e.janRaw) : ''))}</div>
+        <div class="sub">${esc(errText(o.error))}${e ? '・' + esc(C.placeLabel(e.place)) + '・' + num(e.qty) : ''}</div></div></div>`;
+    }).join('')}</div>
+    <button class="btn pri" type="button" id="rejOk">確認した（一覧から消す）</button><button class="btn sec" type="button" id="rejClose">閉じる</button>`);
+  $('rejClose').onclick = closeSheet;
+  $('rejOk').onclick = async () => {
+    try { await idb('rejected', 'readwrite', s => s.clear()); S.rejected = []; } catch (e) {}
+    closeSheet(); renderBand();
+  };
+}
+
+/* ============================================================
+   操作（data-act）
+============================================================ */
+const ACT = {
+  goStart: () => go('start'), goHistory: () => go('history'), goPlaces: () => go('places'), goMylog: () => go('mylog'),
+  goReport: () => go('report', { tab: 'diff' }), goClose: () => go('close'), goAddShelves: () => go('addShelves'),
+  printList,
+  openShelf: d => go('shelf', { shelf: d.shelf }),
+  openStock: () => go('stock'),
+  tapItem: d => { const it = S.index.byCode.get(d.code); if (it) openQty(it, cur().params.shelf, 'list'); },
+  pickSearch: async d => {
+    const it = S.index.byCode.get(d.code); if (!it) return;
+    if (!it.inScope) {
+      const ok = await confirmYes('今回の対象外の商品です', `${it.name}（${C.shelfLabel(it.shelf)}）\n記録だけ残しますか？ 結果には入りません。`, '記録だけ残す');
+      if (!ok) return;
+      return openQty(it, d.place, 'search');
+    }
+    checkPlaceThenQty(it, d.place, 'search');
+  },
+  scan: d => scan.open(d.place),
+  search: d => go('search', { place: d.place }),
+  undo: async d => { await voidEntry(d.id); toast('取り消しました'); render(); },
+  saveMemo: () => { const t = $('memoText').value.trim(); if (!t) return; metric('memo', null, { text: t.slice(0, 1000) }); sendMetrics(); $('memoText').value = ''; toast('メモを残しました'); },
+  completeShelf: async d => {
+    const p = shelfStats(d.shelf);
+    if (p.counted < p.total) {
+      const unc = S.index.list.filter(it => it.shelf === d.shelf && it.inScope && !C.isCounted(it, S.view));
+      await ask(`未が ${unc.length} 件あります`, unc.slice(0, 12).map(x => '・' + x.name).join('\n') + (unc.length > 12 ? `\nほか ${unc.length - 12} 件` : '') + '\n\n無かった商品は「0（無い）」を入れてください。', [{ key: 'ok', label: '戻る', cls: 'dark' }]);
+      return;
+    }
+    if (!(await ensureFlushed(10000))) return toast(`未送信が ${sessionOps().length} 件あります。電波の届く場所で、もう一度押してください`, 'error');
+    let r; try { r = await rpc('st_set_shelf', { sessionId: sid(), shelf: d.shelf, status: 'done' }); } catch (e) { return toast('通信できません。もう一度押してください', 'error'); }
+    if (!r.success) return toast(errText(r.error) + (r.missingCount ? `（${r.missingCount}件）` : ''), 'error');
+    S.shelves = mergeShelves(r.shelves); beep(true); toast('完了にしました'); back();
+  },
+  reopenShelf: async d => {
+    if (!(await confirmYes('棚を再開しますか？', '完了を取り消して、数え直せる状態に戻します。', '再開する'))) return;
+    let r; try { r = await rpc('st_set_shelf', { sessionId: sid(), shelf: d.shelf, status: 'open' }); } catch (e) { return toast('通信できません', 'error'); }
+    if (!r.success) return toast(errText(r.error), 'error');
+    S.shelves = mergeShelves(r.shelves); render();
+  },
+  stockChecked: async () => {
+    const on = !S.session.stockCheckedAt;
+    if (on && !(await confirmYes('ストックの確認を終えますか？', '対象の棚の商品を、ストック置き場でも確認しましたか？（何も無かった場合も「終える」で構いません）', '確認を終える'))) return;
+    if (!on && !(await confirmYes('ストック確認を取り消しますか？', '', '取り消す', 'danger'))) return;
+    if (!(await ensureFlushed(10000))) return toast(`未送信が ${sessionOps().length} 件あります。電波の届く場所で、もう一度押してください`, 'error');
+    let r; try { r = await rpc('st_set_stock_checked', { sessionId: sid(), checked: on }); } catch (e) { return toast('通信できません', 'error'); }
+    if (!r.success) return toast(errText(r.error), 'error');
+    S.session = r.session; render();
+  },
+  // 開始
+  selShelf: d => { const p = cur().params; p.sel[d.shelf] = !p.sel[d.shelf]; p._draw(); },
+  selAll: () => { const p = cur().params; p._named.forEach(x => { p.sel[x.s] = true; }); p._draw(); },
+  selNone: () => { const p = cur().params; p.sel = {}; p._draw(); },
+  doStart: async () => {
+    const p = cur().params;
+    const shelves = Object.keys(p.sel).filter(k => p.sel[k]);
+    const name = ($('stName') ? $('stName').value : p.name || '').trim();
+    if (!(await confirmYes('棚卸しを始めますか？', `${name}\n${shelves.join('・')}${p.noShelf ? '・棚番なし' : ''}`, '開始する'))) return;
+    let r; try { r = await rpc('st_start_session', { opId: p.opId, name, shelves, includeNoShelf: !!p.noShelf }); }
+    catch (e) { return toast('通信できません。もう一度押してください（二重には始まりません）', 'error'); }
+    if (!r.success) return ask('始められませんでした', errText(r.error) + (r.shelves ? '\n' + r.shelves.join('、') : ''), [{ key: 'ok', label: '閉じる', cls: 'dark' }]);
+    const active = await loadWhoami(); await loadSession(active);
+    S.stack = [{ name: 'home' }, { name: 'places' }]; toast('開始しました'); render();
+  },
+  selAdd: d => { const p = cur().params; p.sel[d.shelf] = !p.sel[d.shelf]; render(); },
+  doAddShelves: async () => {
+    const p = cur().params;
+    const shelves = Object.keys(p.sel).filter(k => p.sel[k]);
+    let r; try { r = await rpc('st_add_shelves', { sessionId: sid(), shelves, includeNoShelf: !!p.noShelf }); } catch (e) { return toast('通信できません', 'error'); }
+    if (!r.success) return toast(errText(r.error), 'error');
+    await loadSession(S.session); toast(`${r.added} か所を追加しました`); back();
+  },
+  // 管理画面
+  repTab: d => { const p = cur().params; p.tab = d.tab; render(); },
+  repReload: () => { cur().params.loaded = false; render(); },
+  repItem: d => { const it = S.index && S.index.byCode.get(d.code); if (it) openQty(it, it.shelf === '' ? (S.shelves.some(s => s.shelf === '' && s.inScope) ? '' : STOCK) : it.shelf, 'list'); },
+  csvResult, csvOther,
+  doClose: async () => {
+    if (!(await ensureFlushed(10000))) return toast(`未送信が ${sessionOps().length} 件あります`, 'error');
+    if (!(await confirmYes('確定しますか？', '確定すると記録の追加・取消はできなくなります。', '確定する'))) return;
+    let r; try { r = await rpc('st_close_session', { sessionId: sid() }); } catch (e) { return toast('通信できません。もう一度押してください', 'error'); }
+    if (!r.success) {
+      const reasons = (r.reasons || []).map(x => x.code === 'SHELVES_NOT_DONE' ? '未完了の棚: ' + x.shelves.join('、') : x.code === 'ITEMS_NOT_COUNTED' ? `未の商品 ${x.count} 件` : x.code === 'STOCK_NOT_CHECKED' ? 'ストックの確認がまだ' : x.code);
+      return ask('確定できません', errText(r.error) + '\n' + reasons.join('\n'), [{ key: 'ok', label: '閉じる', cls: 'dark' }]);
+    }
+    const closedId = sid();
+    beep(true);
+    const active = await loadWhoami(); await loadSession(active);
+    S.stack = [{ name: 'home' }, { name: 'report', params: { sessionId: closedId, tab: 'diff' } }];
+    toast('確定しました。結果CSVを保存してください'); render();
+  },
+  cancelSession: async () => {
+    const a = await ask('中止しますか？', '記録は消えません。中止した棚卸しは再開できません。理由を入れてください。', [{ key: 'yes', label: '中止する', cls: 'danger' }, { key: 'no', label: 'やめる' }], { placeholder: '理由（例: 試験のため）' });
+    if (a.key !== 'yes') return;
+    if (!a.value) return toast('理由を入れてください', 'error');
+    let r; try { r = await rpc('st_cancel_session', { sessionId: sid(), reason: a.value }); } catch (e) { return toast('通信できません', 'error'); }
+    if (!r.success) return toast(errText(r.error), 'error');
+    await loadSession(await loadWhoami()); S.stack = [{ name: 'home' }]; toast('中止しました'); render();
+  },
+  openHist: d => go('report', { sessionId: d.id, tab: 'diff' }),
+  reopenSession: async d => {
+    const a = await ask('確定を取り消しますか？', '実施中に戻し、記録の追加・取消ができるようにします。理由を入れてください。', [{ key: 'yes', label: '取り消す', cls: 'danger' }, { key: 'no', label: 'やめる' }], { placeholder: '理由（例: 数え直し）' });
+    if (a.key !== 'yes') return;
+    if (!a.value) return toast('理由を入れてください', 'error');
+    let r; try { r = await rpc('st_reopen_session', { sessionId: d.id, reason: a.value }); } catch (e) { return toast('通信できません', 'error'); }
+    if (!r.success) return toast(errText(r.error), 'error');
+    await loadSession(await loadWhoami()); S.stack = [{ name: 'home' }]; toast('実施中に戻しました'); render();
+  },
+};
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-act]');
+  if (!el || el.disabled) return;
+  if (el.closest('#modal') || el.closest('#sheetBody')) return;
+  const fn = ACT[el.dataset.act];
+  if (fn) fn(el.dataset, el);
+});
+$('hdBack').onclick = back;
+$('sheetBg').onclick = closeSheet;
+
+/* ============================================================
+   起動
+============================================================ */
+async function boot() {
+  const t0 = Date.now();
+  $('ver').textContent = '棚卸し ' + APP_VERSION + (ST_CONFIG.env !== 'prod' ? '（' + ST_CONFIG.env + '）' : '');
+  S.bf = readBfSession();
+  if (!S.bf) { location.replace(ST_CONFIG.portalUrl); return; }
+  loadPref();
+  try { S.deviceId = localStorage.getItem(DEVICE_KEY) || ''; if (!S.deviceId) { S.deviceId = 'd-' + C.uuid(); localStorage.setItem(DEVICE_KEY, S.deviceId); } }
+  catch (e) { S.deviceId = 'd-' + C.uuid(); }
+  try { await idbOpen(); }
+  catch (e) { return showFatal('この状態では使えません', '端末に記録を保存できません（プライベートブラウズ等）。通常のSafariで開き直してください。'); }
+  try {
+    S.ops = (await idb('outbox', 'readonly', s => s.getAll())).sort((a, b) => (a.k < b.k ? -1 : 1));
+    S.rejected = await idb('rejected', 'readonly', s => s.getAll());
+  } catch (e) { return showFatal('この状態では使えません', '端末の保存領域を読めませんでした。'); }
+  S.stack = [{ name: 'home' }];
+  $('hdUser').textContent = S.bf.name || '';
+  for (let i = 0; ; i++) {
+    try {
+      const active = await loadWhoami();
+      await loadSession(active);
+      break;
+    } catch (e) {
+      if (e instanceof AuthError) return showAuthProblem();
+      // 電波が無い: 前回の写しが端末にあれば、それで開いて入力を続けられるようにする（送信は回復後に自動）
+      if (i === 0 && await bootOffline()) return;
+      if (i >= 2) {
+        showFatal('つながりません', '電波の届く場所で、もう一度お試しください。',
+          '<button class="btn dark" type="button" onclick="location.reload()">もう一度</button>');
+        return;
+      }
+      await new Promise(r => setTimeout(r, [2000, 5000][i]));
+    }
+  }
+  startTimers();
+  metric('startup', Date.now() - t0, { cached: S.server.size > 0 });
+  render();
+  flush();
+}
+async function bootOffline() {
+  const b = await kvGet('boot').catch(() => null);
+  if (!b || b.userId !== S.bf.user_id || !b.me || !b.active) return false;
+  S.me = b.me; S.productInfo = b.productInfo;
+  try { await loadSession(b.active, true); } catch (e) { return false; }
+  S.offline = true; S.firstFailAt = Date.now() - 31000;
+  metric('startup_offline', 1);
+  startTimers();
+  render();
+  // つながるまで裏で確かめ続ける
+  const retry = async () => {
+    try {
+      const active = await loadWhoami();
+      S.offline = false; S.firstFailAt = 0;
+      if (!active || active.sessionId !== sid()) { await loadSession(active); S.stack = [{ name: 'home' }]; }
+      else { await loadSession(active); }
+      render(); flush();
+    } catch (e) {
+      if (e instanceof AuthError) return showAuthProblem();
+      setTimeout(retry, 10000);
+    }
+  };
+  setTimeout(retry, 5000);
+  return true;
+}
+let timersStarted = false;
+function startTimers() {
+  if (timersStarted) return; timersStarted = true;
+  setInterval(() => {
+    if (document.visibilityState !== 'visible' || !S.session) return;
+    if (['places', 'shelf', 'stock', 'close', 'home'].includes(cur().name)) fetchState(false).catch(() => {});
+    renderBand();
+  }, 15000);
+  setInterval(sendMetrics, 60000);
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') { flush(); if (S.session) fetchState(false).catch(() => {}); }
+  else sendMetrics();
+});
+window.addEventListener('online', () => flush());
+window.addEventListener('beforeunload', e => { if (S.ops.length) { e.preventDefault(); e.returnValue = ''; } });
+boot();
+</script>
+</body>
+</html>
