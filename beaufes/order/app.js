@@ -1,6 +1,6 @@
 import {get,set,records,update as storageUpdate,mergeReceipt,sanitizeLegacyQr,clearMakerConnection,storageMode} from './storage.js';
 import {buildWorkbook,displayProductCode,emptyHandling,packRemarks,unpackRemarks,handlingWarnings,deliveryLabel,billingLabel} from './export.js';
-const APP_VERSION='v0.19.0';
+const APP_VERSION='v0.20.0';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -124,6 +124,17 @@ function selectedCount(offer,selected){
  return quantities.length?quantities.reduce((sum,q)=>sum+q,0):offer.product_codes.length===1?selected.sets||0:0;
 }
 function automaticKind(offer,kind){return !!offer[`${kind}_components`]||kind==='gift'&&['same_sku_groups','linked_sku_groups','threshold_gift'].includes(offer.gift_rule);}
+// 3＋1は同じ企画・税抜単価ごとに数える。種類は購入・サービスとも自由に選べる。
+function priceGroups(offer,paid,gift){
+ const groups=new Map();
+ for(const [kind,items] of [['paid',paid],['gift',gift]])for(const item of items){
+  const price=offerPrice(offer,item.code);let group=groups.get(price);
+  if(!group){group={price,paid:0,gift:0};groups.set(price,group);}
+  group[kind]+=item.qty;
+ }
+ return [...groups.values()].sort((a,b)=>a.price-b.price);
+}
+const validPriceGroup=(offer,group)=>group.paid%offer.paid_per_set===0&&group.gift===group.paid/offer.paid_per_set*offer.gift_per_set;
 function selectedOffer(offer){return draft.form.offers[offer.offer_id];}
 // 内部の仮商品IDと照合情報は保持し、メーカー向けの表示だけ簡潔にする。
 function makerText(value){
@@ -140,12 +151,12 @@ function addSelectedProduct(group,offer,kind,code,quantity){
  const product=info.catalog.products.find(p=>p.product_code===code);if(!product)return;
  const label=kind==='total'?colorName(offer,product.product_name):makerText(product.product_name);
  const row=element('div',undefined,'selected-product');const name=element('div',label,'product-name');name.title=product.product_name;
- if(kind!=='total')name.append(element('small',`商品コード ${displayProductCode(code)} ／ ${kind==='paid'?yen(offerPrice(offer,code)):'サービス品・0円'}`));
+ if(kind!=='total')name.append(element('small',`商品コード ${displayProductCode(code)} ／ ${kind==='paid'?yen(offerPrice(offer,code)):'サービス品・0円'}${kind==='gift'&&offer.gift_rule==='same_price_groups'?` ／ 同価格グループ ${yen(offerPrice(offer,code))}`:''}`));
  const input=numberInput(quantity,10000,`${label} ${kind==='total'?'合計本数':kind==='paid'?'購入数':'サービス数'}`);
  input.dataset.offer=offer.offer_id;input.dataset.kind=kind;input.dataset.code=code;
  if(automaticKind(offer,kind)){input.readOnly=true;input.classList.add('gift-auto');input.setAttribute('aria-label',`${makerText(product.product_name)} ${kind==='paid'?'購入':'サービス'}数（自動計算）`);}
- input.addEventListener('input',()=>{updateQuantityGuidance(offer,group.closest('.offer-card'));if(quantityByProduct(offer)||kind==='total')saveForm().catch(e=>message(errorText(e)));});
- input.addEventListener('change',()=>{if(!quantityByProduct(offer)&&kind!=='total')saveForm().catch(e=>message(errorText(e)));});
+ input.addEventListener('input',()=>{updateQuantityGuidance(offer,group.closest('.offer-card'));if(quantityByProduct(offer)||kind==='total'||offer.customer_kind_optional)saveForm().catch(e=>message(errorText(e)));});
+ input.addEventListener('change',()=>{if(!quantityByProduct(offer)&&kind!=='total'&&!offer.customer_kind_optional)saveForm().catch(e=>message(errorText(e)));});
  row.append(name,input);group.append(row);
 }
 function renderOffer(offer){
@@ -153,7 +164,7 @@ function renderOffer(offer){
  const head=element('div',undefined,'offer-head');const title=element('div');title.append(element('h3',makerText(offer.label)),element('p',offerSummary(offer),'muted'));
  const remove=element('button','条件を外す','secondary small-action');remove.type='button';remove.onclick=()=>removeOffer(offer.offer_id).catch(e=>message(errorText(e)));head.append(title,remove);card.append(head);
  const description=makerText(offer.description);if(description)card.append(element('p',description,'muted'));
- if(offer.customer_kind){const label=element('label',undefined,'eligibility');const checkbox=element('input');checkbox.type='checkbox';checkbox.dataset.eligibility=offer.offer_id;checkbox.checked=selected.eligibility===offer.customer_kind;checkbox.addEventListener('change',()=>saveForm().catch(e=>message(errorText(e))));label.append(checkbox,element('span',`${offer.brand==='nei'?'NEi':'hyumy'}の${offer.customer_kind==='new'?'新規':'既存取扱'}サロンであることを確認しました`));card.append(label);}
+ if(offer.customer_kind){const label=element('label',undefined,'eligibility');const checkbox=element('input');checkbox.type='checkbox';checkbox.dataset.eligibility=offer.offer_id;checkbox.checked=selected.eligibility===offer.customer_kind;checkbox.addEventListener('change',()=>saveForm().catch(e=>message(errorText(e))));label.append(checkbox,element('span',`${offer.brand==='nei'?'NEi':'hyumy'}の${offer.customer_kind==='new'?'新規':'既存取扱'}サロンであることを確認しました${offer.customer_kind_optional?'（任意・未チェックでも注文できます）':''}`));card.append(label);}
  if(!quantityByProduct(offer)){
  const countRow=element('div',undefined,'set-row');countRow.append(element('span',countLabel(offer),'set-label'));
  const count=numberInput(selectedCount(offer,selected),countLimit(offer),`${makerText(offer.label)}のセット数`);count.dataset.offer=offer.offer_id;count.dataset.kind='sets';
@@ -264,6 +275,13 @@ function updateQuantityGuidance(offer,card){
   progress.classList.add(!sets?'quantity-neutral':difference?'quantity-error':'quantity-complete');
   progress.textContent=!sets?`${countLabel(offer)}を選んでください。`:base+(difference>0?`　あと${difference}点`:difference<0?`　${-difference}点多いです`:'　✓ 数量一致');
  }
+ if(offer.gift_rule==='same_price_groups'&&sets>0){
+  const items=kind=>[...card.querySelectorAll(`input[data-kind=${kind}]`)].map(x=>({code:x.dataset.code,qty:Number(x.value||0)})).filter(x=>x.qty!==0);
+  const groups=priceGroups(offer,items('paid'),items('gift'));
+  const progress=card.querySelector('[data-progress-kind=gift]');
+  const invalid=groups.some(g=>!Number.isInteger(g.paid)||!Number.isInteger(g.gift)||g.paid<0||g.gift<0||!validPriceGroup(offer,g));
+  if(progress&&groups.length){progress.textContent+=' ／ '+groups.map(g=>`${yen(g.price)}：購入${g.paid}・サービス${g.gift}`).join(' ／ ');if(invalid){progress.className='quantity-progress quantity-error';progress.textContent=progress.textContent.replace('　✓ 数量一致','')+'。同じ価格ごとに購入3点＋サービス1点にしてください。';}}
+ }
 }
 function updateSelectionSummaries(){for(const offer of info.catalog.offers){if(!draft.form.offers[offer.offer_id]||offer.product_codes.length===1&&!quantityByProduct(offer))continue;const card=Array.from($('offers').querySelectorAll('.offer-card')).find(node=>node.dataset.offerCard===offer.offer_id);updateQuantityGuidance(offer,card);}}
 // 入力イベントを順に保存し、同じタブの連続入力同士を競合と扱わない。
@@ -296,9 +314,9 @@ function bundles(check=false){
   if(!n){if(check&&selected&&[...Object.values(selected.paid),...Object.values(selected.gift)].some(x=>x!==0))throw Error(`${makerText(o.label)}の${countLabel(o)}を指定してください。`);return [];}
   if(check&&(!Number.isInteger(n)||n<1||n>countLimit(o)))throw Error(`${makerText(o.label)}：${countLabel(o)}は1〜${countLimit(o)}の整数で指定してください。`);
   if(check&&o.ready===false)throw Error('この企画の条件は確認中です。');
-  if(check&&o.customer_kind&&selected.eligibility!==o.customer_kind)throw Error(`${makerText(o.label)}：新規・既存の確認にチェックしてください。`);
+  if(check&&o.customer_kind&&!o.customer_kind_optional&&selected.eligibility!==o.customer_kind)throw Error(`${makerText(o.label)}：新規・既存の確認にチェックしてください。`);
   if(check&&o.exclusive_group){if(groups.has(o.exclusive_group))throw Error('この2つの企画は併用できません。どちらかを選んでください。');groups.add(o.exclusive_group);}
-  const value={offer_id:o.offer_id,sets:n,...(o.customer_kind?{customer_kind:selected.eligibility}:{})};
+  const value={offer_id:o.offer_id,sets:n,...(o.customer_kind&&(!o.customer_kind_optional||selected.eligibility)?{customer_kind:selected.eligibility}:{})};
   for(const kind of ['paid','gift']){
    const required=requiredQty(o,kind,n);
    value[kind]=o.product_codes.length===1&&!quantityByProduct(o)?(required?[{code:o.product_codes[0],qty:required}]:[]):Object.entries(kind==='paid'&&quantityByProduct(o)&&o.product_codes.length===1&&!Object.keys(selected.paid||{}).length?{[o.product_codes[0]]:n}:selected[kind]||{}).filter(([,q])=>q!==0).map(([code,qty])=>({code,qty}));
@@ -309,6 +327,7 @@ function bundles(check=false){
    const expected={};for(const x of value.paid){if(x.qty%o.paid_per_set!==0)throw Error(`同じ商品・容量ごとに購入数を${o.paid_per_set}の倍数にしてください。`);const code=o.gift_rule==='linked_sku_groups'?o.gift_map[x.code]:x.code;expected[code]=(expected[code]||0)+x.qty/o.paid_per_set*o.gift_per_set;}
    if(value.gift.some(x=>x.qty!==expected[x.code])||Object.keys(expected).length!==value.gift.length)throw Error('同じ種類のサービス品の数量を確認してください。');
   }
+  if(check&&o.gift_rule==='same_price_groups'&&priceGroups(o,value.paid,value.gift).some(g=>!validPriceGroup(o,g)))throw Error(`${makerText(o.label)}：同じ価格ごとに購入3点＋サービス1点にしてください。`);
   if(check&&o.gift_rule==='pair_oil'&&o.paid_groups.some(g=>value.paid.filter(x=>g.includes(x.code)).reduce((a,x)=>a+x.qty,0)!==n))throw Error('シャンプーとトリートメントを各セット数と同じ本数にしてください。');
   return [value];
  });
