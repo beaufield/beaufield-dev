@@ -1,6 +1,6 @@
 import {get,set,records,update as storageUpdate,mergeReceipt,sanitizeLegacyQr,clearMakerConnection,storageMode} from './storage.js';
 import {buildWorkbook,displayProductCode,emptyHandling,packRemarks,unpackRemarks,handlingWarnings,deliveryLabel,billingLabel} from './export.js';
-const APP_VERSION='v0.22.0';
+const APP_VERSION='v0.22.1';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -161,11 +161,11 @@ function updatePriceGiftGuidance(offer,card){
   section.dataset.giftState=guide.state;section.querySelector('.price-guide').textContent=guide.text;
  }
 }
-// 旧ヒュミの未送信下書きは、商品と数量を6区分へ移す。確定・送信待ちは変更しない。
+// 旧ヒュミの未送信下書きは、商品と数量を現行区分へ移す。確定・送信待ちは変更しない。
 function splitHyumyDraft(record,catalog){
  const legacy=record.form.offers.pacific_hyumy_existing;
  const replacements=catalog.offers.filter(o=>o.replaces_offer_id==='pacific_hyumy_existing');
- if(record.stage!=='draft'||record.pending||!legacy||replacements.length!==6||catalog.offers.some(o=>o.offer_id==='pacific_hyumy_existing'))return null;
+ if(record.stage!=='draft'||record.pending||!legacy||replacements.length<2||catalog.offers.some(o=>o.offer_id==='pacific_hyumy_existing'))return null;
  const codes=replacements.flatMap(o=>o.product_codes);
  if(['paid','gift'].some(kind=>Object.entries(legacy[kind]||{}).some(([code,qty])=>qty!==0&&!codes.includes(code))))throw Error('旧ヒュミの下書きに対象外の商品があります。元の画面で商品を確認してください。');
  const offers={...record.form.offers};delete offers.pacific_hyumy_existing;
@@ -177,6 +177,24 @@ function splitHyumyDraft(record,catalog){
   offers[offer.offer_id]=selected;
  }
  return {...record,version:catalog.version,form:{...record.form,offers,hyumy_split_notice:true,previous_hyumy_selection:legacy}};
+}
+// 分かれていた店販ソープ・マスクの下書きは、明細を消さず統合先へ合算する。
+function mergeHyumyRetailDraft(record,catalog){
+ if(record.stage!=='draft'||record.pending)return null;
+ const offer=catalog.offers.find(o=>Array.isArray(o.replaces_offer_ids)&&o.replaces_offer_ids.some(id=>record.form.offers[id]));if(!offer)return null;
+ const ids=offer.replaces_offer_ids.filter(id=>record.form.offers[id]);
+ const previous=Object.fromEntries([...ids,offer.offer_id].filter(id=>record.form.offers[id]).map(id=>[id,record.form.offers[id]]));
+ const existing=record.form.offers[offer.offer_id],selected={sets:0,paid:{...existing?.paid},gift:{...existing?.gift},eligibility:existing?.eligibility};
+ for(const id of ids){const item=record.form.offers[id];selected.eligibility??=item.eligibility;
+  for(const kind of ['paid','gift'])for(const [code,qty]of Object.entries(item[kind]||{})){
+   if(qty!==0&&!offer.product_codes.includes(code))throw Error('旧ヒュミの下書きに対象外の商品があります。商品を確認してください。');
+   selected[kind][code]=(selected[kind][code]||0)+qty;
+  }
+ }
+ const count=kind=>Object.values(selected[kind]).reduce((a,b)=>a+Number(b||0),0);
+ selected.sets=Object.values(selected.paid).some(q=>q!==0)||Object.values(selected.gift).some(q=>q!==0)?Math.max(1,Math.ceil(count('paid')/offer.paid_per_set)||1,Math.ceil(count('gift')/offer.gift_per_set)||1):Object.values(previous).reduce((sum,item)=>sum+(item.sets||0),0);
+ const offers={...record.form.offers,[offer.offer_id]:selected};for(const id of ids)delete offers[id];
+ return {...record,version:catalog.version,form:{...record.form,offers,hyumy_split_notice:true,previous_hyumy_retail_selection:previous}};
 }
 function selectedOffer(offer){return draft.form.offers[offer.offer_id];}
 // 内部の仮商品IDと照合情報は保持し、メーカー向けの表示だけ簡潔にする。
@@ -272,7 +290,7 @@ function renderForm(){
  $('draft-id').textContent=`注文番号 ${draft.id}`;$('customer').textContent=draft.form.customer||'';showConnection();
  for(const radio of document.querySelectorAll('input[name=delivery]'))radio.checked=radio.value===selectedDelivery(draft,info.scope);
  $('offers').replaceChildren();
- if(draft.form.hyumy_split_notice)$('offers').append(element('p','ヒュミの3＋1を6区分に分けました。下書きの商品・数量を引き継いでいます。各区分のセット数とサービス品を確認してください。','notice'));
+ if(draft.form.hyumy_split_notice)$('offers').append(element('p','ヒュミの商品区分を変更しました。下書きの商品・数量を引き継いでいます。各区分のセット数とサービス品を確認してください。','notice'));
  for(const offer of info.catalog.offers)if(selectedOffer(offer))$('offers').append(renderOffer(offer));
  if(!$('offers').children.length)$('offers').append(element('p','まだ条件を選んでいません。「特売条件を追加」から始めてください。','empty-state'));
  const locked=submitting||draft.stage!=='draft';for(const x of [$('remarks'),$('billing'),$('contact-check'),$('paper-number'),$('submit'),$('scan'),$('demo'),$('customer-query'),$('customer-search'),...document.querySelectorAll('input[name=customer-search-mode]'),...$('customer-results').querySelectorAll('button'),$('add-offer'),...document.querySelectorAll('input[name=delivery]'),...$('offers').querySelectorAll('input,button')])x.disabled=locked;
@@ -387,7 +405,7 @@ function bundles(check=false){
  });
 }
 function calculate(){const amount=bundles().reduce((sum,b)=>sum+b.paid.reduce((a,x)=>a+x.qty*offerPrice(info.catalog.offers.find(o=>o.offer_id===b.offer_id),x.code),0),0);$('total').textContent=yen(amount);}
-async function activate(value){info=value;$('login').hidden=true;if(!officeMode)await set('maker-catalog',info);$('maker').textContent=info.catalog?.manufacturer_name||'メーカー未設定';$('maker-banner').hidden=info.role==='admin';$('workspace').hidden=info.role==='admin';$('admin').hidden=info.role!=='admin';$('ledger').hidden=info.role!=='admin';$('identity').hidden=info.role!=='admin';if(info.role==='admin')return;const id=await get('draft:'+scopeKey());draft=(await records()).find(x=>x.id===id);if(!draft)await fresh();else{if(draft.stage==='draft'&&draft.form.ui_version!==2){draft=await update(draft.id,r=>{const offers={};for(const [key,item] of Object.entries(r.form.offers||{})){const paid=Object.fromEntries(Object.entries(item.paid||{}).filter(([,qty])=>qty>0));const gift=Object.fromEntries(Object.entries(item.gift||{}).filter(([,qty])=>qty>0));if(item.sets>0||Object.keys(paid).length||Object.keys(gift).length)offers[key]={sets:item.sets||0,paid,gift};}return {...r,form:{...r.form,offers,delivery:'',delivery_confirmed:false,ui_version:2}};});}const split=splitHyumyDraft(draft,info.catalog);if(split)draft=await update(draft.id,r=>splitHyumyDraft(r,info.catalog)||r);if(draft.stage!=='draft'&&draft.receipt?.state==='active'&&!draft.pending)await fresh();else renderForm();}await renderOrders();}
+async function activate(value){info=value;$('login').hidden=true;if(!officeMode)await set('maker-catalog',info);$('maker').textContent=info.catalog?.manufacturer_name||'メーカー未設定';$('maker-banner').hidden=info.role==='admin';$('workspace').hidden=info.role==='admin';$('admin').hidden=info.role!=='admin';$('ledger').hidden=info.role!=='admin';$('identity').hidden=info.role!=='admin';if(info.role==='admin')return;const id=await get('draft:'+scopeKey());draft=(await records()).find(x=>x.id===id);if(!draft)await fresh();else{if(draft.stage==='draft'&&draft.form.ui_version!==2){draft=await update(draft.id,r=>{const offers={};for(const [key,item] of Object.entries(r.form.offers||{})){const paid=Object.fromEntries(Object.entries(item.paid||{}).filter(([,qty])=>qty>0));const gift=Object.fromEntries(Object.entries(item.gift||{}).filter(([,qty])=>qty>0));if(item.sets>0||Object.keys(paid).length||Object.keys(gift).length)offers[key]={sets:item.sets||0,paid,gift};}return {...r,form:{...r.form,offers,delivery:'',delivery_confirmed:false,ui_version:2}};});}const split=splitHyumyDraft(draft,info.catalog);if(split)draft=await update(draft.id,r=>splitHyumyDraft(r,info.catalog)||r);const merged=mergeHyumyRetailDraft(draft,info.catalog);if(merged)draft=await update(draft.id,r=>mergeHyumyRetailDraft(r,info.catalog)||r);if(draft.stage!=='draft'&&draft.receipt?.state==='active'&&!draft.pending)await fresh();else renderForm();}await renderOrders();}
 function orderDetails(record){
  // 登録確定後はサーバーの確定明細を使用し、通信待ちは端末に保存した注文内容と明示する。
  let lines=Array.isArray(record.receipt?.lines)?record.receipt.lines:null;
