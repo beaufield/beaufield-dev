@@ -3,7 +3,7 @@
 <head>
 <meta name="robots" content="noindex,nofollow">
 <script src="candidate-config.js?b=3debf1542ecb"></script>
-<script src="ui-bootstrap.js?b=40aeb3ead80d"></script>
+<script src="ui-bootstrap.js?b=9cc564e79ee9"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex, nofollow">
@@ -285,7 +285,7 @@ body.camera-open { overflow: hidden; }
         ・電波が切れた → 受付は続けてください。記録は端末に残り、つながり次第ひとりでに届きます。<br>
         ・🟡が出た → 別のレーンで入場済みです。お客様に確認してください。<br>
         ・🔴が出た → 「受付番号で検索」か「お名前で検索」。見つからなければ紙の名簿へ。<br>
-        ・「送信待ち」が減らない → 電波の問題です。<b>データを消去しないでください</b>（消えます）。
+        ・「送信待ち」が減らない → 画面上部に黄色の注意が出ていれば、その案内（ログインし直し）に従ってください。出ていなければ電波の問題です。どちらの場合も<b>データを消去しないでください</b>（消えます）。
       </div>
     </details>
 
@@ -316,7 +316,7 @@ await window.BFEventCandidate.ready;
 //    予備名札は朝の名簿に載らない）。最終的な照合はサーバーが行う。
 // ============================================================
 
-const APP_VERSION = '0.7.2';
+const APP_VERSION = '0.7.3';
 
 // 本番GAS（HTML=GitHub Pages / GAS=版番号固定の分離型。ローカル検証はモックに差し替える）
 const GAS_URL = window.BFEventCandidate.endpoint;
@@ -433,7 +433,8 @@ const AUTH_ERROR_HTML = {
   NO_TOKEN:
     'ログイン情報がサーバーに届きませんでした。ポータルからログインし直してください。',
   SESSION_INVALID:
-    'ログインの有効期限が切れています。ポータルからログインし直してください。',
+    'ログインの有効期限が切れています。<b>別のタブでポータルを開いてログインし直してください。</b><br>' +
+    'この画面は閉じなくて構いません。ログインし直すと、自動で送信を再開します。',
   USER_INACTIVE:
     'このアカウントは現在利用停止になっています（前島さんに連絡してください）。',
   NO_ROLE:
@@ -763,6 +764,16 @@ async function sendBatch(batch) {
   try { json = await postJson('scanCheckin', payload); }
   catch (e) { transportError = (e && e.message) ? e.message : 'NETWORK'; }
 
+  if (AUTH_ERRORS.indexOf(transportError) >= 0) {
+    // 日本語コメント: 端末側でログイン期限切れを検出した場合も、電波障害と区別して再ログインを案内する。
+    authWarning = AUTH_ERROR_HTML[transportError] || 'ログインし直してください。';
+    batch.forEach(function (q) {
+      q.last_error = transportError;
+      q.next_attempt_at = Date.now() + 30000;
+    });
+    lsSet(K_QUEUE, queue);
+    return false;
+  }
   if (transportError || !json) {
     // 🔴 配送が失われただけでサーバーは書けているかもしれない（調査レポート §3-2）。
     //    checkin_id が冪等キーなので、そのまま再送してよい
@@ -836,7 +847,13 @@ async function refreshRemote() {
       authWarning = AUTH_ERROR_HTML[String(json.error)] || 'ログインし直してください。';
       render();
     }
-  } catch (e) { /* オフラインなら自端末ぶんだけで判定する */ }
+  } catch (e) {
+    // オフラインなら自端末ぶんだけで判定する。ログイン期限切れだけは画面で知らせる
+    if (e && AUTH_ERRORS.indexOf(e.message) >= 0) {
+      authWarning = AUTH_ERROR_HTML[e.message] || 'ログインし直してください。';
+      render();
+    }
+  }
 }
 
 // ------------------------------------------------------------
@@ -877,7 +894,30 @@ function render() {
   renderRecent();
 }
 
+// 日本語コメント: ポータルのログインは発行から7日の固定期限。営業中に切れないよう12時間前から予告する。
+const EXPIRY_NOTICE_MS = 12 * 60 * 60 * 1000;
+function renderExpiryNotice() {
+  const s = getSession();
+  let box = el('expiryWarn');
+  const left = s ? s.expires - Date.now() : 0;
+  if (!s || authWarning || left > EXPIRY_NOTICE_MS) { if (box) box.remove(); return; }
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'expiryWarn';
+    box.className = 'notice';
+    el('scanSection').insertBefore(box, el('scanSection').firstChild);
+  }
+  const d = new Date(s.expires), p = function (n) { return ('0' + n).slice(-2); };
+  box.innerHTML = '⏰ このログインは <b>' + (d.getMonth() + 1) + '/' + d.getDate() + ' ' +
+    p(d.getHours()) + ':' + p(d.getMinutes()) + '</b> に期限が切れます。<br>' +
+    '<span class="hint">期限の前に、別のタブでポータルを開いて「ログアウト」→ログインし直してください。' +
+    'この画面は閉じなくて構いません（記録は消えません）。</span>';
+}
+
 function renderAuthWarning() {
+  // 起動後に端末内のログイン期限を過ぎた場合も、送信の失敗を待たずに知らせる
+  if (!authWarning && !getSession()) authWarning = AUTH_ERROR_HTML.SESSION_INVALID;
+  renderExpiryNotice();
   let box = el('authWarn');
   if (!authWarning) { if (box) box.remove(); return; }
   if (!box) {
@@ -886,7 +926,11 @@ function renderAuthWarning() {
     box.className = 'notice';
     el('scanSection').insertBefore(box, el('scanSection').firstChild);
   }
-  box.innerHTML = '⚠ 記録はこの端末に残っていますが、まだサーバーへ届いていません。<br>' +
+  // 送信待ちが無いときに「届いていません」と書かない
+  const pending = counts();
+  box.innerHTML = ((pending.wait + pending.warn) > 0
+    ? '⚠ 記録はこの端末に残っていますが、まだサーバーへ届いていません。<br>'
+    : '⚠ このままでは、これからの受付の記録をサーバーへ送れません。<br>') +
     authWarning + '<br><span class="hint">受付はこのまま続けて構いません。' +
     '<b>データを消去しないでください。</b></span>';
 }
@@ -1237,6 +1281,7 @@ async function boot() {
 
   // 裏の仕事: 送信キューと入場済み一覧
   setInterval(pump, PUMP_TICK_MS);
+  setInterval(render, 60000);   // ログイン期限の予告と期限切れの表示を、操作がなくても進める
   setInterval(function () { if (roster) refreshRemote(); }, REMOTE_REFRESH_MS);
   pump();
   if (roster) refreshRemote();
