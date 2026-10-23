@@ -1,6 +1,6 @@
 import {get,set,records,update as storageUpdate,mergeReceipt,sanitizeLegacyQr,clearMakerConnection,storageMode} from './storage.js';
 import {buildWorkbook,displayProductCode,emptyHandling,packRemarks,unpackRemarks,handlingWarnings,deliveryLabel,billingLabel} from './export.js';
-const APP_VERSION='v0.20.1';
+const APP_VERSION='v0.21.0';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -136,6 +136,29 @@ function priceGroups(offer,paid,gift){
  return [...groups.values()].sort((a,b)=>a.price-b.price);
 }
 const validPriceGroup=(offer,group)=>group.paid%offer.paid_per_set===0&&group.gift===group.paid/offer.paid_per_set*offer.gift_per_set;
+// 表示順だけを単価順にし、カタログと同価格内の順番は変えない。
+function displayCodes(offer,kind){
+ const codes=offer[`${kind}_codes`]||offer.product_codes;
+ return offer.gift_rule==='same_price_groups'?[...codes].sort((a,b)=>offerPrice(offer,a)-offerPrice(offer,b)):codes;
+}
+// 色に加えて残数を文章で示す。入力途中の値は消さず、修正できる状態を保つ。
+function priceGiftGuidance(offer,paid,gift,invalid=false){
+ if(invalid)return {state:'review',text:'数量は0以上の整数で入力してください。'};
+ const available=Math.floor(paid/offer.paid_per_set)*offer.gift_per_set,remaining=available-gift,remainder=paid%offer.paid_per_set;
+ const pending=remainder?` 購入はあと${offer.paid_per_set-remainder}点で次の${offer.gift_per_set}点サービスです。`:'';
+ if(remaining<0)return {state:'review',text:`サービスが${-remaining}点多いです。この価格で選べるのは${available}点です。${pending}`};
+ if(remaining>0)return {state:'available',text:`ここからあと${remaining}点選べます（購入${paid}点・サービス${gift}／${available}点）。${pending}`};
+ if(available)return {state:remainder?'waiting':'complete',text:`${remainder?'選択済み':'✓ 選択完了'}：サービス${gift}／${available}点。${pending}`};
+ return {state:'waiting',text:`この価格の商品をあと${offer.paid_per_set-paid}点購入すると、ここから${offer.gift_per_set}点選べます。`};
+}
+function updatePriceGiftGuidance(offer,card){
+ for(const section of card.querySelectorAll('[data-price-kind=gift]')){
+  const price=Number(section.dataset.price),items=kind=>[...card.querySelectorAll(`input[data-kind=${kind}]`)].filter(input=>offerPrice(offer,input.dataset.code)===price).map(input=>Number(input.value||0));
+  const paid=items('paid'),gift=items('gift'),invalid=[...paid,...gift].some(q=>!Number.isInteger(q)||q<0||q>10000);
+  const guide=priceGiftGuidance(offer,paid.reduce((a,b)=>a+b,0),gift.reduce((a,b)=>a+b,0),invalid);
+  section.dataset.giftState=guide.state;section.querySelector('.price-guide').textContent=guide.text;
+ }
+}
 function selectedOffer(offer){return draft.form.offers[offer.offer_id];}
 // 内部の仮商品IDと照合情報は保持し、メーカー向けの表示だけ簡潔にする。
 function makerText(value){
@@ -191,11 +214,20 @@ function renderOffer(offer){
    if(kind==='gift'&&(quantityByProduct(offer)||!(offer.gift_codes||offer.product_codes).length))continue;
    const group=element('div',undefined,'product-group');group.append(element('h4',kind==='paid'?'購入する商品':'サービス品（0円）'));
    const progress=element('p',undefined,'quantity-progress');progress.dataset.progressKind=kind;progress.setAttribute('role','status');group.append(progress);
-   const choices=selected[kind]||{};
+   const choices=selected[kind]||{};let target=group,lastPrice;
+   if(kind==='gift'&&offer.gift_rule==='same_price_groups')group.append(element('p','購入数に応じて、選べる価格帯を青く表示します。青い欄からサービス品を選んでください。','muted'));
    // 複数商品を選べる条件は最初から全商品を並べ、未入力は0点として扱う。
-   for(const code of (offer[`${kind}_codes`]||offer.product_codes)){
+   for(const code of displayCodes(offer,kind)){
+    const price=offerPrice(offer,code);
+    if(offer.gift_rule==='same_price_groups'&&price!==lastPrice){
+     target=element('div',undefined,'price-section');target.dataset.priceKind=kind;target.dataset.price=String(price);
+     target.append(element('h5',kind==='paid'?`税抜単価 ${yen(price)}`:`購入単価 ${yen(price)}に対応するサービス品`));
+     if(kind==='gift'){const guide=element('p',undefined,'price-guide');guide.id=`gift-guide-${offer.offer_id}-${price}`;guide.setAttribute('role','status');target.append(guide);}
+     group.append(target);lastPrice=price;
+    }
     const quantity=quantityByProduct(offer)&&offer.product_codes.length===1&&!(code in choices)?selectedCount(offer,selected):choices[code]||0;
-    addSelectedProduct(group,offer,kind,code,quantity);
+    addSelectedProduct(target,offer,kind,code,quantity);
+    if(kind==='gift'&&offer.gift_rule==='same_price_groups')target.lastElementChild.querySelector('input').setAttribute('aria-describedby',`gift-guide-${offer.offer_id}-${price}`);
    }
    card.append(group);
   }
@@ -276,6 +308,7 @@ function updateQuantityGuidance(offer,card){
   progress.classList.add(!sets?'quantity-neutral':difference?'quantity-error':'quantity-complete');
   progress.textContent=!sets?`${countLabel(offer)}を選んでください。`:base+(difference>0?`　あと${difference}点`:difference<0?`　${-difference}点多いです`:'　✓ 数量一致');
  }
+ if(offer.gift_rule==='same_price_groups')updatePriceGiftGuidance(offer,card);
  if(offer.gift_rule==='same_price_groups'&&sets>0){
   const items=kind=>[...card.querySelectorAll(`input[data-kind=${kind}]`)].map(x=>({code:x.dataset.code,qty:Number(x.value||0)})).filter(x=>x.qty!==0);
   const groups=priceGroups(offer,items('paid'),items('gift'));

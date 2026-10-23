@@ -49,6 +49,17 @@ button:disabled{opacity:.55;cursor:default}
 .quantity-neutral{background:#edf5fa;color:#42647a}
 .quantity-error{background:#fff0ed;color:#a32f24;border:1px solid #e9ada5}
 .quantity-complete{background:#e0f2e6;color:#15563c;border:1px solid #9ccfac}
+/* 同価格3＋1の選択範囲は、色と残数の両方で案内する。 */
+.price-section{border:1px solid #c7deec;border-radius:10px;padding:10px;margin:12px 0;background:#f1f6fa}
+.price-section h5{font-size:14px;margin:0 0 7px;line-height:1.5}
+.price-guide{font-size:14px;font-weight:700;line-height:1.6;margin:5px 0 9px;color:#42647a}
+.price-section[data-gift-state=available]{background:#e3f3ff;border:2px solid #0879b0}
+.price-section[data-gift-state=available] .price-guide{color:#125279}
+.price-section[data-gift-state=available] input{border:2px solid #0879b0;background:#f0f9ff}
+.price-section[data-gift-state=complete]{background:#e0f2e6;border:2px solid #388359}
+.price-section[data-gift-state=complete] .price-guide{color:#15563c}
+.price-section[data-gift-state=review]{background:#fff0ed;border:2px solid #bd4e42}
+.price-section[data-gift-state=review] .price-guide{color:#a32f24}
 .delivery-field{border:0;padding:0;margin:24px 0 16px;min-width:0}
 .delivery-field legend{font-weight:700;margin-bottom:8px}
 .required{background:#a3322b;color:white;font-size:12px;border-radius:4px;padding:2px 5px}
