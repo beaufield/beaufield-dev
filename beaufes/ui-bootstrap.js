@@ -37,18 +37,42 @@ const showReleaseState=state=>{
 
  const releaseGate=endpoint?import('./production-release-gate.mjs?b=383c6f228909').then(({waitForProductionRelease})=>waitForProductionRelease({endpoint:target,fetchImpl:nativeFetch,onState:showReleaseState})):Promise.resolve(true);
  const ready=releaseGate.then(open=>{if(!open)throw Error('切替完了を確認できません。もう一度開いてください。');return Promise.all([import('./client.mjs'),import('./portal-auth.mjs')]);}).then(async([{createClient},{createPortalStaffProvider}])=>{
+  let portalProvider=false;
   if(!staffProvider&&config.authSource==='portal'&&endpoint&&config.portalUrl){
    staffProvider=createPortalStaffProvider({storage:localStorage,origin:location.origin,portalUrl:config.portalUrl,endpoint:target,fetchImpl:nativeFetch,navigate:url=>location.assign(url)});
+   portalProvider=true;
   }
-  let session=null;
-  try{session=await staffProvider?.getSession?.();}catch{banner.textContent='ポータルのログイン確認に失敗しました。通信状態を確認して再読込してください。';}
+  // 日本語コメント: ポータル確認の一時障害では、期限内の端末ログインを消さない。権限は毎要求サーバーが確認する。
+  const portalSession=()=>{
+   if(!portalProvider||location.origin!==new URL(config.portalUrl).origin)return null;
+   let saved;try{saved=JSON.parse(localStorage.getItem('bf_session')||'null');}catch{return null;}
+   if(!saved||typeof saved.token!=='string'||!/^[A-Za-z0-9_-]{32,256}$/.test(saved.token)||!Number.isSafeInteger(saved.expires)||saved.expires<=Date.now()||typeof saved.user_id!=='string'||!saved.user_id)return null;
+   return {user_id:saved.user_id,name:typeof saved.name==='string'&&saved.name?saved.name:saved.user_id,access_token:saved.token,expires_at:saved.expires};
+  };
   const key='bf_event_candidate_session';
+  // 受付画面はこの写しで期限を表示する。別タブで再ログインした後も、再読込なしで新しい期限へ更新する。
+  const remember=current=>{try{storage.setItem(key,JSON.stringify({user_id:current.user_id,name:current.name||current.user_id,expires:current.expires_at,token:'server-auth-required'}));}catch{/* 保存不可は元画面のガードで表示する。 */}};
+  const normalBanner=banner.textContent;
+  let session=null;
+  try{session=await staffProvider?.getSession?.();}
+  catch{
+   session=portalSession();
+   banner.textContent=session?'ログインの確認が一時的にできません。受付は続けられます（記録は端末に残り、つながり次第送ります）。':'ポータルのログイン確認に失敗しました。通信状態を確認して再読込してください。';
+  }
   try{
-   if(session?.user_id&&session?.access_token&&session.expires_at>Date.now())storage.setItem(key,JSON.stringify({user_id:session.user_id,name:session.name||session.user_id,expires:session.expires_at,token:'server-auth-required'}));
+   if(session?.user_id&&session?.access_token&&session.expires_at>Date.now())remember(session);
    else storage.removeItem(key);
   }catch{/* 保存不可は元画面のガードで表示する。 */}
   const call=createClient({endpoint:endpoint?target:'',fetchImpl:nativeFetch,getStaffToken:async()=>{
-   const current=await staffProvider?.getSession?.();return current?.expires_at>Date.now()?current.access_token:null;
+   let current;
+   try{current=await staffProvider?.getSession?.();}
+   catch(error){
+    // 確認だけが一時的に失敗した場合も、期限内の元セッションで送り、可否はサーバーの判定に任せる。
+    const saved=portalSession();if(!saved)throw error;return saved.access_token;
+   }
+   if(!(current?.expires_at>Date.now()))return null;
+   remember(current);if(banner.textContent!==normalBanner)banner.textContent=normalBanner;
+   return current.access_token;
   }});
   window.BFEventCandidate.call=call;
   window.fetch=async(url,options={})=>{
