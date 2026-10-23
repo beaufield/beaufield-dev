@@ -1,6 +1,6 @@
 import {get,set,records,update as storageUpdate,mergeReceipt,sanitizeLegacyQr,clearMakerConnection,storageMode} from './storage.js';
 import {buildWorkbook,displayProductCode,emptyHandling,packRemarks,unpackRemarks,handlingWarnings,deliveryLabel,billingLabel} from './export.js';
-const APP_VERSION='v0.20.0';
+const APP_VERSION='v0.20.1';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -108,7 +108,8 @@ function colorSelection(offer,selected,check){
  return result;
 }
 const requiredQty=(offer,kind,n)=>kind==='gift'&&offer.gift_rule==='threshold_gift'?Math.floor(n/offer.threshold_paid)*offer.threshold_gift:n*offer[`${kind}_per_set`];
-const offerSummary=offer=>totalColor(offer)?'3本分の料金で4本。色番ごとの合計本数を入力':offer.gift_rule==='price_only'?'特売単価で購入できます':offer.gift_rule==='threshold_gift'?`${offer.threshold_paid}箱ごとに${offer.threshold_gift}包サービス`:`${offer.paid_per_set}点購入 ＋ ${offer.gift_per_set}点サービス`;
+// カタログに価格条件の説明があれば、その説明を優先する。
+const offerSummary=offer=>offer.summary?offer.summary:totalColor(offer)?'3本分の料金で4本。色番ごとの合計本数を入力':offer.gift_rule==='price_only'?'特売単価で購入できます':offer.gift_rule==='threshold_gift'?`${offer.threshold_paid}箱ごとに${offer.threshold_gift}包サービス`:`${offer.paid_per_set}点購入 ＋ ${offer.gift_per_set}点サービス`;
 const countLimit=offer=>offer.max_sets_per_person||99;
 const countLabel=offer=>offer.count_label||(offer.gift_rule==='price_only'?(quantityByProduct(offer)?'合計購入数':'購入数量'):'セット数');
 // 選べる商品が複数ある通常販売だけ、商品明細から合計を求める。
