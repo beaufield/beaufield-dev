@@ -1,6 +1,6 @@
 import {get,set,records,update as storageUpdate,mergeReceipt,sanitizeLegacyQr,clearMakerConnection,storageMode} from './storage.js';
 import {buildWorkbook,displayProductCode,emptyHandling,packRemarks,unpackRemarks,handlingWarnings,deliveryLabel,billingLabel} from './export.js';
-const APP_VERSION='v0.24.0';
+const APP_VERSION='v0.24.1';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -66,7 +66,7 @@ async function digest(text){return [...new Uint8Array(await crypto.subtle.digest
 async function enroll(key){const response=await fetch(API_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'enroll',key,device_id:deviceId()}),cache:'no-store'});const data=await response.json();if(!response.ok)throw Error(data.error||'ENROLLMENT_INVALID');makerToken=data.token;session.setItem('booth-token',data.token);const catalog=await api('catalog');if(!catalog.catalog)throw Error('このメーカーの商品が未登録です。');if(catalog.scope.device!==deviceId())throw Error('SCOPE_MISMATCH');connectionVerified=true;await set('maker-connection',{token:data.token,device:deviceId()});await activate(catalog);message(readyMessage(catalog));await pump();}
 function element(tag,text,className){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(className)e.className=className;return e;}
 // 指定メーカーは新規入力を後日納品で開始し、選択済み下書き・送信待ちは保持する。
-const defaultDelivery=scope=>['essence','napla','schwarzkopf','actland'].includes(scope?.booth)?'later':'';
+const defaultDelivery=scope=>['essence','napla','schwarzkopf','actland','chiyoda','daiko','gnome','pacific'].includes(scope?.booth)?'later':'';
 const selectedDelivery=(record,scope)=>record.stage==='draft'&&!record.form.delivery_confirmed?defaultDelivery(scope):record.form.delivery;
 async function fresh(){
  resetCustomerSearch();
