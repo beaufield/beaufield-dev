@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="style.css">
   <script src="jsQR.js" defer></script>
   <script src="exceljs.min.js" defer></script>
-  <script src="app.js?build=20261024-delivery-default" type="module"></script>
+  <script src="app.js?build=20261024-name-search" type="module"></script>
 </head>
 <body>
 <header id="app-header"><div class="header-top"><div><small>BEAU Fes 2026</small><h1>ブース注文 <span id="version"></span></h1></div><div class="header-actions"><a id="maker-help" class="manual-link" href="manual.html" target="_blank" rel="noopener noreferrer" aria-label="使い方（別ウィンドウで開きます）">使い方 ↗</a><span id="network" class="network-badge"></span></div></div><div id="maker-banner" class="maker-banner" hidden><span class="maker-label">メーカー</span><strong id="maker"></strong></div></header>
@@ -23,9 +23,9 @@
       <p id="draft-id" class="muted"></p>
       <button id="scan" class="camera-primary" type="button"><span aria-hidden="true">📷</span> 名札QRをカメラで読み取る</button>
       <button id="demo" class="secondary" type="button">試験用の名札</button>
-      <details id="customer-search-panel" class="customer-search-panel"><summary>QRが読めないとき：コード・お客様名で検索</summary>
-        <fieldset class="search-mode"><legend>検索する情報</legend><div class="row"><label><input type="radio" name="customer-search-mode" value="code" checked> 得意先コード</label><label><input type="radio" name="customer-search-mode" value="name"> 名前・サロン名</label></div></fieldset>
-        <form id="customer-search-form"><label id="customer-query-label" for="customer-query">名札の得意先コード</label><input id="customer-query" type="search" autocomplete="off" maxlength="50" placeholder="名札に印字されたお客様番号"><button id="customer-search" type="submit">検索する</button></form>
+      <details id="customer-search-panel" class="customer-search-panel"><summary>QRが読めないとき：名前・サロン名・コードで検索</summary>
+        <fieldset class="search-mode"><legend>検索する情報</legend><div class="row"><label><input type="radio" name="customer-search-mode" value="code"> 得意先コード</label><label><input type="radio" name="customer-search-mode" value="name" checked> 名前・サロン名</label></div></fieldset>
+        <form id="customer-search-form"><label id="customer-query-label" for="customer-query">お客様名・サロン名</label><input id="customer-query" type="search" autocomplete="off" maxlength="50" placeholder="2文字以上で検索"><button id="customer-search" type="submit">検索する</button></form>
         <p id="customer-search-status" class="muted" role="status" aria-live="polite"></p><div id="customer-results"></div>
       </details>
       <div id="customer" role="status"></div>
