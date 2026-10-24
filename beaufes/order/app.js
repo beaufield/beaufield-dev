@@ -1,6 +1,6 @@
 import {get,set,records,update as storageUpdate,mergeReceipt,sanitizeLegacyQr,clearMakerConnection,storageMode} from './storage.js';
 import {buildWorkbook,displayProductCode,emptyHandling,packRemarks,unpackRemarks,handlingWarnings,deliveryLabel,billingLabel} from './export.js';
-const APP_VERSION='v0.22.1';
+const APP_VERSION='v0.23.0';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -33,7 +33,7 @@ const scopeKey=()=>JSON.stringify(info.scope);
 const message=text=>{$('message').textContent=text;};
 // 接続処理の仕組みではなく、利用者が次にできる操作を案内する。
 const readyMessage=value=>value.event_state==='closed'?'注文の受付は終了しました。履歴を確認できます。':'注文を入力できます。お客様を選んでください。';
-const errorText=e=>({PAPER_ALREADY_REGISTERED:'同じ紙からの注文が登録済みです。メーカーの注文履歴でお客様と明細を確認し、番号を変えて再登録しないでください。',INVALID_PAPER_NUMBER:'紙受付Noは半角英数字・ハイフン32文字以内で入力してください。',INVALID_HANDLING:'受付情報を確認してください。',RESERVED_REMARKS:'受付情報は補助欄へ入力してください。',RESERVATION_DELIVERY_REQUIRED:'予約商品は後日納品です。お渡し済みの商品とは注文を分けてください。',ORDER_CHANGED_RECHECK_REQUIRED:'注文または台帳が変わりました。最新の控えと販売管理を照合し直してください。',NOT_UNRESOLVED:'この注文の確認待ちは既に解決しています。台帳を更新してください。',RESOLUTION_CONFLICT:'この照合操作は別の内容または担当者で記録されています。操作番号を変えて再送せず、事務に確認してください。',OFFICE_RESOLUTION_STORAGE_REQUIRED:'照合操作を端末に保存できません。ブラウザーの保存を許可した端末で操作してください。',SEARCH_INCOMPLETE:'販売管理の照合が終わっていません。確認待ちを維持します。',PRIOR_CORRECTION_NOT_RESOLVED:'古い誤入力・重複の解消と訂正記録を確認してください。',DRAFT_CHANGED:'別のタブで入力が変更されました。最新の氏名・商品・数量を確認してから操作してください。',PURCHASE_CONTENT_CONFLICT:'このお客様の登録確認中の注文と内容が違います。再登録せず、メーカー履歴を確認してください。',STALE_PURCHASE:'別の画面で購入が進んでいます。履歴を更新して確認してください。',ORDER_INTENT_EXPIRED:'確認待ちの注文番号の期限が切れました。再登録せず事務へ確認してください。',CUSTOMER_CHANGED:'申込情報が変わりました。再登録せず受付へ確認してください。',INVALID_REMARKS:'備考は1,000文字以内の文章で入力してください。',OFFER_PERSON_LIMIT:'この企画はお一人様1セットです。登録済みの注文を確認してください。',OFFER_EXCLUSIVE:'この2つの企画は併用できません。どちらかを選んでください。',FIXED_COMPONENT_REQUIRED:'固定セットの構成を確認してください。',LINKED_SKU_REQUIRED:'同じ種類のサービス品と数量を確認してください。',EVENT_CLOSED:'受付は締められています。未送信注文は事務に連絡してください。',QR_NOT_FOUND:'この名札を照合できません。受付情報の同期を確認してください。',SESSION_INVALID:'メーカー接続が無効です。メーカーQRを読み直してください。未送信注文は端末に残っています。',SUBJECT_NOT_FOUND:'このお客様の最新情報を確認できません。もう一度検索するか受付に確認してください。',INVALID_CUSTOMER_CODE:'得意先コードを確認してください。',ORDER_NOT_FOUND:'この注文を確認できません。履歴を更新してください。',PORTAL_SESSION_INVALID:'社内ポータルへログインしてください。',OFFICE_ROLE_REQUIRED:'事務画面の管理者権限がありません。',PORTAL_UNAVAILABLE:'社内ポータルに接続できません。時間をおいて再試行してください。',INVALID_BUNDLE:'同期ファイルが不正です。3種類のデータを作り直してください。',STALE_MASTER_GENERATION:'得意先マスターより古い同期ファイルです。作り直してください。',OLD_GENERATION:'申込データより古い同期ファイルです。作り直してください。',IDEMPOTENCY_CONFLICT:'同じ注文番号で内容が異なります。再登録せず事務に連絡してください。',SET_QUANTITY_MISMATCH:'購入数とサービス数が条件に合っていません。',SCOPE_MISMATCH:'この端末の所属が変わっています。元の接続先で再送してください。'}[e.message]||`処理を完了できませんでした：${e.message}`);
+const errorText=e=>({PURCHASE_ALREADY_SAVED:'別の画面でこのお客様の注文が登録されました。入力内容は残しています。履歴を確認し、追加注文の場合はお客様を選び直してください。',PAPER_ALREADY_REGISTERED:'同じ紙からの注文が登録済みです。メーカーの注文履歴でお客様と明細を確認し、番号を変えて再登録しないでください。',INVALID_PAPER_NUMBER:'紙受付Noは半角英数字・ハイフン32文字以内で入力してください。',INVALID_HANDLING:'受付情報を確認してください。',RESERVED_REMARKS:'受付情報は補助欄へ入力してください。',RESERVATION_DELIVERY_REQUIRED:'予約商品は後日納品です。お渡し済みの商品とは注文を分けてください。',ORDER_CHANGED_RECHECK_REQUIRED:'注文または台帳が変わりました。最新の控えと販売管理を照合し直してください。',NOT_UNRESOLVED:'この注文の確認待ちは既に解決しています。台帳を更新してください。',RESOLUTION_CONFLICT:'この照合操作は別の内容または担当者で記録されています。操作番号を変えて再送せず、事務に確認してください。',OFFICE_RESOLUTION_STORAGE_REQUIRED:'照合操作を端末に保存できません。ブラウザーの保存を許可した端末で操作してください。',SEARCH_INCOMPLETE:'販売管理の照合が終わっていません。確認待ちを維持します。',PRIOR_CORRECTION_NOT_RESOLVED:'古い誤入力・重複の解消と訂正記録を確認してください。',DRAFT_CHANGED:'別のタブで入力が変更されました。最新の氏名・商品・数量を確認してから操作してください。',PURCHASE_CONTENT_CONFLICT:'このお客様の登録確認中の注文と内容が違います。再登録せず、メーカー履歴を確認してください。',STALE_PURCHASE:'別の画面で購入が進んでいます。履歴を更新して確認してください。',ORDER_INTENT_EXPIRED:'確認待ちの注文番号の期限が切れました。再登録せず事務へ確認してください。',CUSTOMER_CHANGED:'申込情報が変わりました。再登録せず受付へ確認してください。',INVALID_REMARKS:'備考は1,000文字以内の文章で入力してください。',OFFER_PERSON_LIMIT:'この企画はお一人様1セットです。登録済みの注文を確認してください。',OFFER_EXCLUSIVE:'この2つの企画は併用できません。どちらかを選んでください。',FIXED_COMPONENT_REQUIRED:'固定セットの構成を確認してください。',LINKED_SKU_REQUIRED:'同じ種類のサービス品と数量を確認してください。',EVENT_CLOSED:'受付は締められています。未送信注文は事務に連絡してください。',QR_NOT_FOUND:'この名札を照合できません。受付情報の同期を確認してください。',SESSION_INVALID:'メーカー接続が無効です。メーカーQRを読み直してください。未送信注文は端末に残っています。',SUBJECT_NOT_FOUND:'このお客様の最新情報を確認できません。もう一度検索するか受付に確認してください。',INVALID_CUSTOMER_CODE:'得意先コードを確認してください。',ORDER_NOT_FOUND:'この注文を確認できません。履歴を更新してください。',PORTAL_SESSION_INVALID:'社内ポータルへログインしてください。',OFFICE_ROLE_REQUIRED:'事務画面の管理者権限がありません。',PORTAL_UNAVAILABLE:'社内ポータルに接続できません。時間をおいて再試行してください。',INVALID_BUNDLE:'同期ファイルが不正です。3種類のデータを作り直してください。',STALE_MASTER_GENERATION:'得意先マスターより古い同期ファイルです。作り直してください。',OLD_GENERATION:'申込データより古い同期ファイルです。作り直してください。',IDEMPOTENCY_CONFLICT:'同じ注文番号で内容が異なります。再登録せず事務に連絡してください。',SET_QUANTITY_MISMATCH:'購入数とサービス数が条件に合っていません。',SCOPE_MISMATCH:'この端末の所属が変わっています。元の接続先で再送してください。'}[e.message]||`処理を完了できませんでした：${e.message}`);
 function on(id,event,fn){$(id).addEventListener(event,async e=>{try{await fn(e);}catch(error){const detail=errorText(error);message(detail);if(id==='submit'){const status=$('submit-status');status.hidden=false;status.className='error';status.textContent=detail;}}});}
 async function requestApi(action,body,token){
  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),action==='sync_bundle'?60000:12000);
@@ -286,7 +286,7 @@ function showRemarks(parent,text,{includeBilling=true}={}){
 function readHandling(){return {billing:$('billing').value||'review',contact:$('contact-check').checked?'review':'registered',paper:$('paper-number').value};}
 function remarksCount(){let count;try{count=[...packRemarks($('remarks').value,readHandling())].length;}catch{count='要確認';}$('remarks-count').textContent=`${count} / 1,000文字（受付情報を含む）`;}
 function renderForm(){
- $('remarks').value=draft.form.remarks||'';const handling={...emptyHandling(),...draft.form.handling};$('billing').value=['salon','personal'].includes(handling.billing)?handling.billing:'';$('billing-help').hidden=['salon','personal'].includes(handling.billing)||draft.stage!=='draft';$('contact-check').checked=handling.contact==='review';$('paper-number').value=handling.paper;$('legacy-paper-field').hidden=!handling.paper;$('handling-panel').open=handling.billing!=='salon'||handling.contact!=='registered'||!!handling.paper;remarksCount();$('another-purchase').hidden=!draft.form.saved_request_id;
+ $('remarks').value=draft.form.remarks||'';const handling={...emptyHandling(),...draft.form.handling};$('billing').value=['salon','personal'].includes(handling.billing)?handling.billing:'';$('billing-help').hidden=['salon','personal'].includes(handling.billing)||draft.stage!=='draft';$('contact-check').checked=handling.contact==='review';$('paper-number').value=handling.paper;$('legacy-paper-field').hidden=!handling.paper;$('handling-panel').open=handling.billing!=='salon'||handling.contact!=='registered'||!!handling.paper;remarksCount();
  $('draft-id').textContent=`注文番号 ${draft.id}`;$('customer').textContent=draft.form.customer||'';showConnection();
  for(const radio of document.querySelectorAll('input[name=delivery]'))radio.checked=radio.value===selectedDelivery(draft,info.scope);
  $('offers').replaceChildren();
@@ -294,7 +294,7 @@ function renderForm(){
  for(const offer of info.catalog.offers)if(selectedOffer(offer))$('offers').append(renderOffer(offer));
  if(!$('offers').children.length)$('offers').append(element('p','まだ条件を選んでいません。「特売条件を追加」から始めてください。','empty-state'));
  const locked=submitting||draft.stage!=='draft';for(const x of [$('remarks'),$('billing'),$('contact-check'),$('paper-number'),$('submit'),$('scan'),$('demo'),$('customer-query'),$('customer-search'),...document.querySelectorAll('input[name=customer-search-mode]'),...$('customer-results').querySelectorAll('button'),$('add-offer'),...document.querySelectorAll('input[name=delivery]'),...$('offers').querySelectorAll('input,button')])x.disabled=locked;
- $('new').disabled=submitting;$('another-purchase').disabled=submitting;const status=$('submit-status');status.hidden=locked===false;status.className='';
+ $('new').disabled=submitting;const status=$('submit-status');status.hidden=locked===false;status.className='';
  if(locked){if(submitting){$('submit').textContent='注文番号を確認中…';status.className='pending';status.textContent='登録済みの注文がないか確認しています。';}else if(draft.receipt?.state==='active'&&!draft.pending){$('submit').textContent='✓ 登録済み';status.className='success';status.textContent='登録が完了しました。次のお客様の入力欄へ切り替えています。';}
   else if(draft.receipt?.state==='cancelled'){ $('submit').textContent='取消済み';status.className='error';status.textContent='この注文は取消済みです。';}
   else{$('submit').textContent='送信・確認中…';status.className='pending';status.textContent=draft.error?`未送信・結果確認中：${draft.error}「未送信を再送・状態確認」を押してください。`:'注文を端末に保存しました。登録結果を確認中です。';}}
@@ -480,7 +480,7 @@ async function pumpInner(){if(!info||!(localDemo?session.getItem('booth-token'):
   if(!['active','cancelled'].includes(response.state))throw Error('ORDER_INTENT_NOT_FOUND');
  }else response=await api(latest.pending==='cancel'?'cancel':latest.pending==='submit'?'submit':'status',latest.pending==='submit'?latest.body:{request_id:latest.id});await update(latest.id,current=>({...mergeReceipt(current,response),error:null}));}catch(e){await update(latest.id,current=>({...current,error:errorText(e)}));}}if(draft&&draft.stage!=='draft'){const current=(await records()).find(r=>r.id===draft.id);if(current){draft=current;if(current.receipt?.state==='active'&&!current.pending){
    // サーバー登録が確定した時だけ新しい入力欄を開く。前の注文は端末の注文一覧に残す。
-   if(current.serverIntent)showReceipt(current.receipt);await fresh();message('登録完了。次のお客様の名札QRを読み取ってください。前の注文は下の一覧から確認・取消できます。');$('message').scrollIntoView({block:'start'});$('scan').focus({preventScroll:true});
+   await fresh();message('登録完了。次のお客様の名札QRを読み取ってください。前の注文は下の一覧から確認・取消できます。');$('message').scrollIntoView({block:'start'});$('scan').focus({preventScroll:true});
   }else renderForm();}}await renderOrders();await refreshHistory();}
 async function pump(){if(pumping)return;pumping=true;try{if(navigator.locks)await navigator.locks.request('beaufes-booth-send',pumpInner);else await pumpInner();}finally{pumping=false;}}
 
@@ -504,17 +504,23 @@ function customerLabel(customer){return `来場者 ${customer.id||'要確認'} �
 async function chooseCustomer(customer,selection,id,serial){
  if(draft.id!==id||draft.stage!=='draft'||customerRequest!==serial)return;
  const label=customerLabel(customer);
- const current=await update(id,r=>draft.id===id&&r.stage==='draft'&&customerRequest===serial?{...r,form:{...r.form,...selection,customer:label,customer_id:customer.id,resolved:true,previous_request_id:null,saved_request_id:null}}:r);
+ const current=await update(id,r=>draft.id===id&&r.stage==='draft'&&customerRequest===serial?{...r,form:{...r.form,...selection,customer:label,customer_id:customer.id,resolved:true,previous_request_id:null,saved_request_id:null,purchase_basis_ready:false}}:r);
  if(draft.id!==id||customerRequest!==serial)return;
  draft=current;$('customer').textContent=label;$('customer-search-panel').open=false;
  message('お客様を選びました。名札のお名前と照合してから商品を登録してください。');
  await customerRecent(customer.id,id,serial);
  if(info.server_order_recovery&&navigator.onLine){
-  const recovered=await api('status',{recover_subject:customer.id});
+  await resolvePurchaseBasis(id,customer.id,serial);
   if(draft.id!==id||customerRequest!==serial)return;
-  if(recovered.already_saved){draft=await update(id,r=>({...r,form:{...r.form,saved_request_id:recovered.request_id}}));renderForm();message('このお客様の注文は登録済みです。下の履歴で控えを確認できます。追加購入するときだけ「別の購入を開始する」を押してください。');}
+  if(draft.form.previous_request_id)message('以前の注文は履歴に残っています。今回の商品を入力して登録してください。');
  }
 
+}
+// お客様を選んだ時点の前注文を固定する。再送時に最新へ進めると二重登録になる。
+async function resolvePurchaseBasis(id,subjectId,serial){
+ const recovered=await api('status',{recover_subject:subjectId});
+ if(draft.id!==id||draft.stage!=='draft'||(serial!==undefined&&customerRequest!==serial))return;
+ draft=await update(id,r=>({...r,form:{...r.form,previous_request_id:recovered.already_saved?recovered.request_id:null,saved_request_id:null,purchase_basis_ready:true}}));
 }
 async function customerRecent(subjectId,id,serial){
  $('customer-recent').textContent='このお客様の直近の注文を確認しています…';
@@ -569,7 +575,7 @@ async function fillSharedDetail(row,body,scope){
   if(!data||data.state_seq!==row.state_seq){body.textContent='明細を読み込んでいます…';data=await api('manufacturer_order',{request_id:key});if(scope!==scopeKey())return;historyDetails.set(key,data);}
   if(scope!==scopeKey())return;body.replaceChildren();
   body.append(element('p',customerLabel(data.customer),'order-customer-full'),element('p',`受け渡し：${data.delivery==='later'?'後日納品':'当日お渡し済み'}`,'order-delivery'),element('p',`注文番号 ${key}`,'muted order-reference'));
-  showRemarks(body,data.remarks);body.append(orderDetails({receipt:data}));const receiptButton=element('button','購入控えを表示','secondary');receiptButton.onclick=()=>showReceipt(data.purchase_receipt||data);body.append(receiptButton);
+  showRemarks(body,data.remarks);body.append(orderDetails({receipt:data}));
   if(data.state==='cancelled'){body.append(element('p','この注文は取消済みです。','muted'));return;}
   const local=(await records()).find(r=>r.id===key&&r.backend===location.origin&&JSON.stringify(r.scope)===scope);
   if(data.mine&&local){const cancel=element('button',local.cancelRequested?'取消を確認中':'この注文を取り消す','secondary');cancel.disabled=!!local.cancelRequested;cancel.onclick=()=>cancelLocalOrder(local).catch(e=>message(errorText(e)));body.append(cancel);}
@@ -625,13 +631,16 @@ on('submit','click',async()=>{
   renderForm();
   if(info.server_order_recovery){
    if(!navigator.onLine)throw Error('通信が戻ってから登録してください。下書きから同じ注文を確認します。');
+   // 旧版の入力途中も保持する。基準はprepare前に保存し、通信失敗でも変更しない。
+   if(!draft.form.purchase_basis_ready){
+    if(draft.form.previous_request_id&&!draft.form.saved_request_id)draft=await update(draft.id,r=>({...r,form:{...r.form,purchase_basis_ready:true}}));
+    else await resolvePurchaseBasis(draft.id,draft.form.customer_id||draft.form.subject_id);
+   }
+   if(!draft.form.purchase_basis_ready)throw Error('DRAFT_CHANGED');
    const {request_id,...order}=body;
    const result=await api('submit',{operation:'prepare',order,...(draft.form.previous_request_id?{previous_request_id:draft.form.previous_request_id}:{})});
-   if(result.already_saved){
-    draft=await update(draft.id,r=>({...r,form:{...r.form,saved_request_id:result.request_id}}));
-    showReceipt(result);message('このお客様の注文は登録済みです。控えを確認してください。追加購入するときだけ「別の購入を開始する」を押してください。');
-    return;
-   }
+   // 他の画面が同じ購入を先に確定した場合、今回の入力を成功扱いで消さない。
+   if(result.already_saved)throw Error('PURCHASE_ALREADY_SAVED');
    if(result.state!=='prepared')throw Error('SERVER_ERROR');
    const source=draft;
    draft=await update(result.request_id,r=>r||({...source,id:result.request_id,body:{...order,request_id:result.request_id},serverIntent:true,stage:'queued',pending:'submit'}));
@@ -644,32 +653,6 @@ on('submit','click',async()=>{
   message('同じ注文番号で登録結果を確認します。');await renderOrders();await pump();
  }finally{submitting=false;renderForm();}
 });
-let additionalPurchase;
-on('another-purchase','click',()=>{
- if(submitting||!draft.form.saved_request_id)return;
- additionalPurchase={id:draft.id,revision:draft.edit_revision||0};
- $('additional-customer').textContent=draft.form.customer;
- $('additional-modal').hidden=false;$('additional-cancel').focus();
-});
-on('additional-cancel','click',()=>{$('additional-modal').hidden=true;additionalPurchase=null;});
-on('additional-start','click',async()=>{
- if(submitting||!additionalPurchase||draft.id!==additionalPurchase.id||(draft.edit_revision||0)!==additionalPurchase.revision)throw Error('DRAFT_CHANGED');
- draft=await update(draft.id,r=>({...r,form:{...r.form,previous_request_id:r.form.saved_request_id,saved_request_id:null,offers:{},remarks:'',handling:emptyHandling(),delivery:'',delivery_confirmed:false}}));
- $('additional-modal').hidden=true;additionalPurchase=null;
- renderForm();message('同じお客様の別の購入を開始しました。商品と受け渡し方法を選んでください。');
-});
-function showReceipt(receipt){
- const target=$('receipt-content');target.replaceChildren();
- target.append(element('h2','購入控え'),element('p',receipt.state==='cancelled'?'取消済み':'登録済み','receipt-state'),element('p',`注文番号 ${receipt.request_id}`));
- const customer=receipt.customer||{};target.append(element('p',`${customer.salon||''} ／ ${customer.name||''}`),element('p',`申込番号 ${customer.id||''}`));
- const handling=unpackRemarks(receipt.remarks||'');target.append(element('p',`名札の得意先 ${customer.customer_code||'事務確認'} ／ 請求先：${billingLabel(handling.billing)}`));
- if(receipt.received_at)target.append(element('p',new Date(receipt.received_at).toLocaleString('ja-JP')));
- target.append(element('p',`受け渡し：${receipt.delivery==='later'?'後日納品':receipt.delivery==='takeaway'?'当日お渡し済み':'要確認'}`),orderDetails({receipt}),element('strong',`税抜合計 ${yen(receipt.total_yen)}`));
- showRemarks(target,receipt.remarks,{includeBilling:false});target.append(element('p','サービス品は0円です。メール送付を保証する画面ではありません。必要な場合はこの控えを撮影し、注文番号をお控えください。'));
- $('receipt-modal').hidden=false;$('receipt-close').focus();
-}
-on('receipt-close','click',()=>{$('receipt-modal').hidden=true;});
-on('receipt-print','click',()=>window.print());
 on('retry','click',pump);
 function closeCamera(){scanId++;if(camera){camera.getTracks().forEach(t=>t.stop());camera=null;}$('video').pause();$('video').srcObject=null;$('camera-modal').hidden=true;document.body.classList.remove('modal-open');modalReturnFocus?.focus();}
 on('camera-close','click',closeCamera);
@@ -683,7 +666,7 @@ on('scan','click',async()=>{
  const step=()=>{if(!camera||id!==scanId)return;if($('video').readyState>=2){canvas.width=$('video').videoWidth;canvas.height=$('video').videoHeight;ctx.drawImage($('video'),0,0);const frame=ctx.getImageData(0,0,canvas.width,canvas.height);const code=window.jsQR(frame.data,frame.width,frame.height);if(code){try{tokenFromQr(code.data);closeCamera();readBadge(code.data).catch(e=>message(errorText(e)));return;}catch{}}}requestAnimationFrame(step);};requestAnimationFrame(step);
 });
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&camera)closeCamera();else if(!document.hidden)refreshHistory().catch(e=>message(errorText(e)));});
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('additional-modal').hidden){$('additional-modal').hidden=true;additionalPurchase=null;}else if(!$('receipt-modal').hidden)$('receipt-modal').hidden=true;else if(!$('camera-modal').hidden)closeCamera();else if(!$('picker-modal').hidden)closePicker();}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('camera-modal').hidden)closeCamera();else if(!$('picker-modal').hidden)closePicker();}});
 on('close','click',async()=>{if(!confirm('試験受付を締めます。未送信の注文がないか確認しましたか？'))return;await api('close');message('受付を締めました。未接続端末の注文は別途確認してください。');});
 on('admin-refresh','click',refreshAdmin);
 // 事務の照合は人が販売管理を確認した後に行う。アプリから売上入力・取消・送信は行わない。
@@ -709,7 +692,7 @@ async function renderResolution(node,order){
  const complete=checkedField(form,'販売管理を開き、検索範囲と他担当者を含めた確認を終えた');complete.required=true;
  const saleBox=element('div');form.append(saleBox);
  const slip=labeledField(saleBox,'確認した伝票番号');const date=labeledField(saleBox,'確認した売上日','date');
- const matched=checkedField(saleBox,'得意先コード・購入品と0円サービス品・数量・税抜単価・合計が、この購入控えと一致した');
+ const matched=checkedField(saleBox,'得意先コード・購入品と0円サービス品・数量・税抜単価・合計が、この注文明細と一致した');
  const noSaleBox=element('div');form.append(noSaleBox);const unsaved=checkedField(noSaleBox,'該当売上も、他担当者や未保存の入力も残っていない');
  const oldBox=element('div');form.append(oldBox);const original=labeledField(oldBox,'元の伝票番号','text',order.posting.slip_number||'');
  const correctionBox=element('div');form.append(correctionBox);const reference=labeledField(correctionBox,'訂正・取消または過去入力解消の記録番号');
@@ -719,7 +702,7 @@ async function renderResolution(node,order){
  const approved=checkedField(form,'表示した注文番号と反映後の状態を確認し、この照合結果を記録する');approved.required=true;
  const send=element('button','照合結果を確認して台帳へ反映');send.type='submit';form.append(send);
  const updateChoice=()=>{const matching=choice.value==='matching_sale',voided=choice.value==='old_sale_voided',correction=order.posting.state==='correction_required';saleBox.hidden=!matching;noSaleBox.hidden=matching;oldBox.hidden=!voided;correctionBox.hidden=!(voided||matching&&correction);ruledBox.hidden=choice.value!=='no_sale'||!(correction||order.posting.slip_number);slip.required=matching;date.required=matching;matched.required=matching;unsaved.required=!matching;original.required=voided;reference.required=voided||matching&&correction;corrected.required=reference.required;ruled.required=!ruledBox.hidden;outcome.textContent='注文 '+order.request_id+' を '+(matching?'入力済み':order.state==='cancelled'?'取消・売上なしの照合完了（再入力不可）':'再入力候補')+' として記録します。';approved.checked=false;};choice.onchange=updateChoice;updateChoice();
- const finish=async()=>{await set(key,null);pending=null;message('照合結果を台帳へ記録しました。購入控えと注文内容は保持されています。');await refreshAdmin();};
+ const finish=async()=>{await set(key,null);pending=null;message('照合結果を台帳へ記録しました。注文内容と履歴は保持されています。');await refreshAdmin();};
  const verify=async()=>{
   const result=await api('posting',{operation:'resolution_status',resolution_id:pending.resolution_id,booth:pending.booth,request_id:pending.request_id});
   if(result.state==='applied'){await finish();return true;}
@@ -732,7 +715,7 @@ async function renderResolution(node,order){
   const action=(title,fn)=>{const button=element('button',title,'secondary');button.type='button';button.onclick=async()=>{button.disabled=true;try{await fn();}catch(e){status.textContent=errorText(e)+'。前の操作番号を保持しています。';}finally{button.disabled=false;}};recovery.append(button);};
   action('反映結果を確認',verify);
   action('同じ操作番号・同じ内容で再試行',async()=>{if(await verify())return;if(pending.snapshot_hash!==context.snapshot_hash)throw Error('ORDER_CHANGED_RECHECK_REQUIRED');await api('posting',pending);await finish();});
-  action('未反映を確認して照合をやり直す',async()=>{if(await verify())return;if(!confirm('未反映を確認しました。最新の購入控えと販売管理をもう一度照合しますか？'))return;await set(key,null);pending=null;await refreshAdmin();});
+  action('未反映を確認して照合をやり直す',async()=>{if(await verify())return;if(!confirm('未反映を確認しました。最新の注文明細と販売管理をもう一度照合しますか？'))return;await set(key,null);pending=null;await refreshAdmin();});
  };recovering();
  form.onsubmit=async event=>{
   event.preventDefault();if(pending)return;send.disabled=true;
@@ -757,7 +740,7 @@ async function refreshAdmin(){const data=await api('admin_orders');$('admin-orde
  const review=handlingWarnings(order);if(review.length)node.append(element('p',review.join('／'),'error'));
  if(order.state==='active'&&order.customer.customer_code&&order.posting.state==='ready')actionButton('この注文の入力を担当する','claimed');
  if(order.posting.state==='claimed'&&order.posting.owner===info.scope.device){actionButton('入力済みにする','entered');actionButton('入力結果が不明','unknown');}
- showRemarks(node,order.remarks);const receiptButton=element('button','購入控えを表示','secondary');receiptButton.onclick=()=>showReceipt(order.purchase_receipt||order);node.append(receiptButton);await renderResolution(node,order);$('admin-orders').append(node);}}
+ showRemarks(node,order.remarks);await renderResolution(node,order);$('admin-orders').append(node);}}
 async function reviewSubject(row,code,state){
  const label=state==='confirmed'?code+' に確定':'保留';
  if(!confirm(row.salon+' ／ '+row.name+' を「'+label+'」にしますか？'))return;
@@ -804,6 +787,8 @@ on('identity-search','click',async()=>{
 });
 on('export','click',async()=>{const batch_id=crypto.randomUUID();const data=await api('export',{batch_id});await set('last-export',data);const workbook=await buildWorkbook(window.ExcelJS,data);const blob=new Blob([await workbook.xlsx.writeBuffer()],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});const url=URL.createObjectURL(blob);const a=element('a');a.href=url;a.download=`ビューフェス注文_${batch_id}.xlsx`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);$('export-status').textContent=`${data.rows.length}件をExcelに出力しました。「入力候補」と「要確認」を分け、コードの先頭0を保持しています。`;});
 async function start(){
+ // 更新前のHTMLが一時的に残る端末でも、廃止した控え・追加購入画面は表示しない。
+ for(const id of ['receipt-modal','additional-modal','another-purchase'])$(id)?.remove();
  // カタログ更新履歴は注文入力画面へ表示しない。旧HTMLでも安全に取り除く。
  $('campaign-notice')?.remove();
  // 固定ヘッダーの実寸に合わせ、スクロール先がメーカー名の下へ隠れないようにする。

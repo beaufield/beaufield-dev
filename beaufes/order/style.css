@@ -179,8 +179,6 @@ section{scroll-margin-top:12px}
 .remarks-help{display:flex;justify-content:space-between;gap:10px;margin-top:6px}
 .order-remarks{white-space:pre-wrap;overflow-wrap:anywhere;background:#f0f8fd;padding:10px;border-radius:7px}
 
-.receipt-panel{max-height:90vh;overflow:auto}.receipt-state{font-weight:bold}
-@media print{body>*{display:none!important}body>#receipt-modal:not([hidden]){display:block!important;position:static;background:white;padding:0}.receipt-panel{max-height:none;overflow:visible;box-shadow:none;width:100%;max-width:none}.receipt-actions{display:none!important}}
 
 /* 入力画面を保ったまま操作ガイドを別画面で開く。 */
 .header-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
