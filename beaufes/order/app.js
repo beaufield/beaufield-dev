@@ -1,6 +1,6 @@
 import {get,set,records,update as storageUpdate,mergeReceipt,sanitizeLegacyQr,clearMakerConnection,storageMode} from './storage.js';
 import {buildWorkbook,displayProductCode,emptyHandling,packRemarks,unpackRemarks,handlingWarnings,deliveryLabel,billingLabel} from './export.js';
-const APP_VERSION='v0.24.1';
+const APP_VERSION='v0.24.2';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -66,7 +66,7 @@ async function digest(text){return [...new Uint8Array(await crypto.subtle.digest
 async function enroll(key){const response=await fetch(API_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'enroll',key,device_id:deviceId()}),cache:'no-store'});const data=await response.json();if(!response.ok)throw Error(data.error||'ENROLLMENT_INVALID');makerToken=data.token;session.setItem('booth-token',data.token);const catalog=await api('catalog');if(!catalog.catalog)throw Error('このメーカーの商品が未登録です。');if(catalog.scope.device!==deviceId())throw Error('SCOPE_MISMATCH');connectionVerified=true;await set('maker-connection',{token:data.token,device:deviceId()});await activate(catalog);message(readyMessage(catalog));await pump();}
 function element(tag,text,className){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(className)e.className=className;return e;}
 // 指定メーカーは新規入力を後日納品で開始し、選択済み下書き・送信待ちは保持する。
-const defaultDelivery=scope=>['essence','napla','schwarzkopf','actland','chiyoda','daiko','gnome','pacific'].includes(scope?.booth)?'later':'';
+const defaultDelivery=scope=>['essence','napla','schwarzkopf','actland','727','daiko','gnome','pacific'].includes(scope?.booth)?'later':'';
 const selectedDelivery=(record,scope)=>record.stage==='draft'&&!record.form.delivery_confirmed?defaultDelivery(scope):record.form.delivery;
 async function fresh(){
  resetCustomerSearch();
@@ -494,8 +494,9 @@ function showConnection(){
  $('connection-status').textContent=ready?'':!navigator.onLine?'インターネットにつながっていません。未送信注文はこの端末に保存されます。検索・履歴の取得には通信が必要です。':!connected?'メーカー用QRを読み取ってから、お客様を選んでください。':'注文画面を準備しています…';
 }
 function resetCustomerSearch(){
- customerRequest++;searchRequest++;
- $('customer-query').value='';$('customer-results').replaceChildren();$('customer-search-status').textContent='';$('customer-search-panel').open=false;$('customer-recent').textContent='';
+ // 全メーカー共通。次のお客様は名前・サロン名の検索から開始する。
+ $('customer-query').value='';document.querySelector('input[name=customer-search-mode][value=name]').checked=true;searchChanged();
+ $('customer-search-panel').open=false;$('customer-recent').textContent='';
 }
 function openCustomerSearch(){$('customer-search-panel').open=true;$('customer-query').focus();}
 function searchMode(){return document.querySelector('input[name=customer-search-mode]:checked').value;}
@@ -820,6 +821,7 @@ on('identity-search','click',async()=>{
 });
 on('export','click',async()=>{const batch_id=crypto.randomUUID();const data=await api('export',{batch_id});await set('last-export',data);const workbook=await buildWorkbook(window.ExcelJS,data);const blob=new Blob([await workbook.xlsx.writeBuffer()],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});const url=URL.createObjectURL(blob);const a=element('a');a.href=url;a.download=`ビューフェス注文_${batch_id}.xlsx`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);$('export-status').textContent=`${data.rows.length}件をExcelに出力しました。「入力候補」と「要確認」を分け、コードの先頭0を保持しています。`;});
 async function start(){
+ resetCustomerSearch();
  // 更新前のHTMLが一時的に残る端末でも、廃止した控え・追加購入画面は表示しない。
  for(const id of ['receipt-modal','additional-modal','another-purchase'])$(id)?.remove();
  // カタログ更新履歴は注文入力画面へ表示しない。旧HTMLでも安全に取り除く。
