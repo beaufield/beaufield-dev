@@ -1,5 +1,5 @@
 // 社員認証で取得した注文だけを端末内でPDF化する。宛先・注文を外部サービスへ送らない。
-import {unpackRemarks,billingLabel,deliveryLabel,handlingWarnings,displayProductCode} from '../order/export.js';
+import {unpackRemarks,billingLabel,deliveryLabel,handlingWarnings,displayProductCode} from '../order/export.js?build=20261025-atfit';
 export function prepareReport(data,makerId=''){
  if(!data||!Array.isArray(data.rows)||!['practice','live'].includes(data.phase))throw Error('REPORT_DATA_MISMATCH');
  const seen=new Set(),rows=data.rows.filter(r=>r.state==='active');let total=0;

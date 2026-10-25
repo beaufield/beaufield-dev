@@ -26,6 +26,7 @@ export function handlingWarnings(order){
  const h=unpackRemarks(order.remarks||'');const warnings=[];
  if(h.billing!=='salon')warnings.push('請求先・請求用得意先コードを事務確認');
  if(h.contact!=='registered')warnings.push('配送・連絡を事務確認（備考の先渡し数も確認）');
+ if((order.lines||[]).some(l=>/^AD26-ATFIT-/.test(l.product_code)))warnings.push('At FIT：販売管理コード未登録。商品登録・正式コード確認後に売上入力');
  if((order.lines||[]).some(l=>/^NAPLA26-NOTE-/.test(l.product_code)))warnings.push('明細はお客様発注待ち');
  if((order.lines||[]).some(l=>/^ACT26-/.test(l.product_code)))warnings.push('コフレ仮ID：正式商品コード照合まで販売管理入力保留');
  return warnings;
@@ -33,7 +34,7 @@ export function handlingWarnings(order){
 export const deliveryLabel=value=>value==='later'?'後日納品':value==='takeaway'?'当日お渡し済み':'未選択';
 
 // 商品コードは表示時だけ0埋めを外す。得意先コードや注文の内部キーは変更しない。
-export const displayProductCode=value=>String(value??'').replace(/^0+(?=\d+$)/,'');
+export const displayProductCode=value=>/^AD26-ATFIT-/.test(String(value??''))?'未登録':String(value??'').replace(/^0+(?=\d+$)/,'');
 export async function buildWorkbook(ExcelJS, data) {
  const workbook=new ExcelJS.Workbook();workbook.creator='BEAU Fes';
  const headings=['出力番号','注文番号','メーカー','得意先コード','サロン名','お客様名','商品コード','商品名','区分','数量','税抜単価','税抜金額','受渡方法','売上日','確認事項','備考','来場者番号','請求先','紙受付No'];
