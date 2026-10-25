@@ -1,5 +1,5 @@
 // 業務データは社員認証後にだけ取得する。接続キーや価格をブラウザーの永続領域へ保存しない。
-const APP_VERSION='v0.2.4';
+const APP_VERSION='v0.3.0';
 // 表示用だけ0埋めを除き、検索・送信・既存注文の識別子は維持する。
 const displayProductCode=value=>String(value??'').replace(/^0+(?=\d+$)/,'');
 const API_URL=document.querySelector('meta[name=directory-api]').content;
@@ -11,9 +11,9 @@ let makers=[],selected='',detailsSequence=0,qrSequence=0,qrBusy=false,currentQr=
 const issued=new Map();
 function session(){try{const s=JSON.parse(localStorage.getItem('bf_session')||'null');return s&&typeof s.token==='string'&&s.expires>Date.now()?s:null;}catch{return null;}}
 function closeQr(){qrSequence++;currentQr=null;$('order-url').value='';$('open-order').removeAttribute('href');$('qr-box').replaceChildren();if($('qr-modal').open)$('qr-modal').close();}
-function lock(){detailsSequence++;issued.clear();closeQr();makers=[];selected='';$('maker-select').replaceChildren(create('option','一覧から選んでください'));$('makers').replaceChildren();$('offers').replaceChildren();$('maker-name').textContent='';$('workspace').hidden=true;$('gate').hidden=false;}
+function lock(){detailsSequence++;$('order-overview').replaceChildren();$('order-overview').hidden=true;issued.clear();closeQr();makers=[];selected='';$('maker-select').replaceChildren(create('option','一覧から選んでください'));$('makers').replaceChildren();$('offers').replaceChildren();$('maker-name').textContent='';$('workspace').hidden=true;$('gate').hidden=false;}
 const errors={PORTAL_SESSION_INVALID:'社員用ポータルでログインし直してください。',BEAUFES_ROLE_REQUIRED:'ビューフェスの利用権限がありません。管理者に確認してください。',PORTAL_UNAVAILABLE:'社員ログインを確認できません。時間をおいて再試行してください。',ORDER_APP_NOT_READY:'このメーカーの注文アプリは準備中です。',EVENT_CLOSED:'注文受付は終了しています。',ENROLLMENT_CONFLICT:'このQRを発行できません。一覧を更新して再試行してください。',DIRECTORY_UNAVAILABLE:'メーカー情報を取得できません。時間をおいて再試行してください。'};
-function report(e){$('status').textContent=errors[e.message]||'処理を完了できませんでした。一覧を更新して再試行してください。';}
+function report(e){staleOverview();$('status').textContent=errors[e.message]||'処理を完了できませんでした。一覧を更新して再試行してください。';}
 async function api(action,body={}){
  const s=session();if(!s){lock();throw Error('PORTAL_SESSION_INVALID');}
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
@@ -24,12 +24,32 @@ async function api(action,body={}){
  }finally{clearTimeout(timer);}
 }
 function orderState(){const maker=makers.find(m=>m.id===selected);$('direct-order').disabled=$('order-qr').disabled=qrBusy||!maker?.order_ready;for(const button of document.querySelectorAll('[data-open-maker]'))button.disabled=qrBusy||!makers.find(m=>m.id===button.dataset.openMaker)?.order_ready;$('order-note').textContent=!maker?'メーカーを選んで注文アプリへ進めます。メーカーへの案内用QRも発行できます。':maker.order_ready?'「注文アプリを開く」で直接入力画面へ進めます。メーカーへの案内にはQRを使えます。':maker.id==='bjc'?'BJCはお客様が用紙へ記入し、受付へ提出します。予約セットは営業へ個別にご相談ください。':'注文アプリ準備中です。キャンペーン内容は確認できます。';}
+// 社員だけが取得できる全体/メーカー別の集計。端末の注文や表示件数は合算しない。
+function summaryBlock(summary,title){
+ const box=create('div');box.className='order-totals';
+ if(!summary||!['total_yen','customer_count','order_count'].every(k=>Number.isSafeInteger(summary[k])&&summary[k]>=0)){
+  box.append(create('p','集計を取得できませんでした。一覧を更新してください。'));return box;
+ }
+ const heading=create('p',title);heading.className='summary-title';box.append(heading);
+ const values=create('div');values.className='summary-values';
+ for(const [label,value]of [['注文金額（税抜）',yen(summary.total_yen)],['注文人数',`${summary.customer_count.toLocaleString('ja-JP')}人`]]){
+  const item=create('div');item.append(create('span',label),create('strong',value));values.append(item);
+ }
+ const note=create('p',`登録済み${summary.order_count.toLocaleString('ja-JP')}件・取消済みを除く`);note.className='summary-note';box.append(values,note);return box;
+}
+function staleOverview(){
+ const box=$('order-overview');if(box.hidden)return;box.classList.add('summary-stale');
+ const note=box.querySelector('.overview-note');if(note&&!note.textContent.startsWith('前回取得の集計です。'))note.textContent='前回取得の集計です。'+note.textContent;
+}
 async function load(){
- const seq=++detailsSequence;$('status').textContent='メーカー一覧を読み込んでいます…';
+ const seq=++detailsSequence;staleOverview();$('status').textContent='メーカー一覧を読み込んでいます…';
  // 紙で受け付けるBJCは、社員用のアプリ一覧には表示しない。
  const result=await api('list');if(seq!==detailsSequence)return;makers=result.makers.filter(m=>m.id!=='bjc');selected='';
+ const overview=$('order-overview');overview.replaceChildren(summaryBlock(result.order_summary,result.summary_phase==='practice'?'全メーカーの練習注文の集計':'全メーカーの注文集計'));overview.hidden=false;overview.classList.remove('summary-stale');
+ const note=create('p','全体の注文人数は、複数メーカーで購入した方も1人です。同じ方の追加注文も重複して数えません。');note.className='overview-note';overview.append(note);
+ if(result.summary_fetched_at){const at=create('p','集計取得 '+new Date(result.summary_fetched_at).toLocaleString('ja-JP'));at.className='summary-note';overview.append(at);}
  $('maker-select').replaceChildren();const placeholder=create('option','一覧から選んでください');placeholder.value='';$('maker-select').append(placeholder);$('makers').replaceChildren();$('makers').hidden=false;$('details').hidden=true;
- for(const maker of makers){const option=create('option',maker.name);option.value=maker.id;$('maker-select').append(option);const card=create('section');card.className='maker-card';card.append(create('h2',maker.name),create('p',`${maker.offer_count}企画`));const note=create('p',maker.order_ready?'注文アプリ接続可':maker.id==='bjc'?'お客様が紙で記入':'注文アプリ準備中');note.className='muted';card.append(note);const direct=create('button','注文アプリを開く');direct.dataset.openMaker=maker.id;direct.disabled=!maker.order_ready;direct.onclick=()=>openOrder(maker.id).catch(report);card.append(direct);const button=create('button','キャンペーンを確認');button.className='secondary';button.onclick=()=>choose(maker.id).catch(report);card.append(button);$('makers').append(card);}
+ for(const maker of makers){const option=create('option',maker.name);option.value=maker.id;$('maker-select').append(option);const card=create('section');card.className='maker-card';card.append(create('h2',maker.name),create('p',`${maker.offer_count}企画`));const note=create('p',maker.order_ready?'注文アプリ接続可':maker.id==='bjc'?'お客様が紙で記入':'注文アプリ準備中');note.className='muted';card.append(note);card.append(summaryBlock(maker.order_summary,'このメーカーの注文集計'));const direct=create('button','注文アプリを開く');direct.dataset.openMaker=maker.id;direct.disabled=!maker.order_ready;direct.onclick=()=>openOrder(maker.id).catch(report);card.append(direct);const button=create('button','キャンペーンを確認');button.className='secondary';button.onclick=()=>choose(maker.id).catch(report);card.append(button);$('makers').append(card);}
  $('gate').hidden=true;$('workspace').hidden=false;$('status').textContent=`${makers.length}社のキャンペーンを確認できます。`;orderState();
 }
 async function choose(id){
@@ -37,6 +57,7 @@ async function choose(id){
  $('offers').replaceChildren();$('details').hidden=true;if(!id){$('makers').hidden=false;return;}
  const detail=await api('details',{maker_id:id});if(seq!==detailsSequence||id!==selected)return;
  $('makers').hidden=true;$('maker-name').textContent=detail.name;$('details').hidden=false;
+ $('offers').append(summaryBlock(makers.find(m=>m.id===id)?.order_summary,'このメーカーの注文集計（一覧取得時点）'));
  if(detail.notice){const notice=create('p',detail.notice);notice.className='questions';$('offers').append(notice);}
  for(const offer of detail.offers){const block=create('article');block.className='offer';block.append(create('h3',offer.title),create('p',offer.condition));if(offer.questions?.length){const questions=create('ul');questions.className='questions';for(const q of offer.questions)questions.append(create('li',q));block.append(questions);}
   const table=create('table'),head=create('thead'),hr=create('tr');for(const title of ['商品コード','商品名・容量','種別','税抜単価'])hr.append(create('th',title));head.append(hr);table.append(head);const tbody=create('tbody');

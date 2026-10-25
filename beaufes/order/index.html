@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="robots" content="noindex,nofollow">
   <title>BEAU Fes ブース注文</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?build=20261025-order-totals">
   <script src="jsQR.js" defer></script>
   <script src="exceljs.min.js" defer></script>
-  <script src="app.js?build=20261024-name-search" type="module"></script>
+  <script src="app.js?build=20261025-order-totals" type="module"></script>
 </head>
 <body>
 <header id="app-header"><div class="header-top"><div><small>BEAU Fes 2026</small><h1>ブース注文 <span id="version"></span></h1></div><div class="header-actions"><a id="maker-help" class="manual-link" href="manual.html" target="_blank" rel="noopener noreferrer" aria-label="使い方（別ウィンドウで開きます）">使い方 ↗</a><span id="network" class="network-badge"></span></div></div><div id="maker-banner" class="maker-banner" hidden><span class="maker-label">メーカー</span><strong id="maker"></strong></div></header>
@@ -58,7 +58,7 @@
       <div id="submit-status" role="status" aria-live="polite" hidden></div>
     </section>
     <section id="history-section" class="history-section" aria-labelledby="history-title"><div class="row section-heading"><h2 id="history-title">この端末の未送信・下書き <span id="order-count" class="count-badge"></span></h2><button id="retry" class="secondary small-action">未送信を再送・状態確認</button></div><p class="muted">この端末に残っている注文です。未送信・取消待ちは通信が戻った状態で再送してください。</p><div id="orders"></div></section>
-    <section id="shared-history-section" class="history-section" aria-labelledby="shared-history-title"><div class="row section-heading"><h2 id="shared-history-title">メーカーの注文履歴</h2><button id="history-refresh" class="secondary small-action">更新する</button></div><p class="muted">同じメーカーの全端末で登録した注文です。行をタップすると商品明細が開きます。同じメーカーの注文は、登録した端末にかかわらず取り消せます。</p><p id="history-status" class="muted" role="status" aria-live="polite">まだ取得していません。</p><div id="shared-orders"></div><button id="history-more" class="secondary" type="button" hidden>以前の注文をもっと見る</button></section>
+    <section id="shared-history-section" class="history-section" aria-labelledby="shared-history-title"><div class="row section-heading"><h2 id="shared-history-title">メーカーの注文履歴</h2><button id="history-refresh" class="secondary small-action">更新する</button></div><p class="muted">同じメーカーの全端末で登録した注文です。行をタップすると商品明細が開きます。同じメーカーの注文は、登録した端末にかかわらず取り消せます。</p><p id="history-status" class="muted" role="status" aria-live="polite">まだ取得していません。</p><div id="history-totals" class="order-totals" role="region" aria-label="メーカーの注文集計" hidden></div><div id="shared-orders"></div><button id="history-more" class="secondary" type="button" hidden>以前の注文をもっと見る</button></section>
   </div>
   <section id="admin" hidden><h2>事務用の出力</h2><p>受付を締めた後、入力用Excelを出力できます。全端末の未送信がないことは、別途確認が必要です。</p><button id="close" class="secondary">試験受付を締める</button><button id="export">入力用Excelを作る</button><p>個人請求・配送先確認・仮商品コードは要確認へ分けます。販売管理入力前に照合してください。サービス品は数量付き・単価0円。未入力の売上日は空欄、確認した売上日は記録どおり出力します。得意先未対応・取消・入力済み等は要確認に分けます。</p><div id="export-status"></div></section>
   <section id="identity" hidden><h2>得意先コードの確認</h2><p>名札からの注文は得意先コードが未確定でも受け付けます。名称・電話・メールの一致は候補です。販売管理へ入力する前に確認してください。</p><div class="search"><label>得意先・申込の同期ファイル（bundle.json）<input id="identity-file" type="file" accept=".json,application/json"></label><button id="identity-sync" class="secondary">同期データを一括反映</button></div><p id="sync-status" class="muted">初回・更新時に、確認済みの完全スナップショットを選択します。</p><button id="identity-refresh" class="secondary">未確定のお客様を表示</button><div id="identity-list"></div><div class="search"><label>得意先マスターを検索<input id="identity-query" placeholder="名称またはコードを2文字以上" autocomplete="off"></label><button id="identity-search" class="secondary">検索</button></div><p id="identity-selected" class="muted">先にお客様を選択してください。</p><div id="identity-results"></div></section>

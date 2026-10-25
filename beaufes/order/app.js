@@ -1,6 +1,6 @@
 import {get,set,records,update as storageUpdate,mergeReceipt,sanitizeLegacyQr,clearMakerConnection,storageMode} from './storage.js';
 import {buildWorkbook,displayProductCode,emptyHandling,packRemarks,unpackRemarks,handlingWarnings,deliveryLabel,billingLabel} from './export.js';
-const APP_VERSION='v0.24.2';
+const APP_VERSION='v0.25.0';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -596,6 +596,24 @@ async function fillSharedDetail(row,body,scope){
   const cancel=element('button',local?.cancelRequested?'取消を確認中':'この注文を取り消す','secondary');cancel.disabled=!!local?.cancelRequested;cancel.onclick=()=>cancelSharedOrder(data,local).catch(e=>message(errorText(e)));body.append(cancel);
  }catch(e){if(scope===scopeKey()){body.replaceChildren(element('p',errorText(e),'error'));const retry=element('button','明細を再取得','secondary');retry.onclick=()=>fillSharedDetail(row,body,scope);body.append(retry);}}
 }
+// 合計は表示中の20件から計算せず、認証済みサーバーの全件集計を使う。
+function renderHistoryTotals(data){
+ const box=$('history-totals'),v=data.order_summary;
+ box.replaceChildren();box.hidden=false;box.removeAttribute('aria-busy');box.classList.remove('summary-stale');
+ if(!v||!['total_yen','customer_count','order_count'].every(k=>Number.isSafeInteger(v[k])&&v[k]>=0)){
+  box.append(element('p','集計を取得できませんでした。「更新する」で再取得してください。','history-error'));return;
+ }
+ const title=element('p',data.customer_access_phase==='practice'?'このメーカーの練習注文の集計':'このメーカーの注文集計','summary-title');
+ const values=element('div',undefined,'summary-values');
+ for(const [label,value]of [['注文金額（税抜）',yen(v.total_yen)],['注文人数',`${v.customer_count.toLocaleString('ja-JP')}人`]]){
+  const item=element('div');item.append(element('span',label),element('strong',value));values.append(item);
+ }
+ box.append(title,values,element('p',`登録済み${v.order_count.toLocaleString('ja-JP')}件。取消済みを除く。同じ方の追加注文は1人として数えます。`,'summary-note'));
+}
+function staleHistoryTotals(){
+ const box=$('history-totals');if(box.hidden)return;box.classList.add('summary-stale');box.removeAttribute('aria-busy');
+ const note=box.querySelector('.summary-note');if(note&&!note.textContent.startsWith('前回取得の集計です。'))note.textContent='前回取得の集計です。'+note.textContent;
+}
 function renderSharedHistory(){
  const opened=new Set([...$('shared-orders').querySelectorAll('details[open]')].map(node=>node.dataset.orderId));$('shared-orders').replaceChildren();
  const scope=scopeKey();
@@ -609,13 +627,13 @@ function renderSharedHistory(){
 async function refreshHistory(more=false){
  if(!info||info.role!=='manufacturer')return;
  const scope=scopeKey();
- if(historyScope!==scope){historyRequest++;historyScope=scope;sharedRows=[];historyCursor=null;historyFetched=null;historyDetails.clear();$('shared-orders').replaceChildren();$('history-more').hidden=true;}
- if(!(localDemo?session.getItem('booth-token'):makerToken)||!navigator.onLine){$('history-status').textContent=historyFetched?`前回取得 ${historyFetched}。通信・メーカー接続を確認して更新してください。`:'履歴の取得には通信とメーカーQRでの接続が必要です。';return;}
- const serial=++historyRequest;$('history-status').classList.remove('history-error');$('history-status').textContent='履歴を取得しています…';$('history-refresh').disabled=true;$('history-more').disabled=true;
+ if(historyScope!==scope){historyRequest++;historyScope=scope;sharedRows=[];historyCursor=null;historyFetched=null;historyDetails.clear();$('shared-orders').replaceChildren();$('history-more').hidden=true;$('history-totals').replaceChildren();$('history-totals').hidden=true;}
+ if(!(localDemo?session.getItem('booth-token'):makerToken)||!navigator.onLine){staleHistoryTotals();$('history-status').textContent=historyFetched?`前回取得 ${historyFetched}。通信・メーカー接続を確認して更新してください。`:'履歴の取得には通信とメーカーQRでの接続が必要です。';return;}
+ const serial=++historyRequest;staleHistoryTotals();$('history-totals').setAttribute('aria-busy','true');$('history-status').classList.remove('history-error');$('history-status').textContent='履歴を取得しています…';$('history-refresh').disabled=true;$('history-more').disabled=true;
  try{const data=await api('manufacturer_history',more&&historyCursor?{cursor:historyCursor}:{});if(serial!==historyRequest||scope!==scopeKey())return;
   sharedRows=more?[...new Map([...sharedRows,...data.rows].map(row=>[row.request_id,row])).values()]:data.rows;historyCursor=data.next_cursor;historyFetched=new Date(data.fetched_at).toLocaleString('ja-JP');
-  renderSharedHistory();$('history-status').textContent=`取得 ${historyFetched} ／ ${sharedRows.length}件表示${historyCursor?'（続きあり）':''}`;
- }catch(e){if(serial===historyRequest&&scope===scopeKey()){$('history-status').classList.add('history-error');$('history-status').textContent=`取得できませんでした。${historyFetched?`前回取得 ${historyFetched}の表示です。`:''}${errorText(e)}`;}}
+  renderHistoryTotals(data);renderSharedHistory();$('history-status').textContent=`取得 ${historyFetched} ／ ${sharedRows.length}件表示${historyCursor?'（続きあり）':''}`;
+ }catch(e){if(serial===historyRequest&&scope===scopeKey()){staleHistoryTotals();$('history-status').classList.add('history-error');$('history-status').textContent=`取得できませんでした。${historyFetched?`前回取得 ${historyFetched}の表示です。`:''}${errorText(e)}`;}}
  finally{if(serial===historyRequest){$('history-refresh').disabled=false;$('history-more').disabled=false;}}
 }
 on('history-refresh','click',()=>refreshHistory());on('history-more','click',()=>refreshHistory(true));

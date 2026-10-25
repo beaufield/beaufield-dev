@@ -185,3 +185,6 @@ section{scroll-margin-top:12px}
 .manual-link{display:inline-flex;align-items:center;min-height:44px;padding:7px 10px;border:1px solid #94bdd2;border-radius:8px;background:white;color:#174a68;font-size:13px;font-weight:700;text-decoration:none;white-space:nowrap}
 .manual-link:hover{background:#e7f4fc}.manual-link:focus-visible{outline:3px solid #e2a64b;outline-offset:2px}
 @media(max-width:370px){.header-actions{gap:5px;flex-direction:column;align-items:flex-end}.manual-link{min-height:36px;padding:5px 8px}}
+
+/* 全件集計と履歴の表示件数を明確に分ける。 */
+.order-totals{background:#eaf6fc;border:1px solid #a6cee1;border-radius:12px;padding:16px;margin:14px 0}.summary-title{font-weight:700;margin:0 0 12px}.summary-values{display:flex;gap:18px;flex-wrap:wrap}.summary-values>div{min-width:140px;flex:1}.summary-values span{display:block;font-size:13px;color:#476779}.summary-values strong{display:block;font-size:25px;color:#144a68;margin-top:5px;overflow-wrap:anywhere}.summary-note{font-size:12px;line-height:1.6;color:#476779;margin:12px 0 0}.summary-stale{background:#fff6e5;border-color:#dbc495}.summary-stale .summary-note{color:#77501b}
