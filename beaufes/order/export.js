@@ -26,6 +26,7 @@ export function handlingWarnings(order){
  const h=unpackRemarks(order.remarks||'');const warnings=[];
  if(h.billing!=='salon')warnings.push('請求先・請求用得意先コードを事務確認');
  if(h.contact!=='registered')warnings.push('配送・連絡を事務確認（備考の先渡し数も確認）');
+ if((order.lines||[]).some(l=>/^NAPLA26-NOTE-/.test(l.product_code)))warnings.push('明細はお客様発注待ち');
  if((order.lines||[]).some(l=>/^ACT26-/.test(l.product_code)))warnings.push('コフレ仮ID：正式商品コード照合まで販売管理入力保留');
  return warnings;
 }
