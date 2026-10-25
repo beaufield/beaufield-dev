@@ -31,3 +31,10 @@ export async function update(id,change){
 }
 export async function clearMakerConnection(token){return transact('settings',true,(store,done)=>{if(!store){if(memory.settings.get('maker-connection')?.token===token)memory.settings.set('maker-connection',null);return;}const request=store.get('maker-connection');request.onsuccess=()=>{if(request.result?.token===token){store.put(null,'maker-connection');memory.settings.set('maker-connection',null);}done();};});}
 export async function sanitizeLegacyQr(){for(const row of await records())if(row.form&&Object.hasOwn(row.form,'qr'))await update(row.id,current=>{const {qr,...form}=current.form;return {...current,form:{...form,qr_hash:current.body?.token_hash||form.qr_hash||'',resolved:false}};});}
+
+// 日本語コメント: サーバーで本番を確認した時だけ、同じアプリの練習記録を端末から消去する。
+export async function purgePracticeRecords(backend,event){
+ const rows=(await records()).filter(row=>row.backend===backend&&row.scope?.event===event&&row.scope?.usage_phase==='practice');
+ for(const row of rows){await transact('records',true,(store,done)=>{memory.records.delete(row.id);if(store)store.delete(row.id);done?.();});}
+ return rows.length;
+}

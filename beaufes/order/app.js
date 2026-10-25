@@ -1,6 +1,6 @@
-import {get,set,records,update as storageUpdate,mergeReceipt,sanitizeLegacyQr,clearMakerConnection,storageMode} from './storage.js';
+import {get,set,records,update as storageUpdate,mergeReceipt,sanitizeLegacyQr,clearMakerConnection,storageMode,purgePracticeRecords} from './storage.js';
 import {buildWorkbook,displayProductCode,emptyHandling,packRemarks,unpackRemarks,handlingWarnings,deliveryLabel,billingLabel} from './export.js';
-const APP_VERSION='v0.25.0';
+const APP_VERSION='v0.25.1';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -406,7 +406,7 @@ function bundles(check=false){
  });
 }
 function calculate(){const amount=bundles().reduce((sum,b)=>sum+b.paid.reduce((a,x)=>a+x.qty*offerPrice(info.catalog.offers.find(o=>o.offer_id===b.offer_id),x.code),0),0);$('total').textContent=yen(amount);}
-async function activate(value){info=value;$('login').hidden=true;if(!officeMode)await set('maker-catalog',info);$('maker').textContent=info.catalog?.manufacturer_name||'メーカー未設定';$('maker-banner').hidden=info.role==='admin';$('workspace').hidden=info.role==='admin';$('admin').hidden=info.role!=='admin';$('ledger').hidden=info.role!=='admin';$('identity').hidden=info.role!=='admin';if(info.role==='admin')return;const id=await get('draft:'+scopeKey());draft=(await records()).find(x=>x.id===id);if(!draft||draft.stage==='discarded')await fresh();else{if(draft.stage==='draft'&&draft.form.ui_version!==2){draft=await update(draft.id,r=>{const offers={};for(const [key,item] of Object.entries(r.form.offers||{})){const paid=Object.fromEntries(Object.entries(item.paid||{}).filter(([,qty])=>qty>0));const gift=Object.fromEntries(Object.entries(item.gift||{}).filter(([,qty])=>qty>0));if(item.sets>0||Object.keys(paid).length||Object.keys(gift).length)offers[key]={sets:item.sets||0,paid,gift};}return {...r,form:{...r.form,offers,delivery:'',delivery_confirmed:false,ui_version:2}};});}const split=splitHyumyDraft(draft,info.catalog);if(split)draft=await update(draft.id,r=>splitHyumyDraft(r,info.catalog)||r);const merged=mergeHyumyRetailDraft(draft,info.catalog);if(merged)draft=await update(draft.id,r=>mergeHyumyRetailDraft(r,info.catalog)||r);if(draft.stage!=='draft'&&draft.receipt?.state==='active'&&!draft.pending)await fresh();else renderForm();}await renderOrders();}
+async function activate(value){if(connectionVerified&&value.customer_access_phase==='live'&&value.role==='manufacturer')await purgePracticeRecords(location.origin,value.scope.event);info=value;renderCutoverNotice();$('login').hidden=true;if(!officeMode)await set('maker-catalog',info);$('maker').textContent=info.catalog?.manufacturer_name||'メーカー未設定';$('maker-banner').hidden=info.role==='admin';$('workspace').hidden=info.role==='admin';$('admin').hidden=info.role!=='admin';$('ledger').hidden=info.role!=='admin';$('identity').hidden=info.role!=='admin';if(info.role==='admin')return;const id=await get('draft:'+scopeKey());draft=(await records()).find(x=>x.id===id);if(!draft||draft.stage==='discarded')await fresh();else{if(draft.stage==='draft'&&draft.form.ui_version!==2){draft=await update(draft.id,r=>{const offers={};for(const [key,item] of Object.entries(r.form.offers||{})){const paid=Object.fromEntries(Object.entries(item.paid||{}).filter(([,qty])=>qty>0));const gift=Object.fromEntries(Object.entries(item.gift||{}).filter(([,qty])=>qty>0));if(item.sets>0||Object.keys(paid).length||Object.keys(gift).length)offers[key]={sets:item.sets||0,paid,gift};}return {...r,form:{...r.form,offers,delivery:'',delivery_confirmed:false,ui_version:2}};});}const split=splitHyumyDraft(draft,info.catalog);if(split)draft=await update(draft.id,r=>splitHyumyDraft(r,info.catalog)||r);const merged=mergeHyumyRetailDraft(draft,info.catalog);if(merged)draft=await update(draft.id,r=>mergeHyumyRetailDraft(r,info.catalog)||r);if(draft.stage!=='draft'&&draft.receipt?.state==='active'&&!draft.pending)await fresh();else renderForm();}await renderOrders();}
 function orderDetails(record){
  // 登録確定後はサーバーの確定明細を使用し、通信待ちは端末に保存した注文内容と明示する。
  let lines=Array.isArray(record.receipt?.lines)?record.receipt.lines:null;
@@ -838,7 +838,30 @@ on('identity-search','click',async()=>{
  if(!data.rows.length)$('identity-results').append(element('p','該当する得意先はありません。'));
 });
 on('export','click',async()=>{const batch_id=crypto.randomUUID();const data=await api('export',{batch_id});await set('last-export',data);const workbook=await buildWorkbook(window.ExcelJS,data);const blob=new Blob([await workbook.xlsx.writeBuffer()],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});const url=URL.createObjectURL(blob);const a=element('a');a.href=url;a.download=`ビューフェス注文_${batch_id}.xlsx`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);$('export-status').textContent=`${data.rows.length}件をExcelに出力しました。「入力候補」と「要確認」を分け、コードの先頭0を保持しています。`;});
+// 日本語コメント: 端末時計だけで成功と表示せず、接続先の本番応答で案内を終了する。
+const CUTOVER_AT=Date.parse('2026-10-26T07:00:00+09:00');
+let checkingCutover=false;
+function renderCutoverNotice(){
+ const notice=$('cutover-notice');if(!notice)return;
+ notice.hidden=officeMode||(connectionVerified&&info?.customer_access_phase==='live');
+ if(!notice.hidden&&Date.now()>=CUTOVER_AT){
+  $('cutover-title').textContent='本番環境への切替状況を確認しています';
+  $('cutover-guide').textContent='10月26日（月）朝7:00が切替予定時刻です。オンラインでこの画面を再読み込みし、本番のお客様が検索できることをご確認ください。';
+ }
+}
+async function refreshCutoverPhase(){
+ renderCutoverNotice();
+ if(officeMode||checkingCutover||Date.now()<CUTOVER_AT||!navigator.onLine||!makerToken||info?.customer_access_phase==='live')return;
+ checkingCutover=true;
+ try{const value=await api('catalog');if(value.customer_access_phase==='live'){
+  if(!localDemo&&value.scope.device!==deviceId())throw Error('SCOPE_MISMATCH');
+  connectionVerified=true;await activate(value);message('本番環境へ切り替わりました。テスト入力を消去しました。本番のお客様を選んでください。');
+ }}catch{renderCutoverNotice();}finally{checkingCutover=false;}
+}
 async function start(){
+ renderCutoverNotice();
+ setInterval(()=>void refreshCutoverPhase(),30000);
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden)void refreshCutoverPhase();});
  resetCustomerSearch();
  // 更新前のHTMLが一時的に残る端末でも、廃止した控え・追加購入画面は表示しない。
  for(const id of ['receipt-modal','additional-modal','another-purchase'])$(id)?.remove();

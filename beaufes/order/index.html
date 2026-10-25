@@ -5,14 +5,21 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="robots" content="noindex,nofollow">
   <title>BEAU Fes ブース注文</title>
-  <link rel="stylesheet" href="style.css?build=20261025-order-totals">
+  <link rel="stylesheet" href="style.css?build=20261025-cutover-notice">
   <script src="jsQR.js" defer></script>
   <script src="exceljs.min.js" defer></script>
-  <script src="app.js?build=20261025-order-totals" type="module"></script>
+  <script src="app.js?build=20261025-cutover-notice" type="module"></script>
 </head>
 <body>
 <header id="app-header"><div class="header-top"><div><small>BEAU Fes 2026</small><h1>ブース注文 <span id="version"></span></h1></div><div class="header-actions"><a id="maker-help" class="manual-link" href="manual.html" target="_blank" rel="noopener noreferrer" aria-label="使い方（別ウィンドウで開きます）">使い方 ↗</a><span id="network" class="network-badge"></span></div></div><div id="maker-banner" class="maker-banner" hidden><span class="maker-label">メーカー</span><strong id="maker"></strong></div></header>
 <main>
+  <aside id="cutover-notice" class="cutover-notice" aria-labelledby="cutover-title">
+    <span class="cutover-label">本番切替のお知らせ</span>
+    <h2 id="cutover-title">10月26日（月）朝7:00に本番環境へ切り替えます</h2>
+    <p id="cutover-guide">それまではテストとして自由にご利用ください。お客様の検索や注文入力など、ぜひお試しください。</p>
+    <p class="cutover-reset">入力されたテスト注文・下書きは、本番切替時にすべて消去されます。本番には引き継がれません。</p>
+    <p class="cutover-note">切替後も同じメーカー用URLをご利用いただけます。時刻は日本時間です。</p>
+  </aside>
   <section id="login"><h2 id="login-title">端末を準備する</h2><label id="token-label">接続コード<input id="token" type="password" autocomplete="off" placeholder="開発用の試験コード"></label><button id="connect">接続する</button><p id="prepared"></p></section>
   <p id="campaign-notice" class="campaign-notice"></p><p id="message" role="status" aria-live="polite"></p>
   <div id="workspace" hidden>
