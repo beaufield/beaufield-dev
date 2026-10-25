@@ -122,6 +122,14 @@
     background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0;
     border-radius: 8px; padding: 14px; font-size: 14px; line-height: 1.8;
   }
+  /* 日本語コメント: 初期化前・通信失敗時にも新規フォームを表示しない。 */
+  #formWrap { display:none !important; }
+  .registration-closed { text-align:center; padding:32px 20px; line-height:1.9; }
+  .registration-closed h2 { margin:0 0 16px; font-size:20px; color:var(--main-dark); }
+  .registration-closed p { margin:12px 0; font-size:15px; }
+  .registration-closed a { color:var(--main-dark); }
+  .pass-open-link { display:block; min-height:48px; margin:14px 0; padding:12px; border-radius:8px;
+    background:#059669; color:#fff !important; text-align:center; text-decoration:none; }
 </style>
 <link rel="stylesheet" href="lib/booking-v1.3.1.css">
 <script src="lib/booking-v1.3.9.js"></script>
@@ -136,7 +144,7 @@
      target="_blank" rel="noopener noreferrer">
     ビューフェスの内容を見る<span aria-hidden="true">↗</span>
   </a>
-  <p class="event-lp-hint">別画面で開きます。内容を確認したら、<br>この申込画面に戻ってください。</p>
+  <p class="event-lp-hint">別画面でイベント内容をご確認いただけます。</p>
 </header>
 
 <main>
@@ -146,8 +154,16 @@
     <div><b>申込締切</b>：2026年10月20日（火）</div>
   </div>
 
+  <!-- 日本語コメント: 新規申込のみ終了。既存の入場パスと予約は継続する。 -->
+  <section class="card registration-closed" id="registrationClosed" aria-labelledby="closedTitle">
+    <h2 id="closedTitle">お申し込みの受付は終了しました。</h2>
+    <p>たくさんのお申し込み、ありがとうございました。</p>
+    <p>お申し込み済みの方は、メールまたは公式LINEから<br>入場パス（QRコード）をご確認ください。</p>
+    <p><a href="?resend=1" id="toResend">入場パスのリンクを紛失した方はこちら</a></p>
+  </section>
+
   <!-- ============ 申込フォーム ============ -->
-  <div id="formWrap">
+  <div id="formWrap" hidden inert>
     <form class="card" id="applyForm">
       <label>サロン様名<span class="req">必須</span></label>
       <input type="text" id="salon_name" required>
@@ -225,7 +241,7 @@
       ※ご予約は、お申し込み後の入場パス画面からも追加・取り消しができます。
     </p>
     <div class="linkLine">
-      <a href="#" id="toResend">入場パスのリンクを紛失した方はこちら</a>
+      <a href="?resend=1" id="legacyToResend">入場パスのリンクを紛失した方はこちら</a>
     </div>
   </div>
 
@@ -251,7 +267,7 @@
     <input type="email" id="resendEmail" inputmode="email" autocomplete="email"
            autocapitalize="off" spellcheck="false">
     <button class="btn" id="resendBtn">パスのリンクを送る</button>
-    <button class="btn btnQuiet" id="backFromResendBtn">申し込み画面に戻る</button>
+    <button class="btn btnQuiet" id="backFromResendBtn">受付終了のご案内に戻る</button>
     <div class="errorMsg" id="resendError"></div>
     <div id="resendDone" style="display:none;margin-top:16px;">
       <div class="okMsg">
@@ -279,12 +295,11 @@ const bookingApi = window.BeaufesBooking || {
     return null;
   }, staff:()=>alert('予約画面を読み込めませんでした。再読み込みしてください。')
 };
-const APP_VERSION = '0.28.7';
+const APP_VERSION = '0.29.0';
 const GAS_URL = window.BFEventCandidate.endpoint;
 
 let bookingForm = null;
-try { bookingForm = bookingApi.mount({root:'#bookingForm',mode:'form',url:GAS_URL}); }
-catch(e) { console.warn('予約欄を読み込めませんでした。来場申込は継続できます。'); }
+// 日本語コメント: 新規申込終了後は新規用の予約欄を初期化しない。
 document.getElementById('versionLine').textContent = 'v' + APP_VERSION;
 
 // GASの結果配信は逐次でも約7%失敗する（実測）。リトライ前提で組む。
@@ -464,7 +479,9 @@ async function postWithRetry(params, onProgress) {
 // 画面の出し分け
 // ------------------------------------------------------------
 function showPanel(which) {
-  el('formWrap').style.display           = (which === 'form')     ? 'block' : 'none';
+  // 日本語コメント: 戻る操作でも新規申込フォームは再表示しない。
+  el('registrationClosed').style.display = (which === 'resend') ? 'none' : 'block';
+  el('formWrap').style.display = 'none';
   el('existingNoticePanel').style.display = (which === 'existing') ? 'block' : 'none';
   el('resendPanel').style.display        = (which === 'resend')   ? 'block' : 'none';
   window.scrollTo(0, 0);
@@ -494,6 +511,9 @@ function buildPayload() {
 
 // 申込を送信する。
 async function sendApply() {
+  // 日本語コメント: 非表示の旧フォームから発火しても送信しない。
+  showPanel('form');
+  return;
   const payload = Object.assign(buildPayload(), bookingForm ? bookingForm.payload() : {});
 
   overlay(true);
@@ -591,3 +611,4 @@ if (new URLSearchParams(location.search).get('resend') === '1') {
 
 </body>
 </html>
+
