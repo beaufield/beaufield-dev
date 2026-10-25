@@ -1538,7 +1538,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.87.1-db';
+const APP_VERSION    = 'v1.87.2-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -2126,6 +2126,12 @@ function _gasNotifyRetry(attemptNumber) {
 // 「ネットワークを確認してください」という誤誘導を避ける。
 // TypeError（fetch自体が失敗＝オフライン等の真の通信断）のときだけ従来の文言にする
 function _gasErrorMessage(e) {
+  // 保存前の端末側制限や、サーバーが明示した重複確認を通信障害に置き換えない。
+  if (e && e.code === 'ORDER_OUTBOX_LIMIT') return '保存結果が未確定の発注が5件あります。設定画面の「未確定を再確認」を実行してください。追加発注の確認待ちは、この上限には含めません。';
+  if (e && e.code === 'ORDER_OUTBOX_UNREADABLE') return '未確定発注の控えを読み取れません。設定画面の診断結果をコピーして管理者へ連絡してください。';
+  if (e && e.code === 'DUPLICATE_ORDER_REVIEW_REQUIRED') return '追加発注の確認が完了していません。追加が必要な場合は出力ボタンを押し、確認と理由の入力を行ってください。';
+  if (e && e.name === 'QuotaExceededError') return '端末に未確定発注の控えを保存できません。診断結果をコピーして管理者へ連絡してください。';
+  if (e && e.name === 'SecurityError') return 'ブラウザで端末への保存が許可されていません。診断結果をコピーして管理者へ連絡してください。';
   if (e && e.name === 'ResourceReadError') return e.message;
   if (e && e.name === 'GasOutcomeUnknownError') return '処理結果を確認できませんでした。同じ操作をすぐ繰り返さず、画面の状態を確認してください。';
   if (e && e.name === 'GasDeadlineError') return '処理時間の上限に達しました。画面を戻しました。';
@@ -4660,6 +4666,12 @@ const ORDER_OUTBOX_LIMIT = 5;
 const ORDER_OUTBOX_AUTO_RECOVER_MS = 7 * 24 * 60 * 60 * 1000;
 const _orderOutboxInFlight = new Map();
 
+// DUPLICATE_REVIEW はサーバーが保存せず確認を求めた結果。自動復旧の対象外なので、
+// 結果不明の保存を守る5件枠にも含めない。既存の控え・送信ID・重複確認は保持する。
+function _orderOutboxNeedsRecovery(entry) {
+  return entry.status !== 'DUPLICATE_REVIEW';
+}
+
 function _readOrderOutbox() {
   try {
     const raw = localStorage.getItem(LS_ORDER_OUTBOX);
@@ -4702,10 +4714,14 @@ function updateOrderOutboxStatus() {
   if (!el) return;
   const userId = currentUser ? String(currentUser.user_id || '') : '';
   const rows = _readOrderOutbox().filter(x => !userId || String(x.userId || '') === userId);
-  const needsReview = rows.filter(x => x.status === 'CONFLICT' || x.status === 'STALE' ||
-    x.status === 'DUPLICATE_REVIEW' || Date.now() - x.createdAt > ORDER_OUTBOX_AUTO_RECOVER_MS).length;
-  el.textContent = `未確定発注: ${rows.length}件` + (needsReview ? `（要確認 ${needsReview}件）` : '');
-  el.style.color = rows.length ? 'var(--danger)' : 'var(--text-light)';
+  const pending = rows.filter(_orderOutboxNeedsRecovery);
+  const duplicateReviews = rows.length - pending.length;
+  const needsReview = pending.filter(x => x.status === 'CONFLICT' || x.status === 'STALE' ||
+    Date.now() - x.createdAt > ORDER_OUTBOX_AUTO_RECOVER_MS).length;
+  el.textContent = `未確定発注: ${pending.length}件（上限${ORDER_OUTBOX_LIMIT}件）`
+    + (needsReview ? `（要確認 ${needsReview}件）` : '')
+    + (duplicateReviews ? ` ／ 追加発注の確認待ち: ${duplicateReviews}件（別枠）` : '');
+  el.style.color = pending.length ? 'var(--danger)' : 'var(--text-light)';
 }
 
 function _newOrderOutboxEntry(outputType) {
@@ -4715,9 +4731,12 @@ function _newOrderOutboxEntry(outputType) {
     const existing = rows.find(x => x.requestId === orderRequestId);
     if (existing) return existing; // 出力形式を変えても最初に固定したpayloadを再利用する
   }
-  const currentUserRows = rows.filter(x => String(x.userId || '') === String(currentUser.user_id || ''));
+  const currentUserRows = rows.filter(x => String(x.userId || '') === String(currentUser.user_id || '') &&
+    _orderOutboxNeedsRecovery(x));
   if (currentUserRows.length >= ORDER_OUTBOX_LIMIT) {
-    throw new Error('未確定の発注が5件あります。設定画面の「未確定を再確認」を実行してください。');
+    const err = new Error('保存結果が未確定の発注が5件あります。設定画面の「未確定を再確認」を実行してください。');
+    err.code = 'ORDER_OUTBOX_LIMIT';
+    throw err;
   }
   orderRequestId = _generateRequestId();
   const itemsSnapshot = cartItems.map(item => ({
@@ -5029,7 +5048,7 @@ async function recoverPendingOrders(manual = false) {
   if (!currentUser) return;
   const userId = String(currentUser.user_id || '');
   const rows = _readOrderOutbox().filter(x => String(x.userId || '') === userId &&
-    x.status !== 'CONFLICT' && x.status !== 'DUPLICATE_REVIEW');
+    x.status !== 'CONFLICT' && _orderOutboxNeedsRecovery(x));
   if (rows.length === 0) {
     if (manual) showToast('未確定の発注はありません', 'success');
     updateOrderOutboxStatus();
@@ -5235,6 +5254,11 @@ function _setOrderSaveStatus(state, detail = '', outputType = '') {
     el.innerHTML = '⚠️ 発注履歴の保存を確認できません。ファイルは出力していません。'
       + '<br>通信が回復してから、同じ内容のまま確認をやり直してください。'
       + `<button class="btn btn-outline btn-sm" style="margin-top:6px" ${orderAction('retryOrderSave', outputType)}>🔄 保存確認をやり直す</button>`;
+  } else if (state === 'blocked') {
+    // 確認待ち・端末側の制限は、通信回復待ちや保存再試行へ誘導しない。
+    el.style.display = 'block';
+    el.style.color = 'var(--danger)';
+    el.textContent = '⚠️ ファイルは出力していません。' + detail;
   } else if (state === 'inactive') {
     // H4: 保存は成立しているが失効済み。「保存確認をやり直す」ボタンは出さない
     el.style.display = 'block';
@@ -5258,6 +5282,8 @@ async function _saveBeforeExternalOutput(outputType) {
     return orderNo;
   } catch(e) {
     if (e && e.code === 'ORDER_NO_LONGER_ACTIVE') _setOrderSaveStatus('inactive', '', outputType);
+    else if (e && (['ORDER_OUTBOX_LIMIT', 'ORDER_OUTBOX_UNREADABLE', 'DUPLICATE_ORDER_REVIEW_REQUIRED'].includes(e.code) ||
+      ['QuotaExceededError', 'SecurityError'].includes(e.name))) _setOrderSaveStatus('blocked', _gasErrorMessage(e), outputType);
     else _setOrderSaveStatus('failed', '', outputType);
     throw e;
   }
