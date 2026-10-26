@@ -192,35 +192,7 @@ body.camera-open { overflow: hidden; }
 
   <!-- ② 受付（名簿を取得したら出る） -->
   <div id="scanSection" style="display:none;">
-<style>
-/* 日本語コメント: 受付の中で開く当日登録。画面遷移や別の社員ログインを要求しない。 */
-#walkinCard [hidden]{display:none!important}#walkinCard label{display:block;font-size:14px;margin:12px 0 4px}#walkinCard select{width:100%;padding:11px;font:inherit;border:1px solid #ccd7da;border-radius:8px;background:white}#walkinCard .wiButtons{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}#walkinCard .wiButtons button{flex:1;min-width:130px}#walkinCard .wiMatch{border-top:1px solid #dde5e6;margin-top:10px;padding-top:10px}#walkinCard .wiMatch button{margin-top:5px}#walkinCard input[type=checkbox]{width:20px;height:20px;vertical-align:middle}#walkinMessage{white-space:pre-line;overflow-wrap:anywhere}#walkinCard .wiSummary{white-space:pre-line;background:#edf5f3;padding:12px;border-radius:9px;margin:12px 0}#walkinCard .wiStatus{font-size:13px;font-weight:bold;color:#10617c;margin:8px 0}
-</style>
-<div class="card" id="walkinCard" style="overflow-wrap:anywhere">
- <h2>当日登録・予備名札</h2>
- <button class="ghost" id="walkinOpen" type="button">未申込の方を登録</button>
- <div id="walkinPanel" hidden>
-  <div class="wiStatus" id="walkinStatus" role="status"></div>
-  <div id="walkinSummary" class="wiSummary" hidden></div>
-  <div id="walkinForm">
-   <p class="hint">お名前・サロン名・業態の3項目で登録します。メール・電話は不要です。控えメールは送りません。</p>
-   <label for="walkinName">お名前（必須）</label><input id="walkinName" type="text" maxlength="60" autocomplete="off">
-   <label for="walkinSalon">サロン名（必須）</label><input id="walkinSalon" type="text" maxlength="100" autocomplete="off">
-   <label for="walkinBusiness">業態（必須）</label><select id="walkinBusiness"><option value="">選んでください</option></select>
-   <div class="wiButtons"><button id="walkinSearch" type="button" class="ghost">登録済みか確認</button></div>
-   <div id="walkinMatches" aria-live="polite"></div>
-   <div id="walkinConfirm" hidden><label><input id="walkinReviewed" type="checkbox">候補を確認し、新しく登録する方だと確認しました</label><div class="wiButtons"><button id="walkinRegister" type="button">この内容で当日登録</button></div></div>
-  </div>
-  <div id="walkinSparePanel" hidden><p class="hint">渡す札のお名前と番号を確認します。使用済み・解除済みの札は選べません。</p><label for="walkinSpare">手元の予備名札</label><select id="walkinSpare"></select><div class="wiButtons"><button id="walkinAssign" type="button">この名札を割り当てる</button><button id="walkinReloadSpares" type="button" class="ghost">名札一覧を更新</button></div></div>
-  <div id="walkinResumePanel" hidden><div class="wiButtons"><button id="walkinResume" type="button">同じ操作を再確認する</button></div></div>
-  <div id="walkinCheckinPanel" hidden><p>予備名札を確認して、下のボタンで入場を記録してください。QRをもう一度読む必要はありません。</p><div class="wiButtons"><button id="walkinCheckin" type="button">この方を入場受付</button></div></div>
-  <div id="walkinDonePanel" hidden><p>端末に入場記録を残しました。送信は自動で行います。上部の「送信待ち」と「直近の受付」で状況を確認してください。</p><div class="wiButtons"><button id="walkinNext" type="button">次の当日登録へ</button></div></div>
-  <div class="wiButtons"><button id="walkinCancel" type="button" class="ghost">この当日登録を取り消す</button></div>
-  <div id="walkinMessage" class="err" role="alert"></div>
-  <div class="wiButtons"><button id="walkinClose" type="button" class="ghost">QR受付へ戻る</button></div>
-  <p class="hint">途中で閉じても進捗は残ります。通信・認証のエラーは続きを再開し、最初から作り直しません。</p>
- </div>
-</div>
+
 
 
     <div class="card">
@@ -259,6 +231,36 @@ body.camera-open { overflow: hidden; }
         <div class="hint">名簿の中だけを探します（通信しません）。</div>
       </div>
     </div>
+
+<style>
+/* 日本語コメント: 受付の中で開く当日登録。画面遷移や別の社員ログインを要求しない。 */
+#walkinCard [hidden]{display:none!important}#walkinCard label{display:block;font-size:14px;margin:12px 0 4px}#walkinCard select{width:100%;padding:11px;font:inherit;border:1px solid #ccd7da;border-radius:8px;background:white}#walkinCard .wiButtons{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}#walkinCard .wiButtons button{flex:1;min-width:130px}#walkinCard .wiMatch{border-top:1px solid #dde5e6;margin-top:10px;padding-top:10px}#walkinCard .wiMatch button{margin-top:5px}#walkinCard input[type=checkbox]{width:20px;height:20px;vertical-align:middle}#walkinMessage{white-space:pre-line;overflow-wrap:anywhere}#walkinCard .wiSummary{white-space:pre-line;background:#edf5f3;padding:12px;border-radius:9px;margin:12px 0}#walkinCard .wiStatus{font-size:13px;font-weight:bold;color:#10617c;margin:8px 0}
+</style>
+<div class="card" id="walkinCard" style="overflow-wrap:anywhere">
+ <h2>当日登録・予備名札</h2>
+ <button class="ghost" id="walkinOpen" type="button">未申込の方を登録</button>
+ <div id="walkinPanel" hidden>
+  <div class="wiStatus" id="walkinStatus" role="status"></div>
+  <div id="walkinSummary" class="wiSummary" hidden></div>
+  <div id="walkinForm">
+   <p class="hint">お名前・サロン名・業態の3項目で登録します。メール・電話は不要です。控えメールは送りません。</p>
+   <label for="walkinName">お名前（必須）</label><input id="walkinName" type="text" maxlength="60" autocomplete="off">
+   <label for="walkinSalon">サロン名（必須）</label><input id="walkinSalon" type="text" maxlength="100" autocomplete="off">
+   <label for="walkinBusiness">業態（必須）</label><select id="walkinBusiness"><option value="">選んでください</option></select>
+   <div class="wiButtons"><button id="walkinSearch" type="button" class="ghost">登録済みか確認</button></div>
+   <div id="walkinMatches" aria-live="polite"></div>
+   <div id="walkinConfirm" hidden><label><input id="walkinReviewed" type="checkbox">候補を確認し、新しく登録する方だと確認しました</label><div class="wiButtons"><button id="walkinRegister" type="button">この内容で当日登録</button></div></div>
+  </div>
+  <div id="walkinSparePanel" hidden><p class="hint">渡す札のお名前と番号を確認します。使用済み・解除済みの札は選べません。</p><label for="walkinSpare">手元の予備名札</label><select id="walkinSpare"></select><div class="wiButtons"><button id="walkinAssign" type="button">この名札を割り当てる</button><button id="walkinReloadSpares" type="button" class="ghost">名札一覧を更新</button></div></div>
+  <div id="walkinResumePanel" hidden><div class="wiButtons"><button id="walkinResume" type="button">同じ操作を再確認する</button></div></div>
+  <div id="walkinCheckinPanel" hidden><p>予備名札を確認して、下のボタンで入場を記録してください。QRをもう一度読む必要はありません。</p><div class="wiButtons"><button id="walkinCheckin" type="button">この方を入場受付</button></div></div>
+  <div id="walkinDonePanel" hidden><p>端末に入場記録を残しました。送信は自動で行います。上部の「送信待ち」と「直近の受付」で状況を確認してください。</p><div class="wiButtons"><button id="walkinNext" type="button">次の当日登録へ</button></div></div>
+  <div class="wiButtons"><button id="walkinCancel" type="button" class="ghost">この当日登録を取り消す</button></div>
+  <div id="walkinMessage" class="err" role="alert"></div>
+  <div class="wiButtons"><button id="walkinClose" type="button" class="ghost">QR受付へ戻る</button></div>
+  <p class="hint">途中で閉じても進捗は残ります。通信・認証のエラーは続きを再開し、最初から作り直しません。</p>
+ </div>
+</div>
 
     <div class="card">
       <h2>③ 直近の受付</h2>
@@ -316,7 +318,7 @@ await window.BFEventCandidate.ready;
 //    予備名札は朝の名簿に載らない）。最終的な照合はサーバーが行う。
 // ============================================================
 
-const APP_VERSION = '0.7.3';
+const APP_VERSION = '0.7.4';
 
 // 本番GAS（HTML=GitHub Pages / GAS=版番号固定の分離型。ローカル検証はモックに差し替える）
 const GAS_URL = window.BFEventCandidate.endpoint;
@@ -335,7 +337,6 @@ const SEND_BATCH       = 25;                                  // 1回のPOSTで�
 const BACKOFF_SEC      = [1, 2, 3, 5, 8, 13, 21, 34, 55, 60];
 const PUMP_TICK_MS     = 3000;
 const REMOTE_REFRESH_MS = 30000;                              // §3-1「30秒ごと」
-const VERDICT_HOLD_MS  = 12000;                               // 判定表示を残す時間
 
 // 送っても直らないエラー。これ以上再送しても意味がないので要確認に落とす
 const PERMANENT_ERRORS = ['INVALID_REQUEST', 'NO_CHECKINS'];
@@ -351,7 +352,7 @@ let deviceId = '';
 let sending = false;
 let storageOk = false;
 let authWarning = '';
-let scanStream = null, scanTimer = null, verdictTimer = null;
+let scanStream = null, scanTimer = null;
 
 function el(id) { return document.getElementById(id); }
 function esc(s) {
@@ -705,8 +706,7 @@ function showVerdict(kind, title, opt) {
   }
 
   el('verdictBox').innerHTML = html;
-  if (verdictTimer) clearTimeout(verdictTimer);
-  verdictTimer = setTimeout(function () { el('verdictBox').innerHTML = ''; }, VERDICT_HOLD_MS);
+  // 日本語コメント: 次の受付結果で置き換わるまで、お名前と判定を表示し続ける。
   try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) { window.scrollTo(0, 0); }
 }
 
