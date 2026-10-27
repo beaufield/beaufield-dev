@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="attendance.css?b=20261027b">
 <script src="candidate-config.js?b=3debf1542ecb"></script>
 <script src="ui-bootstrap.js?b=40aeb3ead80d"></script>
-<script type="module" src="attendance.mjs?b=20261027b"></script>
+<script type="module" src="attendance.mjs?b=20261027c"></script>
 </head>
 <body>
 <header class="appHeader">
@@ -52,7 +52,7 @@
       <p class="muted note">担当・予約・キーワードは、上の人数とグラフにも反映されます。</p>
     </section>
     <section class="panel" id="listPanel" aria-labelledby="listTitle">
-      <div class="sectionLine"><div><h2 id="listTitle">来場者一覧</h2><p id="listSummary" class="muted" aria-live="polite"></p></div><label>並び順 <select id="sort"><option value="recent">受付が新しい順</option><option value="oldest">受付が早い順</option><option value="name">名前順</option><option value="salon">サロン名順</option></select></label></div>
+      <div class="sectionLine"><div><h2 id="listTitle">来場者一覧</h2><p id="listSummary" class="muted" aria-live="polite"></p></div><label>並び順 <select id="sort"><option value="recent">受付が新しい順</option><option value="oldest">受付が早い順</option><option value="name">名前順</option><option value="salon">サロン名順</option><option value="tantou">担当別</option></select></label></div>
       <div class="tabs" role="group" aria-label="受付状態で絞り込み"><button type="button" data-status="arrived" aria-pressed="true">受付済み</button><button type="button" data-status="waiting" aria-pressed="false">未受付</button><button type="button" data-status="all" aria-pressed="false">全員</button></div>
       <p class="muted note">来場を確認できた方だけ「受付済みにする」を押してください。本人へのメール・LINE通知は送信しません。</p>
       <div class="tableScroll"><table><thead><tr><th>受付状態・時刻</th><th>サロン名</th><th>お名前</th><th>担当</th><th>予約内容</th><th>受付番号</th><th>手動受付</th></tr></thead><tbody id="rows"></tbody></table></div>

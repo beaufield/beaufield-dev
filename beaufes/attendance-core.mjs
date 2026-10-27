@@ -50,14 +50,22 @@ export function histogram(rows,date,interval=10){
  let cumulative=0;for(const bin of bins)bin.cumulative=cumulative+=bin.count;
  return {bins,count:dated.length,unknown:arrived.filter(a=>!a.time).length,otherDate:arrived.filter(a=>a.time&&a.time.date!==date).length,max:Math.max(1,...bins.map(b=>b.count))};
 }
-export function selectList(rows,{status='arrived',date='',minute=null,interval=10,sort='recent'}={}){
+export function selectList(rows,{status='arrived',date='',minute=null,interval=10,sort='recent',tantouOrder=[]}={}){
  const selected=rows.filter(a=>{
   if(status==='arrived'&&!a.arrived||status==='waiting'&&a.arrived)return false;
   if(minute!==null&&(!a.arrived||!a.time||a.time.date!==date||a.time.minute<minute||a.time.minute>=minute+interval))return false;
   return true;
  });
  const cmp=(a,b)=>String(a||'').localeCompare(String(b||''),'ja');
+ // 日本語コメント: 担当選択欄と同じ順。未登録の担当も残し、未割当は最後へまとめる。
+ const ownerName=value=>String(value||'').trim();
+ const owners=new Map(tantouOrder.map((name,index)=>[ownerName(name),index]));
+ const rank=name=>name?(owners.get(name)??tantouOrder.length):tantouOrder.length+1;
  selected.sort((a,b)=>{
+  if(sort==='tantou'){
+   const left=ownerName(a.tantou),right=ownerName(b.tantou);
+   return rank(left)-rank(right)||cmp(left,right)||cmp(a.salon_name,b.salon_name)||cmp(a.staff_name,b.staff_name)||cmp(a.app_id,b.app_id);
+  }
   if(sort==='name')return cmp(a.staff_name,b.staff_name)||cmp(a.app_id,b.app_id);
   if(sort==='salon')return cmp(a.salon_name,b.salon_name)||cmp(a.staff_name,b.staff_name)||cmp(a.app_id,b.app_id);
   return (sort==='oldest'?1:-1)*((a.time?.epoch??0)-(b.time?.epoch??0))||cmp(a.app_id,b.app_id);

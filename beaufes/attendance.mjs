@@ -1,7 +1,7 @@
-import {EVENT_DATE,snapshot,selectBase,totals,histogram,selectList,minuteLabel,sessionClock} from './attendance-core.mjs?b=20261027b';
+import {EVENT_DATE,snapshot,selectBase,totals,histogram,selectList,minuteLabel,sessionClock} from './attendance-core.mjs?b=20261027c';
 import {UNKNOWN_TIME,pendingCheckin,prepareCheckin,clearCheckin,validateCheckinResult} from './attendance-checkin.mjs?b=20261027a';
 // 日本語コメント: 既存の社員認証と受付APIを共用する。申込・予約・パス再送APIは呼ばない。
-const APP_VERSION='1.2.0';
+const APP_VERSION='1.3.0';
 const $=id=>document.getElementById(id);
 let data=null,status='arrived',minute=null,inFlight=false,timer=null,lastSuccess=0,denied=false;
 let manualAppId=null,manualBusy=false;
@@ -82,7 +82,7 @@ function renderCumulative(chart){
 }
 function renderList(base){
  const interval=Number($('interval').value),date=$('chartDate').value;
- const list=selectList(base,{status,date,minute,interval,sort:$('sort').value});
+ const list=selectList(base,{status,date,minute,interval,sort:$('sort').value,tantouOrder:data.tantou});
  const title=status==='arrived'?'来場者一覧（受付済み）':status==='waiting'?'未受付の方の一覧':'申込者一覧（全員）';
  $('listTitle').textContent=title;
  $('listSummary').textContent=`表示 ${list.length}人`+(minute!==null?' · '+date.replaceAll('-','/')+' '+minuteLabel(minute)+'〜'+minuteLabel(minute+interval):'');
