@@ -41,6 +41,20 @@ export function prepareProductSummary(input,makerId=''){
  if(result.reduce((n,m)=>n+m.totalYen,0)!==data.total_yen)throw Error('REPORT_DATA_MISMATCH');
  return {makers:result,productCount:result.reduce((n,m)=>n+m.products.length,0),totalYen:data.total_yen};
 }
+// 受渡区分を先に分け、同じ商品の購入・サービス・金額を区分の間で相殺しない。
+export function prepareDeliveryProductSummary(input){
+ if(input?.maker_id)throw Error('REPORT_DATA_MISMATCH');
+ const data=prepareReport(input),buckets=[{key:'later',label:'後日納品',rows:[]},{key:'takeaway',label:'当日お渡し済み',rows:[]}];
+ const pending={key:'unknown',label:'受渡方法未確認',rows:[]};
+ for(const row of data.rows)(buckets.find(g=>g.key===row.delivery)||pending).rows.push(row);
+ if(pending.rows.length)buckets.push(pending);
+ const groups=buckets.map(group=>{
+  const part={...data,rows:group.rows,order_count:group.rows.length,total_yen:group.rows.reduce((n,r)=>n+r.total_yen,0),customer_count:new Set(group.rows.map(r=>r.customer.id).filter(Boolean)).size};
+  return {key:group.key,label:group.label,data:part,summary:prepareProductSummary(part)};
+ });
+ if(groups.reduce((n,g)=>n+g.data.order_count,0)!==data.order_count||groups.reduce((n,g)=>n+g.summary.totalYen,0)!==data.total_yen)throw Error('REPORT_DATA_MISMATCH');
+ return {data,groups,totalYen:data.total_yen,productCount:groups.reduce((n,g)=>n+g.summary.productCount,0)};
+}
 // 同姓同名・共通の得意先番号は統合せず、来場者番号でお客様をまとめる。
 export function prepareCustomerReport(input,makerId=''){
  const data=prepareReport(input,makerId),people=new Map();
@@ -64,10 +78,11 @@ export function prepareCustomerReport(input,makerId=''){
  return {data,customers,groups,customerCount:customers.length};
 }
 export async function buildCustomerPdf(input,options={}){return buildOrderPdf(input,{...options,view:'customers'});}
+export async function buildDeliveryProductPdf(input,options={}){return buildOrderPdf(input,{...options,makerId:'',title:'全メーカー',view:'delivery-products'});}
 export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages={},makerId='',title='全メーカー',view='orders'}={}){
- if(!['orders','customers'].includes(view))throw Error('REPORT_DATA_MISMATCH');
+ if(!['orders','customers','delivery-products'].includes(view))throw Error('REPORT_DATA_MISMATCH');
  const data=prepareReport(input,makerId),customerReport=view==='customers'?prepareCustomerReport(data,makerId):null;
- const summary=prepareProductSummary(data,makerId);
+ const summary=prepareProductSummary(data,makerId),deliverySummary=view==='delivery-products'?prepareDeliveryProductSummary(data):null;
  if(!pdfLib?.PDFDocument||!fontkit||!fontBytes)throw Error('PDF_DEPENDENCY_UNAVAILABLE');
  const {PDFDocument,rgb}=pdfLib,doc=await PDFDocument.create();doc.registerFontkit(fontkit);
  // 日本語フォントの一部だけの埋込みで文字が欠けるビューアーを避け、全字形を埋め込む。
@@ -78,7 +93,7 @@ export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages=
  const clean=value=>{const s=String(value??'').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g,' ').normalize('NFC');if([...s].some(c=>c!=='\n'&&!glyphs.has(c.codePointAt(0))&&!inlineImages.has(c)))throw Error('PDF_FONT_UNSUPPORTED');return s;};
  const W=595.28,H=841.89,M=36,WIDTH=W-M*2,BOTTOM=45;
  const navy=rgb(.09,.25,.35),gray=rgb(.35,.4,.44),blue=rgb(.91,.95,.98),light=rgb(.96,.97,.98),warn=rgb(.58,.25,.07);
- let page,y,context='',activeCustomer=null;const pages=[],pageCustomers=new Map();
+ let page,y,context='',activeCustomer=null;const pages=[],pageCustomers=new Map(),pageDeliveries=new Map();
  const parts=text=>{const result=[];let chunk='';for(const ch of text){if(inlineImages.has(ch)){if(chunk)result.push({text:chunk});chunk='';result.push({image:inlineImages.get(ch)});}else chunk+=ch;}if(chunk)result.push({text:chunk});return result;};
  const textWidth=(text,size)=>parts(text).reduce((n,p)=>n+(p.image?size:font.widthOfTextAtSize(p.text,size)),0);
  const wrap=(value,width,size)=>{const lines=[];for(const para of clean(value).split('\n')){let line='';for(const ch of para){if(line&&textWidth(line+ch,size)>width){lines.push(line);line='';}line+=ch;}lines.push(line);}return lines;};
@@ -140,6 +155,7 @@ export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages=
   if(h.contact!=='registered')paragraph('配送先・一部お渡し等は備考と受付情報を確認してください。',{size:8,color:warn});
   context='';rule();
  }
+ if(view!=='delivery-products'){
  newPage();paragraph(`${data.order_count}件 ／ ${view==='customers'?customerReport.customerCount:data.customer_count}人 ／ 税抜合計 ${yen(data.total_yen)}円`,{size:12});
  if(view==='customers'){
   paragraph('営業担当ごとに、お客様の全メーカーの注文をまとめています。お客様の中は注文日時の古い順です。',{size:9,color:gray});
@@ -167,20 +183,28 @@ export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages=
   for(const [name,c] of counts)paragraph(`${name}：${c.n}件 ／ ${yen(c.total)}円`,{size:9});
   if(!data.rows.length)paragraph('対象の有効注文はありません。',{size:12});rule();for(const r of data.rows)orderBody(r);
  }
+ }
  let summaryStartPage=null;
- if(view==='orders'){
+ if(view==='orders'||view==='delivery-products'){
+ const segments=deliverySummary?.groups||[{key:'all',label:'全注文',data,summary}];
+ for(const segment of segments){
+ const summary=segment.summary,sectionData=segment.data,split=view==='delivery-products',later=split&&segment.key==='later',unknown=split&&segment.key==='unknown';
  // 注文単位の明細とは別のページ・色・見出しで、最後に商品合算の一覧を付ける。
- summaryStartPage=pages.length+1;const green=rgb(.10,.32,.25),paleGreen=rgb(.91,.96,.92),summaryStripe=rgb(.96,.98,.96);
+ if(summaryStartPage===null)summaryStartPage=pages.length+1;
+ const green=later?rgb(.12,.29,.54):unknown?rgb(.55,.32,.04):rgb(.10,.32,.25),paleGreen=later?rgb(.91,.95,.99):unknown?rgb(1,.96,.88):rgb(.91,.96,.92),summaryStripe=later?rgb(.96,.98,1):rgb(.96,.98,.96);
+ const summaryTop=H-(split?188:173);
  const summaryCols=[58,213,28,42,48,42,WIDTH-431];
  function summaryPage(){
   page=doc.addPage([W,H]);pages.push(page);context='';
+  if(split)pageDeliveries.set(page,segment.label);
   page.drawRectangle({x:M,y:H-82,width:WIDTH,height:46,color:paleGreen});
   page.drawRectangle({x:M,y:H-82,width:5,height:46,color:green});
-  draw('商品別集計',M+14,H-54,18,green);draw('全注文を商品ごとに合算した一覧です',M+14,H-71,8,gray);
+  draw(split?`商品別集計 / ${segment.label}`:'商品別集計',M+14,H-54,18,green);draw(split?'この受渡区分の注文を、メーカー・商品ごとに合算した一覧です':'全注文を商品ごとに合算した一覧です',M+14,H-71,8,gray);
   draw(`${data.phase==='practice'?'【練習データ・売上入力しない】':'【本番データ】'} ${title}`,M,H-101,10,data.phase==='practice'?warn:green);
   draw(`取得 ${when(data.fetched_at)} ／ 取消済みを除く・金額は税抜`,M,H-116,8,gray);
-  draw(`有効注文 ${data.order_count}件 ／ 商品 ${summary.productCount}種類 ／ 税抜合計 ${yen(summary.totalYen)}円`,M,H-136,10,green);
-  draw('購入とサービスを区別。数量は本・個・セットなど、登録された単位のままです。',M,H-152,8,gray);y=H-173;
+  draw(`有効注文 ${sectionData.order_count}件 ／ 商品 ${summary.productCount}種類 ／ 税抜合計 ${yen(summary.totalYen)}円`,M,H-136,10,green);
+  draw('購入とサービスを区別。数量は本・個・セットなど、登録された単位のままです。',M,H-152,8,gray);
+  if(split)draw(`全メーカー・全受渡区分の合計（税抜） ${yen(data.total_yen)}円`,M,H-167,8,gray);y=summaryTop;
  }
  function summaryHeader(){
   page.drawRectangle({x:M,y:y-27,width:WIDTH,height:34,color:green});let x=M;
@@ -207,7 +231,7 @@ export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages=
   for(let index=0;index<maker.products.length;index++){
    const {cells,rows,height}=productLayout(maker.products[index]);
    const last=index===maker.products.length-1,reserve=height+(last?34:0)+(last&&mi===summary.makers.length-1?46:0);
-   if(reserve+wrap(maker.name+'（続き）',WIDTH,12).length*16+53>H-173-BOTTOM)throw Error('PDF_ROW_TOO_LONG');
+   if(reserve+wrap(maker.name+'（続き）',WIDTH,12).length*16+53>summaryTop-BOTTOM)throw Error('PDF_ROW_TOO_LONG');
    if(y-reserve<BOTTOM){summaryPage();summaryMaker(maker,true);}
    if(index%2===0)page.drawRectangle({x:M,y:y-height+7,width:WIDTH,height,color:summaryStripe});
    let x=M;
@@ -219,8 +243,9 @@ export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages=
   draw('メーカー合計（税抜）',M+8,y-11,9,green);const amount=yen(maker.totalYen)+'円';draw(amount,W-M-8-font.widthOfTextAtSize(amount,10),y-11,10,green);y-=39;
  }
  if(y-38<BOTTOM)summaryPage();
- page.drawRectangle({x:M,y:y-26,width:WIDTH,height:33,color:green});draw('商品別集計 合計（税抜）',M+10,y-14,11,rgb(1,1,1));
+ page.drawRectangle({x:M,y:y-26,width:WIDTH,height:33,color:green});draw(split?'受渡区分合計（税抜）':'商品別集計 合計（税抜）',M+10,y-14,11,rgb(1,1,1));
  const grandTotal=yen(summary.totalYen)+'円';draw(grandTotal,W-M-10-font.widthOfTextAtSize(grandTotal,12),y-14,12,rgb(1,1,1));
+ }
  }
  pages.forEach((p,i)=>{
   p.drawText(`${i+1} / ${pages.length}`,{x:W-M-60,y:22,size:8,font,color:gray});
@@ -229,11 +254,11 @@ export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages=
    const suffix=` ｜ このお客様の ${section.pages.indexOf(p)+1} / ${section.pages.length} ページ`,prefix=`お客様 ${section.number} ｜ `;
    let name=String(section.person.customer.name||'お名前未登録');while(name&&textWidth(prefix+name+suffix,8)>WIDTH-82)name=[...name].slice(0,-1).join('');
    label=prefix+name+suffix;
-  }else label=summaryStartPage&&i+1>=summaryStartPage?'商品別集計 / BEAU Fes 注文データ':view==='customers'?'お客様別 / 営業担当順 / BEAU Fes':data.phase==='practice'?'練習データ / BEAU Fes 注文データ':'BEAU Fes 注文データ / 出力時点の注文';
+  }else label=pageDeliveries.has(p)?`商品別集計 / ${pageDeliveries.get(p)} / BEAU Fes`:summaryStartPage&&i+1>=summaryStartPage?'商品別集計 / BEAU Fes 注文データ':view==='customers'?'お客様別 / 営業担当順 / BEAU Fes':data.phase==='practice'?'練習データ / BEAU Fes 注文データ':'BEAU Fes 注文データ / 出力時点の注文';
   // 絵文字を含むお名前も通常の本文と同じ画像併用描画でフッターへ表示する。
   const previous=page;page=p;draw(label,M,22,8,gray);page=previous;
  });
 
- doc.setTitle(view==='customers'?'BEAU Fes お客様別注文（営業担当順）':'BEAU Fes 注文データ');doc.setCreator('BEAU Fes 注文PDF出力');doc.setLanguage('ja-JP');
- return {bytes:await doc.save(),pages:pages.length,orderCount:data.order_count,totalYen:data.total_yen,summaryStartPage,summaryPageCount:summaryStartPage?pages.length-summaryStartPage+1:0,productCount:summary.productCount,customerCount:customerReport?.customerCount??data.customer_count,view};
+ doc.setTitle(view==='delivery-products'?'BEAU Fes 全メーカー商品別集計（受渡別）':view==='customers'?'BEAU Fes お客様別注文（営業担当順）':'BEAU Fes 注文データ');doc.setCreator('BEAU Fes 注文PDF出力');doc.setLanguage('ja-JP');
+ return {bytes:await doc.save(),pages:pages.length,orderCount:data.order_count,totalYen:data.total_yen,summaryStartPage,summaryPageCount:summaryStartPage?pages.length-summaryStartPage+1:0,productCount:deliverySummary?.productCount??summary.productCount,customerCount:customerReport?.customerCount??data.customer_count,view,...(deliverySummary?{deliveryGroups:deliverySummary.groups.map(g=>({key:g.key,label:g.label,orderCount:g.data.order_count,totalYen:g.summary.totalYen,productCount:g.summary.productCount}))}:{})};
 }
