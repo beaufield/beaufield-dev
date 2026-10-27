@@ -1,4 +1,4 @@
-// 日本語コメント: 認証後に読んだ有効注文を端末内で2シートに集計する。外部送信しない。
+// 日本語コメント: 認証後に読んだ有効注文を明細・商品・お客様の3つの見方で端末内に集計する。
 import {prepareReport} from './order-pdf.mjs?build=20261025-atfit';
 import {unpackRemarks,billingLabel,deliveryLabel,handlingWarnings} from '../order/export.js?build=20261025-atfit';
 
@@ -30,7 +30,52 @@ export function prepareExcelData(input,makerId=''){
  }
  const summary=[...groups.values()].sort((a,b)=>a.maker.localeCompare(b.maker,'ja')||a.code.localeCompare(b.code)||a.name.localeCompare(b.name,'ja')||a.unit.localeCompare(b.unit,'ja')).map(g=>[g.maker,g.code,g.name,g.unit,g.paid,g.gift,g.paid+g.gift,g.amount,g.orders.size,g.prices.length?Math.min(...g.prices):null,g.prices.length?Math.max(...g.prices):null,[...g.notes].join('／')].map(literal));
  if(details.reduce((n,r)=>n+r[13],0)!==data.total_yen||summary.reduce((n,r)=>n+r[7],0)!==data.total_yen)throw Error('REPORT_DATA_MISMATCH');
- return {data,details,summary};
+ return {data,details,summary,customerMatrix:prepareCustomerMatrix(data)};
+}
+
+export const excelColumn=number=>{let s='';for(let n=number;n;n=Math.floor((n-1)/26))s=String.fromCharCode(65+(n-1)%26)+s;return s;};
+const textUnits=value=>[...String(value)].reduce((n,c)=>n+(c.charCodeAt(0)>255?2:1),0);
+export function prepareCustomerMatrix(data){
+ const manufacturers=[...new Map(data.rows.map(r=>[r.booth,{id:r.booth,name:r.manufacturer||r.booth}])).values()].sort((a,b)=>a.name.localeCompare(b.name,'ja')||a.id.localeCompare(b.id));
+ // 明細の表示名で計算を照合するため、異なるメーカーの同名を黙って合算しない。
+ if(new Set(manufacturers.map(m=>m.name)).size!==manufacturers.length)throw Error('REPORT_DATA_MISMATCH');
+ const people=new Map();
+ for(const order of data.rows){
+  const id=order.customer.id||'',key=id?'id:'+id:'order:'+order.booth+':'+order.request_id;
+  if(!people.has(key))people.set(key,{id,requestId:order.request_id,key,customer:order.customer,latest:'',orders:new Set(),makers:new Map(),total:0});
+  const person=people.get(key);person.orders.add(order.booth+':'+order.request_id);person.total+=order.total_yen;
+  if(String(order.received_at)>=person.latest){person.customer=order.customer;person.latest=String(order.received_at);}
+  if(!person.makers.has(order.booth))person.makers.set(order.booth,{amount:0,items:new Map()});
+  const cell=person.makers.get(order.booth);cell.amount+=order.total_yen;
+  for(const line of order.lines){
+   const itemKey=JSON.stringify([line.product_code,line.product_name,line.unit,line.kind]);
+   if(!cell.items.has(itemKey))cell.items.set(itemKey,{...line,qty:0});cell.items.get(itemKey).qty+=line.qty;
+  }
+ }
+ const customers=[...people.values()].sort((a,b)=>Number(!a.customer.customer_code)-Number(!b.customer.customer_code)||String(a.customer.customer_code||'').localeCompare(String(b.customer.customer_code||''))||String(a.customer.salon||'').localeCompare(String(b.customer.salon||''),'ja')||String(a.customer.name||'').localeCompare(String(b.customer.name||''),'ja')||a.key.localeCompare(b.key));
+ const headers=['来場者番号','得意先コード','サロン名','お客様名','注文件数','購入メーカー数','税抜合計（円）',...manufacturers.flatMap(m=>[m.name+'｜購入内容',m.name+'｜税抜金額（円）'])];
+ const widths=[21,18,28,22,14,18,20,...manufacturers.flatMap(()=>[58,22])];
+ const rows=[],rowHeights=[];
+ for(const person of customers){
+  const row=[person.id||'番号未登録（注文ごと）',person.customer.customer_code||'',person.customer.salon||'',person.customer.name||'',person.orders.size,person.makers.size,person.total];let wrappedLines=1;
+  for(const maker of manufacturers){
+   const cell=person.makers.get(maker.id);
+   const contents=cell?[...cell.items.values()].sort((a,b)=>(a.kind==='gift')-(b.kind==='gift')||String(a.product_code).localeCompare(String(b.product_code))||String(a.product_name).localeCompare(String(b.product_name),'ja')).map(item=>`${item.product_name} [${item.product_code}] ×${item.qty}${item.unit}${item.kind==='gift'?'（サービス）':''}`).join('\n'):'';
+   if(contents.length>32767)throw Error('EXPORT_TOO_LARGE');
+   wrappedLines=Math.max(wrappedLines,contents.split('\n').reduce((n,line)=>n+Math.max(1,Math.ceil(textUnits(line)/55)),0));
+   row.push(contents,cell?.amount||0);
+  }
+  // Excelの行高上限を超える内容を、切れたまま保存しない。
+  const height=Math.max(36,wrappedLines*14+8);if(height>409)throw Error('EXPORT_TOO_LARGE');
+  rows.push(row.map(literal));rowHeights.push(height);
+ }
+ if(rows.reduce((n,r)=>n+r[6],0)!==data.total_yen)throw Error('REPORT_DATA_MISMATCH');
+ return {manufacturers,customers,headers,widths,rows,rowHeights};
+}
+
+export function customerAmountFormula(row,last,maker,customer){
+ const source="'注文明細'!",matchColumn=customer.id?'D':'B',matchValue=customer.id?`$A${row}`:`"${customer.requestId.replace(/"/g,'""')}"`;
+ return `=SUMPRODUCT((${source}$${matchColumn}$${DATA_ROW}:$${matchColumn}$${last}=${matchValue})*(${source}$A$${DATA_ROW}:$A$${last}="${maker.name.replace(/"/g,'""')}")*${source}$N$${DATA_ROW}:$N$${last})`;
 }
 
 // 数量と金額は明細を参照する式。購入数とサービス数を分け、同じメーカー・コード・商品名・単位で集計する。
@@ -64,5 +109,22 @@ export async function buildOrderExcel(ExcelJS,input,{makerId='',title='全メー
   for(const col of index?[3,12]:[9,18,19])sheet.getColumn(col).alignment={vertical:'middle',wrapText:true};
   if(!rows.length)sheet.getCell(`A${DATA_ROW}`).value='対象の有効注文はありません。';
  }
- return {bytes:await workbook.xlsx.writeBuffer(),orderCount:input.order_count,totalYen:input.total_yen,detailCount:model.details.length,productCount:model.summary.length};
+ const matrix=model.customerMatrix,sheet=workbook.addWorksheet('お客様×メーカー');
+ sheet.views=[{state:'frozen',xSplit:4,ySplit:HEADER_ROW,showGridLines:false}];sheet.columns=matrix.widths.map(width=>({width}));
+ sheet.getCell('A2').value=`BEAU Fes 2026 ${title} お客様別の購入内容`;sheet.getCell('A2').font={name:'Arial',size:14,bold:true};
+ sheet.getCell('A3').value='来場者番号ごとに追加注文を合算。メーカーごとに購入内容と税抜金額を表示。サービス品は別表示。氏名・コードは最新注文時点。';
+ sheet.getCell('A4').value='税抜合計（円）';sheet.getCell('B4').value={formula:`SUM(G${DATA_ROW}:G${Math.max(DATA_ROW,DATA_ROW+matrix.rows.length-1)})`,result:input.total_yen};sheet.getCell('B4').numFmt='#,##0';
+ sheet.getCell('C4').value=`お客様 ${matrix.rows.length}人／メーカー ${matrix.manufacturers.length}社／注文 ${input.order_count}件`;
+ sheet.getRow(HEADER_ROW).values=matrix.headers;
+ const header=sheet.getRow(HEADER_ROW);header.height=44;header.font={name:'Arial',size:10,bold:true,color:{argb:'FFFFFFFF'}};header.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF244860'}};header.alignment={horizontal:'center',vertical:'middle',wrapText:true};
+ for(let i=0;i<matrix.rows.length;i++){
+  const number=DATA_ROW+i,row=sheet.getRow(number);row.values=matrix.rows[i];row.height=matrix.rowHeights[i];row.font={name:'Arial',size:10};row.alignment={vertical:'top',wrapText:true};
+  const amounts=[];
+  for(let m=0;m<matrix.manufacturers.length;m++){const column=9+m*2;amounts.push(excelColumn(column)+number);row.getCell(column).value={formula:customerAmountFormula(number,last,matrix.manufacturers[m],matrix.customers[i]).slice(1),result:matrix.rows[i][column-1]};row.getCell(column).numFmt='#,##0';}
+  row.getCell(7).value={formula:amounts.length?`SUM(${amounts.join(',')})`:'0',result:matrix.rows[i][6]};row.getCell(7).numFmt='#,##0';
+ }
+ for(const column of [1,2])sheet.getColumn(column).numFmt='@';for(const column of [5,6,7])sheet.getColumn(column).numFmt='#,##0';
+ sheet.autoFilter={from:{row:HEADER_ROW,column:1},to:{row:Math.max(HEADER_ROW,DATA_ROW+matrix.rows.length-1),column:matrix.headers.length}};
+ if(!matrix.rows.length)sheet.getCell(`A${DATA_ROW}`).value='対象の有効注文はありません。';
+ return {bytes:await workbook.xlsx.writeBuffer(),orderCount:input.order_count,totalYen:input.total_yen,detailCount:model.details.length,productCount:model.summary.length,customerCount:matrix.rows.length};
 }

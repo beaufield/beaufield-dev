@@ -1,5 +1,5 @@
 // 業務データは社員認証後にだけ取得する。接続キーや価格をブラウザーの永続領域へ保存しない。
-const APP_VERSION='v0.5.1';
+const APP_VERSION='v0.6.0';
 // 表示用だけ0埋めを除き、検索・送信・既存注文の識別子は維持する。
 const displayProductCode=value=>/^AD26-ATFIT-/.test(String(value??''))?'未登録':String(value??'').replace(/^0+(?=\d+$)/,'');
 const API_URL=document.querySelector('meta[name=directory-api]').content;
@@ -128,13 +128,13 @@ async function exportExcel(id=''){
  excelBusy=true;orderState();$('excel-status').textContent='最新の注文からExcelを作成しています…';
  try{
   if(!excelLibrary)excelLibrary=(window.ExcelJS?Promise.resolve():loadScript('../order/exceljs.min.js')).catch(error=>{excelLibrary=null;throw error;});
-  const [data,,module]=await Promise.all([api('export_orders',id?{maker_id:id}:{}),excelLibrary,import('./order-excel.mjs?build=20261027-excel')]);
+  const [data,,module]=await Promise.all([api('export_orders',id?{maker_id:id}:{}),excelLibrary,import('./order-excel.mjs?build=20261027-customer-view')]);
   if(session()?.token!==auth.token){lock();throw Error('PORTAL_SESSION_INVALID');}
   const result=await module.buildOrderExcel(window.ExcelJS,data,{makerId:id,title:maker?.name||'全メーカー'});
   if(session()?.token!==auth.token){lock();throw Error('PORTAL_SESSION_INVALID');}
   const url=URL.createObjectURL(new Blob([result.bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})),link=create('a');
   link.href=url;link.download=`BEAUFes_${data.phase==='practice'?'練習_':''}${id||'全メーカー'}_注文集計_${new Date().toISOString().replace(/[:.]/g,'-')}.xlsx`;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
-  $('excel-status').textContent=`${maker?.name||'全メーカー'}：注文${result.orderCount}件・明細${result.detailCount}行・商品${result.productCount}件のExcelを保存しました（税抜 ${yen(result.totalYen)}）。`;
+  $('excel-status').textContent=`${maker?.name||'全メーカー'}：注文${result.orderCount}件・明細${result.detailCount}行・商品${result.productCount}件・お客様${result.customerCount}人のExcelを保存しました（税抜 ${yen(result.totalYen)}）。`;
  }catch(error){$('excel-status').textContent=errors[error.message]||'Excelを作成できませんでした。オンラインで再試行してください。';throw error;}
  finally{excelBusy=false;orderState();}
 }
