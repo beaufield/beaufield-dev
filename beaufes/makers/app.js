@@ -1,5 +1,5 @@
 // 業務データは社員認証後にだけ取得する。接続キーや価格をブラウザーの永続領域へ保存しない。
-const APP_VERSION='v0.7.1';
+const APP_VERSION='v0.8.0';
 // 表示用だけ0埋めを除き、検索・送信・既存注文の識別子は維持する。
 const displayProductCode=value=>/^AD26-ATFIT-/.test(String(value??''))?'未登録':String(value??'').replace(/^0+(?=\d+$)/,'');
 const API_URL=document.querySelector('meta[name=directory-api]').content;
@@ -11,7 +11,7 @@ let makers=[],selected='',detailsSequence=0,qrSequence=0,qrBusy=false,currentQr=
 const issued=new Map();
 function session(){try{const s=JSON.parse(localStorage.getItem('bf_session')||'null');return s&&typeof s.token==='string'&&s.expires>Date.now()?s:null;}catch{return null;}}
 function closeQr(){qrSequence++;currentQr=null;$('order-url').value='';$('open-order').removeAttribute('href');$('qr-box').replaceChildren();if($('qr-modal').open)$('qr-modal').close();}
-function lock(){detailsSequence++;$('excel-all').disabled=true;$('excel-maker').disabled=true;$('excel-status').textContent='';$('pdf-maker').disabled=true;$('pdf-all').disabled=true;$('pdf-status').textContent='';$('order-overview').replaceChildren();$('order-overview').hidden=true;issued.clear();closeQr();makers=[];selected='';$('maker-select').replaceChildren(create('option','一覧から選んでください'));$('makers').replaceChildren();$('offers').replaceChildren();$('maker-name').textContent='';$('workspace').hidden=true;$('gate').hidden=false;}
+function lock(){detailsSequence++;$('excel-all').disabled=true;$('excel-maker').disabled=true;$('excel-status').textContent='';$('pdf-customers').disabled=true;$('pdf-maker').disabled=true;$('pdf-all').disabled=true;$('pdf-status').textContent='';$('order-overview').replaceChildren();$('order-overview').hidden=true;issued.clear();closeQr();makers=[];selected='';$('maker-select').replaceChildren(create('option','一覧から選んでください'));$('makers').replaceChildren();$('offers').replaceChildren();$('maker-name').textContent='';$('workspace').hidden=true;$('gate').hidden=false;}
 const errors={EXPORT_TOO_LARGE:'注文件数が多いため、メーカーを選んで出力してください。',REPORT_DATA_MISMATCH:'取得した注文の集計が一致しません。再入力せず、時間をおいて注文データを再取得してください。',PDF_FONT_UNSUPPORTED:'PDFで表示できない文字が含まれています。注文内容を変えず、事務へご連絡ください。',PDF_DEPENDENCY_UNAVAILABLE:'PDF作成用のファイルを取得できません。オンラインで再試行してください。',PORTAL_SESSION_INVALID:'社員用ポータルでログインし直してください。',BEAUFES_ROLE_REQUIRED:'ビューフェスの利用権限がありません。管理者に確認してください。',PORTAL_UNAVAILABLE:'社員ログインを確認できません。時間をおいて再試行してください。',ORDER_APP_NOT_READY:'このメーカーの注文アプリは準備中です。',EVENT_CLOSED:'注文受付は終了しています。',ENROLLMENT_CONFLICT:'このQRを発行できません。一覧を更新して再試行してください。',DIRECTORY_UNAVAILABLE:'メーカー情報を取得できません。時間をおいて再試行してください。'};
 function report(e){staleOverview();$('status').textContent=errors[e.message]||'処理を完了できませんでした。一覧を更新して再試行してください。';}
 async function api(action,body={}){
@@ -23,7 +23,7 @@ async function api(action,body={}){
   return data;
  }finally{clearTimeout(timer);}
 }
-function orderState(){const maker=makers.find(m=>m.id===selected);$('excel-all').disabled=excelBusy||!session()||$("workspace").hidden;$('excel-maker').disabled=excelBusy||!session()||$("workspace").hidden||!maker;$('pdf-all').disabled=pdfBusy||!session();$('pdf-maker').disabled=pdfBusy||!session()||!maker;for(const button of document.querySelectorAll('[data-pdf-maker]'))button.disabled=pdfBusy||!session();$('direct-order').disabled=$('order-qr').disabled=qrBusy||!maker?.order_ready;for(const button of document.querySelectorAll('[data-open-maker]'))button.disabled=qrBusy||!makers.find(m=>m.id===button.dataset.openMaker)?.order_ready;$('order-note').textContent=!maker?'メーカーを選んで注文アプリへ進めます。メーカーへの案内用QRも発行できます。':maker.order_ready?'「注文アプリを開く」で直接入力画面へ進めます。メーカーへの案内にはQRを使えます。':maker.id==='bjc'?'BJCはお客様が用紙へ記入し、受付へ提出します。予約セットは営業へ個別にご相談ください。':'注文アプリ準備中です。キャンペーン内容は確認できます。';}
+function orderState(){const maker=makers.find(m=>m.id===selected),pdfLocked=pdfBusy||!session()||$("workspace").hidden;$('excel-all').disabled=excelBusy||!session()||$("workspace").hidden;$('excel-maker').disabled=excelBusy||!session()||$("workspace").hidden||!maker;$('pdf-all').disabled=pdfLocked;$('pdf-customers').disabled=pdfLocked;$('pdf-maker').disabled=pdfLocked||!maker;for(const button of document.querySelectorAll('[data-pdf-maker]'))button.disabled=pdfLocked;$('direct-order').disabled=$('order-qr').disabled=qrBusy||!maker?.order_ready;for(const button of document.querySelectorAll('[data-open-maker]'))button.disabled=qrBusy||!makers.find(m=>m.id===button.dataset.openMaker)?.order_ready;$('order-note').textContent=!maker?'メーカーを選んで注文アプリへ進めます。メーカーへの案内用QRも発行できます。':maker.order_ready?'「注文アプリを開く」で直接入力画面へ進めます。メーカーへの案内にはQRを使えます。':maker.id==='bjc'?'BJCはお客様が用紙へ記入し、受付へ提出します。予約セットは営業へ個別にご相談ください。':'注文アプリ準備中です。キャンペーン内容は確認できます。';}
 // 社員だけが取得できる全体/メーカー別の集計。端末の注文や表示件数は合算しない。
 function summaryBlock(summary,title){
  const box=create('div');box.className='order-totals';
@@ -105,18 +105,18 @@ async function dependencies(){
  if(!pdfLibraries)pdfLibraries=(async()=>{await Promise.all([window.PDFLib?null:loadScript('pdf-lib.min.js'),window.fontkit?null:loadScript('fontkit.umd.min.js')]);const response=await fetch('NotoSansJP-Regular.ttf',{cache:'force-cache'});if(!response.ok)throw Error('PDF_DEPENDENCY_UNAVAILABLE');const canvas=document.createElement("canvas");canvas.width=canvas.height=64;const context=canvas.getContext("2d");context.font='52px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';context.textAlign="center";context.textBaseline="middle";context.fillText("🌹",32,32);return {pdfLib:window.PDFLib,fontkit:window.fontkit,fontBytes:await response.arrayBuffer(),glyphImages:{"🌹":canvas.toDataURL("image/png")}};})().catch(e=>{pdfLibraries=null;throw e;});
  return pdfLibraries;
 }
-async function exportPdf(id=''){
+async function exportPdf(id='',view='orders'){
  if(pdfBusy)return;const auth=session();if(!auth){lock();throw Error('PORTAL_SESSION_INVALID');}
  const maker=id?makers.find(m=>m.id===id):null;if(id&&!maker)throw Error('DIRECTORY_UNAVAILABLE');
  pdfBusy=true;orderState();$('pdf-status').textContent='最新の注文を取得してPDFを作成しています…';
  try{
-  const [data,libs,module]=await Promise.all([api('export_orders',id?{maker_id:id}:{}),dependencies(),import('./order-pdf.mjs?build=20261027-maker-pdf')]);
+  const [data,libs,module]=await Promise.all([api('export_orders',id?{maker_id:id}:{}),dependencies(),import('./order-pdf.mjs?build=20261027-customer-pdf')]);
   if(session()?.token!==auth.token){lock();throw Error('PORTAL_SESSION_INVALID');}
-  const result=await module.buildOrderPdf(data,{...libs,makerId:id,title:maker?.name||'全メーカー'});
+  const result=await (view==='customers'?module.buildCustomerPdf:module.buildOrderPdf)(data,{...libs,makerId:id,title:maker?.name||'全メーカー'});
   if(session()?.token!==auth.token){lock();throw Error('PORTAL_SESSION_INVALID');}
   const url=URL.createObjectURL(new Blob([result.bytes],{type:'application/pdf'})),link=create('a');
-  link.href=url;link.download=`BEAUFes_${data.phase==='practice'?'練習_':''}${id||'全メーカー'}_注文_${new Date().toISOString().replace(/[:.]/g,'-')}.pdf`;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
-  $('pdf-status').textContent=`${maker?.name||'全メーカー'}：${result.orderCount}件・${result.pages}ページのPDFを保存しました（末尾に商品別集計・税抜 ${yen(result.totalYen)}）。`;
+  link.href=url;link.download=`BEAUFes_${data.phase==='practice'?'練習_':''}${view==='customers'?'お客様別_営業担当順':id||'全メーカー'}_注文_${new Date().toISOString().replace(/[:.]/g,'-')}.pdf`;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+  $('pdf-status').textContent=`${view==='customers'?'お客様別（営業担当順）':maker?.name||'全メーカー'}：${result.orderCount}件・${result.pages}ページのPDFを保存しました（${view==='customers'?result.customerCount+'人のお客様別':'末尾に商品別集計'}・税抜 ${yen(result.totalYen)}）。`;
  }catch(error){$('pdf-status').textContent=errors[error.message]||'PDFを作成できませんでした。オンラインで再試行してください。';throw error;}
  finally{pdfBusy=false;orderState();}
 }
@@ -140,7 +140,7 @@ async function exportExcel(id=''){
 }
 $('version').textContent=APP_VERSION;
 $('excel-all').onclick=()=>exportExcel().catch(report);$('excel-maker').onclick=()=>exportExcel(selected).catch(report);
-$('pdf-all').onclick=()=>exportPdf().catch(report);$('pdf-maker').onclick=()=>exportPdf(selected).catch(report);
+$('pdf-all').onclick=()=>exportPdf().catch(report);$('pdf-customers').onclick=()=>exportPdf('','customers').catch(report);$('pdf-maker').onclick=()=>exportPdf(selected).catch(report);
 $('direct-order').onclick=()=>openOrder().catch(report);
 $('refresh').onclick=()=>{closeQr();load().catch(report);};$('maker-select').onchange=e=>choose(e.target.value).catch(report);$('back').onclick=()=>choose('').catch(report);$('order-qr').onclick=()=>showQr().catch(report);$('qr-close').onclick=closeQr;$('qr-modal').addEventListener('cancel',closeQr);
 $('copy-url').onclick=async()=>{if(!currentQr)return;try{await navigator.clipboard.writeText(currentQr.url);$('qr-status').textContent='注文URLをコピーしました。';}catch{$('order-url').focus();$('order-url').select();$('qr-status').textContent='URLを選択しました。コピー操作でお渡しください。';}};

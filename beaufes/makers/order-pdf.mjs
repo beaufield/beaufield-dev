@@ -11,9 +11,9 @@ export function prepareReport(data,makerId=''){
   if(subtotal!==r.total_yen||!Number.isSafeInteger(subtotal))throw Error('REPORT_DATA_MISMATCH');total+=subtotal;
  }
  if(!Number.isSafeInteger(total)||data.order_count!==rows.length||data.total_yen!==total)throw Error('REPORT_DATA_MISMATCH');
- // 全メーカー・個社とも注文日時の新しい順。同時刻は注文番号で安定させ、日時不明は末尾に置く。
- const time=value=>{const n=Date.parse(value);return Number.isFinite(n)?n:-Infinity;};
- rows.sort((a,b)=>time(b.received_at)-time(a.received_at)||a.request_id.localeCompare(b.request_id));
+ // 全メーカー・個社とも注文日時の古い順。同時刻は注文番号で安定させ、日時不明は末尾に置く。
+ const time=value=>{const n=Date.parse(value);return Number.isFinite(n)?n:Infinity;};
+ rows.sort((a,b)=>time(a.received_at)-time(b.received_at)||a.request_id.localeCompare(b.request_id));
  return {...data,rows,total_yen:total,customer_count:new Set(rows.map(r=>r.customer.id).filter(Boolean)).size};
 }
 const yen=value=>Number(value).toLocaleString('ja-JP');
@@ -41,8 +41,32 @@ export function prepareProductSummary(input,makerId=''){
  if(result.reduce((n,m)=>n+m.totalYen,0)!==data.total_yen)throw Error('REPORT_DATA_MISMATCH');
  return {makers:result,productCount:result.reduce((n,m)=>n+m.products.length,0),totalYen:data.total_yen};
 }
-export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages={},makerId='',title='全メーカー'}={}){
- const data=prepareReport(input,makerId);
+// 同姓同名・共通の得意先番号は統合せず、来場者番号でお客様をまとめる。
+export function prepareCustomerReport(input,makerId=''){
+ const data=prepareReport(input,makerId),people=new Map();
+ const stamp=value=>{const n=Date.parse(value);return Number.isFinite(n)?n:-Infinity;};
+ for(const order of data.rows){
+  const key=order.customer.id?'id:'+order.customer.id:'order:'+order.booth+':'+order.request_id;
+  if(!people.has(key))people.set(key,{key,customer:order.customer,latest:-Infinity,rows:[],totalYen:0});
+  const person=people.get(key);person.rows.push(order);person.totalYen+=order.total_yen;
+  if(stamp(order.received_at)>=person.latest){person.customer=order.customer;person.latest=stamp(order.received_at);}
+ }
+ const name=value=>String(value||'').trim(),cmp=(a,b)=>name(a).localeCompare(name(b),'ja');
+ const configured=[...new Set((Array.isArray(data.tantou_list)?data.tantou_list:[]).map(name).filter(Boolean))];
+ const ranks=new Map(configured.map((v,i)=>[v,i])),rank=v=>v?(ranks.get(v)??configured.length):configured.length+1;
+ const customers=[...people.values()].sort((a,b)=>{
+  const left=name(a.customer.tantou),right=name(b.customer.tantou);
+  return rank(left)-rank(right)||cmp(left,right)||cmp(a.customer.salon,b.customer.salon)||cmp(a.customer.name,b.customer.name)||cmp(a.key,b.key);
+ });
+ const groups=[];
+ for(const person of customers){const owner=name(person.customer.tantou);let group=groups.at(-1);if(!group||group.name!==owner){group={name:owner,label:owner||'未割当',customers:[],orderCount:0,totalYen:0};groups.push(group);}group.customers.push(person);group.orderCount+=person.rows.length;group.totalYen+=person.totalYen;}
+ if(customers.reduce((n,p)=>n+p.totalYen,0)!==data.total_yen)throw Error('REPORT_DATA_MISMATCH');
+ return {data,customers,groups,customerCount:customers.length};
+}
+export async function buildCustomerPdf(input,options={}){return buildOrderPdf(input,{...options,view:'customers'});}
+export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages={},makerId='',title='全メーカー',view='orders'}={}){
+ if(!['orders','customers'].includes(view))throw Error('REPORT_DATA_MISMATCH');
+ const data=prepareReport(input,makerId),customerReport=view==='customers'?prepareCustomerReport(data,makerId):null;
  const summary=prepareProductSummary(data,makerId);
  if(!pdfLib?.PDFDocument||!fontkit||!fontBytes)throw Error('PDF_DEPENDENCY_UNAVAILABLE');
  const {PDFDocument,rgb}=pdfLib,doc=await PDFDocument.create();doc.registerFontkit(fontkit);
@@ -59,40 +83,63 @@ export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages=
  const textWidth=(text,size)=>parts(text).reduce((n,p)=>n+(p.image?size:font.widthOfTextAtSize(p.text,size)),0);
  const wrap=(value,width,size)=>{const lines=[];for(const para of clean(value).split('\n')){let line='';for(const ch of para){if(line&&textWidth(line+ch,size)>width){lines.push(line);line='';}line+=ch;}lines.push(line);}return lines;};
  function draw(text,x,at,size=9,color=navy){let left=x;for(const part of parts(clean(text))){if(part.image){page.drawImage(part.image,{x:left,y:at-size*.15,width:size,height:size});left+=size;}else{page.drawText(part.text,{x:left,y:at,size,font,color});left+=font.widthOfTextAtSize(part.text,size);}}}
- function newPage(){page=doc.addPage([W,H]);pages.push(page);draw('BEAU Fes 2026 注文データ',M,H-42,16);draw(`${data.phase==='practice'?'【練習データ・売上入力しない】':'【本番データ】'} ${title}`,M,H-62,10,data.phase==='practice'?warn:navy);draw(`取得 ${when(data.fetched_at)} ／ 金額は税抜・取消済みを除く`,M,H-78,8,gray);y=H-100;if(context){for(const line of wrap(context+'（続き）',WIDTH,9)){draw(line,M,y,9);y-=13;}y-=6;}}
+ function newPage(){page=doc.addPage([W,H]);pages.push(page);draw(view==='customers'?'お客様別 注文一覧（営業担当順）':'BEAU Fes 2026 注文データ',M,H-42,16);draw(`${data.phase==='practice'?'【練習データ・売上入力しない】':'【本番データ】'} ${title}`,M,H-62,10,data.phase==='practice'?warn:navy);draw(`取得 ${when(data.fetched_at)} ／ 金額は税抜・取消済みを除く`,M,H-78,8,gray);y=H-100;if(context){for(const line of wrap(context+'（続き）',WIDTH,9)){draw(line,M,y,9);y-=13;}y-=6;}}
  function ensure(height){if(y-height<BOTTOM)newPage();}
  function paragraph(text,{size=9,color=navy,gap=4}={}){for(const line of wrap(text,WIDTH,size)){ensure(size+7);draw(line,M,y,size,color);y-=size+5;}y-=gap;}
  function rule(){ensure(10);page.drawLine({start:{x:M,y:y+3},end:{x:W-M,y:y+3},thickness:.6,color:rgb(.75,.8,.83)});y-=10;}
  function tableHeader(){ensure(28);page.drawRectangle({x:M,y:y-19,width:WIDTH,height:24,color:blue});let x=M;const cols=[52,210,40,32,79,WIDTH-413];for(const [i,label]of ['商品コード','商品名・企画','区分','数量','税抜単価','税抜金額'].entries()){draw(label,x+4,y-10,8);x+=cols[i];}y-=27;return cols;}
- function lineRow(line,cols,index){
+ function lineRow(line,cols,index,reserve=0){
   const pending=/^NAPLA26-NOTE-/.test(line.product_code),name=pending?String(line.product_name||'').replace('（6本・明細はお客様発注待ち）','（6本・5＋1）'):String(line.product_name||''),cells=[pending?'-':displayProductCode(line.product_code),name,line.kind==='gift'?'サービス':'購入',String(line.qty),yen(line.unit_price_yen),yen(line.qty*line.unit_price_yen)];
   const lines=cells.map((s,i)=>wrap(s,cols[i]-8,8.5)),height=Math.max(...lines.map(a=>a.length))*12+10;
-  if(y-height<BOTTOM){newPage();tableHeader();}
+  if(y-height-reserve<BOTTOM){newPage();tableHeader();}
   if(height>H-180)throw Error('PDF_ROW_TOO_LONG');
   if(index%2===0)page.drawRectangle({x:M,y:y-height+7,width:WIDTH,height,color:light});
   let x=M;for(let i=0;i<cells.length;i++){let at=y-5;for(const text of lines[i]){const right=i>=3?Math.max(4,cols[i]-5-font.widthOfTextAtSize(text,8.5)):4;draw(text,x+right,at,8.5,line.kind==='gift'?rgb(.15,.36,.26):navy);at-=12;}x+=cols[i];}y-=height;
  }
- newPage();paragraph(`${data.order_count}件 ／ ${data.customer_count}人 ／ 税抜合計 ${yen(data.total_yen)}円`,{size:12});
- const counts=new Map();for(const r of data.rows){const name=r.manufacturer||r.booth;const c=counts.get(name)||{n:0,total:0};c.n++;c.total+=r.total_yen;counts.set(name,c);}
- for(const [name,c] of counts)paragraph(`${name}：${c.n}件 ／ ${yen(c.total)}円`,{size:9});
- if(!data.rows.length)paragraph('対象の有効注文はありません。',{size:12});
- rule();
- for(const r of data.rows){
-  const h=unpackRemarks(r.remarks||''),warnings=orderWarnings(r),customer=r.customer;context='';
-  ensure(210);context=`${r.manufacturer||r.booth} ／ 注文 ${r.request_id}`;
+ function orderBody(r,{showCustomer=true,lastForCustomer=false}={}){
+  const h=unpackRemarks(r.remarks||''),warnings=orderWarnings(r),customer=r.customer;
+  ensure(showCustomer?225:lastForCustomer?220:155);context=`${r.manufacturer||r.booth} ／ 注文 ${r.request_id}`;
+  if(!showCustomer)context=`営業担当：${String(customer.tantou||'').trim()||'未割当'} ／ ${customer.salon||''} ${customer.name||''} ／ 注文 ${r.request_id}`;
   paragraph(r.manufacturer||r.booth,{size:13});paragraph(`注文番号：${r.request_id}`,{size:8});
   paragraph(`注文日時：${when(r.received_at)} ／ 来場者番号：${customer.id||'未確認'}`,{size:8});
-  paragraph(`得意先コード：${h.billing==='salon'?(customer.customer_code||'要確認'):'事務確認（個人請求・未確定）'} ／ サロン：${customer.salon||'未登録'}`,{size:10});
-  paragraph(`お客様：${customer.name||'未登録'} ／ 請求先：${billingLabel(h.billing)} ／ 受渡：${deliveryLabel(r.delivery)}`,{size:9});
+  if(showCustomer){
+   paragraph(`得意先コード：${h.billing==='salon'?(customer.customer_code||'要確認'):'事務確認（個人請求・未確定）'} ／ サロン：${customer.salon||'未登録'}`,{size:10});
+   paragraph(`お客様：${customer.name||'未登録'} ／ 営業担当：${String(customer.tantou||'').trim()||'未割当'}`,{size:9});
+  }
+  paragraph(`請求先：${billingLabel(h.billing)} ／ 受渡：${deliveryLabel(r.delivery)}`,{size:9});
   for(const text of warnings)paragraph('要確認：'+text,{size:9,color:warn});
-  const cols=tableHeader();r.lines.forEach((line,i)=>lineRow(line,cols,i));
+  // お客様合計だけが次のページへ孤立しないよう、最後の明細に後続の表示領域も確保する。
+  const closing=lastForCustomer?83+(h.remarks?wrap('備考：'+h.remarks,WIDTH,9).length*14+4:0)+(h.contact!=='registered'?wrap('配送先・一部お渡し等は備考と受付情報を確認してください。',WIDTH,8).length*13+4:0):0;
+  const cols=tableHeader();r.lines.forEach((line,i)=>lineRow(line,cols,i,i===r.lines.length-1?closing:0));
   paragraph(`注文合計（税抜）：${yen(r.total_yen)}円`,{size:10});
   if(h.remarks)paragraph('備考：'+h.remarks,{size:9});
   if(h.contact!=='registered')paragraph('配送先・一部お渡し等は備考と受付情報を確認してください。',{size:8,color:warn});
   context='';rule();
  }
+ newPage();paragraph(`${data.order_count}件 ／ ${view==='customers'?customerReport.customerCount:data.customer_count}人 ／ 税抜合計 ${yen(data.total_yen)}円`,{size:12});
+ if(view==='customers'){
+  paragraph('営業担当ごとに、お客様の全メーカーの注文をまとめています。お客様の中は注文日時の古い順です。',{size:9,color:gray});
+  paragraph('営業担当は出力時点のお客様情報。担当の表示順は社員画面と同じ設定順、未割当は最後です。',{size:8,color:gray});
+  for(const group of customerReport.groups)paragraph(`${group.label}：お客様 ${group.customers.length}人 ／ ${group.orderCount}注文 ／ ${yen(group.totalYen)}円`,{size:10});
+  if(!customerReport.customers.length)paragraph('対象の有効注文はありません。',{size:12});
+  for(const group of customerReport.groups)for(const person of group.customers){
+   context='';newPage();const customer=person.customer;
+   page.drawRectangle({x:M,y:y-26,width:WIDTH,height:33,color:blue});draw('営業担当：'+group.label,M+10,y-14,12);y-=45;
+   paragraph(customer.salon||'サロン未登録',{size:14});paragraph(`お客様：${customer.name||'未登録'} ／ 来場者番号：${customer.id||'未確認'}`,{size:10});
+   paragraph(`得意先コード：${customer.customer_code||'要確認'} ／ 注文 ${person.rows.length}件 ／ 税抜合計 ${yen(person.totalYen)}円`,{size:10});rule();
+   person.rows.forEach((r,i)=>orderBody(r,{showCustomer:false,lastForCustomer:i===person.rows.length-1}));
+   context=`営業担当：${group.label} ／ ${customer.salon||''} ${customer.name||''}`;ensure(42);
+   page.drawRectangle({x:M,y:y-23,width:WIDTH,height:30,color:blue});draw('お客様合計（税抜）',M+10,y-13,11);const total=yen(person.totalYen)+'円';draw(total,W-M-10-textWidth(total,11),y-13,11);y-=40;context='';
+  }
+ }else{
+  const counts=new Map();for(const r of data.rows){const name=r.manufacturer||r.booth;const c=counts.get(name)||{n:0,total:0};c.n++;c.total+=r.total_yen;counts.set(name,c);}
+  for(const [name,c] of counts)paragraph(`${name}：${c.n}件 ／ ${yen(c.total)}円`,{size:9});
+  if(!data.rows.length)paragraph('対象の有効注文はありません。',{size:12});rule();for(const r of data.rows)orderBody(r);
+ }
+ let summaryStartPage=null;
+ if(view==='orders'){
  // 注文単位の明細とは別のページ・色・見出しで、最後に商品合算の一覧を付ける。
- const summaryStartPage=pages.length+1,green=rgb(.10,.32,.25),paleGreen=rgb(.91,.96,.92),summaryStripe=rgb(.96,.98,.96);
+ summaryStartPage=pages.length+1;const green=rgb(.10,.32,.25),paleGreen=rgb(.91,.96,.92),summaryStripe=rgb(.96,.98,.96);
  const summaryCols=[58,213,28,42,48,42,WIDTH-431];
  function summaryPage(){
   page=doc.addPage([W,H]);pages.push(page);context='';
@@ -143,7 +190,8 @@ export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages=
  if(y-38<BOTTOM)summaryPage();
  page.drawRectangle({x:M,y:y-26,width:WIDTH,height:33,color:green});draw('商品別集計 合計（税抜）',M+10,y-14,11,rgb(1,1,1));
  const grandTotal=yen(summary.totalYen)+'円';draw(grandTotal,W-M-10-font.widthOfTextAtSize(grandTotal,12),y-14,12,rgb(1,1,1));
- pages.forEach((p,i)=>{p.drawText(`${i+1} / ${pages.length}`,{x:W-M-60,y:22,size:8,font,color:gray});p.drawText(i+1>=summaryStartPage?'商品別集計 / BEAU Fes 注文データ':data.phase==='practice'?'練習データ / BEAU Fes 注文データ':'BEAU Fes 注文データ / 出力時点の注文',{x:M,y:22,size:8,font,color:i+1>=summaryStartPage?green:gray});});
- doc.setTitle('BEAU Fes 注文データ');doc.setCreator('BEAU Fes 注文PDF出力');doc.setLanguage('ja-JP');
- return {bytes:await doc.save(),pages:pages.length,orderCount:data.order_count,totalYen:data.total_yen,summaryStartPage,summaryPageCount:pages.length-summaryStartPage+1,productCount:summary.productCount};
+ }
+ pages.forEach((p,i)=>{p.drawText(`${i+1} / ${pages.length}`,{x:W-M-60,y:22,size:8,font,color:gray});p.drawText(summaryStartPage&&i+1>=summaryStartPage?'商品別集計 / BEAU Fes 注文データ':view==='customers'?'お客様別 / 営業担当順 / BEAU Fes':data.phase==='practice'?'練習データ / BEAU Fes 注文データ':'BEAU Fes 注文データ / 出力時点の注文',{x:M,y:22,size:8,font,color:gray});});
+ doc.setTitle(view==='customers'?'BEAU Fes お客様別注文（営業担当順）':'BEAU Fes 注文データ');doc.setCreator('BEAU Fes 注文PDF出力');doc.setLanguage('ja-JP');
+ return {bytes:await doc.save(),pages:pages.length,orderCount:data.order_count,totalYen:data.total_yen,summaryStartPage,summaryPageCount:summaryStartPage?pages.length-summaryStartPage+1:0,productCount:summary.productCount,customerCount:customerReport?.customerCount??data.customer_count,view};
 }
