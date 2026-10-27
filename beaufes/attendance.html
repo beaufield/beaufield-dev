@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title>来場状況（社員用） | ビューフェス2026</title>
-<link rel="stylesheet" href="attendance.css?b=20261025b">
+<link rel="stylesheet" href="attendance.css?b=20261027a">
 <script src="candidate-config.js?b=3debf1542ecb"></script>
 <script src="ui-bootstrap.js?b=40aeb3ead80d"></script>
-<script type="module" src="attendance.mjs?b=20261025b"></script>
+<script type="module" src="attendance.mjs?b=20261027a"></script>
 </head>
 <body>
 <header class="appHeader">
@@ -20,6 +20,7 @@
     <div><span class="liveDot" id="liveDot"></span><strong id="liveLabel">読み込み中…</strong><div class="muted" id="lastUpdated">社員ログインを確認しています</div></div>
     <div class="actions"><label class="autoLabel"><input id="autoRefresh" type="checkbox" checked>30秒ごとに自動更新</label><button id="refresh" type="button">最新の状況を取得</button></div>
   </section>
+  <div id="manualNotice" class="notice" role="status" hidden></div>
   <div id="error" class="notice error" role="alert" hidden></div>
   <section id="gate" class="panel gate" hidden><h2>社員ログインが必要です</h2><p>ポータルでログインしてから、この画面を開き直してください。</p><a class="button" href="./login.html">ログイン画面を開く</a></section>
   <div id="dashboard" hidden>
@@ -27,7 +28,7 @@
       <div class="sectionLine"><h2>現在の受付状況</h2><span class="muted" id="scopeLabel">全申込者</span></div>
       <div class="summary">
         <button class="stat arrived" type="button" data-status="arrived"><span>受付済み</span><strong id="arrivedCount">—</strong><small>人 · 来た人を見る →</small></button>
-        <button class="stat waiting" type="button" data-status="waiting"><span>未受付</span><strong id="waitingCount">—</strong><small>人 · まだ来ていない人を見る →</small></button>
+        <button class="stat waiting" type="button" data-status="waiting"><span>未受付</span><strong id="waitingCount">—</strong><small>人 · 未受付の人を見る →</small></button>
         <button class="stat total" type="button" data-status="all"><span>申込総数</span><strong id="totalCount">—</strong><small>人 · 全員を見る →</small></button>
       </div>
       <div class="progressLine"><progress id="receptionProgress" max="100" value="0" aria-label="受付率"></progress><span id="progressText"></span></div>
@@ -52,11 +53,25 @@
     <section class="panel" id="listPanel" aria-labelledby="listTitle">
       <div class="sectionLine"><div><h2 id="listTitle">来場者一覧</h2><p id="listSummary" class="muted" aria-live="polite"></p></div><label>並び順 <select id="sort"><option value="recent">受付が新しい順</option><option value="oldest">受付が早い順</option><option value="name">名前順</option><option value="salon">サロン名順</option></select></label></div>
       <div class="tabs" role="group" aria-label="受付状態で絞り込み"><button type="button" data-status="arrived" aria-pressed="true">受付済み</button><button type="button" data-status="waiting" aria-pressed="false">未受付</button><button type="button" data-status="all" aria-pressed="false">全員</button></div>
-      <div class="tableScroll"><table><thead><tr><th>受付状態・時刻</th><th>サロン名</th><th>お名前</th><th>担当</th><th>予約内容</th><th>受付番号</th></tr></thead><tbody id="rows"></tbody></table></div>
+      <p class="muted note">来場を確認できた方だけ「受付済みにする」を押してください。本人へのメール・LINE通知は送信しません。</p>
+      <div class="tableScroll"><table><thead><tr><th>受付状態・時刻</th><th>サロン名</th><th>お名前</th><th>担当</th><th>予約内容</th><th>受付番号</th><th>手動受付</th></tr></thead><tbody id="rows"></tbody></table></div>
       <p id="empty" class="empty" hidden>条件に合う方はいません。</p>
     </section>
   </div>
-  <footer><span id="version"></span> · 来場状況は閲覧専用です · 時刻は日本時間</footer>
+  <footer><span id="version"></span> · 手動受付による本人通知なし · 時刻は日本時間</footer>
 </main>
+
+<dialog id="manualDialog" aria-labelledby="manualTitle">
+ <form id="manualForm">
+  <h2 id="manualTitle">手動で受付済みにする</h2>
+  <p id="manualPerson" class="manualPerson"></p>
+  <p>この方の来場を確認できていますか。受付済み人数に反映します。</p>
+  <label class="manualTime">来場日時（分かる場合のみ・日本時間）<input id="manualTime" type="datetime-local" min="2026-10-26T00:00" max="2026-10-26T23:59"></label>
+  <p class="muted">不明の場合は空欄のまま保存できます。時刻不明の方は人数に含め、時間帯別グラフには含めません。</p>
+  <p class="manualNoNotify">本人へのメール・LINE通知は送信しません。</p>
+  <p id="manualError" class="notice error" role="alert" hidden></p>
+  <div class="actions"><button id="manualCancel" class="secondary" type="button">閉じる</button><button id="manualSave" type="submit">受付済みにする（通知なし）</button></div>
+ </form>
+</dialog>
 </body>
 </html>
