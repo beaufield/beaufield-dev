@@ -53,7 +53,13 @@ export function prepareDeliveryProductSummary(input){
   return {key:group.key,label:group.label,data:part,summary:prepareProductSummary(part)};
  });
  if(groups.reduce((n,g)=>n+g.data.order_count,0)!==data.order_count||groups.reduce((n,g)=>n+g.summary.totalYen,0)!==data.total_yen)throw Error('REPORT_DATA_MISMATCH');
- return {data,groups,totalYen:data.total_yen,productCount:groups.reduce((n,g)=>n+g.summary.productCount,0)};
+ // メーカーを親にして、その中に後日・当日の両区分を置く。区分が0件でも表示できる形で保持する。
+ const makers=prepareProductSummary(data).makers.map(maker=>({id:maker.id,name:maker.name,totalYen:maker.totalYen,orders:maker.orders,productCount:maker.products.length,groups:groups.filter(g=>g.key!=='unknown'||g.data.rows.some(r=>r.booth===maker.id)).map(group=>{
+  const rows=group.data.rows.filter(r=>r.booth===maker.id),part={...data,rows,order_count:rows.length,total_yen:rows.reduce((n,r)=>n+r.total_yen,0),customer_count:new Set(rows.map(r=>r.customer.id)).size};
+  return {key:group.key,label:group.label,data:part,summary:prepareProductSummary(part)};
+ })}));
+ if(makers.reduce((n,m)=>n+m.totalYen,0)!==data.total_yen||makers.some(m=>m.groups.reduce((n,g)=>n+g.summary.totalYen,0)!==m.totalYen))throw Error('REPORT_DATA_MISMATCH');
+ return {data,groups,makers,totalYen:data.total_yen,productCount:groups.reduce((n,g)=>n+g.summary.productCount,0)};
 }
 // 同姓同名・共通の得意先番号は統合せず、来場者番号でお客様をまとめる。
 export function prepareCustomerReport(input,makerId=''){
@@ -186,7 +192,8 @@ export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages=
  }
  let summaryStartPage=null;
  if(view==='orders'||view==='delivery-products'){
- const segments=deliverySummary?.groups||[{key:'all',label:'全注文',data,summary}];
+ const makerSections=deliverySummary?(deliverySummary.makers.length?deliverySummary.makers:[{id:'',name:'全メーカー',totalYen:0,orders:0,productCount:0,groups:deliverySummary.groups}]):null;
+ const segments=makerSections?makerSections.flatMap(m=>m.groups.map((g,i)=>({...g,makerId:m.id,makerName:m.name,makerTotal:m.totalYen,makerOrders:m.orders,makerProducts:m.productCount,startsMaker:i===0,endsMaker:i===m.groups.length-1}))):[{key:'all',label:'全注文',data,summary}];
  for(const segment of segments){
  const summary=segment.summary,sectionData=segment.data,split=view==='delivery-products',later=split&&segment.key==='later',unknown=split&&segment.key==='unknown';
  // 注文単位の明細とは別のページ・色・見出しで、最後に商品合算の一覧を付ける。
@@ -196,13 +203,13 @@ export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages=
  const summaryCols=[58,213,28,42,48,42,WIDTH-431];
  function summaryPage(){
   page=doc.addPage([W,H]);pages.push(page);context='';
-  if(split)pageDeliveries.set(page,segment.label);
-  page.drawRectangle({x:M,y:H-82,width:WIDTH,height:46,color:paleGreen});
-  page.drawRectangle({x:M,y:H-82,width:5,height:46,color:green});
-  draw(split?`商品別集計 / ${segment.label}`:'商品別集計',M+14,H-54,18,green);draw(split?'この受渡区分の注文を、メーカー・商品ごとに合算した一覧です':'全注文を商品ごとに合算した一覧です',M+14,H-71,8,gray);
+  if(split)pageDeliveries.set(page,segment.makerName);
+  page.drawRectangle({x:M,y:H-82,width:WIDTH,height:46,color:split?blue:paleGreen});
+  page.drawRectangle({x:M,y:H-82,width:5,height:46,color:split?navy:green});
+  draw(split?`商品別集計 / ${segment.makerName}`:'商品別集計',M+14,H-54,split?16:18,split?navy:green);draw(split?'このメーカーの中で「後日納品」と「当日お渡し済み」を分けています':'全注文を商品ごとに合算した一覧です',M+14,H-71,8,gray);
   draw(`${data.phase==='practice'?'【練習データ・売上入力しない】':'【本番データ】'} ${title}`,M,H-101,10,data.phase==='practice'?warn:green);
   draw(`取得 ${when(data.fetched_at)} ／ 取消済みを除く・金額は税抜`,M,H-116,8,gray);
-  draw(`有効注文 ${sectionData.order_count}件 ／ 商品 ${summary.productCount}種類 ／ 税抜合計 ${yen(summary.totalYen)}円`,M,H-136,10,green);
+  draw(`有効注文 ${split?segment.makerOrders:sectionData.order_count}件 ／ 商品 ${split?segment.makerProducts:summary.productCount}種類 ／ 税抜合計 ${yen(split?segment.makerTotal:summary.totalYen)}円`,M,H-136,10,split?navy:green);
   draw('購入とサービスを区別。数量は本・個・セットなど、登録された単位のままです。',M,H-152,8,gray);
   if(split)draw(`全メーカー・全受渡区分の合計（税抜） ${yen(data.total_yen)}円`,M,H-167,8,gray);y=summaryTop;
  }
@@ -213,25 +220,29 @@ export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages=
   }y-=35;
  }
  function summaryMaker(maker,continued=false){
-  for(const text of wrap(maker.name+(continued?'（続き）':''),WIDTH,12)){draw(text,M,y,12,green);y-=16;}y-=2;
-  draw(`${maker.orders}注文 ／ ${maker.products.length}商品 ／ メーカー税抜合計 ${yen(maker.totalYen)}円`,M,y,8,gray);y-=16;summaryHeader();
+  for(const text of wrap((split?segment.label:maker.name)+(continued?'（続き）':''),WIDTH,12)){draw(text,M,y,12,green);y-=16;}y-=2;
+  draw(`${maker.orders}注文 ／ ${maker.products.length}商品 ／ ${split?'この受渡区分':'メーカー'}税抜合計 ${yen(maker.totalYen)}円`,M,y,8,gray);y-=16;summaryHeader();
  }
  function productLayout(product){
   const pending=/^NAPLA26-NOTE-/.test(product.code),name=pending?product.name.replace('（6本・明細はお客様発注待ち）','（6本・5＋1）'):product.name;
   const cells=[pending?'-':displayProductCode(product.code),name,product.unit,String(product.paidQty),String(product.giftQty),String(product.totalQty),yen(product.totalYen)];
   const rows=cells.map((value,i)=>wrap(value,summaryCols[i]-8,8.5));return {cells,rows,height:Math.max(...rows.map(r=>r.length))*12+10};
  }
- summaryPage();
- if(!summary.makers.length){draw('対象の有効注文はありません。',M,y,11,green);y-=28;}
+ if(!split||segment.startsMaker)summaryPage();
+ if(!summary.makers.length){
+  if(split){if(y-(segment.endsMaker?145:100)<BOTTOM)summaryPage();draw(segment.label,M,y,12,green);y-=22;}
+  draw('対象の有効注文はありません。',M,y,11,green);y-=28;
+  if(split){page.drawRectangle({x:M,y:y-19,width:WIDTH,height:25,color:paleGreen});draw(segment.label+' 合計（税抜）',M+8,y-11,9,green);draw('0円',W-M-8-font.widthOfTextAtSize('0円',10),y-11,10,green);y-=39;}
+ }
  for(let mi=0;mi<summary.makers.length;mi++){
   const maker=summary.makers[mi];
-  const first=productLayout(maker.products[0]),headingHeight=wrap(maker.name,WIDTH,12).length*16+53;
-  const firstReserve=first.height+(maker.products.length===1?34:0)+(maker.products.length===1&&mi===summary.makers.length-1?46:0);
+  const first=productLayout(maker.products[0]),headingHeight=wrap(split?segment.label:maker.name,WIDTH,12).length*16+53;
+  const firstReserve=first.height+(maker.products.length===1?34:0)+(maker.products.length===1&&mi===summary.makers.length-1&&(!split||segment.endsMaker)?46:0);
   if(y-headingHeight-firstReserve<BOTTOM)summaryPage();summaryMaker(maker);
   for(let index=0;index<maker.products.length;index++){
    const {cells,rows,height}=productLayout(maker.products[index]);
-   const last=index===maker.products.length-1,reserve=height+(last?34:0)+(last&&mi===summary.makers.length-1?46:0);
-   if(reserve+wrap(maker.name+'（続き）',WIDTH,12).length*16+53>summaryTop-BOTTOM)throw Error('PDF_ROW_TOO_LONG');
+   const last=index===maker.products.length-1,reserve=height+(last?34:0)+(last&&mi===summary.makers.length-1&&(!split||segment.endsMaker)?46:0);
+   if(reserve+wrap((split?segment.label:maker.name)+'（続き）',WIDTH,12).length*16+53>summaryTop-BOTTOM)throw Error('PDF_ROW_TOO_LONG');
    if(y-reserve<BOTTOM){summaryPage();summaryMaker(maker,true);}
    if(index%2===0)page.drawRectangle({x:M,y:y-height+7,width:WIDTH,height,color:summaryStripe});
    let x=M;
@@ -240,11 +251,13 @@ export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages=
    }y-=height;
   }
   page.drawRectangle({x:M,y:y-19,width:WIDTH,height:25,color:paleGreen});
-  draw('メーカー合計（税抜）',M+8,y-11,9,green);const amount=yen(maker.totalYen)+'円';draw(amount,W-M-8-font.widthOfTextAtSize(amount,10),y-11,10,green);y-=39;
+  draw(split?segment.label+' 合計（税抜）':'メーカー合計（税抜）',M+8,y-11,9,green);const amount=yen(maker.totalYen)+'円';draw(amount,W-M-8-font.widthOfTextAtSize(amount,10),y-11,10,green);y-=39;
  }
+ if(!split||segment.endsMaker){
  if(y-38<BOTTOM)summaryPage();
- page.drawRectangle({x:M,y:y-26,width:WIDTH,height:33,color:green});draw(split?'受渡区分合計（税抜）':'商品別集計 合計（税抜）',M+10,y-14,11,rgb(1,1,1));
- const grandTotal=yen(summary.totalYen)+'円';draw(grandTotal,W-M-10-font.widthOfTextAtSize(grandTotal,12),y-14,12,rgb(1,1,1));
+ page.drawRectangle({x:M,y:y-26,width:WIDTH,height:33,color:split?navy:green});draw(split?'メーカー合計・全受渡分（税抜）':'商品別集計 合計（税抜）',M+10,y-14,11,rgb(1,1,1));
+ const grandTotal=yen(split?segment.makerTotal:summary.totalYen)+'円';draw(grandTotal,W-M-10-font.widthOfTextAtSize(grandTotal,12),y-14,12,rgb(1,1,1));y-=42;
+ }
  }
  }
  pages.forEach((p,i)=>{
