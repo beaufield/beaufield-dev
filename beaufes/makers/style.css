@@ -9,3 +9,6 @@
 
 /* PDFの取得状態は入力操作と独立して知らせる。 */
 #pdf-status{overflow-wrap:anywhere}button:disabled{cursor:default;opacity:.55}
+
+/* スマホでは出力操作の文字を横書きで読める幅にする。 */
+@media(max-width:700px){.controls .actions{display:grid;grid-template-columns:1fr}.controls .actions>*{width:100%}}
