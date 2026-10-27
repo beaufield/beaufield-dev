@@ -30,7 +30,9 @@ async function refresh(){
   status.textContent='最新版を取得しました。注文画面を開きます。';
   // 新しいURLのHTMLとscriptを使い、ブラウザー側の古いHTTPキャッシュも避ける。
   const target=new URL('index.html',location.href);target.searchParams.set('updated',stamp);
-  if(new URLSearchParams(location.search).get('office')==='1')target.searchParams.set('office','1');
+  const sourceParams=new URLSearchParams(location.search);
+  if(sourceParams.get('office')==='1')target.searchParams.set('office','1');
+  if(sourceParams.get('staff')==='1'){target.searchParams.set('staff','1');target.searchParams.set('maker',sourceParams.get('maker')||'');}
   if(join)target.hash='join='+join;
   location.replace(target.href);
  }catch{

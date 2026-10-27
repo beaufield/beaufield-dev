@@ -1,5 +1,5 @@
 // 業務データは社員認証後にだけ取得する。接続キーや価格をブラウザーの永続領域へ保存しない。
-const APP_VERSION='v0.9.1';
+const APP_VERSION='v0.10.0';
 // 表示用だけ0埋めを除き、検索・送信・既存注文の識別子は維持する。
 const displayProductCode=value=>/^AD26-ATFIT-/.test(String(value??''))?'未登録':String(value??'').replace(/^0+(?=\d+$)/,'');
 const API_URL=document.querySelector('meta[name=directory-api]').content;
@@ -12,7 +12,7 @@ const issued=new Map();
 function session(){try{const s=JSON.parse(localStorage.getItem('bf_session')||'null');return s&&typeof s.token==='string'&&s.expires>Date.now()?s:null;}catch{return null;}}
 function closeQr(){qrSequence++;currentQr=null;$('order-url').value='';$('open-order').removeAttribute('href');$('qr-box').replaceChildren();if($('qr-modal').open)$('qr-modal').close();}
 function lock(){detailsSequence++;$('excel-all').disabled=true;$('excel-maker').disabled=true;$('excel-status').textContent='';$('pdf-customers').disabled=true;$('pdf-products-delivery').disabled=true;$('pdf-maker').disabled=true;$('pdf-all').disabled=true;$('pdf-status').textContent='';$('order-overview').replaceChildren();$('order-overview').hidden=true;issued.clear();closeQr();makers=[];selected='';$('maker-select').replaceChildren(create('option','一覧から選んでください'));$('makers').replaceChildren();$('offers').replaceChildren();$('maker-name').textContent='';$('workspace').hidden=true;$('gate').hidden=false;}
-const errors={EXPORT_TOO_LARGE:'注文件数が多いため、メーカーを選んで出力してください。',REPORT_DATA_MISMATCH:'取得した注文の集計が一致しません。再入力せず、時間をおいて注文データを再取得してください。',PDF_FONT_UNSUPPORTED:'PDFで表示できない文字が含まれています。注文内容を変えず、事務へご連絡ください。',PDF_DEPENDENCY_UNAVAILABLE:'PDF作成用のファイルを取得できません。オンラインで再試行してください。',PORTAL_SESSION_INVALID:'社員用ポータルでログインし直してください。',BEAUFES_ROLE_REQUIRED:'ビューフェスの利用権限がありません。管理者に確認してください。',PORTAL_UNAVAILABLE:'社員ログインを確認できません。時間をおいて再試行してください。',ORDER_APP_NOT_READY:'このメーカーの注文アプリは準備中です。',EVENT_CLOSED:'注文受付は終了しています。',ENROLLMENT_CONFLICT:'このQRを発行できません。一覧を更新して再試行してください。',DIRECTORY_UNAVAILABLE:'メーカー情報を取得できません。時間をおいて再試行してください。'};
+const errors={MANUFACTURER_ACCESS_CLOSED:'メーカー用URL・QRの発行は終了しました。社員は「注文アプリを開く」から入力できます。',EXPORT_TOO_LARGE:'注文件数が多いため、メーカーを選んで出力してください。',REPORT_DATA_MISMATCH:'取得した注文の集計が一致しません。再入力せず、時間をおいて注文データを再取得してください。',PDF_FONT_UNSUPPORTED:'PDFで表示できない文字が含まれています。注文内容を変えず、事務へご連絡ください。',PDF_DEPENDENCY_UNAVAILABLE:'PDF作成用のファイルを取得できません。オンラインで再試行してください。',PORTAL_SESSION_INVALID:'社員用ポータルでログインし直してください。',BEAUFES_ROLE_REQUIRED:'ビューフェスの利用権限がありません。管理者に確認してください。',PORTAL_UNAVAILABLE:'社員ログインを確認できません。時間をおいて再試行してください。',ORDER_APP_NOT_READY:'このメーカーの注文アプリは準備中です。',EVENT_CLOSED:'注文受付は終了しています。',ENROLLMENT_CONFLICT:'このQRを発行できません。一覧を更新して再試行してください。',DIRECTORY_UNAVAILABLE:'メーカー情報を取得できません。時間をおいて再試行してください。'};
 function report(e){staleOverview();$('status').textContent=errors[e.message]||'処理を完了できませんでした。一覧を更新して再試行してください。';}
 async function api(action,body={}){
  const s=session();if(!s){lock();throw Error('PORTAL_SESSION_INVALID');}
@@ -76,7 +76,7 @@ async function prepareOrder(maker){
 async function openOrder(id=selected){
  const maker=makers.find(m=>m.id===id);if(!maker?.order_ready||qrBusy)return;
  closeQr();selected=id;$('maker-select').value=id;const seq=++qrSequence;qrBusy=true;orderState();$('status').textContent='注文アプリへ接続しています…';
- try{const url=await prepareOrder(maker);if(seq===qrSequence&&selected===maker.id)location.assign(url);}finally{qrBusy=false;orderState();}
+ try{await api('details',{maker_id:maker.id});if(seq===qrSequence&&selected===maker.id)location.assign(ORDER_URL+'?staff=1&maker='+encodeURIComponent(maker.id));}finally{qrBusy=false;orderState();}
 }
 async function showQr(){
  const maker=makers.find(m=>m.id===selected);if(!maker?.order_ready||qrBusy)return;
