@@ -1,5 +1,5 @@
 // 業務データは社員認証後にだけ取得する。接続キーや価格をブラウザーの永続領域へ保存しない。
-const APP_VERSION='v0.7.0';
+const APP_VERSION='v0.7.1';
 // 表示用だけ0埋めを除き、検索・送信・既存注文の識別子は維持する。
 const displayProductCode=value=>/^AD26-ATFIT-/.test(String(value??''))?'未登録':String(value??'').replace(/^0+(?=\d+$)/,'');
 const API_URL=document.querySelector('meta[name=directory-api]').content;
@@ -110,7 +110,7 @@ async function exportPdf(id=''){
  const maker=id?makers.find(m=>m.id===id):null;if(id&&!maker)throw Error('DIRECTORY_UNAVAILABLE');
  pdfBusy=true;orderState();$('pdf-status').textContent='最新の注文を取得してPDFを作成しています…';
  try{
-  const [data,libs,module]=await Promise.all([api('export_orders',id?{maker_id:id}:{}),dependencies(),import('./order-pdf.mjs?build=20261027-product-summary')]);
+  const [data,libs,module]=await Promise.all([api('export_orders',id?{maker_id:id}:{}),dependencies(),import('./order-pdf.mjs?build=20261027-maker-pdf')]);
   if(session()?.token!==auth.token){lock();throw Error('PORTAL_SESSION_INVALID');}
   const result=await module.buildOrderPdf(data,{...libs,makerId:id,title:maker?.name||'全メーカー'});
   if(session()?.token!==auth.token){lock();throw Error('PORTAL_SESSION_INVALID');}

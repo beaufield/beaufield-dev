@@ -11,15 +11,16 @@ export function prepareReport(data,makerId=''){
   if(subtotal!==r.total_yen||!Number.isSafeInteger(subtotal))throw Error('REPORT_DATA_MISMATCH');total+=subtotal;
  }
  if(!Number.isSafeInteger(total)||data.order_count!==rows.length||data.total_yen!==total)throw Error('REPORT_DATA_MISMATCH');
- rows.sort((a,b)=>String(a.manufacturer||a.booth).localeCompare(String(b.manufacturer||b.booth),'ja')||String(a.customer.customer_code||'~').localeCompare(String(b.customer.customer_code||'~'))||String(a.received_at).localeCompare(String(b.received_at))||a.request_id.localeCompare(b.request_id));
+ // 全メーカー・個社とも注文日時の新しい順。同時刻は注文番号で安定させ、日時不明は末尾に置く。
+ const time=value=>{const n=Date.parse(value);return Number.isFinite(n)?n:-Infinity;};
+ rows.sort((a,b)=>time(b.received_at)-time(a.received_at)||a.request_id.localeCompare(b.request_id));
  return {...data,rows,total_yen:total,customer_count:new Set(rows.map(r=>r.customer.id).filter(Boolean)).size};
 }
 const yen=value=>Number(value).toLocaleString('ja-JP');
 const when=value=>{const d=new Date(value);return Number.isFinite(d.getTime())?d.toLocaleString('ja-JP',{timeZone:'Asia/Tokyo',hour12:false}):'時刻未確認';};
-const states={ready:'未入力',claimed:'入力中・再入力禁止',entered:'入力済み・再入力禁止',unknown:'入力結果不明・再入力禁止',correction_required:'訂正確認',resolved_cancelled:'取消照合済み'};
 export function orderWarnings(order){
  const h=unpackRemarks(order.remarks||'');
- return [...new Set([...handlingWarnings(order),!order.customer.customer_code?'得意先コードを確認':null,h.invalid?'受付情報の形式を確認':null,order.posting?.state!=='ready'?`台帳：${states[order.posting?.state]||'要確認'}。重複入力しない`:null].filter(Boolean))];
+ return [...new Set([...handlingWarnings(order),!order.customer.customer_code?'得意先コードを確認':null,h.invalid?'受付情報の形式を確認':null].filter(Boolean))];
 }
 // 商品別集計は確定済みの明細を合算する。現在のカタログで価格を再計算しない。
 export function prepareProductSummary(input,makerId=''){
@@ -72,7 +73,6 @@ export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages=
   let x=M;for(let i=0;i<cells.length;i++){let at=y-5;for(const text of lines[i]){const right=i>=3?Math.max(4,cols[i]-5-font.widthOfTextAtSize(text,8.5)):4;draw(text,x+right,at,8.5,line.kind==='gift'?rgb(.15,.36,.26):navy);at-=12;}x+=cols[i];}y-=height;
  }
  newPage();paragraph(`${data.order_count}件 ／ ${data.customer_count}人 ／ 税抜合計 ${yen(data.total_yen)}円`,{size:12});
- paragraph('社員向け・販売管理入力の確認用です。PDFの保存では売上入力済みになりません。売上日は入力時に確認してください。',{size:8,color:gray});
  const counts=new Map();for(const r of data.rows){const name=r.manufacturer||r.booth;const c=counts.get(name)||{n:0,total:0};c.n++;c.total+=r.total_yen;counts.set(name,c);}
  for(const [name,c] of counts)paragraph(`${name}：${c.n}件 ／ ${yen(c.total)}円`,{size:9});
  if(!data.rows.length)paragraph('対象の有効注文はありません。',{size:12});
@@ -84,7 +84,6 @@ export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages=
   paragraph(`注文日時：${when(r.received_at)} ／ 来場者番号：${customer.id||'未確認'}`,{size:8});
   paragraph(`得意先コード：${h.billing==='salon'?(customer.customer_code||'要確認'):'事務確認（個人請求・未確定）'} ／ サロン：${customer.salon||'未登録'}`,{size:10});
   paragraph(`お客様：${customer.name||'未登録'} ／ 請求先：${billingLabel(h.billing)} ／ 受渡：${deliveryLabel(r.delivery)}`,{size:9});
-  paragraph(`売上日：${r.posting?.sales_date||'入力時に確認'} ／ 台帳：${states[r.posting?.state]||'要確認'} ／ 伝票番号：${r.posting?.slip_number||'未登録'}`,{size:8,color:gray});
   for(const text of warnings)paragraph('要確認：'+text,{size:9,color:warn});
   const cols=tableHeader();r.lines.forEach((line,i)=>lineRow(line,cols,i));
   paragraph(`注文合計（税抜）：${yen(r.total_yen)}円`,{size:10});
@@ -144,7 +143,7 @@ export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages=
  if(y-38<BOTTOM)summaryPage();
  page.drawRectangle({x:M,y:y-26,width:WIDTH,height:33,color:green});draw('商品別集計 合計（税抜）',M+10,y-14,11,rgb(1,1,1));
  const grandTotal=yen(summary.totalYen)+'円';draw(grandTotal,W-M-10-font.widthOfTextAtSize(grandTotal,12),y-14,12,rgb(1,1,1));
- pages.forEach((p,i)=>{p.drawText(`${i+1} / ${pages.length}`,{x:W-M-60,y:22,size:8,font,color:gray});p.drawText(i+1>=summaryStartPage?'商品別集計 / BEAU Fes 社員用':data.phase==='practice'?'練習データ / BEAU Fes 社員用':'BEAU Fes 社員用 / 出力時点の注文',{x:M,y:22,size:8,font,color:i+1>=summaryStartPage?green:gray});});
- doc.setTitle('BEAU Fes 注文データ');doc.setCreator('BEAU Fes 社員用PDF出力');doc.setLanguage('ja-JP');
+ pages.forEach((p,i)=>{p.drawText(`${i+1} / ${pages.length}`,{x:W-M-60,y:22,size:8,font,color:gray});p.drawText(i+1>=summaryStartPage?'商品別集計 / BEAU Fes 注文データ':data.phase==='practice'?'練習データ / BEAU Fes 注文データ':'BEAU Fes 注文データ / 出力時点の注文',{x:M,y:22,size:8,font,color:i+1>=summaryStartPage?green:gray});});
+ doc.setTitle('BEAU Fes 注文データ');doc.setCreator('BEAU Fes 注文PDF出力');doc.setLanguage('ja-JP');
  return {bytes:await doc.save(),pages:pages.length,orderCount:data.order_count,totalYen:data.total_yen,summaryStartPage,summaryPageCount:pages.length-summaryStartPage+1,productCount:summary.productCount};
 }
