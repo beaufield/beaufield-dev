@@ -1,5 +1,5 @@
 // 業務データは社員認証後にだけ取得する。接続キーや価格をブラウザーの永続領域へ保存しない。
-const APP_VERSION='v0.6.0';
+const APP_VERSION='v0.7.0';
 // 表示用だけ0埋めを除き、検索・送信・既存注文の識別子は維持する。
 const displayProductCode=value=>/^AD26-ATFIT-/.test(String(value??''))?'未登録':String(value??'').replace(/^0+(?=\d+$)/,'');
 const API_URL=document.querySelector('meta[name=directory-api]').content;
@@ -102,7 +102,7 @@ async function saveQr(){
 let pdfBusy=false,pdfLibraries;
 function loadScript(src){return new Promise((resolve,reject)=>{const script=document.createElement('script');script.src=src;script.onload=resolve;script.onerror=()=>{script.remove();reject(Error('PDF_DEPENDENCY_UNAVAILABLE'));};document.head.append(script);});}
 async function dependencies(){
- if(!pdfLibraries)pdfLibraries=(async()=>{await Promise.all([window.PDFLib?null:loadScript('pdf-lib.min.js'),window.fontkit?null:loadScript('fontkit.umd.min.js')]);const response=await fetch('NotoSansJP-Regular.ttf',{cache:'force-cache'});if(!response.ok)throw Error('PDF_DEPENDENCY_UNAVAILABLE');return {pdfLib:window.PDFLib,fontkit:window.fontkit,fontBytes:await response.arrayBuffer()};})().catch(e=>{pdfLibraries=null;throw e;});
+ if(!pdfLibraries)pdfLibraries=(async()=>{await Promise.all([window.PDFLib?null:loadScript('pdf-lib.min.js'),window.fontkit?null:loadScript('fontkit.umd.min.js')]);const response=await fetch('NotoSansJP-Regular.ttf',{cache:'force-cache'});if(!response.ok)throw Error('PDF_DEPENDENCY_UNAVAILABLE');const canvas=document.createElement("canvas");canvas.width=canvas.height=64;const context=canvas.getContext("2d");context.font='52px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';context.textAlign="center";context.textBaseline="middle";context.fillText("🌹",32,32);return {pdfLib:window.PDFLib,fontkit:window.fontkit,fontBytes:await response.arrayBuffer(),glyphImages:{"🌹":canvas.toDataURL("image/png")}};})().catch(e=>{pdfLibraries=null;throw e;});
  return pdfLibraries;
 }
 async function exportPdf(id=''){
@@ -110,13 +110,13 @@ async function exportPdf(id=''){
  const maker=id?makers.find(m=>m.id===id):null;if(id&&!maker)throw Error('DIRECTORY_UNAVAILABLE');
  pdfBusy=true;orderState();$('pdf-status').textContent='最新の注文を取得してPDFを作成しています…';
  try{
-  const [data,libs,module]=await Promise.all([api('export_orders',id?{maker_id:id}:{}),dependencies(),import('./order-pdf.mjs?build=20261025-atfit')]);
+  const [data,libs,module]=await Promise.all([api('export_orders',id?{maker_id:id}:{}),dependencies(),import('./order-pdf.mjs?build=20261027-product-summary')]);
   if(session()?.token!==auth.token){lock();throw Error('PORTAL_SESSION_INVALID');}
   const result=await module.buildOrderPdf(data,{...libs,makerId:id,title:maker?.name||'全メーカー'});
   if(session()?.token!==auth.token){lock();throw Error('PORTAL_SESSION_INVALID');}
   const url=URL.createObjectURL(new Blob([result.bytes],{type:'application/pdf'})),link=create('a');
   link.href=url;link.download=`BEAUFes_${data.phase==='practice'?'練習_':''}${id||'全メーカー'}_注文_${new Date().toISOString().replace(/[:.]/g,'-')}.pdf`;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
-  $('pdf-status').textContent=`${maker?.name||'全メーカー'}：${result.orderCount}件・${result.pages}ページのPDFを保存しました（税抜 ${yen(result.totalYen)}）。`;
+  $('pdf-status').textContent=`${maker?.name||'全メーカー'}：${result.orderCount}件・${result.pages}ページのPDFを保存しました（末尾に商品別集計・税抜 ${yen(result.totalYen)}）。`;
  }catch(error){$('pdf-status').textContent=errors[error.message]||'PDFを作成できませんでした。オンラインで再試行してください。';throw error;}
  finally{pdfBusy=false;orderState();}
 }
