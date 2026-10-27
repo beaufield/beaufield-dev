@@ -78,12 +78,36 @@ export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages=
  const clean=value=>{const s=String(value??'').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g,' ').normalize('NFC');if([...s].some(c=>c!=='\n'&&!glyphs.has(c.codePointAt(0))&&!inlineImages.has(c)))throw Error('PDF_FONT_UNSUPPORTED');return s;};
  const W=595.28,H=841.89,M=36,WIDTH=W-M*2,BOTTOM=45;
  const navy=rgb(.09,.25,.35),gray=rgb(.35,.4,.44),blue=rgb(.91,.95,.98),light=rgb(.96,.97,.98),warn=rgb(.58,.25,.07);
- let page,y,context='';const pages=[];
+ let page,y,context='',activeCustomer=null;const pages=[],pageCustomers=new Map();
  const parts=text=>{const result=[];let chunk='';for(const ch of text){if(inlineImages.has(ch)){if(chunk)result.push({text:chunk});chunk='';result.push({image:inlineImages.get(ch)});}else chunk+=ch;}if(chunk)result.push({text:chunk});return result;};
  const textWidth=(text,size)=>parts(text).reduce((n,p)=>n+(p.image?size:font.widthOfTextAtSize(p.text,size)),0);
  const wrap=(value,width,size)=>{const lines=[];for(const para of clean(value).split('\n')){let line='';for(const ch of para){if(line&&textWidth(line+ch,size)>width){lines.push(line);line='';}line+=ch;}lines.push(line);}return lines;};
  function draw(text,x,at,size=9,color=navy){let left=x;for(const part of parts(clean(text))){if(part.image){page.drawImage(part.image,{x:left,y:at-size*.15,width:size,height:size});left+=size;}else{page.drawText(part.text,{x:left,y:at,size,font,color});left+=font.widthOfTextAtSize(part.text,size);}}}
- function newPage(){page=doc.addPage([W,H]);pages.push(page);draw(view==='customers'?'お客様別 注文一覧（営業担当順）':'BEAU Fes 2026 注文データ',M,H-42,16);draw(`${data.phase==='practice'?'【練習データ・売上入力しない】':'【本番データ】'} ${title}`,M,H-62,10,data.phase==='practice'?warn:navy);draw(`取得 ${when(data.fetched_at)} ／ 金額は税抜・取消済みを除く`,M,H-78,8,gray);y=H-100;if(context){for(const line of wrap(context+'（続き）',WIDTH,9)){draw(line,M,y,9);y-=13;}y-=6;}}
+ // 濃紺の大きな見出しを、そのお客様の全ページへ繰り返す。
+ function customerHeader(continued){
+  const section=activeCustomer,customer=section.person.customer,white=rgb(1,1,1),top=y+8;
+  const names=wrap(customer.name||'お名前未登録',WIDTH-32,21),salons=wrap('サロン：'+(customer.salon||'未登録'),WIDTH-32,12);
+  const height=48+names.length*27+salons.length*18;
+  if(height>H-330)throw Error('PDF_ROW_TOO_LONG');
+  page.drawRectangle({x:M-12,y:BOTTOM+12,width:4,height:top-BOTTOM-12,color:navy});
+  page.drawRectangle({x:M,y:top-height,width:WIDTH,height,color:navy});
+  draw(`お客様 ${section.number} / ${customerReport.customerCount}${continued?'（続き）':''}`,M+16,top-20,10,white);
+  const rep='営業担当：'+section.group.label;draw(rep,W-M-16-textWidth(rep,9),top-20,9,white);
+  let at=top-48;for(const name of names){draw(name,M+16,at,21,white);at-=27;}
+  for(const salon of salons){draw(salon,M+16,at,12,white);at-=18;}
+  y=top-height-20;
+  paragraph(`来場者番号：${customer.id||'未確認'} ／ 得意先コード：${customer.customer_code||'要確認'}`,{size:9,color:gray});
+  if(!continued)paragraph(`注文 ${section.person.rows.length}件 ／ 税抜合計 ${yen(section.person.totalYen)}円`,{size:10});
+  y-=4;
+ }
+ function newPage(){
+  page=doc.addPage([W,H]);pages.push(page);
+  draw(view==='customers'?'お客様別 注文一覧（営業担当順）':'BEAU Fes 2026 注文データ',M,H-42,16);
+  draw(`${data.phase==='practice'?'【練習データ・売上入力しない】':'【本番データ】'} ${title}`,M,H-62,10,data.phase==='practice'?warn:navy);
+  draw(`取得 ${when(data.fetched_at)} ／ 金額は税抜・取消済みを除く`,M,H-78,8,gray);y=H-100;
+  if(view==='customers'&&activeCustomer){const continued=activeCustomer.pages.length>0;activeCustomer.pages.push(page);pageCustomers.set(page,activeCustomer);customerHeader(continued);}
+  if(context){for(const line of wrap(context+'（続き）',WIDTH,9)){draw(line,M,y,9);y-=13;}y-=6;}
+ }
  function ensure(height){if(y-height<BOTTOM)newPage();}
  function paragraph(text,{size=9,color=navy,gap=4}={}){for(const line of wrap(text,WIDTH,size)){ensure(size+7);draw(line,M,y,size,color);y-=size+5;}y-=gap;}
  function rule(){ensure(10);page.drawLine({start:{x:M,y:y+3},end:{x:W-M,y:y+3},thickness:.6,color:rgb(.75,.8,.83)});y-=10;}
@@ -109,7 +133,7 @@ export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages=
   paragraph(`請求先：${billingLabel(h.billing)} ／ 受渡：${deliveryLabel(r.delivery)}`,{size:9});
   for(const text of warnings)paragraph('要確認：'+text,{size:9,color:warn});
   // お客様合計だけが次のページへ孤立しないよう、最後の明細に後続の表示領域も確保する。
-  const closing=lastForCustomer?83+(h.remarks?wrap('備考：'+h.remarks,WIDTH,9).length*14+4:0)+(h.contact!=='registered'?wrap('配送先・一部お渡し等は備考と受付情報を確認してください。',WIDTH,8).length*13+4:0):0;
+  const closing=lastForCustomer?48+activeCustomer.endHeight+(h.remarks?wrap('備考：'+h.remarks,WIDTH,9).length*14+4:0)+(h.contact!=='registered'?wrap('配送先・一部お渡し等は備考と受付情報を確認してください。',WIDTH,8).length*13+4:0):0;
   const cols=tableHeader();r.lines.forEach((line,i)=>lineRow(line,cols,i,i===r.lines.length-1?closing:0));
   paragraph(`注文合計（税抜）：${yen(r.total_yen)}円`,{size:10});
   if(h.remarks)paragraph('備考：'+h.remarks,{size:9});
@@ -122,15 +146,22 @@ export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages=
   paragraph('営業担当は出力時点のお客様情報。担当の表示順は社員画面と同じ設定順、未割当は最後です。',{size:8,color:gray});
   for(const group of customerReport.groups)paragraph(`${group.label}：お客様 ${group.customers.length}人 ／ ${group.orderCount}注文 ／ ${yen(group.totalYen)}円`,{size:10});
   if(!customerReport.customers.length)paragraph('対象の有効注文はありません。',{size:12});
+  paragraph('お客様ごとに改ページ。濃紺の見出しから「ご注文はここまで」の合計欄までが、そのお客様の注文です。',{size:9,color:gray});
+  let customerNumber=0;
   for(const group of customerReport.groups)for(const person of group.customers){
-   context='';newPage();const customer=person.customer;
-   page.drawRectangle({x:M,y:y-26,width:WIDTH,height:33,color:blue});draw('営業担当：'+group.label,M+10,y-14,12);y-=45;
-   paragraph(customer.salon||'サロン未登録',{size:14});paragraph(`お客様：${customer.name||'未登録'} ／ 来場者番号：${customer.id||'未確認'}`,{size:10});
-   paragraph(`得意先コード：${customer.customer_code||'要確認'} ／ 注文 ${person.rows.length}件 ／ 税抜合計 ${yen(person.totalYen)}円`,{size:10});rule();
+   const customer=person.customer,number=String(++customerNumber).padStart(2,'0');
+   const endLines=wrap(`${customer.name||'お名前未登録'} 様のご注文はここまで`,WIDTH-28,11),endHeight=40+endLines.length*15;
+   activeCustomer={person,group,number,endLines,endHeight,pages:[]};context='';newPage();
    person.rows.forEach((r,i)=>orderBody(r,{showCustomer:false,lastForCustomer:i===person.rows.length-1}));
-   context=`営業担当：${group.label} ／ ${customer.salon||''} ${customer.name||''}`;ensure(42);
-   page.drawRectangle({x:M,y:y-23,width:WIDTH,height:30,color:blue});draw('お客様合計（税抜）',M+10,y-13,11);const total=yen(person.totalYen)+'円';draw(total,W-M-10-textWidth(total,11),y-13,11);y-=40;context='';
+   context='';ensure(endHeight+14);const top=y+7;
+   page.drawRectangle({x:M,y:top-endHeight,width:WIDTH,height:endHeight,color:navy});
+   let at=top-19;for(const label of endLines){draw(label,M+14,at,11,rgb(1,1,1));at-=15;}
+   const amount=yen(person.totalYen)+'円';draw('お客様合計（税抜）',M+14,top-endHeight+13,10,rgb(1,1,1));draw(amount,W-M-14-textWidth(amount,13),top-endHeight+13,13,rgb(1,1,1));
+   // 終了枠の下で縦線も止め、空白部分まで注文が続くように見せない。
+   const below=top-endHeight-(BOTTOM+12);if(below>0)page.drawRectangle({x:M-12,y:BOTTOM+12,width:4,height:below,color:rgb(1,1,1)});
+   y=top-endHeight-14;activeCustomer=null;
   }
+
  }else{
   const counts=new Map();for(const r of data.rows){const name=r.manufacturer||r.booth;const c=counts.get(name)||{n:0,total:0};c.n++;c.total+=r.total_yen;counts.set(name,c);}
   for(const [name,c] of counts)paragraph(`${name}：${c.n}件 ／ ${yen(c.total)}円`,{size:9});
@@ -191,7 +222,18 @@ export async function buildOrderPdf(input,{pdfLib,fontkit,fontBytes,glyphImages=
  page.drawRectangle({x:M,y:y-26,width:WIDTH,height:33,color:green});draw('商品別集計 合計（税抜）',M+10,y-14,11,rgb(1,1,1));
  const grandTotal=yen(summary.totalYen)+'円';draw(grandTotal,W-M-10-font.widthOfTextAtSize(grandTotal,12),y-14,12,rgb(1,1,1));
  }
- pages.forEach((p,i)=>{p.drawText(`${i+1} / ${pages.length}`,{x:W-M-60,y:22,size:8,font,color:gray});p.drawText(summaryStartPage&&i+1>=summaryStartPage?'商品別集計 / BEAU Fes 注文データ':view==='customers'?'お客様別 / 営業担当順 / BEAU Fes':data.phase==='practice'?'練習データ / BEAU Fes 注文データ':'BEAU Fes 注文データ / 出力時点の注文',{x:M,y:22,size:8,font,color:gray});});
+ pages.forEach((p,i)=>{
+  p.drawText(`${i+1} / ${pages.length}`,{x:W-M-60,y:22,size:8,font,color:gray});
+  const section=pageCustomers.get(p);let label;
+  if(section){
+   const suffix=` ｜ このお客様の ${section.pages.indexOf(p)+1} / ${section.pages.length} ページ`,prefix=`お客様 ${section.number} ｜ `;
+   let name=String(section.person.customer.name||'お名前未登録');while(name&&textWidth(prefix+name+suffix,8)>WIDTH-82)name=[...name].slice(0,-1).join('');
+   label=prefix+name+suffix;
+  }else label=summaryStartPage&&i+1>=summaryStartPage?'商品別集計 / BEAU Fes 注文データ':view==='customers'?'お客様別 / 営業担当順 / BEAU Fes':data.phase==='practice'?'練習データ / BEAU Fes 注文データ':'BEAU Fes 注文データ / 出力時点の注文';
+  // 絵文字を含むお名前も通常の本文と同じ画像併用描画でフッターへ表示する。
+  const previous=page;page=p;draw(label,M,22,8,gray);page=previous;
+ });
+
  doc.setTitle(view==='customers'?'BEAU Fes お客様別注文（営業担当順）':'BEAU Fes 注文データ');doc.setCreator('BEAU Fes 注文PDF出力');doc.setLanguage('ja-JP');
  return {bytes:await doc.save(),pages:pages.length,orderCount:data.order_count,totalYen:data.total_yen,summaryStartPage,summaryPageCount:summaryStartPage?pages.length-summaryStartPage+1:0,productCount:summary.productCount,customerCount:customerReport?.customerCount??data.customer_count,view};
 }
