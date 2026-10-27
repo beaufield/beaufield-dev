@@ -1,6 +1,6 @@
 import {get,set,records,update as storageUpdate,mergeReceipt,sanitizeLegacyQr,clearMakerConnection,storageMode,purgePracticeRecords} from './storage.js';
 import {buildWorkbook,displayProductCode,emptyHandling,packRemarks,unpackRemarks,handlingWarnings,deliveryLabel,billingLabel} from './export.js';
-const APP_VERSION='v0.25.3';
+const APP_VERSION='v0.25.4';
 const API_URL=location.hostname==='127.0.0.1'||location.hostname==='localhost'?'./api':'https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/booth-api';
 const OFFICE_URL=API_URL==='./api'?API_URL:API_URL.replace('/booth-api','/office-api');
 const officeMode=new URLSearchParams(location.search).get('office')==='1';
@@ -608,7 +608,7 @@ function renderHistoryTotals(data){
  for(const [label,value]of [['注文金額（税抜）',yen(v.total_yen)],['注文人数',`${v.customer_count.toLocaleString('ja-JP')}人`]]){
   const item=element('div');item.append(element('span',label),element('strong',value));values.append(item);
  }
- box.append(title,values,element('p',`登録済み${v.order_count.toLocaleString('ja-JP')}件。取消済みを除く。同じ方の追加注文は1人として数えます。`,'summary-note'),element('p','フェス終了後に注文明細はデータで各社にお送りします。','summary-note'));
+ box.append(title,values,element('p',`登録済み${v.order_count.toLocaleString('ja-JP')}件。取消済みを除く。同じ方の追加注文は1人として数えます。`,'summary-note'),element('p','注文の外部通知は停止中です。注文明細は社員用画面からPDF・Excelで出力できます。','summary-note'));
 }
 function staleHistoryTotals(){
  const box=$('history-totals');if(box.hidden)return;box.classList.add('summary-stale');box.removeAttribute('aria-busy');
