@@ -46,6 +46,8 @@ export function histogram(rows,date,interval=10){
  const end=Math.max(960,...dated.map(a=>(Math.floor(a.time.minute/interval)+1)*interval));
  const bins=[];for(let minute=start;minute<end;minute+=interval)bins.push({minute,count:0});
  for(const a of dated)bins[Math.floor((a.time.minute-start)/interval)].count++;
+ // 日本語コメント: 各時間帯の終わりまでの累計。時刻不明・別日を混ぜず、棒と同じ母集団を使う。
+ let cumulative=0;for(const bin of bins)bin.cumulative=cumulative+=bin.count;
  return {bins,count:dated.length,unknown:arrived.filter(a=>!a.time).length,otherDate:arrived.filter(a=>a.time&&a.time.date!==date).length,max:Math.max(1,...bins.map(b=>b.count))};
 }
 export function selectList(rows,{status='arrived',date='',minute=null,interval=10,sort='recent'}={}){

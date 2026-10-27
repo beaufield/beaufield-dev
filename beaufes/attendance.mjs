@@ -1,7 +1,7 @@
-import {EVENT_DATE,snapshot,selectBase,totals,histogram,selectList,minuteLabel,sessionClock} from './attendance-core.mjs?b=20261027a';
+import {EVENT_DATE,snapshot,selectBase,totals,histogram,selectList,minuteLabel,sessionClock} from './attendance-core.mjs?b=20261027b';
 import {UNKNOWN_TIME,pendingCheckin,prepareCheckin,clearCheckin,validateCheckinResult} from './attendance-checkin.mjs?b=20261027a';
 // 日本語コメント: 既存の社員認証と受付APIを共用する。申込・予約・パス再送APIは呼ばない。
-const APP_VERSION='1.1.0';
+const APP_VERSION='1.2.0';
 const $=id=>document.getElementById(id);
 let data=null,status='arrived',minute=null,inFlight=false,timer=null,lastSuccess=0,denied=false;
 let manualAppId=null,manualBusy=false;
@@ -43,21 +43,42 @@ function renderChart(base){
  for(const [index,bin] of chart.bins.entries()){
   const range=minuteLabel(bin.minute)+'〜'+minuteLabel(bin.minute+interval);
   const button=textNode('button','','bar'+(bin.minute===minute?' active':''));button.type='button';
-  button.setAttribute('aria-label',`${date} ${range} ${bin.count}人。押すと来場者を表示`);button.setAttribute('aria-pressed',String(bin.minute===minute));button.title=range+'：'+bin.count+'人';
+  button.setAttribute('aria-label',`${date} ${range} ${bin.count}人・この時間帯の終了までの累計${bin.cumulative}人。押すと来場者を表示`);button.setAttribute('aria-pressed',String(bin.minute===minute));button.title=range+'：'+bin.count+'人 ／ 累計'+bin.cumulative+'人';
   const fill=textNode('span','','barFill'+(bin.count?'':' zero'));fill.style.height=(bin.count/chart.max*145)+'px';
   if(bin.count)fill.append(textNode('span',String(bin.count),'barNumber'));
   button.append(fill);
   if(interval===60||index%3===0)button.append(textNode('span',minuteLabel(bin.minute),'barLabel'));
   button.addEventListener('click',()=>{minute=minute===bin.minute?null:bin.minute;status='arrived';render();$('listPanel').scrollIntoView({behavior:'smooth',block:'start'});});root.append(button);
  }
- $('chartSummary').textContent=`${date.replaceAll('-','/')} の来場 ${chart.count}人 · 棒を押すとその時間帯の来場者を表示`;
- $('chartCaption').textContent=`${interval}分ごと・最初の受付時刻で集計（日本時間）`;
+ renderCumulative(chart);
+ $('chartSummary').textContent=`${date.replaceAll('-','/')} の来場・累計 ${chart.count}人 · 棒を押すとその時間帯の来場者を表示`;
+ $('chartCaption').textContent=`${interval}分ごと・最初の受付時刻で集計（日本時間）。線は各時間帯の終了までの累計`;
  const notices=[];
  if(date!==EVENT_DATE)notices.push('開催日（10/26）以外の受付を表示しています。');
  if(chart.otherDate)notices.push(`別日の受付 ${chart.otherDate}人はグラフの対象外です。上の受付済み人数には含みます。`);
  if(chart.unknown)notices.push(`受付時刻を確認できない ${chart.unknown}人はグラフの対象外です。上の受付済み人数と一覧には含みます。`);
  if(!chart.count)notices.push('この日の受付記録はまだありません。');
  $('chartNotice').textContent=notices.join(' ');$('clearTime').hidden=minute===null;
+}
+function renderCumulative(chart){
+ const max=Math.max(1,chart.count);
+ function axis(id,limit){
+  const root=$(id);root.replaceChildren(textNode('span','人','axisTitle'));
+  for(const value of [...new Set([0,Math.ceil(limit/2),limit])]){
+   const label=textNode('span',String(value),'axisTick');
+   label.style.top=(65+(1-value/limit)*145)+'px';root.append(label);
+  }
+ }
+ // 日本語コメント: 棒の高さ・クリックは維持。累計は右軸の独立目盛で重ね、左右の尺度を明記する。
+ axis('barAxis',chart.max);axis('cumulativeAxis',max);
+ const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');
+ svg.classList.add('cumulativeOverlay');svg.setAttribute('viewBox','0 0 1000 145');svg.setAttribute('preserveAspectRatio','none');svg.setAttribute('aria-hidden','true');
+ const points=chart.bins.map((bin,index)=>({x:(index+.5)/chart.bins.length*1000,y:145-bin.cumulative/max*145}));
+ const line=document.createElementNS(ns,'polyline');line.setAttribute('points',points.map(p=>p.x+','+p.y).join(' '));line.classList.add('cumulativeLine');svg.append(line);
+ for(const [index,point] of points.entries()){
+  const dot=document.createElementNS(ns,'circle');dot.setAttribute('cx',point.x);dot.setAttribute('cy',point.y);dot.setAttribute('r','3');dot.dataset.cumulative=chart.bins[index].cumulative;dot.classList.add('cumulativeDot');svg.append(dot);
+ }
+ $('chart').append(svg);
 }
 function renderList(base){
  const interval=Number($('interval').value),date=$('chartDate').value;

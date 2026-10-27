@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title>来場状況（社員用） | ビューフェス2026</title>
-<link rel="stylesheet" href="attendance.css?b=20261027a">
+<link rel="stylesheet" href="attendance.css?b=20261027b">
 <script src="candidate-config.js?b=3debf1542ecb"></script>
 <script src="ui-bootstrap.js?b=40aeb3ead80d"></script>
-<script type="module" src="attendance.mjs?b=20261027a"></script>
+<script type="module" src="attendance.mjs?b=20261027b"></script>
 </head>
 <body>
 <header class="appHeader">
@@ -36,7 +36,8 @@
     </section>
     <section class="panel" aria-labelledby="chartTitle">
       <div class="sectionLine"><div><h2 id="chartTitle">時間帯別の来場者数</h2><p class="muted" id="chartCaption">最初の受付時刻で集計（日本時間）</p></div><div class="actions chartControls"><label>集計日 <input type="date" id="chartDate" value="2026-10-26"></label><label>集計間隔 <select id="interval"><option value="10">10分ごと</option><option value="60">1時間ごと</option></select></label></div></div>
-      <div class="chartScroll" tabindex="0" aria-label="横にスクロールして時間帯を表示"><div class="chart" id="chart" role="group" aria-label="時間帯別の来場者数の棒グラフ"></div></div>
+      <div class="chartLegend" aria-label="グラフの凡例"><span><i class="barKey" aria-hidden="true"></i>棒：時間帯別の人数（左軸）</span><span class="cumulativeLegend"><i class="lineKey" aria-hidden="true"></i>線：当日の累計人数（右軸）</span></div>
+      <div class="chartFrame"><div class="chartAxis" id="barAxis" aria-hidden="true"></div><div class="chartScroll" tabindex="0" aria-label="横にスクロールして時間帯を表示"><div class="chart" id="chart" role="group" aria-label="時間帯別の来場者数の棒グラフと累計の折れ線グラフ"></div></div><div class="chartAxis cumulativeAxis" id="cumulativeAxis" aria-hidden="true"></div></div>
       <div class="chartFooter"><span id="chartSummary" class="muted"></span><button id="clearTime" class="secondary" type="button" hidden>時間帯の絞り込みを解除</button></div>
       <p class="muted note" id="chartNotice"></p>
     </section>
