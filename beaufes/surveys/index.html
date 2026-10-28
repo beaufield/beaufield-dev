@@ -1,16 +1,18 @@
 <!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="survey-api" content="https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/beaufes-survey"><meta name="portal-url" content="https://beaufield.github.io/beaufield-dev/">
-<meta name="referrer" content="no-referrer"><title>BEAU Fes アンケート回答</title><link rel="stylesheet" href="style.css?rev=49851099b075"></head>
-<body><header><div><p class="eyebrow">BEAUFIELD STAFF</p><h1>アンケート回答 <small id="version"></small></h1></div><a id="portal" href="https://beaufield.github.io/beaufield-dev/">社員ポータルへ</a></header>
-<main><p id="candidate" class="notice" hidden>本番接続は未設定です。公開前の候補画面です。</p><p id="status" role="status" aria-live="polite"></p>
-<section id="gate" class="panel"><h2>社員用ポータルでログインしてください</h2><p>Googleアカウントは必要ありません。ビューフェスの利用権限で回答を確認できます。</p><p>LINE WORKSから開いた場合、ポータルでログイン後に通知の「回答の詳細を見る」をもう一度押してください。</p><a class="button" id="signin" href="https://beaufield.github.io/beaufield-dev/">ポータルを開く</a><button id="retry">ログイン状態を確認</button></section>
+<meta name="referrer" content="no-referrer"><title>BEAU Fes アンケート回答</title><link rel="stylesheet" href="style.css?rev=d18fe780c35b"></head>
+<body class="is-busy"><div id="busy" class="busy-overlay" role="dialog" aria-modal="true" aria-labelledby="busy-title" aria-describedby="busy-note" tabindex="-1"><div class="busy-card"><span class="spinner" aria-hidden="true"></span><h2 id="busy-title">アンケートを読み込んでいます</h2><p id="busy-note" role="status" aria-live="polite">メーカー・お客様の回答を準備しています。</p><button id="busy-cancel" class="secondary" hidden>キャンセル</button></div></div>
+<header id="app-header" inert><div><p class="eyebrow">BEAUFIELD STAFF</p><h1>アンケート回答 <small id="version"></small></h1></div><a id="portal" href="https://beaufield.github.io/beaufield-dev/">社員ポータルへ</a></header>
+<main id="app-main" inert aria-busy="true"><p id="candidate" class="notice" hidden>本番接続は未設定です。公開前の候補画面です。</p><p id="status" role="status" aria-live="polite"></p><p id="feedback" class="notice" role="alert" hidden></p>
+<section id="gate" class="panel" hidden><h2>社員用ポータルでログインしてください</h2><p>Googleアカウントは必要ありません。ビューフェスの利用権限で回答を確認できます。</p><p>LINE WORKSから開いた場合、ポータルでログイン後に通知の「回答の詳細を見る」をもう一度押してください。</p><a class="button" id="signin" href="https://beaufield.github.io/beaufield-dev/">ポータルを開く</a><button id="retry">ログイン状態を確認</button></section>
+<section id="load-error" class="panel" hidden><h2>回答を読み込めませんでした</h2><p>接続を確認して、もう一度お試しください。</p><button id="load-retry">再読み込み</button></section>
 <div id="workspace" hidden><nav class="survey-tabs" role="tablist" aria-label="アンケートの種類"><button type="button" role="tab" id="tab-maker" data-kind="maker" aria-selected="true" aria-controls="survey-panel">メーカー</button><button type="button" role="tab" id="tab-customer" data-kind="customer" aria-selected="false" aria-controls="survey-panel" tabindex="-1">お客様</button></nav>
-<div id="survey-panel" role="tabpanel" aria-labelledby="tab-maker"><section id="summary" class="summary" aria-label="回答件数と満足度"></section>
+<div id="survey-panel" role="tabpanel" aria-labelledby="tab-maker"><div id="list-view"><section id="summary" class="summary" aria-label="回答件数と満足度"></section>
 <section class="panel"><form id="filters">
 <label>名前・会社・サロン・コメント<input id="query" maxlength="200" type="search" placeholder="キーワードを入力"></label>
 <label>満足度<select id="score"><option value="">すべて</option><option value="5">5</option><option value="4">4</option><option value="3">3</option><option value="2">2</option><option value="1">1</option></select></label>
 <label>開始日<input id="from" type="date"></label><label>終了日<input id="until" type="date"></label><button type="submit">検索・更新</button></form></section>
-<section id="detail" class="panel" hidden aria-label="回答の詳細"></section><section aria-label="回答一覧"><p id="count"></p><div id="responses"></div><button id="more" hidden>さらに表示</button></section>
-<section id="admin" class="panel" hidden><h2>同期・通知の状態</h2><button id="health-refresh">状態を更新</button><div id="health"></div></section></div></div></main>
-<footer>回答内容は社員向けの閲覧専用です。</footer><script type="module" src="app.js?rev=3c8a863c855b"></script></body></html>
+<section aria-label="回答一覧"><p id="count"></p><div id="responses"></div><button id="more" hidden>さらに表示</button></section>
+<section id="admin" class="panel" hidden><h2>同期・通知の状態</h2><button id="health-refresh">状態を更新</button><div id="health"></div></section></div><section id="detail" class="panel" hidden aria-label="回答の詳細"></section></div></div></main>
+<footer>回答内容は社員向けの閲覧専用です。</footer><script type="module" src="app.js?rev=9645da055894"></script></body></html>
