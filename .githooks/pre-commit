@@ -20,11 +20,18 @@ BLOCKED_EXT='\.(pdf|PDF|csv|CSV|xlsx|XLSX|xlsm|XLSM|xls|XLS|tsv|TSV|docx|DOCX|do
 #   .gitignore は `git add -f` で飛び越えられるため、ここでも止める。
 BLOCKED_FILES='(^|/)CLAUDE\.md$|(^|/)AGENTS\.md$|(^|/)SPEC\.md$|(^|/)HANDOVER\.md$|(^|/)_handoff[^/]*\.md$|PRIVATE|(^|/)\.env($|\.)|(^|/)\.dev\.vars$|(^|/)\.clasprc\.json$|(^|/)config\.json$|(^|/)\.wrangler/|\.sql$'
 
-# ステージされている追加・変更ファイルから対象を抽出
-staged=$(git diff --cached --name-only --diff-filter=ACM)
+# 印刷用の業務資料は拡張子にかかわらず拒否する。
+# .gitignore を -f で越えた場合や、公開コードからの名前変更も対象にする。
+BLOCKED_DIRS='^beaufes/印刷物/'
+
+# NUL区切りで取得し、日本語パスの引用・エスケープによる取りこぼしを防ぐ。
+# ファイル名中の改行も分割されるが、拒否フォルダの接頭辞は必ず残る。
+# R（名前変更）を含め、移動先が非公開フォルダの場合も確認する。
+staged=$(git diff --cached --name-only --diff-filter=ACMR -z | tr '\0' '\n')
 violations_ext=$(echo "$staged" | grep -E "$BLOCKED_EXT" || true)
 violations_files=$(echo "$staged" | grep -E "$BLOCKED_FILES" || true)
-violations=$(printf '%s\n%s' "$violations_ext" "$violations_files" | grep -v '^$' || true)
+violations_dirs=$(printf '%s\n' "$staged" | grep -E "$BLOCKED_DIRS" || true)
+violations=$(printf '%s\n%s\n%s' "$violations_ext" "$violations_files" "$violations_dirs" | grep -v '^$' || true)
 
 if [ -n "$violations" ]; then
     echo ""
@@ -43,6 +50,7 @@ if [ -n "$violations" ]; then
     echo "  - _handoff*.md: GAS URL・シートID・作業状況を含む引継ぎ資料"
     echo "  - *PRIVATE* / .env / .dev.vars / config.json / .clasprc.json / .wrangler/: 非公開資料・秘密設定"
     echo "  - *.sql: DB構造・権限設計（価格原稿などのデータを含むことがある）"
+    echo "  - 印刷物フォルダ: 氏名・取引先・受付情報を含む業務資料（全拡張子）"
     echo ""
     echo "対処方法:"
     echo "  1. ステージから取り除く:"
