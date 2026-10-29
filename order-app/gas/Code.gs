@@ -26,7 +26,7 @@ const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
 const DB_URL          = _PROPS.getProperty('DB_URL');          // §8: SupabaseプロジェクトURL（例 https://xxxx.supabase.co）
 const DB_SECRET_KEY   = _PROPS.getProperty('DB_SECRET_KEY');   // §8: service_role相当のsecret key（apikeyヘッダーにのみ使う）
-const VERSION         = 'v1.40.5';
+const VERSION         = 'v1.40.6';
 const APP_NAME        = 'order-app';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 let _requestMetric = null;
@@ -3685,8 +3685,8 @@ function initializeSheets() {
   ensureSheet(SHEET_RECEIPT_AUTO, RECEIPT_AUTO_HEADERS);
   ensureSheet(SHEET_POSTING_LAG,  POSTING_LAG_HEADERS);
 
-  const suppSh = ensureSheet(SHEET_SUPPLIERS, ['コード','名称','FAX','更新日時','発注方法']);
-  // 固定の仕入先初期データは公開履歴から除去。
+  // 仕入先の初期データは非公開の管理手順で登録する。
+  ensureSheet(SHEET_SUPPLIERS, ['コード','名称','FAX','更新日時','発注方法']);
 
   Logger.log('✅ 初期設定完了 (Version: ' + VERSION + ')');
 }
