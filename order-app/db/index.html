@@ -1538,7 +1538,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.87.2-db';
+const APP_VERSION    = 'v1.87.3-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -5336,20 +5336,72 @@ async function outputText() {
 
 // Web発注先の発注記録として保存（アプリからは送信しない。Phase H）
 // 発注サイトで注文した（する）内容を記録するだけのため、出力・ダウンロードは行わない
+// ブラウザのconfirmが抑止されても無反応にならないよう、画面内で明示的に確認する。
+function confirmWebOrderRecord() {
+  return new Promise((resolve, reject) => {
+    const previousFocus = document.activeElement;
+    const dialog = document.createElement('dialog');
+    dialog.id = 'web-record-confirm';
+    dialog.setAttribute('aria-labelledby', 'web-record-confirm-title');
+    dialog.setAttribute('aria-describedby', 'web-record-confirm-warning');
+    dialog.style.cssText = 'width:min(420px,calc(100% - 32px));max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);overflow:auto;margin:auto;box-sizing:border-box;border:1px solid var(--border,#bbb);border-radius:12px;padding:20px;background:var(--surface,#fff);color:var(--text,#222);';
+    const title = document.createElement('h3');
+    title.id = 'web-record-confirm-title';
+    title.style.cssText = 'font-size:18px;line-height:1.5;margin-bottom:12px;';
+    title.textContent = '発注記録として保存しますか？';
+    const target = document.createElement('p');
+    target.style.cssText = 'font-size:14px;line-height:1.6;margin-bottom:12px;';
+    target.textContent = currentOrder.supplierName + ' / ' + currentOrder.date + ' / ' + cartItems.length + '品目';
+    const warning = document.createElement('p');
+    warning.id = 'web-record-confirm-warning';
+    warning.style.cssText = 'font-size:14px;line-height:1.7;';
+    warning.textContent = '発注サイトで注文した（する）内容で間違いありませんか？ このアプリからは送信されません。記録すると、この数量は「発注済み」として提案から差し引かれます。';
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;margin-top:20px;';
+    const cancel = document.createElement('button');
+    cancel.id = 'web-record-cancel'; cancel.type = 'button';
+    cancel.className = 'btn btn-outline'; cancel.textContent = 'キャンセル';
+    const accept = document.createElement('button');
+    accept.id = 'web-record-accept'; accept.type = 'button';
+    accept.className = 'btn btn-primary'; accept.textContent = 'この内容で記録する';
+    let settled = false;
+    const finish = (value, error) => {
+      if (settled) return;
+      settled = true; accept.disabled = cancel.disabled = true;
+      if (dialog.open) dialog.close();
+      dialog.remove(); previousFocus?.focus();
+      if (error) reject(error); else resolve(value);
+    };
+    cancel.addEventListener('click', () => finish(false));
+    accept.addEventListener('click', () => finish(true));
+    dialog.addEventListener('cancel', event => { event.preventDefault(); finish(false); });
+    dialog.addEventListener('close', () => finish(false));
+    actions.append(cancel, accept); dialog.append(title, target, warning, actions);
+    document.body.appendChild(dialog);
+    try { dialog.showModal(); cancel.focus(); }
+    catch { finish(false, new Error('保存の確認画面を開けませんでした。発注記録は保存していません。')); }
+  });
+}
+
+let webRecordBusy = false;
 async function outputWebRecord() {
-  if (SatoOxOrderForm.contains(cartItems)) return outputSatoOxPDF();
-  if (!confirm(
-    '発注サイトで注文した（する）内容で間違いありませんか？\n' +
-    '記録すると、この数量は「発注済み」として提案から差し引かれます。'
-  )) return;
-  showLoading('発注記録を保存・確認中...');
+  if (webRecordBusy) return; // 確認中・保存中の連打では確認や保存を増やさない。
+  webRecordBusy = true;
+  let loading = false;
   try {
+    if (SatoOxOrderForm.contains(cartItems)) return await outputSatoOxPDF();
+    if (!await confirmWebOrderRecord()) return;
+    showLoading('発注記録を保存・確認中...');
+    loading = true;
     await _saveBeforeExternalOutput('Web記録');
     _finishExternalOutput();
     showToast('発注記録として保存しました', 'success');
   } catch(e) {
-    showToast('エラー: ' + e.message, 'error');
-  } finally { hideLoading(); }
+    showToast('発注記録を完了できませんでした: ' + (loading ? _gasErrorMessage(e) : (e.message || '確認画面を開けませんでした。')), 'error');
+  } finally {
+    if (loading) hideLoading();
+    webRecordBusy = false;
+  }
 }
 
 // CSV出力（ヘッダー行なし）。保存確認後にだけダウンロードする。
