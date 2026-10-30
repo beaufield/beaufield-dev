@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.37.0';
+const VERSION = 'v2.37.3';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -6764,7 +6764,7 @@ function bridgeAuditCatalog_(path) {
     method:'get',headers:{Authorization:'Bearer '+token,Accept:'application/json'},muteHttpExceptions:true,followRedirects:false});
   let total = null, pages = 0;
   const consume = (response, offset) => {
-    if (response.getResponseCode() !== 200) bridgeFail_('CATALOG_READ_FAILED');
+    response=bridgeCatalogResponse_(response,request(offset),token,path,offset);
     let body;try {body=JSON.parse(response.getContentText());} catch (_) {bridgeFail_('CATALOG_SCHEMA_INVALID');}
     const data=Array.isArray(body.data)?body.data:body[allowed[path]], rawTotal=body.meta&&body.meta.total;
     if ((typeof rawTotal!=='number'&&typeof rawTotal!=='string')||!/^\d+$/.test(String(rawTotal))) bridgeFail_('CATALOG_TOTAL_MISSING');
@@ -6774,10 +6774,10 @@ function bridgeAuditCatalog_(path) {
     if (data.length!==Math.min(100,total-offset)) bridgeFail_('CATALOG_PAGE_INCOMPLETE');
     data.forEach(row=>{if (!row||!/^[1-9]\d*$/.test(String(row.id))||!Number.isSafeInteger(Number(row.id))||ids.has(String(row.id))) bridgeFail_('CATALOG_ID_INVALID');ids.add(String(row.id));rows.push(row);});pages++;
   };
-  const first=request(0);consume(apiFetch_(first.url,first),0);
+  const first=request(0);consume(bridgeCatalogFetch_([first],token,path,[0])[0],0);
   const offsets=[];for(let off=100;off<total;off+=100)offsets.push(off);
   // 既存GASと同じfetchAllを使い、固定ページを10件ずつ検証する。
-  for(let i=0;i<offsets.length;i+=10){const chunk=offsets.slice(i,i+10),responses=UrlFetchApp.fetchAll(chunk.map(request));
+  for(let i=0;i<offsets.length;i+=10){const chunk=offsets.slice(i,i+10),responses=bridgeCatalogFetch_(chunk.map(request),token,path,chunk);
     if(responses.length!==chunk.length)bridgeFail_('CATALOG_PAGE_INCOMPLETE');responses.forEach((r,j)=>consume(r,chunk[j]));}
   if(rows.length!==total)bridgeFail_('CATALOG_PAGE_INCOMPLETE');
   return {rows:rows,evidence:{path:path,total:total,rowCount:rows.length,pageCount:pages,limit:100,filters:[],startedAt:startedAt,completedAt:Date.now()}};

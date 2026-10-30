@@ -1,7 +1,33 @@
 // Bモール新商品検知専用。旧12680経路・価格更新・登録・公開・通知には触れない。
-const BMALL_AUTO_ACTIONS_ = Object.freeze(['bmallAutoStatus','bmallAutoSnapshot','bmallAutoReferences','bmallAutoPrepare','bmallAutoProposal','bmallAutoApprove','bmallAutoSave','bmallAutoResult']);
+const BMALL_AUTO_ACTIONS_ = Object.freeze(['bmallAutoStatus','bmallAutoSnapshot','bmallAutoReferences','bmallAutoPrepare','bmallAutoProposal','bmallAutoApprove','bmallAutoSave','bmallAutoResult','bmallAutoChatPreflight','bmallAutoPrepareChat','bmallAutoChatSave','bmallAutoRecoveryPreview','bmallAutoRecoveryCommit','bmallAutoRecoveryResult']);
+const BMALL_CHAT_AUTH_MODE_ = 'owner_chat_delegation_v1';
+// Owner-confirmed Web listing exclusions. This rule is checked again under the save Lock.
+const BMALL_WEB_NG_CODES_ = Object.freeze(['12542','12645','12646','12647','12648']);
 const BMALL_AUTO_JOURNAL_ = 'Bmall_新商品確認記録';
 function autoFail_(s) { throw new Error('AUTO_'+s); }
+function autoSaveErrorCode_(e) {
+  return e&&/^AUTO_[A-Z0-9_]{1,80}$/.test(e.message)?e.message:
+    e&&/^BRIDGE_[A-Z0-9_]{1,80}$/.test(e.message)?'AUTO_'+e.message:'AUTO_INTERNAL_FAILURE';
+}
+function autoSaveTrace_(v) { return typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v)?v:null; }
+function autoSaveDiagnostic_(traceId,stage,outcome,startedAt,httpStatus,errorCode) {
+  if(!traceId)return;
+  try { console.log(JSON.stringify({event:'bmall_chat_save',version:1,traceId:traceId,stage:stage,outcome:outcome,
+    startedAt:new Date(startedAt).toISOString(),at:new Date().toISOString(),durationMs:Math.max(0,Date.now()-startedAt),
+    httpStatus:Number.isInteger(httpStatus)&&httpStatus>=100&&httpStatus<=599?httpStatus:null,
+    errorCode:typeof errorCode==='string'&&/^AUTO_[A-Z0-9_]{1,80}$/.test(errorCode)?errorCode:null})); } catch(ignored) {}
+}
+function autoChatNoWriteProof_(params,lockHeld) {
+  // Only a verified journal read while this execution holds the same save Lock can certify a pre-claim stop.
+  if(!lockHeld||!params||params.action!=='bmallAutoChatSave'||!autoSaveTrace_(params.traceId))return null;
+  const id=params.envelope&&params.envelope.proposalId;
+  if(typeof id!=='string'||!/^P-[0-9a-f-]{36}$/.test(id))return null;
+  try {
+    const got=autoGet_(id),p=got&&got.p;
+    if(!p||p.authMode!==BMALL_CHAT_AUTH_MODE_||!['PROPOSED','INVALID'].includes(p.state)||p.draftId||p.attemptedAt)return null;
+    return {saveOutcome:'NO_WRITE_CONFIRMED',proposalId:id,traceId:params.traceId};
+  }catch(ignored){return null;}
+}
 function autoExact_(v, keys) { if(!v||Array.isArray(v)||typeof v!=='object'||Object.keys(v).sort().join('|')!==keys.slice().sort().join('|')) autoFail_('INVALID_FIELDS'); }
 function autoId_(s) { if(typeof s!=='string'||!/^P-[0-9a-f-]{36}$/.test(s)) autoFail_('INVALID_PROPOSAL'); return s; }
 function autoOwner_() { if(typeof BMALL_AUTO_OWNER_==='undefined'||typeof BMALL_AUTO_OWNER_!=='string') autoFail_('OWNER_NOT_CONFIGURED'); return BMALL_AUTO_OWNER_; }
@@ -33,7 +59,7 @@ function autoPut_(p) {
   if(bridgeStable_(autoGet_(p.id).p)!==bridgeStable_(p))autoFail_('JOURNAL_DURABILITY_UNKNOWN');
 }
 function autoPublic_(p) {
-  return {ok:true,proposalId:p.id,state:p.state,payload:p.payload,codes:p.codes,payloadHash:p.payloadHash,masterHash:p.masterHash,
+  return {ok:true,proposalId:p.id,state:p.state,...(p.authMode?{authMode:p.authMode}:{}),payload:p.payload,codes:p.codes,payloadHash:p.payloadHash,masterHash:p.masterHash,
     createdAt:p.createdAt,expiresAt:p.expiresAt,approvedAt:p.approvedAt||null,approvalExpiresAt:p.approvalExpiresAt||null,
     reviewLabels:p.reviewLabels||null,draftId:p.draftId||null,readbackVerified:p.state==='VERIFIED',notificationEnabled:false};
 }
@@ -47,7 +73,7 @@ function autoMaster_() {
   const csv=Utilities.parseCsv(blob.getDataAsString('Shift_JIS'));if(csv.length<2)autoFail_('MASTER_INCOMPLETE');
   const h=csv[0].map(x=>String(x).trim().replace(/^\uFEFF/,''));if(new Set(h).size!==h.length)autoFail_('MASTER_SCHEMA');
   const price=h.includes('定価１')?'定価１':'定価1';
-  const req=['コード','商品名','仕入先CD','仕入先名','JANCD','売上単価',price,'仕入単価','単位名','最終売上日','廃番'];
+  const req=['コード','商品名','仕入先CD','仕入先名','JANCD','売上単価',price,'仕入単価','単位名','最終売上日','廃番','在庫有無'];
   if(req.some(x=>!h.includes(x)))autoFail_('MASTER_SCHEMA');const codes=new Set(),rows=[];
   csv.slice(1).forEach(v=>{if(v.every(x=>String(x).trim()===''))return;if(v.length!==h.length)autoFail_('MASTER_INCOMPLETE');
     const r={};h.forEach((k,i)=>r[k]=String(v[i]).trim());const code=bridgeNormalizeCode_(r['コード']);
@@ -55,7 +81,7 @@ function autoMaster_() {
     const releaseHeader=['発売日','発売年月日'].find(x=>h.includes(x));
     rows.push({code:code,name:r['商品名'],jan:bridgeNormalizeJan_(r['JANCD']),supplierCd:bridgeNormalizeCode_(r['仕入先CD']),supplierName:r['仕入先名'],
       unitPrice:autoMasterNumber_(r['売上単価']),jodai:autoMasterNumber_(r[price]),shiire:autoMasterNumber_(r['仕入単価']),unit:r['単位名'],
-      lastSaleDate:bridgeMasterDate_(r['最終売上日']),releaseDate:releaseHeader?bridgeMasterDate_(r[releaseHeader]):'',discontinued:!['','0','FALSE'].includes(r['廃番'].toUpperCase())});
+      lastSaleDate:bridgeMasterDate_(r['最終売上日']),releaseDate:releaseHeader?bridgeMasterDate_(r[releaseHeader]):'',discontinued:!['','0','FALSE'].includes(r['廃番'].toUpperCase()),stockManagement:r['在庫有無']});
   });
   if(rows.length<1000)autoFail_('MASTER_UNEXPECTED_SMALL_REVIEW_REQUIRED');
   if(f.getLastUpdated().getTime()!==updatedAt||f.getSize()!==size)autoFail_('MASTER_CHANGED');
@@ -90,6 +116,10 @@ function autoMatches_(audit,r,names) {
 }
 function autoSnapshot_() {
   const m=autoMaster_(),s=bridgeReadSheets_(),a=autoAudit_(s),again=autoMaster_();if(m.generation!==again.generation)autoFail_('MASTER_CHANGED');
+  return autoSnapshotResult_(m,a);
+}
+function autoSnapshotResult_(m,a) {
+  // 同じ要求内で取得した監査だけを共有する。要求をまたぐカタログcacheは使わない。
   return {ok:true,complete:true,includesHidden:true,masterHash:m.masterHash,generation:m.generation,updatedAt:m.updatedAt,sizeBytes:m.sizeBytes,rowCount:m.rowCount,
     rows:m.rows.map(r=>Object.assign({},r,{matches:autoMatches_(a,r)})),categories:a.categories,features:a.features,catalogEvidence:a.evidence,notificationEnabled:false};
 }
@@ -104,6 +134,8 @@ function autoValidate_(d,m,a) {
   if(!Array.isArray(d.sets)||!d.sets.length||d.sets.length>30)autoFail_('INVALID_SETS');const seen=new Set();
   d.sets.forEach(s=>{autoExact_(s,'code setName jan unitPrice jodai shiire unit lastSaleDate'.split(' '));if(typeof s.code!=='string'||seen.has(s.code))autoFail_('DUPLICATE_SET_CODE');seen.add(s.code);
     const r=m.rows.find(x=>x.code===s.code);if(!r||r.discontinued)autoFail_('MASTER_TARGET_INVALID');
+    if(BMALL_WEB_NG_CODES_.includes(r.code))autoFail_('WEB_LISTING_EXCLUDED');
+    if(r.stockManagement!=='する')autoFail_('STOCK_MANAGEMENT_NOT_CONFIRMED');
     if([r.unitPrice,r.jodai,r.shiire].some(x=>x===null))autoFail_('MASTER_PRICE_UNKNOWN');
     if(d.supplierCd!==r.supplierCd||d.supplierName!==r.supplierName||s.jan!==r.jan||s.unitPrice!==r.unitPrice||s.jodai!==r.jodai||s.shiire!==r.shiire||s.unit!==r.unit||s.lastSaleDate!==r.lastSaleDate)autoFail_('MASTER_PAYLOAD_MISMATCH');
     if(!bridgeSafeText_(s.setName,200)||!bridgeSafeText_(s.unit,30))autoFail_('INVALID_SET_TEXT');
@@ -117,6 +149,17 @@ function autoEnvelopeValid_(e,signature,key) {
   const expected=Utilities.computeHmacSha256Signature(bridgeStable_(e),key,Utilities.Charset.UTF_8).map(b=>('0'+((b+256)%256).toString(16)).slice(-2)).join('');
   if(!bridgeKeyMatches_(signature,expected))autoFail_('APPROVAL_SIGNATURE_INVALID');
 }
+function autoChatEnvelopeValid_(e,signature,key) {
+  autoExact_(e,['purpose','version','authMode','proposalId','ownerId','codes','payloadHash','masterHash','requestedAt','expiresAt','nonce']);
+  autoId_(e.proposalId);
+  if(e.purpose!=='bmall-chat-delegated-new-draft-save-v1'||e.version!==1||e.authMode!==BMALL_CHAT_AUTH_MODE_||e.ownerId!==autoOwner_()||
+     !Array.isArray(e.codes)||!e.codes.length||new Set(e.codes).size!==e.codes.length||
+     typeof e.payloadHash!=='string'||!/^[a-f0-9]{64}$/.test(e.payloadHash)||typeof e.masterHash!=='string'||!/^[a-f0-9]{64}$/.test(e.masterHash)||
+     typeof e.nonce!=='string'||!/^[0-9a-f-]{36}$/.test(e.nonce)||!Number.isSafeInteger(e.requestedAt)||Date.now()-e.requestedAt<0||Date.now()-e.requestedAt>120000||
+     !Number.isSafeInteger(e.expiresAt)||e.expiresAt<=Date.now()||e.expiresAt-e.requestedAt>120000)autoFail_('CHAT_DELEGATION_INVALID');
+  const expected=Utilities.computeHmacSha256Signature(bridgeStable_(e),key,Utilities.Charset.UTF_8).map(b=>('0'+((b+256)%256).toString(16)).slice(-2)).join('');
+  if(!bridgeKeyMatches_(signature,expected))autoFail_('CHAT_DELEGATION_SIGNATURE_INVALID');
+}
 function autoParentRow_(p,id) {
   const d=p.payload;return [id,'下書き','new_product','',d.productName,d.categoryId,d.featureId1===null?'':d.featureId1,d.featureId2===null?'':d.featureId2,d.featureId3===null?'':d.featureId3,d.description,d.confidence,d.reasoning,d.refUrls.join('\n'),d.supplierCd,d.supplierName,new Date(p.attemptedAt).toISOString(),'','',d.jodaiType,d.taxTypeId,d.viewGroupRestricted?'TRUE':'FALSE',normalizeDraftProductTag_(d.productTag).tag];
 }
@@ -128,59 +171,96 @@ function autoVerify_(before,after,p) {
   if(ps.length!==1||bridgeStable_(canon(ps[0]))!==bridgeStable_(canon(autoParentRow_(p,p.draftId)))||bridgeStable_(ss.map(canon))!==bridgeStable_(autoSetRows_(p,p.draftId).map(canon)))autoFail_('READBACK_MISMATCH');
   [after.parents,after.children].forEach(t=>t.values.forEach((r,i)=>{if(String(r[0])===p.draftId&&t.formulas[i].some(Boolean))autoFail_('TARGET_FORMULA');}));
 }
-function autoSave_(p) {
+function autoSave_(p,chatProof,diag) {
+  diag=diag||function(){};diag('PRECHECK_BEGIN','started');
   if(p.state==='VERIFIED')return autoPublic_(p);if(['IN_FLIGHT','UNKNOWN'].includes(p.state))autoFail_('OUTCOME_UNKNOWN_NO_RESEND');
-  if(p.state!=='APPROVED'||p.ownerId!==autoOwner_()||p.approvalExpiresAt<=Date.now()||p.expiresAt<=Date.now())autoFail_('APPROVAL_REQUIRED');
-  const proof=p.approvalEnvelope;
-  if(!proof||proof.proposalId!==p.id||proof.ownerId!==autoOwner_()||bridgeStable_(proof.codes)!==bridgeStable_(p.codes)||proof.payloadHash!==p.payloadHash||proof.masterHash!==p.masterHash||proof.expiresAt!==p.approvalExpiresAt||!bridgeKeyMatches_(p.approvalSignature,autoMac_(proof)))autoFail_('APPROVAL_PROOF_INVALID');
-  const m=autoMaster_();if(m.masterHash!==p.masterHash){p.state='INVALID';autoPut_(p);autoFail_('MASTER_CHANGED_APPROVAL_INVALID');}
-  const before=bridgeReadSheets_(),a=autoAudit_(before);if(bridgeStable_(autoValidate_(p.payload,m,a))!==bridgeStable_(p.codes))autoFail_('PAYLOAD_CHANGED');
-  if(autoMaster_().generation!==m.generation)autoFail_('MASTER_CHANGED');
+  if(p.authMode===BMALL_CHAT_AUTH_MODE_){
+    if(!chatProof||p.state!=='PROPOSED'||p.expiresAt<=Date.now())autoFail_('CHAT_PROPOSAL_REQUIRED');
+    const e=chatProof.envelope;
+    if(e.proposalId!==p.id||e.requestedAt<p.createdAt||e.expiresAt>p.expiresAt||bridgeStable_(e.codes)!==bridgeStable_(p.codes)||e.payloadHash!==p.payloadHash||e.masterHash!==p.masterHash)autoFail_('CHAT_PROPOSAL_MISMATCH');
+    p.ownerId=e.ownerId;p.delegatedRequestAt=e.requestedAt;p.delegationEnvelope=e;p.delegationSignature=chatProof.signature;
+  }else{
+    if(chatProof||p.authMode&&p.authMode!=='owner_oidc_review_post')autoFail_('AUTH_MODE_MISMATCH');
+    if(p.state!=='APPROVED'||p.ownerId!==autoOwner_()||p.approvalExpiresAt<=Date.now()||p.expiresAt<=Date.now())autoFail_('APPROVAL_REQUIRED');
+    const proof=p.approvalEnvelope;
+    if(!proof||proof.proposalId!==p.id||proof.ownerId!==autoOwner_()||bridgeStable_(proof.codes)!==bridgeStable_(p.codes)||proof.payloadHash!==p.payloadHash||proof.masterHash!==p.masterHash||proof.expiresAt!==p.approvalExpiresAt||!bridgeKeyMatches_(p.approvalSignature,autoMac_(proof)))autoFail_('APPROVAL_PROOF_INVALID');
+  }
+  const m=autoMaster_();if(m.masterHash!==p.masterHash){p.state='INVALID';autoPut_(p);autoFail_('MASTER_CHANGED_APPROVAL_INVALID');}diag('MASTER_MATCHED','completed');
+  const before=bridgeReadSheets_(),a=autoAudit_(before);diag('CATALOG_AND_DRAFT_AUDITED','completed');
+  if(bridgeStable_(autoValidate_(p.payload,m,a))!==bridgeStable_(p.codes))autoFail_('PAYLOAD_CHANGED');diag('PAYLOAD_VALIDATED','completed');
+  if(autoMaster_().generation!==m.generation)autoFail_('MASTER_CHANGED');diag('PRECHECK_COMPLETE','completed');
   const today=Utilities.formatDate(new Date(),'Asia/Tokyo','yyyyMMdd'),prefix='D'+today+'-';let seq=0;
   const claim=id=>{if(typeof id==='string'&&id.startsWith(prefix)&&/^D\d{8}-\d{3}$/.test(id))seq=Math.max(seq,Number(id.slice(-3)));};
   before.parents.values.slice(1).forEach(r=>claim(String(r[0])));
   const journal=autoJournal_(false);if(journal)journal.getDataRange().getValues().slice(1).forEach(r=>{let x;try{x=JSON.parse(String(r[1]));}catch(e){autoFail_('JOURNAL_CORRUPT');}claim(x.draftId);});
+  // An unresolved recovery claim reserves its ID even if no product row was appended.
+  autoRecoveryAll_().forEach(r=>claim(r.draftId));
   const old=bridgeReadJournal_();if(old)claim(old.draftId);if(seq>=999)autoFail_('DAILY_ID_EXHAUSTED');
   p.draftId=prefix+('00'+(seq+1)).slice(-3);p.state='IN_FLIGHT';p.attemptedAt=Date.now();
   // 独立journalの確保・耐久再読が完了するまで商品行を追記しない。
-  autoPut_(p);
+  autoPut_(p);diag('JOURNAL_IN_FLIGHT','completed');
   try {
     const ss=getDataSpreadsheet_(),parents=ss.getSheetByName(SHEET_DRAFT),sets=ss.getSheetByName(SHEET_DRAFT_SETS);
     if(draftProductTagColumn_(parents,false)!==22)autoFail_('DRAFT_TAG_SCHEMA');
     const pr=parents.getLastRow()+1,sr=sets.getLastRow()+1,setRows=autoSetRows_(p,p.draftId);
-    parents.getRange(pr,1,1,22).setNumberFormat('@');parents.getRange(pr,1,1,22).setValues([autoParentRow_(p,p.draftId)]);
-    sets.getRange(sr,1,setRows.length,9).setNumberFormat('@');sets.getRange(sr,1,setRows.length,9).setValues(setRows);
-    SpreadsheetApp.flush();autoVerify_(before,bridgeReadSheets_(),p);p.state='VERIFIED';autoPut_(p);return autoPublic_(p);
-  }catch(e){p.state='UNKNOWN';try{autoPut_(p);}catch(ignored){}autoFail_('OUTCOME_UNKNOWN_NO_RESEND');}
+    parents.getRange(pr,1,1,22).setNumberFormat('@');parents.getRange(pr,1,1,22).setValues([autoParentRow_(p,p.draftId)]);diag('PARENT_WRITTEN','completed');
+    sets.getRange(sr,1,setRows.length,9).setNumberFormat('@');sets.getRange(sr,1,setRows.length,9).setValues(setRows);diag('SET_WRITTEN','completed');
+    SpreadsheetApp.flush();autoVerify_(before,bridgeReadSheets_(),p);p.state='VERIFIED';autoPut_(p);diag('JOURNAL_VERIFIED','completed');return autoPublic_(p);
+  }catch(e){diag('POST_CLAIM_FAILURE','unknown',autoSaveErrorCode_(e));p.state='UNKNOWN';try{autoPut_(p);}catch(ignored){}autoFail_('OUTCOME_UNKNOWN_NO_RESEND');}
 }
 function handleBmallAuto_(params) {
-  let lock;try{
+  let lock,lockHeld=false;const saveTrace=autoSaveTrace_(params&&params.traceId),saveStartedAt=Date.now();try{
     if(!BMALL_AUTO_ACTIONS_.includes(params.action))autoFail_('ACTION_NOT_ALLOWED');const key=PropertiesService.getScriptProperties().getProperty('BMALL_BRIDGE_API_KEY');
     if(!bridgeKeyMatches_(params.apiKey,key))autoFail_('UNAUTHORIZED');autoOwner_();
     if(params.action==='bmallAutoStatus'){autoExact_(params,['action','apiKey']);return {ok:true,version:1,gasVersion:VERSION,approval:'owner_oidc_review_post',notificationEnabled:false};}
+    if(params.action==='bmallAutoChatPreflight'){autoExact_(params,['action','apiKey']);return {ok:true,version:1,gasVersion:VERSION,authMode:BMALL_CHAT_AUTH_MODE_,legacyApproval:'owner_oidc_review_post',writes:0};}
     if(params.action==='bmallAutoSnapshot'){autoExact_(params,['action','apiKey']);return autoSnapshot_();}
     if(params.action==='bmallAutoReferences'){
       autoExact_(params,['action','apiKey','supplierCd','maxProducts']);if(typeof params.supplierCd!=='string'||!/^\d{1,16}$/.test(params.supplierCd)||!Number.isSafeInteger(params.maxProducts)||params.maxProducts<1||params.maxProducts>80)autoFail_('INVALID_REFERENCE_REQUEST');
       const m=autoMaster_(),a=autoAudit_(bridgeReadSheets_()),codes=new Set(m.rows.filter(x=>x.supplierCd===params.supplierCd).map(x=>x.code));
       const matchingSets=a.sets.filter(x=>codes.has(bridgeNormalizeCode_(x.product_no))),productIds=new Set(matchingSets.map(x=>String(x.product_id)));
       if(autoMaster_().generation!==m.generation)autoFail_('MASTER_CHANGED');
-      return {ok:true,masterHash:m.masterHash,complete:true,includesHidden:true,categories:a.categories,features:a.features,
+      return {ok:true,masterHash:m.masterHash,complete:true,includesHidden:true,categories:a.categories,features:a.features,auditSnapshot:autoSnapshotResult_(m,a),
         examples:a.products.filter(x=>productIds.has(String(x.id))).slice(0,params.maxProducts).map(x=>({productId:x.id,productName:x.name,categoryId:x.category_id,featureIds:[x.feature_id1,x.feature_id2,x.feature_id3],sets:matchingSets.filter(s=>String(s.product_id)===String(x.id)).map(s=>({setId:s.id,productNo:s.product_no,setName:s.name}))})),totalMatchingProducts:productIds.size};
     }
-    lock=LockService.getScriptLock();if(!lock.tryLock(1000))autoFail_('BUSY_NO_WRITE');
-    if(params.action==='bmallAutoPrepare'){
+    lock=LockService.getScriptLock();if(!lock.tryLock(1000))autoFail_('BUSY_NO_WRITE');lockHeld=true;
+    if(params.action==='bmallAutoRecoveryPreview'){
+      autoExact_(params,['action','apiKey','proposalId']);return autoRecoveryPreview_(params.proposalId);
+    }
+    if(params.action==='bmallAutoRecoveryResult'){
+      autoExact_(params,['action','apiKey','proposalId']);return autoRecoveryResult_(params.proposalId);
+    }
+    if(params.action==='bmallAutoRecoveryCommit'){
+      autoExact_(params,['action','apiKey','envelope','signature']);return autoRecoveryCommit_(params.envelope,params.signature,key);
+    }
+    if(params.action==='bmallAutoChatSave')autoSaveDiagnostic_(saveTrace,'LOCK_ACQUIRED','completed',saveStartedAt,null,null);
+    if(params.action==='bmallAutoPrepare'||params.action==='bmallAutoPrepareChat'){
+      const chat=params.action==='bmallAutoPrepareChat';
       autoExact_(params,['action','apiKey','proposalId','draft']);autoId_(params.proposalId);if(autoGet_(params.proposalId))autoFail_('PROPOSAL_EXISTS');
       const m=autoMaster_(),a=autoAudit_(bridgeReadSheets_()),codes=autoValidate_(params.draft,m,a);if(autoMaster_().generation!==m.generation)autoFail_('MASTER_CHANGED');
-      const d=params.draft,p={version:1,id:params.proposalId,payload:d,payloadHash:bridgeHash_(d),masterHash:m.masterHash,codes:codes,state:'PROPOSED',createdAt:Date.now(),expiresAt:Date.now()+86400000,
+      const d=params.draft,p={version:1,id:params.proposalId,...(chat?{authMode:BMALL_CHAT_AUTH_MODE_}:{}),payload:d,payloadHash:bridgeHash_(d),masterHash:m.masterHash,codes:codes,state:'PROPOSED',createdAt:Date.now(),expiresAt:Date.now()+86400000,
         reviewLabels:{categoryName:(a.categories.find(x=>x.id===d.categoryId)||{}).name||'ID '+d.categoryId,features:[d.featureId1,d.featureId2,d.featureId3].map(id=>id===null?'未指定':(a.features.find(x=>x.id===id)||{}).name||'ID '+id)}};autoPut_(p);return autoPublic_(p);
     }
     if(params.action==='bmallAutoApprove'){
       autoExact_(params,['action','apiKey','envelope','signature']);autoEnvelopeValid_(params.envelope,params.signature,key);const e=params.envelope,g=autoGet_(e.proposalId);if(!g)autoFail_('PROPOSAL_MISSING');const p=g.p;
-      if(p.state!=='PROPOSED'||p.expiresAt<=Date.now()||bridgeStable_(p.codes)!==bridgeStable_(e.codes)||p.payloadHash!==e.payloadHash||p.masterHash!==e.masterHash||autoMaster_().masterHash!==p.masterHash)autoFail_('APPROVAL_STALE');
+      if(p.authMode===BMALL_CHAT_AUTH_MODE_||p.state!=='PROPOSED'||p.expiresAt<=Date.now()||bridgeStable_(p.codes)!==bridgeStable_(e.codes)||p.payloadHash!==e.payloadHash||p.masterHash!==e.masterHash||autoMaster_().masterHash!==p.masterHash)autoFail_('APPROVAL_STALE');
       p.ownerId=e.ownerId;p.approvedAt=e.approvedAt;p.approvalExpiresAt=e.expiresAt;p.approvalNonce=e.nonce;p.approvalEnvelope=e;p.approvalSignature=params.signature;p.state='APPROVED';autoPut_(p);return autoPublic_(p);
+    }
+    if(params.action==='bmallAutoChatSave'){
+      autoExact_(params,saveTrace?['action','apiKey','envelope','signature','traceId']:['action','apiKey','envelope','signature']);autoChatEnvelopeValid_(params.envelope,params.signature,key);
+      // This one incident is recoverable only through the separate, one-shot recovery path.
+      if(params.envelope.proposalId===BMALL_RECOVERY_CASE_.proposalId)autoFail_('RECOVERY_SOURCE_FROZEN');
+      const got=autoGet_(params.envelope.proposalId);if(!got)autoFail_('PROPOSAL_MISSING');
+      if(got.p.authMode!==BMALL_CHAT_AUTH_MODE_)autoFail_('AUTH_MODE_MISMATCH');
+      autoSaveDiagnostic_(saveTrace,'PROPOSAL_LOADED','completed',saveStartedAt,null,null);
+      const result=autoSave_(got.p,{envelope:params.envelope,signature:params.signature},(stage,outcome,errorCode)=>autoSaveDiagnostic_(saveTrace,stage,outcome,saveStartedAt,null,errorCode));
+      autoSaveDiagnostic_(saveTrace,'RETURN_VERIFIED','completed',saveStartedAt,200,null);return result;
     }
     autoExact_(params,['action','apiKey','proposalId']);const got=autoGet_(params.proposalId);if(!got){if(params.action==='bmallAutoResult')return {ok:true,state:'NOT_FOUND',attempted:false};autoFail_('PROPOSAL_MISSING');}
     if(params.action==='bmallAutoSave')return autoSave_(got.p);
     if(params.action==='bmallAutoProposal'||params.action==='bmallAutoResult')return autoPublic_(got.p);autoFail_('ACTION_NOT_ALLOWED');
-  }catch(e){return {ok:false,error:e&&/^AUTO_[A-Z0-9_]+$/.test(e.message)?e.message:e&&/^BRIDGE_[A-Z0-9_]+$/.test(e.message)?'AUTO_'+e.message:'AUTO_INTERNAL_FAILURE'};}finally{if(lock)lock.releaseLock();}
+  }catch(e){const code=autoSaveErrorCode_(e),proof=autoChatNoWriteProof_(params,lockHeld);
+    if(params&&params.action==='bmallAutoChatSave')autoSaveDiagnostic_(saveTrace,proof?'PRE_CLAIM_STOP':'OUTCOME_UNKNOWN',proof?'no_write':'unknown',saveStartedAt,null,code);
+    return {ok:false,error:code,...(e&&e.catalogRead?{catalogRead:e.catalogRead}:{}),...(proof||{})};
+  }finally{if(lockHeld)lock.releaseLock();}
 }
