@@ -10,7 +10,7 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.14.1';
+const VERSION       = 'v1.14.2';
 // ポータル画面（GitHub Pages）のURL。旧HTML向けの更新案内タイルのリンク先に使う。
 const PORTAL_URL    = 'https://beaufield.github.io/beaufield-dev/';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
@@ -104,10 +104,17 @@ const APP_MASTER = [
 // （シート未作成／空／例外時は自動的に現状のAPP_MASTERへ戻る）。
 // キャッシュは60秒（他アプリのロールキャッシュと同じ粒度）。
 function _loadAppMaster() {
-  const cache = CacheService.getScriptCache();
-  const hit = cache.get('app_master_v1');
-  if (hit) {
-    try { return JSON.parse(hit); } catch (e) {}
+  let cache = null;
+  // 一時保存が読めなくても、正本シートから一覧を取得する。
+  try {
+    cache = CacheService.getScriptCache();
+    const hit = cache.get('app_master_v1');
+    if (hit) {
+      const cached = JSON.parse(hit);
+      if (Array.isArray(cached)) return cached;
+    }
+  } catch (e) {
+    Logger.log('アプリ一覧キャッシュを読み直します');
   }
   try {
     const sh = SpreadsheetApp.openById(AUTH_SHEET_ID).getSheetByName('apps');
@@ -131,7 +138,20 @@ function _loadAppMaster() {
     }
     if (!list.length) return APP_MASTER;                     // 全滅 → 現状維持
     list.sort((a, b) => a.sort - b.sort);
-    cache.put('app_master_v1', JSON.stringify(list), 60);
+    // 保存は補助処理。容量超過や保存失敗でも、取得済みの最新一覧を返す。
+    try {
+      if (cache) {
+        const serialized = JSON.stringify(list);
+        const bytes = Utilities.newBlob(serialized, 'application/json').getBytes().length;
+        if (bytes <= 95 * 1024) { // 100KB上限に余裕を持たせる。
+          cache.put('app_master_v1', serialized, 60);
+        } else {
+          Logger.log('アプリ一覧キャッシュを省略: 容量上限超過');
+        }
+      }
+    } catch (e) {
+      Logger.log('アプリ一覧キャッシュを省略: 保存失敗');
+    }
     return list;
   } catch (e) {
     Logger.log('_loadAppMaster failed: ' + e);
