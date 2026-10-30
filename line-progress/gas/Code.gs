@@ -32,10 +32,11 @@
  * 参照: LINEHarness/友だち登録進捗ダッシュボード_設計.md
  */
 
-const VERSION = '1.4.0';
+const VERSION = '1.4.1';
 const APP_NAME = 'line-progress';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 const CACHE_TTL_DATA = 90;     // 集計結果キャッシュ 90秒（§8-2「開くたび最新」の実務的な下限）
+const MAX_DATA_CACHE_BYTES = 95 * 1024; // 100KB上限に余裕を持たせる。超過時は一覧を直接返す。
 
 // プロパティ取得（未設定なら明示的にエラー。project-dashboardと同一パターン）
 function prop_(key) {
@@ -201,15 +202,16 @@ function fetchAllFriends_() {
   const items = [];
   let offset = 0;
   const limit = 200;
-  for (let page = 0; page < 5; page++) { // 上限ガード（§3-4-1）
+  for (let page = 0; page < 100; page++) { // 最大20,000件。未完了はエラーとし、部分集計を返さない。
     const r = lhFetch_('/api/friends?limit=' + limit + '&offset=' + offset);
     const data = r.data || {};
     const pageItems = data.items || [];
     items.push.apply(items, pageItems);
-    if (!data.hasNextPage) break;
+    if (!data.hasNextPage) return items;
+    if (!pageItems.length) throw new Error('友だち一覧のページ取得が進みません');
     offset += limit;
   }
-  return items;
+  throw new Error('友だち一覧が取得上限を超えました。部分集計は表示しません');
 }
 
 function fetchSubmissions_(formId) {
@@ -273,9 +275,12 @@ function getData_(fresh) {
   const cache = CacheService.getScriptCache();
   const cacheKey = 'data_v' + VERSION;
   if (!fresh) {
-    const cached = cache.get(cacheKey);
-    if (cached) {
-      try { return JSON.parse(cached); } catch (e) {}
+    // 一時保存が読めなくても、元データを読み直して表示を続ける。
+    try {
+      const cached = cache.get(cacheKey);
+      if (cached) return JSON.parse(cached);
+    } catch (e) {
+      Logger.log('一覧キャッシュを読み直します');
     }
   }
 
@@ -388,7 +393,18 @@ function getData_(fresh) {
     salesReps: repMap ? Object.keys(repMap) : []
   };
 
-  cache.put(cacheKey, JSON.stringify(result), CACHE_TTL_DATA);
+  // キャッシュは高速化のための補助。保存失敗を一覧取得の失敗にしない。
+  try {
+    const serialized = JSON.stringify(result);
+    const bytes = Utilities.newBlob(serialized, 'application/json').getBytes().length;
+    if (bytes <= MAX_DATA_CACHE_BYTES) {
+      cache.put(cacheKey, serialized, CACHE_TTL_DATA);
+    } else {
+      Logger.log('一覧キャッシュを省略: 容量上限超過');
+    }
+  } catch (e) {
+    Logger.log('一覧キャッシュを省略: 保存失敗');
+  }
   return result;
 }
 
