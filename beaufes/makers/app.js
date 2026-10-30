@@ -1,5 +1,5 @@
 // 業務データは社員認証後にだけ取得する。接続キーや価格をブラウザーの永続領域へ保存しない。
-const APP_VERSION='v0.10.0';
+const APP_VERSION='v0.10.1';
 // 表示用だけ0埋めを除き、検索・送信・既存注文の識別子は維持する。
 const displayProductCode=value=>/^AD26-ATFIT-/.test(String(value??''))?'未登録':String(value??'').replace(/^0+(?=\d+$)/,'');
 const API_URL=document.querySelector('meta[name=directory-api]').content;
@@ -43,8 +43,8 @@ function staleOverview(){
 }
 async function load(){
  const seq=++detailsSequence;staleOverview();$('status').textContent='メーカー一覧を読み込んでいます…';
- // 紙で受け付けるBJCは、社員用のアプリ一覧には表示しない。
- const result=await api('list');if(seq!==detailsSequence)return;makers=result.makers.filter(m=>m.id!=='bjc');selected='';
+ // 紙注文のメーカーも同じ一覧で集計・出力できるようにする。
+ const result=await api('list');if(seq!==detailsSequence)return;makers=result.makers;selected='';
  const overview=$('order-overview');overview.replaceChildren(summaryBlock(result.order_summary,result.summary_phase==='practice'?'全メーカーの練習注文の集計':'全メーカーの注文集計'));overview.hidden=false;overview.classList.remove('summary-stale');
  const note=create('p','全体の注文人数は、複数メーカーで購入した方も1人です。同じ方の追加注文も重複して数えません。');note.className='overview-note';overview.append(note);
  if(result.summary_fetched_at){const at=create('p','集計取得 '+new Date(result.summary_fetched_at).toLocaleString('ja-JP'));at.className='summary-note';overview.append(at);}
