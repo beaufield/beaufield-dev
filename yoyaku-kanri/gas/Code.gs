@@ -12,12 +12,13 @@
 //
 // ============================================================
 
-const VERSION  = '1.14.1';
+const VERSION  = '1.15.0';
 const APP_NAME = 'yoyaku-kanri';
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS         = PropertiesService.getScriptProperties();
-const SPREADSHEET_ID = _PROPS.getProperty('SPREADSHEET_ID');
+// 閉鎖版だけ別名を参照。旧固定版を止める際は旧SPREADSHEET_IDを空欄にする。
+const SPREADSHEET_ID = _PROPS.getProperty('YOYAKU_LEGACY_READ_SHEET_ID');
 const AUTH_SHEET_ID  = _PROPS.getProperty('AUTH_SHEET_ID');
 
 // シート名定数
@@ -392,7 +393,7 @@ function getProducts(data) {
 /**
  * 商品登録・更新（adminのみ）
  */
-function saveProduct(data) {
+function saveProductImpl_(data) {
   const userInfo = data._userInfo;
   if (!userInfo || userInfo.yoyaku_role !== 'admin') return _err('権限がありません');
 
@@ -510,7 +511,7 @@ function testProductNotify() {
 /**
  * 商品の有効 / 無効を切り替える（adminのみ）
  */
-function toggleProductActive(data) {
+function toggleProductActiveImpl_(data) {
   const userInfo = data._userInfo;
   if (!userInfo || userInfo.yoyaku_role !== 'admin') return _err('権限がありません');
 
@@ -580,7 +581,7 @@ function getReservations(data) {
  * 予約登録・更新
  * data.notes（任意）: 備考テキスト
  */
-function saveReservation(data) {
+function saveReservationImpl_(data) {
   const userInfo = data._userInfo;
   if (!userInfo) return _err('ユーザー情報が取得できません');
 
@@ -635,14 +636,7 @@ function saveReservation(data) {
   }
 
   // 在庫チェック・採番・書き込みを排他制御（並行リクエストによる在庫超過・重複No防止）
-  const lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(10000);
-  } catch(e) {
-    return _err('混雑しています。しばらくしてから再試行してください。');
-  }
-
-  try {
+  { // 共通writerラッパーが既にロックを保持している
     // 在庫チェック（stock_limit > 0 の場合のみ）
     if (product.stock_limit > 0) {
       let alreadyReserved = 0;
@@ -776,15 +770,13 @@ function saveReservation(data) {
         }
       });
     }
-  } finally {
-    lock.releaseLock();
   }
 }
 
 /**
  * 予約削除
  */
-function deleteReservation(data) {
+function deleteReservationImpl_(data) {
   const userInfo = data._userInfo;
   if (!userInfo) return _err('ユーザー情報が取得できません');
 
@@ -810,7 +802,7 @@ function deleteReservation(data) {
 /**
  * ステータス変更（adminのみ）
  */
-function updateStatus(data) {
+function updateStatusImpl_(data) {
   const userInfo = data._userInfo;
   if (!userInfo || userInfo.yoyaku_role !== 'admin') return _err('権限がありません');
 
@@ -840,7 +832,7 @@ function updateStatus(data) {
 /**
  * 複数予約を一括削除
  */
-function bulkDelete(data) {
+function bulkDeleteImpl_(data) {
   const userInfo = data._userInfo;
   if (!userInfo) return _err('ユーザー情報が取得できません');
 
@@ -881,7 +873,7 @@ function bulkDelete(data) {
 /**
  * 複数予約を一括ステータス変更（adminのみ）
  */
-function bulkUpdateStatus(data) {
+function bulkUpdateStatusImpl_(data) {
   const userInfo = data._userInfo;
   if (!userInfo || userInfo.yoyaku_role !== 'admin') return _err('権限がありません');
 
@@ -917,7 +909,7 @@ function bulkUpdateStatus(data) {
  * admin: 全件変更可
  * staff: 自分の「予約」ステータスのみ変更可
  */
-function bulkUpdateDelivery(data) {
+function bulkUpdateDeliveryImpl_(data) {
   const userInfo = data._userInfo;
   if (!userInfo) return _err('ユーザー情報が取得できません');
 
@@ -968,7 +960,7 @@ function bulkUpdateDelivery(data) {
 //                               新行: confirm_qty / ステータス「確定」/ 新No
 //   元行のNoを維持することで予約順位が保たれる（スプリット設計）
 // ============================================================
-function processArrival(data) {
+function processArrivalImpl_(data) {
   const userInfo = data._userInfo;
   if (!userInfo || userInfo.yoyaku_role !== 'admin') return _err('権限がありません');
 
@@ -1118,3 +1110,22 @@ function _getUsersFromAuth() {
 function getUsers(data) {
   return _ok(_getUsersFromAuth());
 }
+
+// 9 writerすべてで、ロック取得後にプロパティを読み直す。閉鎖中は一切書かない。
+function legacyWriter_(data, fn) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return _err('混雑しています。時間をおいて再度確認してください。');
+  try {
+    if (PropertiesService.getScriptProperties().getProperty('LEGACY_WRITER_STATE') !== 'sheets') return _err('予約の保存先を切替中です。画面を読み直してください。');
+    return fn(data);
+  } finally { lock.releaseLock(); }
+}
+function saveProduct(data) { return legacyWriter_(data, saveProductImpl_); }
+function toggleProductActive(data) { return legacyWriter_(data, toggleProductActiveImpl_); }
+function saveReservation(data) { return legacyWriter_(data, saveReservationImpl_); }
+function deleteReservation(data) { return legacyWriter_(data, deleteReservationImpl_); }
+function updateStatus(data) { return legacyWriter_(data, updateStatusImpl_); }
+function bulkDelete(data) { return legacyWriter_(data, bulkDeleteImpl_); }
+function bulkUpdateStatus(data) { return legacyWriter_(data, bulkUpdateStatusImpl_); }
+function bulkUpdateDelivery(data) { return legacyWriter_(data, bulkUpdateDeliveryImpl_); }
+function processArrival(data) { return legacyWriter_(data, processArrivalImpl_); }

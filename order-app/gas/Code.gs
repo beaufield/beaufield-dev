@@ -26,7 +26,7 @@ const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
 const DB_URL          = _PROPS.getProperty('DB_URL');          // §8: SupabaseプロジェクトURL（例 https://xxxx.supabase.co）
 const DB_SECRET_KEY   = _PROPS.getProperty('DB_SECRET_KEY');   // §8: service_role相当のsecret key（apikeyヘッダーにのみ使う）
-const VERSION         = 'v1.40.6';
+const VERSION         = 'v1.41.2';
 const APP_NAME        = 'order-app';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 let _requestMetric = null;
@@ -227,11 +227,11 @@ function _normalizePemKey_(raw) {
 // stocktake のときだけ、棚卸しの役割（user/admin）を app_role として載せる（棚卸しアプリ 仕様書 §4.2）
 function issueDbJwt_(auth, app, sessionExpiresAt) {
   const now = Math.floor(Date.now() / 1000);
-  const exp = Math.min(Math.floor(sessionExpiresAt / 1000), now + DB_JWT_TTL_SEC);
+  const exp = Math.min(Math.floor(sessionExpiresAt / 1000), now + (app === 'yoyaku-kanri' ? 300 : DB_JWT_TTL_SEC));
   const header  = { alg: 'RS256', typ: 'JWT', kid: _PROPS.getProperty('DB_JWT_KID') };
   const payload = { iss: 'beaufield-order-gas', aud: 'authenticated', role: 'authenticated',
                     sub: uuidFromUserId_(auth.user_id), app: app, user_id: auth.user_id, iat: now, exp: exp };
-  if (app === 'stocktake') payload.app_role = auth.role;
+  if (app === 'stocktake' || app === 'yoyaku-kanri') payload.app_role = auth.role;
   const input = b64url_(JSON.stringify(header)) + '.' + b64url_(JSON.stringify(payload));
   const pem = _normalizePemKey_(_PROPS.getProperty('DB_JWT_PRIVATE_KEY'));
   const sig = Utilities.computeRsaSha256Signature(input, pem);
@@ -357,6 +357,7 @@ function syncToDb_() {
     Logger.log('syncToDb_ 失敗: ' + e);
   } finally {
     lock.releaseLock();
+    try { ykMaintenance_(); } catch(e) { Logger.log('予約の追加定期処理が失敗'); }
   }
 }
 
@@ -488,6 +489,7 @@ function copyChangesToSheets_() {
     Logger.log('copyChangesToSheets_ 失敗（次回同じseqからやり直し）: ' + e);
   } finally {
     lock.releaseLock();
+    try { ykBackup_(); } catch(e) { Logger.log('予約の追加定期処理が失敗'); }
   }
 }
 
@@ -963,9 +965,10 @@ function doPost(e) {
   // app_name が order-app・stock-report・stocktake のいずれでもありうるため、
   // getStockReport と同じ位置（固定 'order-app' 検証より前）で特別扱いする
   if (action === 'issueDbToken') {
-    const DB_TOKEN_APPS = ['order-app', 'stock-report', 'stocktake'];
+    const DB_TOKEN_APPS = ['order-app', 'stock-report', 'stocktake', 'yoyaku-kanri'];
     const dbApp = DB_TOKEN_APPS.indexOf(p.app) !== -1 ? p.app : 'order-app';
-    const dbAuth = validateSession(p.session_token || '', dbApp);
+    if (dbApp === 'yoyaku-kanri' && !ykEnabled_('YOYAKU_DB_ENABLED')) return jsonResponse({ success: false, error: 'YOYAKU_DISABLED' });
+    const dbAuth = dbApp === 'yoyaku-kanri' ? ykFreshAuth_(p.session_token || '') : validateSession(p.session_token || '', dbApp);
     if (!dbAuth.valid) {
       if (dbAuth.transient) {
         return jsonResponse({ success: false, error: 'AUTH_UNAVAILABLE', message: '認証確認に失敗しました。もう一度お試しください。' });
@@ -3743,4 +3746,120 @@ function getOrderTemplate(makerKey) {
     Logger.log('getOrderTemplate error: ' + err);
     return { success: false, error: 'INTERNAL_ERROR' };
   }
+}
+
+// 共通GASへ追加する予約専用処理。フラグ未設定はすべて停止として扱う。
+function ykEnabled_(key) { return _PROPS.getProperty(key) === 'true'; }
+function ykRole_(raw) {
+  const role = String(raw || '').trim().toLowerCase();
+  return role === 'staff' ? 'user' : (role === 'user' || role === 'admin' ? role : 'none');
+}
+function ykFreshAuth_(token) {
+  // 既存5分キャッシュを通さず、期限切れ行の削除等の副作用も起こさない。
+  if (!token) return { valid: false };
+  try {
+    const ss = SpreadsheetApp.openById(AUTH_SHEET_ID);
+    const sheets = ['sessions', 'users', 'user_app_roles'].map(n => ss.getSheetByName(n));
+    if (sheets.some(s => !s)) return { valid: false, transient: true };
+    const rows = sheets.map(s => s.getDataRange().getValues().slice(1));
+    const sessions = rows[0].filter(r => String(r[0]) === token);
+    if (sessions.length !== 1) return { valid: false };
+    const uid = String(sessions[0][1]), expiresAt = Number(sessions[0][2]);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return { valid: false };
+    const users = rows[1].filter(r => String(r[0]) === uid);
+    const roles = rows[2].filter(r => String(r[0]) === uid && String(r[1]) === 'yoyaku-kanri');
+    if (users.length !== 1 || roles.length !== 1 || !(users[0][3] === true || users[0][3] === 'TRUE')) return { valid: false };
+    const role = ykRole_(roles[0][2]);
+    if (role === 'none') return { valid: false };
+    return { valid: true, user_id: uid, name: String(users[0][1] || uid), role: role, expiresAt: expiresAt };
+  } catch(e) { return { valid: false, transient: true }; }
+}
+function ykCallRpc_(name, args) {
+  assertTestEnv_();
+  const expected = _PROPS.getProperty('ENV') === 'test' ? 'https://qxzdypqbqduwuwmwnbgk.supabase.co' : 'https://jlebreiqpqzfsjsunyfw.supabase.co';
+  if (DB_URL !== expected) throw new Error('YOYAKU_PROJECT_MISMATCH');
+  if (!ykEnabled_('YOYAKU_DB_ENABLED')) throw new Error('YOYAKU_DISABLED');
+  const response = UrlFetchApp.fetch(DB_URL + '/rest/v1/rpc/' + name, {
+    method: 'post', contentType: 'application/json',
+    headers: { apikey: DB_SECRET_KEY, 'Content-Profile': 'yoyaku_api', 'Accept-Profile': 'yoyaku_api' },
+    payload: JSON.stringify(args || {}), muteHttpExceptions: true
+  });
+  if (response.getResponseCode() !== 200) throw new Error('YOYAKU_DB_HTTP_' + response.getResponseCode());
+  const r = JSON.parse(response.getContentText());
+  if (!r || r.success !== true) throw new Error('YOYAKU_DB_REJECTED');
+  return r;
+}
+function ykSyncDirectory_() {
+  const sourceVersion = Date.now(); // 取得開始順。ネットワークの到着順ではない。
+  const ss = SpreadsheetApp.openById(AUTH_SHEET_ID);
+  const us = ss.getSheetByName('users'), rs = ss.getSheetByName('user_app_roles');
+  if (!us || !rs) throw new Error('YOYAKU_AUTH_SHEETS_MISSING');
+  const roles = {}, seen = {};
+  rs.getDataRange().getValues().slice(1).forEach(r => {
+    if (String(r[1]) !== 'yoyaku-kanri') return;
+    const id = String(r[0]);
+    if (Object.prototype.hasOwnProperty.call(roles, id)) throw new Error('YOYAKU_DUPLICATE_ROLE');
+    roles[id] = ykRole_(r[2]);
+  });
+  const users = us.getDataRange().getValues().slice(1).filter(r => String(r[0] || '') !== '').map(r => {
+    const id = String(r[0]);
+    if (seen[id]) throw new Error('YOYAKU_DUPLICATE_USER');
+    seen[id] = true;
+    return { user_id: id, name: String(r[1] || id), short_name: String(r[7] || r[1] || id),
+             active: r[3] === true || r[3] === 'TRUE', yoyaku_role: roles[id] || 'none' };
+  });
+  if (!users.length) throw new Error('YOYAKU_EMPTY_DIRECTORY');
+  return ykCallRpc_('yk_sync_directory', { p_users: users, p_generation: Utilities.getUuid(), p_source_version: sourceVersion });
+}
+function ykSendOneNotification_() {
+  if (!ykEnabled_('YOYAKU_NOTIFICATIONS_ENABLED')) return;
+  const test = _PROPS.getProperty('ENV') === 'test';
+  const mode = _PROPS.getProperty('YOYAKU_NOTIFICATION_MODE');
+  const webhook = _PROPS.getProperty('YOYAKU_LINEWORKS_WEBHOOK');
+  if (test && (mode !== 'stub' || webhook)) throw new Error('YOYAKU_TEST_NOTIFICATION_GUARD');
+  if (!test && (mode !== 'live' || !webhook)) throw new Error('YOYAKU_NOTIFICATION_CONFIG');
+  const claimed = ykCallRpc_('yk_claim_notification', { p_claim_id: Utilities.getUuid() });
+  if (!claimed.event) return;
+  const event = claimed.event;
+  let state = 'UNKNOWN', code = 'RESPONSE_UNKNOWN';
+  if (test) { state = 'SENT'; code = 'TEST_STUB'; }
+  else {
+    try {
+      const res = UrlFetchApp.fetch(webhook, { method: 'post', contentType: 'application/json', payload: JSON.stringify({ body: { text: event.body } }), muteHttpExceptions: true });
+      const status = res.getResponseCode();
+      state = status >= 200 && status < 300 ? 'SENT' : 'UNKNOWN';
+      code = 'HTTP_' + status;
+    } catch(e) { /* 送信済みか判定できないので自動再送しない。 */ }
+  }
+  // 確定の返事が消えても再送しない。期限切れclaimはDBがUNKNOWNへ移す。
+  ykCallRpc_('yk_finish_notification', { p_event_id: event.event_id, p_claim_id: event.claim_id, p_state: state, p_result_code: code });
+}
+function ykMaintenance_() {
+  if (!ykEnabled_('YOYAKU_DB_ENABLED')) return;
+  try { ykSyncDirectory_(); } catch(e) { Logger.log('予約ディレクトリ同期失敗'); }
+  try { ykSendOneNotification_(); } catch(e) { Logger.log('予約通知処理失敗'); }
+}
+function ykSha256_(text) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8).map(b => ((b + 256) % 256).toString(16).padStart(2, '0')).join('');
+}
+function ykBackup_() {
+  if (!ykEnabled_('YOYAKU_DB_ENABLED') || !ykEnabled_('YOYAKU_BACKUP_ENABLED')) return;
+  const now = Date.now(), last = Number(_PROPS.getProperty('YOYAKU_BACKUP_LAST_OK') || 0);
+  if (now - last < 14 * 60 * 1000) return;
+  const folderId = _PROPS.getProperty('YOYAKU_BACKUP_FOLDER_ID');
+  if (!folderId) throw new Error('YOYAKU_BACKUP_FOLDER_REQUIRED');
+  // 初期設定時には個別共有も事前照合する。この検査だけで非公開を断定しない。
+  const folder = DriveApp.getFolderById(folderId);
+  if (folder.getSharingAccess() !== DriveApp.Access.PRIVATE) throw new Error('YOYAKU_BACKUP_FOLDER_NOT_PRIVATE');
+  const snapshot = ykCallRpc_('yk_export_snapshot', {});
+  if (ykSha256_(snapshot.canonical_text) !== snapshot.sha256) throw new Error('YOYAKU_EXPORT_DIGEST');
+  const state = JSON.parse(snapshot.canonical_text).app_state, id = Utilities.getUuid();
+  const envelope = JSON.stringify({ format_version: 1, sha256: snapshot.sha256, canonical_text: snapshot.canonical_text });
+  const name = 'yoyaku_' + Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyyMMdd_HHmmss') + '_' + id + '.json.gz';
+  const file = folder.createFile(Utilities.gzip(Utilities.newBlob(envelope, 'application/json', name.replace(/\.gz$/, '')), name));
+  const reread = JSON.parse(Utilities.ungzip(file.getBlob()).getDataAsString('UTF-8'));
+  if (reread.sha256 !== snapshot.sha256 || ykSha256_(reread.canonical_text) !== snapshot.sha256) throw new Error('YOYAKU_BACKUP_READBACK');
+  ykCallRpc_('yk_record_backup', { p_backup_id: id, p_seq: state.commit_seq, p_epoch: state.writer_epoch, p_digest: snapshot.sha256, p_destination: file.getId(), p_state: 'VERIFIED' });
+  _PROPS.setProperty('YOYAKU_BACKUP_LAST_OK', String(now));
+  // 保存期間による削除は初期実装では行わない。運用実測後の別承認とする。
 }
