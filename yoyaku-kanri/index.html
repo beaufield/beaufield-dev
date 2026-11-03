@@ -423,6 +423,8 @@
     .confirm-box p    { font-size: 15px; margin-bottom: 20px; line-height: 1.5; }
     .confirm-actions  { display: flex; gap: 10px; }
     .confirm-actions .btn { flex: 1; }
+    /* 長い商品名でもスマホの画面全体を広げず、表の中だけ横スクロールする。 */
+    #statsProduct { overflow-x: auto; max-width: 100%; }
   </style>
 </head>
 <body>
@@ -791,13 +793,15 @@
   </div>
 </div>
 
+<script src="yoyaku-config.js"></script>
+<script src="yoyaku-client.js"></script>
 <script>
-const APP_VERSION = 'v1.25.1';
+const APP_VERSION = 'v3.0.4';
 document.getElementById('headerVersion').textContent = APP_VERSION;
 // ============================================================
 // 設定（デプロイ後に GAS_URL を変更すること）
 // ============================================================
-const GAS_URL    = 'https://script.google.com/macros/s/AKfycbxvWbUf17DVe6dpW8cHEqrCuA3BbqF49EXqU3JXkA7hIR5lcT5sZwlQtgJPSi8rKTeo3w/exec';
+const GAS_URL = ''; // 旧保存経路は使用しない
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 
 // ============================================================
@@ -836,7 +840,7 @@ let showStatsStored = false; // 集計タブで保管済みを含めるか
 //      期限を先に見てポータルへ飛ばすため）ので、TTLをこれ以上延ばす意味はない。
 //      portal 側のセッション期間を変えるときは、ここも合わせること。
 // ============================================================
-const LS_CACHE_KEY = 'bf_yoyaku_v1240';  // バージョン変更時はここも更新
+const LS_CACHE_KEY = 'bf_yoyaku_legacy_disabled';  // バージョン変更時はここも更新
 const LS_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7日（保険。鮮度はバックグラウンド更新で担保）
 const STORED_DAYS  = 30;                 // この日数以上前の確定済みを「保管済み」扱いにする
 let _loadedCacheAt = 0;                  // 表示中キャッシュの最終更新時刻（最新化失敗の案内用）
@@ -847,29 +851,8 @@ function isStored(r) {
   return new Date(r.updated_at) < new Date(Date.now() - STORED_DAYS * 86400000);
 }
 
-function _loadLocalCache(userId) {
-  try {
-    const raw = localStorage.getItem(LS_CACHE_KEY);
-    if (!raw) return null;
-    const c = JSON.parse(raw);
-    // 別ユーザー or 期限切れは無効
-    if (c.user_id !== userId || Date.now() > c.expires) return null;
-    // expires は保存・更新のたびに「その時刻＋TTL」になるので、引けば最終更新時刻になる
-    _loadedCacheAt = c.expires - LS_CACHE_TTL;
-    return c.data;
-  } catch(e) { return null; }
-}
-
-function _saveLocalCache(userId, data) {
-  try {
-    localStorage.setItem(LS_CACHE_KEY, JSON.stringify({
-      user_id: userId,
-      expires: Date.now() + LS_CACHE_TTL,
-      data:    data
-    }));
-  } catch(e) {}
-}
-
+function _loadLocalCache(userId) { return null; }
+function _saveLocalCache(userId, data) { /* DBキャッシュは利用者/project/epochごとに通信層が保存する。 */ }
 function _clearLocalCache() {
   try { localStorage.removeItem(LS_CACHE_KEY); } catch(e) {}
 }
@@ -877,14 +860,7 @@ function _clearLocalCache() {
 /** 旧バージョンのキャッシュキーを掃除する。
  *  localStorageの容量は beaufield.github.io の全アプリで共有されるため、
  *  二度と読まれない80KB級のゴミを残さない（iOS Safariは約5MBで頭打ちになる）。 */
-function _purgeOldCaches() {
-  try {
-    Object.keys(localStorage)
-      .filter(k => k.indexOf('bf_yoyaku_v') === 0 && k !== LS_CACHE_KEY)
-      .forEach(k => localStorage.removeItem(k));
-  } catch(e) {}
-}
-
+function _purgeOldCaches() { /* 旧v2候補を含む既存記録は消さない。 */ }
 /** アクセス権限なしの画面に差し替える（キャッシュも破棄する）
  *  2026-09-18: 以前は存在しない #mainContent を書き換えようとして例外になっていた。
  *  権限を失った人に予約データを残さないため、タブ本体ごとDOMから取り除く。 */
@@ -1059,7 +1035,7 @@ function switchTab(tab) {
 
 /** activeProducts をローカルの products から再計算（GAS 呼び出し不要） */
 function _refreshActiveProducts() {
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
   activeProducts = products.filter(p =>
     p.is_active && !p.is_expired && (!p.deadline || p.deadline >= todayStr)
   );
@@ -1383,11 +1359,7 @@ async function registerReservation() {
 
     // 保存応答に含まれる予約レコードをローカルにマージして即時反映（全件再取得を廃止し高速化）
     // レスポンスに reservation が含まれない場合（旧デプロイ等）は従来どおり全件再取得にフォールバック
-    if (res.data.reservation) {
-      _mergeReservation(res.data.reservation);
-    } else {
-      await loadReservations();
-    }
+    await loadReservations();
 
   } catch(e) {
     await _onWriteError(e, 'reservations');  // v1.25.1: 結果不明は一覧を読み直して確認
@@ -1604,8 +1576,14 @@ function printReservations() {
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Beaufield 予約一覧</title>
   <style>
+    /* 印刷は用紙表示後の本人操作だけで開始し、画面操作ボタンを紙面へ出さない。 */
+    .print-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:12px; font-size:14px; }
+    .print-actions button { font:inherit; min-height:44px; padding:10px 16px; border:1px solid #64748b; border-radius:6px; background:#fff; color:#111; }
+    .print-actions small { width:100%; font-size:12px; color:#475569; }
+    @media print { .print-actions { display:none !important; } }
     @page { size: A4 portrait; margin: 14mm 12mm; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, 'Hiragino Sans', 'Yu Gothic UI', sans-serif; font-size: 10px; color: #111; }
@@ -1644,6 +1622,11 @@ function printReservations() {
   </style>
 </head>
 <body>
+  <div class="print-actions">
+    <button type="button" onclick="this.disabled=true; try { window.print(); } finally { this.disabled=false; }">印刷する</button>
+    <button type="button" onclick="window.close()">元の画面へ戻る</button>
+    <small>内容を確認してから「印刷する」を押してください。</small>
+  </div>
   <h1>Beaufield 予約一覧</h1>
   <div class="meta">
     <span>フィルタ: ${e(filterStr)}</span>
@@ -1680,7 +1663,7 @@ function printReservations() {
     </tfoot>
   </table>
   <div class="footer">Beaufield 予約管理システム　${printDate} 出力</div>
-  <script>window.onload = function() { window.print(); };<\/script>
+
 </body>
 </html>`;
 
@@ -2264,25 +2247,13 @@ function openShippingModal() {
 
 /** 期間フィルタの日付範囲を返す（null = 全期間） */
 function _getShippingPeriodRange(period) {
-  const now   = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (period === 'today') {
-    return { from: today, to: new Date(today.getTime() + 86400000 - 1) };
-  }
-  if (period === 'week') {
-    const dow    = (now.getDay() + 6) % 7; // 月=0
-    const monday = new Date(today.getTime() - dow * 86400000);
-    return { from: monday, to: new Date(monday.getTime() + 7 * 86400000 - 1) };
-  }
-  if (period === 'month') {
-    return {
-      from: new Date(now.getFullYear(), now.getMonth(), 1),
-      to:   new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59)
-    };
-  }
-  return null; // 全期間
+  const j = new Date(Date.now() + 9 * 3600000), y = j.getUTCFullYear(), m = j.getUTCMonth(), d = j.getUTCDate();
+  const today = Date.UTC(y, m, d) - 9 * 3600000;
+  if (period === 'today') return { from: new Date(today), to: new Date(today + 86400000 - 1) };
+  if (period === 'week') { const mon = today - ((j.getUTCDay() + 6) % 7) * 86400000; return { from: new Date(mon), to: new Date(mon + 7 * 86400000 - 1) }; }
+  if (period === 'month') return { from: new Date(Date.UTC(y, m, 1) - 9 * 3600000), to: new Date(Date.UTC(y, m + 1, 1) - 9 * 3600000 - 1) };
+  return null;
 }
-
 /**
  * 出荷一覧データを集計して返す
  * 集計キー: staff × delivery_method × salon_name
@@ -2567,8 +2538,14 @@ function printShipping() {
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Beaufield 出荷一覧</title>
   <style>
+    /* 印刷は用紙表示後の本人操作だけで開始し、画面操作ボタンを紙面へ出さない。 */
+    .print-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:12px; font-size:14px; }
+    .print-actions button { font:inherit; min-height:44px; padding:10px 16px; border:1px solid #64748b; border-radius:6px; background:#fff; color:#111; }
+    .print-actions small { width:100%; font-size:12px; color:#475569; }
+    @media print { .print-actions { display:none !important; } }
     @page { size: A4 portrait; margin: 14mm 12mm; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, 'Hiragino Sans', 'Yu Gothic UI', sans-serif; font-size: 10px; color: #111; }
@@ -2586,6 +2563,11 @@ function printShipping() {
   </style>
 </head>
 <body>
+  <div class="print-actions">
+    <button type="button" onclick="this.disabled=true; try { window.print(); } finally { this.disabled=false; }">印刷する</button>
+    <button type="button" onclick="window.close()">元の画面へ戻る</button>
+    <small>内容を確認してから「印刷する」を押してください。</small>
+  </div>
   <h1>Beaufield 出荷一覧</h1>
   <div class="meta">
     <span>商品: <b>${e(productName)}</b></span>
@@ -2607,7 +2589,7 @@ function printShipping() {
     <tbody>${rows}</tbody>
   </table>
   <div class="footer">Beaufield 予約管理システム　${printDate} 出力</div>
-  <script>window.onload = function() { window.print(); };<\/script>
+
 </body>
 </html>`;
 
@@ -3065,19 +3047,11 @@ function getShortName(userId, fallbackName) {
  *  Date.toString()形式（GMT+0900付き）にも対応 */
 function formatDateJP(dateStr) {
   if (!dateStr) return '';
-  // "yyyy-MM-dd HH:mm" → "yyyy-MM-ddTHH:mm" に変換してローカル時刻として解釈
-  let d = new Date(dateStr.replace(' ', 'T'));
-  if (isNaN(d.getTime())) d = new Date(dateStr); // フォールバック（GMT形式等）
-  if (isNaN(d.getTime())) return dateStr;
-  const days = ['日', '月', '火', '水', '木', '金', '土'];
-  const m   = d.getMonth() + 1;
-  const day = d.getDate();
-  const dow = days[d.getDay()];
-  const hh  = String(d.getHours()).padStart(2, '0');
-  const mm  = String(d.getMinutes()).padStart(2, '0');
-  return `${m}月${day}日（${dow}）${hh}:${mm}`;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '';
+  const p = Object.fromEntries(new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(d).map(p => [p.type, p.value]));
+  return `${p.month}月${p.day}日（${p.weekday}）${p.hour}:${p.minute}`;
 }
-
 // ============================================================
 // GAS API 通信
 // ============================================================
@@ -3097,35 +3071,7 @@ const READ_PROGRESS_AFTER_MS = 5000;
 const BG_REFRESH_RETRY_MS = 30000;
 const READ_ACTIONS = ['init', 'getProducts', 'getReservations'];
 
-async function gasGet(action, params = {}, options = {}) {
-  if (!READ_ACTIONS.includes(action)) throw new Error('読み込み専用の通信で書き込みは送れません: ' + action);
-  const onProgress = options.onProgress || null;
-  const startedAt = Date.now();
-  let lastError = null;
-  for (let attempt = 1; attempt <= READ_MAX_ATTEMPTS; attempt++) {
-    if (attempt > 1) {
-      if (onProgress) onProgress(`読み込みをやり直しています（${attempt}回目）…`);
-      await new Promise(resolve => setTimeout(resolve, READ_RETRY_DELAY_MS));
-    }
-    const ticker = onProgress ? setInterval(() => {
-      const sec = Math.round((Date.now() - startedAt) / 1000);
-      if (Date.now() - startedAt < READ_PROGRESS_AFTER_MS) return;
-      onProgress(`読み込み中…（${sec}秒）${attempt > 1 ? `　${attempt}回目` : ''}\nGoogle側の応答を待っています`);
-    }, 1000) : null;
-    try {
-      const payload = await _gasReadOnce(action, params);
-      if (attempt > 1) _markReadRetried();
-      return payload;
-    } catch (e) {
-      lastError = e;
-    } finally {
-      if (ticker) clearInterval(ticker);
-      if (onProgress) onProgress('');
-    }
-  }
-  throw new Error('通信に失敗しました（' + (lastError?.message || 'UNKNOWN') + '）');
-}
-
+async function gasGet(action, params = {}, options = {}) { return await ykRead(action); }
 async function _gasReadOnce(action, params) {
   const ac = typeof AbortController === 'function' ? new AbortController() : null;
   const timer = ac ? setTimeout(() => ac.abort(), READ_TIMEOUT_MS) : null;
@@ -3219,41 +3165,12 @@ class ResultUnknownError extends Error {
   }
 }
 
-async function gasPost(action, data = {}) {
-  const body = new URLSearchParams({
-    action,
-    session_token: token,
-    data: JSON.stringify(data)
-  });
-  let res;
-  try {
-    res = await fetch(GAS_URL, {
-      method: 'POST',
-      body,
-      redirect: 'follow'
-    });
-  } catch (e) {
-    throw new ResultUnknownError('NETWORK');
-  }
-  let payload;
-  try { payload = await res.json(); } catch (e) { throw new ResultUnknownError('NOT_JSON_' + res.status); }
-  // POSTの中身が消えてGETとして届いた印（doGetが返す）。処理自体は済んでいることが多い
-  if (payload && payload.error === 'USE_POST') throw new ResultUnknownError('POST_BODY_LOST');
-  return payload;
-}
-
+async function gasPost(action, data = {}) { return await ykWrite(action, data); }
 /** 保存系の失敗表示。結果不明なら一覧を読み直して、反映を確かめてもらう（再送はしない） */
 async function _onWriteError(e, target = 'reservations') {
-  if (!(e instanceof ResultUnknownError)) {
-    showToast(e.message, 'error');
-    return;
-  }
-  console.warn('保存の結果不明:', e.detail);
-  showToast(RESULT_UNKNOWN_MSG, 'warning');
-  const ok = await _reloadAfterUnknown(target);
-  _showUnknownNotice(ok);
+  if (e instanceof YoyakuDb.UnknownResult || _ykClient?.pending()) { _ykPendingNotice(); return; }
+  showToast(e.message, 'error');
 }
-
 /** 結果不明の後に一覧を読み直す。読めたら true */
 async function _reloadAfterUnknown(target) {
   showLoading();
@@ -3331,6 +3248,100 @@ document.querySelectorAll('.modal-overlay, .confirm-overlay').forEach(el => {
     }
   });
 });
+// 本番画面の業務機能を残し、通信だけ予約APIへ接続する。
+let _ykClient = null, _ykViewEpoch = null;
+function _ykGetClient() {
+  if (_ykClient) return _ykClient;
+  const c = window.YOYAKU_CONFIG;
+  if (!c || !c.ready || !/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(c.issuerUrl)) throw new Error('移行候補の接続先はまだ設定されていません');
+  _ykClient = new YoyakuDb.YoyakuClient({ url: c.url, publicKey: c.publicKey,
+    session: () => { try { return JSON.parse(localStorage.getItem('bf_session') || 'null'); } catch(e) { return null; } },
+    issueToken: async sessionToken => {
+      const res = await fetch(c.issuerUrl, { method: 'POST', body: new URLSearchParams({ action: 'issueDbToken', app: 'yoyaku-kanri', session_token: sessionToken }), redirect: 'follow' });
+      if (!res.ok) throw new Error('AUTH_UNAVAILABLE');
+      return await res.json();
+    }
+  });
+  return _ykClient;
+}
+function _ykView(s) {
+  const today = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+  const counts = {};
+  s.reservations.forEach(r => { counts[r.product_id] = (counts[r.product_id] || 0) + Number(r.quantity); });
+  return { user: s.user_info, users: s.users, reservations: s.reservations,
+    products: s.products.map(p => ({ ...p, unit_price: Number(p.unit_price), stock_limit: Number(p.stock_limit),
+      reserved_total: counts[p.product_id] || 0, remaining: p.stock_limit > 0 ? Math.max(0, p.stock_limit - (counts[p.product_id] || 0)) : null,
+      is_expired: !!(p.deadline && p.deadline < today) })) };
+}
+async function ykRead(action) {
+  const client = _ykGetClient(); let s;
+  try { s = await client.readSnapshot(); }
+  catch(e) { if (['SESSION_INVALID', 'ACCESS_DENIED'].includes(e.message)) return { success: false, error: e.message }; throw e; }
+  const view = _ykView(s);
+  _ykViewEpoch = s.writer_epoch;
+  // 同時読取はclientが古いseqを捨てる。全表示を同じsnapshotへ揃える。
+  if (currentUser) _applyInitData(view, true);
+  if (client.pending()) _ykPendingNotice();
+  if (action === 'init') return { success: true, data: view };
+  if (action === 'getProducts') return { success: true, data: view.products };
+  if (action === 'getReservations') return { success: true, data: view.reservations };
+  throw new Error('未対応の読取操作です');
+}
+async function ykWrite(action, data) {
+  const client = _ykGetClient(), versions = {};
+  const nos = data.allocations?.map(a => a.reservation_no) || data.reservation_nos || (data.reservation_no ? [data.reservation_no] : []);
+  nos.forEach(no => { const row = reservations.find(r => r.reservation_no === Number(no)); if (row) versions[String(no)] = row.row_version; });
+  if (data.product_id && ['saveProduct', 'toggleProductActive'].includes(action)) {
+    const p = products.find(p => p.product_id === data.product_id); if (p) versions['product:' + p.product_id] = p.row_version;
+  }
+  const r = await client.mutate(action, data, { epoch: _ykViewEpoch, versions: versions });
+  if (!r.success) {
+    const messages = { YK_VERSION_CONFLICT: '別の操作で更新されています。一覧を読み直してから確認してください。', YK_EPOCH_CHANGED: '保存先の世代が変わりました。画面を読み直してください。', YK_WRITER_CLOSED: '現在は参照のみです。', YK_CAPACITY_EXCEEDED: '予約上限を超えます。一覧を更新してください。', YK_PRODUCT_INACTIVE: 'この商品は受付停止中です。', YK_PRODUCT_EXPIRED: 'この商品の受付期限が過ぎています。' };
+    return { ...r, error: messages[r.error] || '保存できませんでした。入力内容と権限を確認してください。' };
+  }
+  // 正常応答の後に一覧更新だけ失敗しても「保存失敗」に戻さない。
+  try { const s = await client.readSnapshot(); _ykViewEpoch = s.writer_epoch; _applyInitData(_ykView(s), true); }
+  catch(e) { _showNotice('保存は完了しています。一覧の更新だけ失敗しました。', '一覧を更新', () => loadReservations(), 'warning'); }
+  return r;
+}
+function _ykPendingNotice() {
+  _showNotice('保存結果が未確認の操作があります。新しい保存の前に確認してください。', '操作結果を確認', _ykResolve, 'warning');
+}
+// 結果照会で確定した新規登録は、同じ入力が残る場合だけ通常保存と同じく片付ける。
+// 利用者が待機中に別の下書きへ書き換えていたら消さない。
+function _ykClearResolvedRegistration(pending, result) {
+  const a = pending?.args, p = a?.p_payload;
+  if (!result?.success || a?.p_action !== 'saveReservation' || !p || p.reservation_no) return false;
+  const fields = { regSalon: String(p.salon_name || '').trim(), regProduct: String(p.product_id || ''),
+    regStaff: String(p.staff_id || ''), regDelivery: String(p.delivery_method || '未定'), regNotes: String(p.notes || '').trim() };
+  if (Object.entries(fields).some(([id, value]) => document.getElementById(id).value.trim() !== value) ||
+      Number(document.getElementById('regQty').value) !== Number(p.quantity)) return false;
+  document.getElementById('regSalon').value = '';
+  document.getElementById('regProduct').value = '';
+  document.getElementById('regQty').value = '1';
+  document.getElementById('regNotes').value = '';
+  document.getElementById('stockInfo').style.display = 'none';
+  return true;
+}
+async function _ykResolve() {
+  try {
+    const pending = _ykGetClient().pending();
+    const r = await _ykGetClient().resolvePending();
+    if (r.state === 'COMMITTED' || r.state === 'REJECTED' || r.state === 'NONE') {
+      if (r.state === 'COMMITTED') _ykClearResolvedRegistration(pending, r.result);
+      _hideNotice(); await loadReservations();
+      showToast(r.state === 'REJECTED' ? '前の操作は保存されていません。内容を確認してください。' : '保存結果を確認しました。', r.state === 'REJECTED' ? 'warning' : 'success');
+    } else {
+      _showNotice('結果をまだ確認できません。同じ操作番号のまま再確認できます。新規登録はしないでください。', '同じ操作で再確認', () => {
+        showConfirm('元の内容・同じ操作番号で再確認します。すでに保存済みなら再登録はされません。', '再確認する', async () => {
+          try { const result = await _ykGetClient().retryPendingExplicitly(); _ykClearResolvedRegistration(pending, result); await loadReservations(); _hideNotice(); showToast(result.success ? '保存を確認しました。' : '保存されていません。内容と一覧を確認してください。', result.success ? 'success' : 'warning'); }
+          catch(e) { _ykPendingNotice(); }
+        }, 'btn-primary');
+      }, 'warning');
+    }
+  } catch(e) { _ykPendingNotice(); }
+}
+
 </script>
 </body>
 </html>
