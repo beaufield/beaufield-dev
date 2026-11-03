@@ -26,7 +26,7 @@ const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
 const DB_URL          = _PROPS.getProperty('DB_URL');          // §8: SupabaseプロジェクトURL（例 https://xxxx.supabase.co）
 const DB_SECRET_KEY   = _PROPS.getProperty('DB_SECRET_KEY');   // §8: service_role相当のsecret key（apikeyヘッダーにのみ使う）
-const VERSION         = 'v1.41.3';
+const VERSION         = 'v1.41.4';
 const APP_NAME        = 'order-app';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 let _requestMetric = null;
@@ -3872,4 +3872,12 @@ function runYoyakuBackup() {
   const last = Number(_PROPS.getProperty('YOYAKU_BACKUP_LAST_OK') || 0);
   if (!last) throw new Error('YOYAKU_BACKUP_NOT_CREATED');
   Logger.log('予約バックアップ確認: ' + new Date(last).toISOString());
+}
+
+// Googleが生成する正式な承認URLを所有者の実行ログで確認する。
+// 複数Googleアカウント時のエディタ承認ページの不具合に備える。
+function getYoyakuBackupAuthorization() {
+  const info = ScriptApp.getAuthorizationInfo(ScriptApp.AuthMode.FULL, ['https://www.googleapis.com/auth/drive']);
+  if (info.getAuthorizationStatus() === ScriptApp.AuthorizationStatus.REQUIRED) Logger.log(info.getAuthorizationUrl());
+  else Logger.log('予約バックアップのDrive権限は付与済みです。');
 }
