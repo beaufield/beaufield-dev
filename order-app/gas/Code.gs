@@ -26,7 +26,7 @@ const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
 const DB_URL          = _PROPS.getProperty('DB_URL');          // §8: SupabaseプロジェクトURL（例 https://xxxx.supabase.co）
 const DB_SECRET_KEY   = _PROPS.getProperty('DB_SECRET_KEY');   // §8: service_role相当のsecret key（apikeyヘッダーにのみ使う）
-const VERSION         = 'v1.41.2';
+const VERSION         = 'v1.41.3';
 const APP_NAME        = 'order-app';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 let _requestMetric = null;
@@ -3862,4 +3862,14 @@ function ykBackup_() {
   ykCallRpc_('yk_record_backup', { p_backup_id: id, p_seq: state.commit_seq, p_epoch: state.writer_epoch, p_digest: snapshot.sha256, p_destination: file.getId(), p_state: 'VERIFIED' });
   _PROPS.setProperty('YOYAKU_BACKUP_LAST_OK', String(now));
   // 保存期間による削除は初期実装では行わない。運用実測後の別承認とする。
+}
+
+// 所有者のGASエディタから実行する。Web APIのactionへは追加しない。
+// 定期処理が隠した例外をここでは伝播させ、未保存を成功扱いしない。
+function runYoyakuBackup() {
+  if (!ykEnabled_('YOYAKU_DB_ENABLED') || !ykEnabled_('YOYAKU_BACKUP_ENABLED')) throw new Error('YOYAKU_BACKUP_DISABLED');
+  ykBackup_();
+  const last = Number(_PROPS.getProperty('YOYAKU_BACKUP_LAST_OK') || 0);
+  if (!last) throw new Error('YOYAKU_BACKUP_NOT_CREATED');
+  Logger.log('予約バックアップ確認: ' + new Date(last).toISOString());
 }
