@@ -879,6 +879,21 @@
 @media(max-width:600px){.prop-adjust-table thead{display:none}.prop-adjust-table tbody,.prop-adjust-table tr,.prop-adjust-table td{display:block}.prop-adjust-table tr{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px}.prop-adjust-table td{border:0;padding:4px;min-width:0!important}.prop-adjust-table td:nth-child(2)::before{content:'数量：';font-weight:bold}.prop-adjust-table td:nth-child(3)::before{content:'在庫日数：';font-weight:bold}.prop-adjust-table td:nth-child(4)::before{content:'金額：';font-weight:bold}}
 /* PROP_ADJUST_STYLE_END */
 </style>
+<style>
+/* 入荷待ち・基準比較はスマートフォンでも折り返し、既存の数量操作を隠さない。 */
+.order-supply-card { margin-top:16px;padding:12px;border:1px solid var(--border,#ccc);border-radius:10px; }
+.order-supply-card h3,.order-supply-dialog h3 {font-size:16px;line-height:1.5;margin:0 0 10px;}
+.order-supply-card p,.order-supply-dialog p {font-size:13px;line-height:1.65;margin:6px 0;overflow-wrap:anywhere;}
+.order-supply-item {padding:12px 0;border-top:1px solid var(--border,#ddd);overflow-wrap:anywhere;}
+.order-supply-status,.order-supply-orders {font-weight:600;color:var(--primary,#1684a0);}
+.order-supply-list summary {font-size:13px;cursor:pointer;margin:6px 0;}
+.order-supply-dialog {width:min(560px,calc(100% - 24px));max-height:calc(100dvh - 24px);overflow:auto;box-sizing:border-box;margin:auto;padding:18px;border:1px solid var(--border,#bbb);border-radius:12px;background:var(--surface,#fff);color:var(--text,#222);}
+.order-supply-dialog .btn-row {display:flex;flex-wrap:wrap;gap:10px;position:sticky;bottom:0;background:var(--surface,#fff);padding-top:10px;}
+.order-supply-dialog .btn {white-space:normal;min-width:0;}
+#qty-supply-retry {margin-bottom:10px;}
+#qty-supply-retry[hidden] {display:none;}
+#qty-add-btn:disabled {opacity:.5;cursor:wait;}
+</style>
 </head>
 <body>
 
@@ -1019,6 +1034,7 @@
       <div id="confirm-header"></div>
       <div id="confirm-list"></div>
       <div id="confirm-total"></div>
+      <section id="confirm-supply-review" class="order-supply-card" aria-live="polite"></section>
     </div>
     <div id="output-btns">
       <button id="btn-csv"         class="btn btn-primary"   onclick="outputCSV()"        style="margin-bottom:8px">📥 CSV出力</button>
@@ -1340,6 +1356,7 @@
     </div>
 
     <div id="qty-supply-note" role="status" style="font-size:13px;line-height:1.5;margin-bottom:10px"></div>
+    <button type="button" id="qty-supply-retry" class="btn btn-outline btn-sm" hidden onclick="refreshQtySupply(pendingProduct)">入荷・発注を再確認</button>
     <div class="qty-grid">
       <button class="qty-btn selected" onclick="selectQty(this,1)">1</button>
       <button class="qty-btn" onclick="selectQty(this,2)">2</button>
@@ -1381,7 +1398,7 @@
     </div>
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="closeModal('modal-qty');if(currentTab==='scan')setTimeout(focusScanInput,150);">キャンセル</button>
-      <button class="btn btn-primary" onclick="confirmQty()">追加</button>
+      <button class="btn btn-primary" id="qty-add-btn" onclick="confirmQty()">追加</button>
     </div>
   </div>
 </div>
@@ -1538,7 +1555,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.87.3-db';
+const APP_VERSION    = 'v1.88.0-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -2132,6 +2149,7 @@ function _gasErrorMessage(e) {
   if (e && e.code === 'DUPLICATE_ORDER_REVIEW_REQUIRED') return '追加発注の確認が完了していません。追加が必要な場合は出力ボタンを押し、確認と理由の入力を行ってください。';
   if (e && e.name === 'QuotaExceededError') return '端末に未確定発注の控えを保存できません。診断結果をコピーして管理者へ連絡してください。';
   if (e && e.name === 'SecurityError') return 'ブラウザで端末への保存が許可されていません。診断結果をコピーして管理者へ連絡してください。';
+  if (e && ['ORDER_SUPPLY_UNAVAILABLE', 'ORDER_SUPPLY_CHANGED', 'ORDER_SUPPLY_CANCELLED'].includes(e.code)) return e.message;
   if (e && e.name === 'ResourceReadError') return e.message;
   if (e && e.name === 'GasOutcomeUnknownError') return '処理結果を確認できませんでした。同じ操作をすぐ繰り返さず、画面の状態を確認してください。';
   if (e && e.name === 'GasDeadlineError') return '処理時間の上限に達しました。画面を戻しました。';
@@ -4120,6 +4138,9 @@ function openQtyModal(product, isHandwritten) {
 
   // 数量は公開分析・未入荷・最低発注数を確認してから表示する。
   ++qtySupplyEpoch;
+  qtySupplyState = null;
+  setQtySupplyButton(!isHandwritten);
+  document.getElementById('qty-supply-retry').hidden = true;
   const recEl = document.getElementById('qty-recommended');
   recEl.classList.remove('show');
   delete recEl.dataset.recommended;
@@ -4154,7 +4175,7 @@ function openQtyModal(product, isHandwritten) {
   resetQtyButtons();
   if (SatoOxOrderForm.target(product)) document.getElementById('qty-sub').textContent += ' | 専用注文・12本単位';
   openModal('modal-qty');
-  if (hasReorder && hasStock) refreshQtySupply(product);
+  if (!isHandwritten) refreshQtySupply(product);
 }
 
 function applyRecommendedQty() {
@@ -4201,6 +4222,7 @@ function selectOtherQty(el) {
 }
 
 function confirmQty() {
+  if (!pendingProduct || !qtySupplyCanAdd()) return;
   if (SatoOxOrderForm.target(pendingProduct) && selectedQty===null) {
     try {SatoOxOrderForm.quantity(document.getElementById('qty-val').value);}catch(e){showToast(e.message,'error');return;}
   }
@@ -4595,6 +4617,7 @@ function renderConfirmPage() {
   document.getElementById('output-btns').style.display     = 'block';
   _setOrderSaveStatus('none');
   applyOutputButtons();
+  refreshConfirmOrderSupply();
 }
 
 // 発注先の発注方法設定に応じてボタン表示を制御
@@ -5184,6 +5207,9 @@ async function saveOrderToGAS(outputType) {
     }
   }
   if (savedOrderNo) return savedOrderNo;
+  // 結果不明・保存済みの再照会は、照合ダイアログで遮らず既存の送信IDで回復する。
+  const recovering = orderRequestId && _readOrderOutbox().some(row => row.requestId === orderRequestId);
+  if (DATA_BACKEND === 'db' && !recovering) await confirmOrderSupplyBeforeSave();
   const entry = _newOrderOutboxEntry(outputType);
   try {
     return await _processOrderEntry(entry, entry.status === 'READY');
@@ -5282,7 +5308,7 @@ async function _saveBeforeExternalOutput(outputType) {
     return orderNo;
   } catch(e) {
     if (e && e.code === 'ORDER_NO_LONGER_ACTIVE') _setOrderSaveStatus('inactive', '', outputType);
-    else if (e && (['ORDER_OUTBOX_LIMIT', 'ORDER_OUTBOX_UNREADABLE', 'DUPLICATE_ORDER_REVIEW_REQUIRED'].includes(e.code) ||
+    else if (e && (['ORDER_OUTBOX_LIMIT', 'ORDER_OUTBOX_UNREADABLE', 'DUPLICATE_ORDER_REVIEW_REQUIRED', 'ORDER_SUPPLY_UNAVAILABLE', 'ORDER_SUPPLY_CHANGED', 'ORDER_SUPPLY_CANCELLED'].includes(e.code) ||
       ['QuotaExceededError', 'SecurityError'].includes(e.name))) _setOrderSaveStatus('blocked', _gasErrorMessage(e), outputType);
     else _setOrderSaveStatus('failed', '', outputType);
     throw e;
@@ -10867,7 +10893,7 @@ async function inventoryPolicyOpen(file) {
   }
 }
 </script>
-<script>/* 分析の未入荷残と新しい注文を区別し、追加発注を勝手に増やさない。 */
+<script>/* 分析に含む未入荷残と分析後注文を分け、入荷未確認を現物在庫と混同しない。 */
 const ProposalSupply = (() => {
   const code = value => { const s=String(value??'').trim(); return /^\d+$/.test(s)?s.padStart(6,'0'):s; };
   const ms = value => {
@@ -10875,57 +10901,77 @@ const ProposalSupply = (() => {
     const m=String(value||'').match(/^(\d{4})[-/](\d{2})[-/](\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/);
     return m?Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4].padStart(2,'0')}:${m[5]}:${m[6]||'00'}+09:00`):null;
   };
-  function decide(product,data,local=[]) {
-    const c=code(product.code), unknown={kind:'unknown',label:'推奨数未確認',qty:null,note:'入荷・提案の確認ができていません。基準との差だけで追加発注を決めないでください。'};
-    if(data?.success!==true || !data.analysisId)return unknown;
-    const p=(data.proposals||[]).find(r=>code(r.code)===c);
+  const number = value => value!==null&&value!==undefined&&typeof value!=='boolean'&&String(value).trim()!==''&&Number.isFinite(Number(value))?Number(value):null;
+  const fmt = value => Number(value).toLocaleString('ja-JP',{maximumFractionDigits:3});
+  function decide(product,data,local=[],options={}) {
+    const c=code(product.code),unknown={code:c,kind:'unknown',label:'数量判定は未確認',qty:null,orders:[],afterQty:0,note:'入荷・分析を確認できません。基準との差だけで追加発注を決めないでください。'};
+    if(data?.success!==true || !Array.isArray(data.pendingOrders))return unknown;
+    const p=(data.proposals||[]).find(r=>code(r.code)===c),analysisMs=ms(data.analysisInputAt||data.analyzedAt);
+    const reflected=r=>typeof r.inAnalysis==='boolean'?r.inAnalysis:ms(r.registeredAt)!==null&&analysisMs!==null?ms(r.registeredAt)<=analysisMs:null;
+    const excluded=new Set(options.excludeOrderNos||[]),all=data.pendingOrders.filter(r=>code(r.code)===c && number(r.qty)>0);
+    const orders=all.filter(r=>!excluded.has(r.orderNo)).map(r=>({orderNo:r.orderNo||'',date:r.orderDate||'',qty:Number(r.qty),reflected:reflected(r),isDelayed:r.isDelayed===true}));
+    // 同一注文・商品をローカル控えから再加算しない。一部入荷済みの原注文数量は在庫に足さない。
+    const lines=new Set(all.map(r=>r.orderNo+'|'+c));
+    for(const r of local)if(code(r.code)===c&&number(r.qty)>0&&!excluded.has(r.orderNo)&&!lines.has(r.orderNo+'|'+c)&&analysisMs!==null&&r.savedAt>analysisMs)
+      orders.push({orderNo:r.orderNo||'',date:r.orderDate||'',qty:Number(r.qty),reflected:false,isDelayed:false});
+    const afterQty=orders.filter(r=>r.reflected===false).reduce((s,r)=>s+r.qty,0);
+    const target=p?number(p.recommended):number(product.reorderPoint),stock=p?number(p.stock):number(product.stock),modelPending=p?number(p.onOrder):null;
+    const detail={code:c,target,stock,modelPending,afterQty,orders,records:orders.length,analyzedAt:data.analyzedAt||'',balanceKind:'unknown'};
+    const recordText=orders.length?' 注文記録：'+orders.map(r=>`${r.date||'日付不明'} ${fmt(r.qty)}個${r.reflected===false?'（分析後）':''}`).join('、')+'。注文数量には一部入荷済み分を含む場合があります。':'';
+    const fail=(kind,label,note)=>({...detail,kind,label,qty:null,note:note+recordText});
+    if(!data.analysisId)return fail('unknown','分析未確認','公開分析がないため数量の比較はできません。');
     const hidden=rows=>(rows||[]).some(r=>code(typeof r==='object'?r.code:r)===c);
-    if(hidden(data.exclusions)||hidden(data.eol))return {kind:'excluded',label:'除外・終売を確認',qty:null,note:'手動の除外・終売が設定されています。'};
-    const pending=(data.pendingOrders||[]).filter(r=>code(r.code)===c&&Number(r.qty)>0);
-    const analysisMs=ms(data.analysisInputAt||data.analyzedAt);
-    const newPending=pending.some(r=>r.inAnalysis===false || typeof r.inAnalysis!=='boolean' && (ms(r.registeredAt)===null || analysisMs===null || ms(r.registeredAt)>analysisMs));
-    const lines=new Set(pending.map(r=>r.orderNo+'|'+c));
-    const localNew=local.some(r=>code(r.code)===c&&!lines.has(r.orderNo+'|'+c) && (analysisMs===null || r.savedAt>analysisMs));
-    const delayed=pending.some(r=>r.isDelayed===true);
-    const target=p?Number(p.recommended):Number(product.reorderPoint);
-    const stock=p?Number(p.stock):Number(product.stock);
-    const modelPending=p?Number(p.onOrder||0):null;
-    const detail={code:c,target,stock,modelPending,records:pending.length};
-    if(delayed)return {...detail,kind:'delayed',label:'入荷遅延を確認',qty:null,note:`過去の注文に入荷遅延があります。届いているか・欠品かを確認してください。追加注文を自動では勧めません。`};
-    if(newPending||localNew)return {...detail,kind:'ordered',label:'発注済みを確認',qty:null,note:'分析後の注文があるため、追加発注の前に既存注文を確認してください。'};
-    if(p?.groupId)return {...detail,kind:'series',label:'系列の条件確認',qty:null,note:'系列全体の数量・最低条件で判断します。商品の基準との差だけでは発注数を出しません。'};
-    if(p && Number(product.stock)!==stock)return {...detail,kind:'stock_changed',label:'在庫更新を確認',qty:null,note:`分析時点の在庫${stock}と表示在庫が異なります。在庫更新・分析時点を確認してから数量を決めてください。`};
-    if(p?.pendingCovered || p && stock<target && modelPending>0 && stock+modelPending>=target) {
-      if(!pending.length)return {...detail,kind:'pending_unknown',label:'未入荷情報を確認',qty:null,note:`分析で未入荷${modelPending}を加算していますが、現在の注文状態を確認できません。受領・取消・在庫更新を確認してください。`};
-      if(modelPending>pending.reduce((s,r)=>s+Number(r.qty),0))return {...detail,kind:'pending_unknown',label:'未入荷残を確認',qty:null,note:`分析の未入荷残${modelPending}が現在表示される注文数量より多くなっています。古い注文が入荷待ち一覧の表示期間外になった可能性もあります。過去注文の受領・取消・在庫更新を確認してください。`};
-      return {...detail,kind:'pending',label:'入荷待ちで補う想定',qty:0,note:`分析時点：帳簿在庫${stock}＋未入荷残${modelPending}、基準${target}。追加提案は0です。注文記録の数量には一部計上済み分が含まれ得るため、その合計を在庫へ足しません。`};
-    }
-    if(p&&Number.isSafeInteger(p.proposedQty)&&p.proposedQty>0)return {...detail,kind:p.refOnly?'reference':'proposal',qty:p.proposedQty,
-      label:(p.refOnly?'確認用数量: ':'推奨発注数: ')+p.proposedQty,
-      note:`${p.refOnly?'参考商品です。自動選択されません。':'公開分析と最低発注数に基づく数量です。'} 最低発注数${p.lot}。分析 ${data.analyzedAt}`};
-    if(Number.isFinite(stock)&&Number.isFinite(target)&&stock>=target)return {...detail,kind:'sufficient',label:'基準以上',qty:0,note:'帳簿在庫は基準以上です。'};
-    return {...unknown,...detail,note:'在庫は基準未満ですが、公開分析に個別の提案行がありません。除外・系列条件・分析更新を確認してください。'};
+    if(hidden(data.exclusions)||hidden(data.eol))return fail('excluded','除外・終売を確認','手動の除外・終売が設定されています。');
+    if(orders.some(r=>r.reflected===null))return fail('pending_unknown','注文の分析反映を確認','保存時刻・分析への反映を確認できない注文があります。');
+    if(orders.some(r=>r.isDelayed))return fail('delayed','入荷遅延を確認','入荷未確認の注文に計上期限を過ぎたものがあります。到着を確認してください。');
+    if(all.some(r=>excluded.has(r.orderNo)&&reflected(r)!==false))return fail('pending_unknown','修正元の反映を確認','修正元の注文が分析に含まれています。置換前の数量を単純に差し引けないため、修正後の必要数を確認してください。');
+    if(!p||stock===null||target===null||target<0||modelPending===null||modelPending<0)return fail('unknown','分析明細を確認','分析時点の在庫・未入荷残をそろえて取得できないため、必要数は自動判定できません。');
+    if(number(product.stock)!==stock)return fail('stock_changed','在庫更新を確認',`分析時点の在庫${fmt(stock)}と表示在庫が異なります。在庫更新・分析時点を確認してください。`);
+    const reflectedQty=orders.filter(r=>r.reflected===true).reduce((s,r)=>s+r.qty,0);
+    if(modelPending>reflectedQty)return fail('pending_unknown','未入荷残を確認',`分析の未入荷残${fmt(modelPending)}を現在の注文記録で確認できません。受領・取消・注文の修正を確認してください。`);
+    if(p.groupId)return fail('series','系列の条件確認',`分析時点の在庫${fmt(stock)}・未入荷残${fmt(modelPending)}、分析後の発注${fmt(afterQty)}個。系列全体の数量・最低条件で判断してください。`);
+    const position=stock+modelPending+afterQty,gap=Math.max(0,target-position),aboveTarget=Math.max(0,position-target),lot=number(p.lot);
+    const qty=gap>0?Number.isSafeInteger(lot)&&lot>0?Math.ceil(gap/lot)*lot:null:0,balanceKind=gap>0?'shortage':aboveTarget>0?'above':'covered';
+    const comparison=`分析 ${data.analyzedAt||'時刻未確認'}：帳簿在庫${fmt(stock)}＋分析時点の未入荷残${fmt(modelPending)}＋分析後発注${fmt(afterQty)}＝${fmt(position)}個相当（未入荷含む）／基準${fmt(target)}個。`;
+    const result=gap>0?`あと${fmt(gap)}個不足。${qty===null?'最低発注数を確認してください。':`発注単位${fmt(lot)}個では追加${fmt(qty)}個が目安です。`}`:aboveTarget>0?`追加不要。分析の基準を${fmt(aboveTarget)}個上回ります。`:'基準を満たすため追加不要です。';
+    const label=gap>0?`あと${fmt(gap)}個不足${qty===null?'':`（追加目安${fmt(qty)}個）`}`:aboveTarget>0?`追加不要・基準を${fmt(aboveTarget)}個上回る`:'追加不要・基準を満たす';
+    const kind=afterQty>0?'ordered':gap>0?(p.refOnly?'reference':'proposal'):modelPending>0?'pending':'sufficient';
+    return {...detail,kind,balanceKind,position,gap,aboveTarget,qty,label:(p.refOnly&&gap>0?'参考：':'')+label,note:comparison+result+(p.refOnly&&gap>0?' 参考商品です。自動選択はしません。':'')+' 未入荷は現物在庫ではありません。分析後の売上・入荷を再分析した結果ではなく、基準超過が直ちに過剰在庫を意味するものではありません。'+recordText};
   }
-  return {code,decide};
+  return {code,decide,fmt};
 })();
-let qtySupplyEpoch=0;
+let qtySupplyEpoch=0,qtySupplyState=null;
+function setQtySupplyButton(disabled) {
+  const button=document.getElementById('qty-add-btn');if(button)button.disabled=disabled;
+}
+function qtySupplyCanAdd() {
+  if(pendingProduct?.isHandwritten)return true;
+  if(qtySupplyState?.code===ProposalSupply.code(pendingProduct?.code)&&qtySupplyState.status==='ready')return true;
+  showToast('入荷・発注の確認が完了してから追加してください。取得に失敗した場合は「再確認」を押してください。','error');return false;
+}
 async function refreshQtySupply(product) {
   const epoch=++qtySupplyEpoch,rec=document.getElementById('qty-recommended'),note=document.getElementById('qty-supply-note');
+  qtySupplyState={code:ProposalSupply.code(product.code),status:'loading'};setQtySupplyButton(true);
+  const retry=document.getElementById('qty-supply-retry');if(retry)retry.hidden=true;
   rec.textContent='入荷・提案を確認中';rec.classList.add('show');delete rec.dataset.recommended;note.textContent='';
+  const current=()=>epoch===qtySupplyEpoch&&document.getElementById('modal-qty').classList.contains('open')&&ProposalSupply.code(pendingProduct?.code)===ProposalSupply.code(product.code);
   try {
     // 読取だけ。提案画面の選択・系列配分・カートを再初期化しない。
     const data=await gasGet({action:'getOrderProposals'});
-    if(epoch!==qtySupplyEpoch || !document.getElementById('modal-qty').classList.contains('open') || ProposalSupply.code(pendingProduct?.code)!==ProposalSupply.code(product.code))return;
-    const decision=ProposalSupply.decide(product,data,_readOrderedLocal());
+    if(!current())return;
+    if(data?.success!==true||!Array.isArray(data.pendingOrders))throw Error('入荷情報の応答を確認できません');
+    const decision=ProposalSupply.decide(product,data,_readOrderedLocal(),{excludeOrderNos:[revisionBaseOrderNo].filter(Boolean)});
     rec.textContent=decision.label;note.textContent=decision.note;
     if(decision.qty>0)rec.dataset.recommended=decision.qty;
     if(Number.isFinite(decision.target)) {
       const el=document.getElementById('qty-reorder');el.textContent=`${decision.stock<decision.target?'⚠️ ':''}適正在庫: ${decision.target}`;
       el.className=`qty-reorder show ${decision.stock<decision.target?'warning':'normal'}`;
     }
+    qtySupplyState={code:ProposalSupply.code(product.code),status:'ready',decision};setQtySupplyButton(false);
   } catch(error) {
-    if(epoch!==qtySupplyEpoch || !document.getElementById('modal-qty').classList.contains('open') || ProposalSupply.code(pendingProduct?.code)!==ProposalSupply.code(product.code))return;
-    rec.textContent='推奨数未確認';note.textContent='入荷・提案を取得できません。確認後に数量を決めてください。';delete rec.dataset.recommended;
+    if(!current())return;
+    rec.textContent='入荷・発注を再確認';note.textContent='情報を取得できなかったため追加を止めています。「再確認」を押してください。';delete rec.dataset.recommended;
+    qtySupplyState={code:ProposalSupply.code(product.code),status:'error'};if(retry)retry.hidden=false;
   }
 }
 function proposalPendingNeedsReview(p) {
@@ -11986,5 +12032,113 @@ async function reOutputSatoOxPDF(orderNo) {
 
 </script>
 <!-- SATO_OX_FORM_EMBED_END -->
+<!-- ORDER_SUPPLY_REVIEW_BEGIN -->
+<script>/* 全入口で同じ入荷待ちの照合を行う。保存済み・結果不明の再照会は既存の送信IDを維持する。 */
+function orderSupplyRows(items,products,data,local,excludeOrderNos=[]) {
+  const grouped=new Map();
+  items.forEach((item,index)=>{
+    const c=ProposalSupply.code(item.code),key=item.isHandwritten||!c?'manual-'+index:c;
+    const row=grouped.get(key)||{code:c,name:item.name,qty:0,manual:item.isHandwritten||!c};
+    row.qty+=Number(item.qty)||0;grouped.set(key,row);
+  });
+  return [...grouped.values()].map(row=>{
+    const product=products.find(p=>ProposalSupply.code(p.code)===row.code)||{code:row.code};
+    const decision=row.manual?{kind:'unknown',qty:null,orders:[],label:'手書き商品のため照合できません',note:'商品コードがないため、既存注文と必要数を手動で確認してください。'}:
+      ProposalSupply.decide(product,data,local,{excludeOrderNos});
+    const projected=Number.isFinite(decision.position)?decision.position+row.qty:null;
+    const balance=projected===null?'必要数は未確認':projected<decision.target?`追加後も${ProposalSupply.fmt(decision.target-projected)}個不足`:
+      projected>decision.target?`基準を${ProposalSupply.fmt(projected-decision.target)}個上回る`:'追加後は基準を満たす';
+    const result=projected===null?`今回${ProposalSupply.fmt(row.qty)}個を追加（${balance}）`:
+      `今回${ProposalSupply.fmt(row.qty)}個を追加すると${ProposalSupply.fmt(projected)}個相当／基準${ProposalSupply.fmt(decision.target)}個（${balance}）`;
+    return {...row,decision,projected,result,needsConfirmation:decision.orders.length>0||decision.qty===null};
+  });
+}
+function orderSupplyFingerprint() {
+  return JSON.stringify({order:currentOrder,revision:revisionBaseOrderNo,items:cartItems});
+}
+function orderSupplyError(code,message) { const error=new Error(message);error.code=code;return error; }
+async function readOrderSupplyReview() {
+  const data=await gasGet({action:'getOrderProposals'});
+  if(data?.success!==true||!Array.isArray(data.pendingOrders)||!Array.isArray(data.proposals))throw orderSupplyError('ORDER_SUPPLY_UNAVAILABLE','入荷・発注情報を確認できません。「入荷・発注を再確認」を押してください。');
+  const rows=orderSupplyRows(cartItems,productMaster,data,_readOrderedLocal(),[revisionBaseOrderNo].filter(Boolean));
+  return {data,rows,signature:JSON.stringify({analysisId:data.analysisId,rows})};
+}
+function createOrderSupplyList(rows) {
+  const list=document.createElement('div');list.className='order-supply-list';
+  for(const row of rows) {
+    const item=document.createElement('div');item.className='order-supply-item';
+    const name=document.createElement('strong');name.textContent=row.name;
+    const status=document.createElement('p');status.className='order-supply-status';status.textContent=row.decision.label;
+    const result=document.createElement('p');result.textContent=row.result;
+    const details=document.createElement('details'),summary=document.createElement('summary'),note=document.createElement('p');
+    summary.textContent='注文記録・計算の内訳';note.textContent=row.decision.note;details.append(summary,note);
+    // 既存注文は折り畳みの外へ出し、追加前に発注日と原注文数量が目に入るようにする。
+    const orders=document.createElement('p');orders.className='order-supply-orders';
+    orders.textContent=row.decision.orders.map(r=>`${r.date||'日付不明'}に${ProposalSupply.fmt(r.qty)}個発注（入荷未確認・注文No ${r.orderNo||'不明'}）`).join(' ／ ');
+    item.append(name,status);if(orders.textContent)item.append(orders);item.append(result,details);list.append(item);
+  }
+  return list;
+}
+function paintOrderSupplyReview(review) {
+  const host=document.getElementById('confirm-supply-review');if(!host)return;
+  const title=document.createElement('h3');title.textContent='入荷待ちと今回の追加数量';
+  const note=document.createElement('p');note.textContent='分析時点の基準との比較です。未入荷は現物在庫ではなく、発注済みの原数量には一部入荷分を含む場合があります。';
+  const retry=document.createElement('button');retry.type='button';retry.className='btn btn-outline btn-sm';retry.textContent='入荷・発注を再確認';retry.addEventListener('click',()=>refreshConfirmOrderSupply());
+  host.replaceChildren(title,note,createOrderSupplyList(review.rows),retry);
+}
+let confirmSupplyEpoch=0;
+async function refreshConfirmOrderSupply() {
+  const host=document.getElementById('confirm-supply-review');if(!host)return;
+  const epoch=++confirmSupplyEpoch,fingerprint=orderSupplyFingerprint();host.textContent='入荷待ちと分析後の発注を確認中…';
+  if(savedOrderNo){host.textContent='保存済みの発注です。再出力で新しい発注は作成しません。';return;}
+  try {
+    const review=await readOrderSupplyReview();
+    if(epoch===confirmSupplyEpoch&&fingerprint===orderSupplyFingerprint())paintOrderSupplyReview(review);
+  } catch(error) {
+    if(epoch!==confirmSupplyEpoch||fingerprint!==orderSupplyFingerprint())return;
+    const text=document.createElement('p');text.textContent='入荷・発注情報を取得できません。出力前にも再確認し、確認できるまで新しい発注の保存を止めます。';
+    const retry=document.createElement('button');retry.type='button';retry.className='btn btn-outline';retry.textContent='入荷・発注を再確認';retry.addEventListener('click',()=>refreshConfirmOrderSupply());host.replaceChildren(text,retry);
+  }
+}
+function showOrderSupplyApproval(rows) {
+  return new Promise((resolve,reject)=>{
+    const previousFocus=document.activeElement,dialog=document.createElement('dialog');dialog.id='order-supply-approval';dialog.className='order-supply-dialog';dialog.setAttribute('aria-labelledby','order-supply-approval-title');
+    const title=document.createElement('h3');title.id='order-supply-approval-title';title.textContent='既存の発注と追加数量を確認してください';
+    const note=document.createElement('p');note.textContent='入荷未確認の注文、または必要数を自動判定できない商品があります。今回の数量を追加してよいか確認してください。';
+    const actions=document.createElement('div');actions.className='btn-row';
+    const cancel=document.createElement('button');cancel.id='order-supply-cancel';cancel.type='button';cancel.className='btn btn-outline';cancel.textContent='戻って見直す';
+    const accept=document.createElement('button');accept.id='order-supply-accept';accept.type='button';accept.className='btn btn-primary';accept.textContent='確認してこの数量を追加する';
+    let settled=false;
+    const finish=(value,error)=>{if(settled)return;settled=true;accept.disabled=cancel.disabled=true;if(dialog.open)dialog.close();dialog.remove();previousFocus?.focus();error?reject(error):resolve(value);};
+    cancel.addEventListener('click',()=>finish(false));accept.addEventListener('click',()=>finish(true));
+    dialog.addEventListener('cancel',event=>{event.preventDefault();finish(false);});dialog.addEventListener('close',()=>finish(false));
+    actions.append(cancel,accept);dialog.append(title,note,createOrderSupplyList(rows),actions);document.body.appendChild(dialog);
+    try{dialog.showModal();cancel.focus();}catch{finish(false,orderSupplyError('ORDER_SUPPLY_UNAVAILABLE','追加数量の確認画面を開けません。保存・出力を止めました。'));}
+  });
+}
+let orderSupplySaveGate=null;
+async function confirmOrderSupplyBeforeSave() {
+  if(orderSupplySaveGate)return orderSupplySaveGate;
+  const fingerprint=orderSupplyFingerprint();
+  const task=(async()=>{
+    let review;
+    try{review=await readOrderSupplyReview();}catch{throw orderSupplyError('ORDER_SUPPLY_UNAVAILABLE','入荷・発注情報を確認できないため保存・出力を止めました。通信回復後に再確認してください。');}
+    if(fingerprint!==orderSupplyFingerprint())throw orderSupplyError('ORDER_SUPPLY_CHANGED','確認中に注文内容が変わりました。もう一度確認してください。');
+    paintOrderSupplyReview(review);
+    const warnings=review.rows.filter(row=>row.needsConfirmation);
+    if(warnings.length) {
+      if(!await showOrderSupplyApproval(warnings))throw orderSupplyError('ORDER_SUPPLY_CANCELLED','追加発注の確認を取り消しました。保存・出力していません。');
+      // 確認画面を長時間開いた場合も、その間の別注文を見逃さない。
+      let latest;try{latest=await readOrderSupplyReview();}catch{throw orderSupplyError('ORDER_SUPPLY_UNAVAILABLE','確認後の入荷・発注情報を取得できません。保存・出力を止めました。');}
+      if(latest.signature!==review.signature) {paintOrderSupplyReview(latest);throw orderSupplyError('ORDER_SUPPLY_CHANGED','確認中に発注・分析情報が変わりました。表示を見直してから、もう一度出力してください。');}
+    }
+    if(fingerprint!==orderSupplyFingerprint())throw orderSupplyError('ORDER_SUPPLY_CHANGED','確認中に注文内容が変わりました。もう一度確認してください。');
+  })();
+  orderSupplySaveGate=task;
+  try{return await task;}finally{if(orderSupplySaveGate===task)orderSupplySaveGate=null;}
+}
+if(typeof module!=='undefined')module.exports={orderSupplyRows};
+</script>
+<!-- ORDER_SUPPLY_REVIEW_END -->
 </body>
 </html>
