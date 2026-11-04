@@ -180,7 +180,7 @@
 'use strict';
 /* 接続先。公開用は tools/build_pages.cjs が下の1行を本番・試験の値に置き換える（ここ以外に書かない） */
 const ST_CONFIG = /*ST_CONFIG_BEGIN*/{"env":"prod","dbUrl":"https://jlebreiqpqzfsjsunyfw.supabase.co","dbKey":"sb_publishable_YXncOJtKml1dfGRdxHns-w_TcE2-Ypg","gasUrl":"https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec","portalUrl":"https://beaufield.github.io/beaufield-dev/"}/*ST_CONFIG_END*/;
-const APP_VERSION = 'v0.1.0';
+const APP_VERSION = 'v0.2.3';
 const C = window.StCore;
 const STOCK = C.STOCK;
 const SESSION_KEY = 'bf_session';
@@ -203,6 +203,7 @@ const S = {
   rejected: [],             // 送れなかった記録
   view: null,               // C.computeView の結果
   stack: [],                // 画面の履歴 [{name, params}]
+  employee: { assignments: [], reviews: [], conflicts: [], recounts: [], users: [] }, lastSyncAt: '',
   pref: { showBook: false, onlyOpenPlaces: false, onlyUncounted: false },
   deviceId: '',
   firstFailAt: 0, flushing: false, retryTimer: null, failCount: 0,
@@ -407,6 +408,7 @@ function rebuildView() { S.view = C.computeView(S.server, viewOps()); }
 async function loadWhoami() {
   const r = await rpc('st_whoami', {});
   if (!r.success) throw new AuthError(r.error);
+  if (r.employeeVersion !== 1) throw new Error('EMPLOYEE_SCHEMA_REQUIRED');
   S.me = { userId: r.userId, name: r.name, role: r.role };
   S.productInfo = r.productInfo;
   return r.active;
@@ -414,7 +416,7 @@ async function loadWhoami() {
 // 実施中の棚卸しを読み込む（端末の写しがあれば先に表示）
 // offline=true: 通信せず、端末に残っている写しだけで開く（電波の無い場所で開き直したとき）
 async function loadSession(active, offline) {
-  if (!offline) kvPut('boot', { userId: S.bf.user_id, me: S.me, productInfo: S.productInfo, active: active || null }).catch(() => {});
+  if (!offline) kvPut('boot', { userId: S.bf.user_id, me: S.me, productInfo: S.productInfo, employeeVersion: 1, active: active || null }).catch(() => {});
   if (!active) { S.session = null; S.index = null; S.server = new Map(); S.seq = 0; rebuildView(); return; }
   const cachedItems = await kvGet('items').catch(() => null);
   const cachedState = await kvGet('state').catch(() => null);
@@ -424,7 +426,7 @@ async function loadSession(active, offline) {
     S.index = C.buildItems(cachedItems.items); S.shelves = parseShelves(cachedItems.shelves); haveCache = true;
   }
   if (cachedState && cachedState.sessionId === active.sessionId) {
-    S.server = new Map(cachedState.entries.map(e => [e.id, e])); S.seq = cachedState.seq; S.users = cachedState.users || {};
+    S.server = new Map(cachedState.entries.map(e => [e.id, e])); S.seq = cachedState.seq; S.users = cachedState.users || {}; S.employee = cachedState.employee || S.employee; S.lastSyncAt = cachedState.lastSyncAt || '';
   } else { S.server = new Map(); S.seq = 0; }
   rebuildView();
   if (offline) {
@@ -452,8 +454,18 @@ async function fetchState(full) {
   for (const row of r.entries) { const e = C.entryFromRow(row); S.server.set(e.id, e); }
   S.sent.splice(0, sentBefore);
   S.seq = r.seq; Object.assign(S.users, r.users || {});
+  // 対象品の採用・除外が別端末で行われたら、検索用の写しも更新する。
+  if (S.itemVersion != null && r.itemVersion !== S.itemVersion) {
+    const items = await rpc('st_get_items', { sessionId: s0 });
+    if (items.success) {
+      S.index = C.buildItems(items.items);
+      await kvPut('items', { sessionId: s0, role: S.me.role, items: items.items, shelves: items.shelves });
+    }
+  }
+  S.itemVersion = r.itemVersion;
+  S.employee = r.employee || S.employee; S.lastSyncAt = new Date().toISOString(); S.offline = false;
   S.session = r.session; S.shelves = mergeShelves(r.shelves);
-  kvPut('state', { sessionId: s0, seq: S.seq, users: S.users, entries: [...S.server.values()] }).catch(() => {});
+  kvPut('state', { sessionId: s0, seq: S.seq, users: S.users, employee: S.employee, lastSyncAt: S.lastSyncAt, entries: [...S.server.values()] }).catch(() => {});
   rebuildView();
   if (r.session.status !== 'counting') { await onSessionEnded(); return; }
   renderLight();
@@ -474,7 +486,7 @@ async function onSessionEnded() {
    記録の保存と送信（§9）
 ============================================================ */
 async function addOp(op) {
-  op.k = opKey(); op.createdAt = Date.now();
+  op.k = opKey(); op.createdAt = Date.now(); op.userId = S.me.userId;
   try { await idb('outbox', 'readwrite', s => s.put(op)); }
   catch (e) {
     await ask('保存できませんでした', '端末に記録を保存できませんでした。この記録は保存されていません。\n画面を開き直してから、もう一度入力してください。', [{ key: 'ok', label: '閉じる', cls: 'dark' }]);
@@ -489,21 +501,27 @@ async function addOp(op) {
 function saveEntry(o) {
   const e = { id: C.uuid(), kind: o.kind || 'item', code: o.code || null, janRaw: o.janRaw || '', place: o.place, mode: o.mode || 'add',
     qty: o.qty, inputMethod: o.inputMethod || 'list', memo: o.memo || '', deviceId: S.deviceId, clientAt: new Date().toISOString(),
-    userId: S.me.userId, voided: false };
+    userId: S.me.userId, voided: false, tier: o.tier || '', expectedIds: o.expectedIds || [], assignmentEpoch: o.assignmentEpoch };
   return addOp({ type: 'put', sessionId: sid(), entry: e });
 }
-const voidEntry = entryId => addOp({ type: 'void', sessionId: sid(), entryId });
+const voidEntry = entryId => { const e = S.view.active.get(entryId); const a = e && S.employee.assignments.find(x => x.place === e.place); return addOp({ type: 'void', sessionId: sid(), entryId, assignmentEpoch: a && a.epoch, deviceId: S.deviceId }); };
 const wire = e => ({ entryId: e.id, kind: e.kind, code: e.code, janRaw: e.janRaw, place: e.place, mode: e.mode, qty: e.qty,
-  inputMethod: e.inputMethod, memo: e.memo, deviceId: e.deviceId, clientAt: e.clientAt });
+  inputMethod: e.inputMethod, memo: e.memo, deviceId: e.deviceId, clientAt: e.clientAt, tier: e.tier || '', expectedIds: e.expectedIds || [], assignmentEpoch: e.assignmentEpoch });
 
 async function removeOps(ops, rejectedWith) {
   const keys = new Set(ops.map(o => o.k));
-  await idb('outbox', 'readwrite', s => { ops.forEach(o => s.delete(o.k)); return null; });
   if (rejectedWith) {
     const recs = ops.map(o => Object.assign({}, o, { error: rejectedWith[o.k] || 'REJECTED', rejectedAt: Date.now() }));
-    await idb('rejected', 'readwrite', s => { recs.forEach(r => s.put(r)); return null; });
+    // 退避先への保存と送信待ちの削除を一体にし、容量不足等で記録を失わない。
+    await new Promise((resolve, reject) => {
+      const t = IDB.db.transaction(['outbox', 'rejected'], 'readwrite');
+      recs.forEach(r => t.objectStore('rejected').put(r));
+      ops.forEach(o => t.objectStore('outbox').delete(o.k));
+      t.oncomplete = resolve; t.onerror = () => reject(t.error); t.onabort = () => reject(t.error);
+    });
     S.rejected.push(...recs);
   } else {
+    await idb('outbox', 'readwrite', s => { ops.forEach(o => s.delete(o.k)); return null; });
     S.sent.push(...ops);  // サーバーは受け取った。次の取得で反映されるまで表示に重ねる
   }
   S.ops = S.ops.filter(o => !keys.has(o.k));
@@ -515,9 +533,10 @@ async function flush() {
   try {
     while (S.ops.length) {
       const first = S.ops[0];
+      if ((first.userId || (first.entry && first.entry.userId)) !== S.me.userId) throw new AuthError('OTHER_USER_PENDING');
       if (first.type === 'put') {
         const batch = [];
-        for (const op of S.ops) { if (op.type !== 'put' || op.sessionId !== first.sessionId || batch.length >= 50) break; batch.push(op); }
+        for (const op of S.ops) { if (op.type !== 'put' || op.sessionId !== first.sessionId || (op.userId || op.entry.userId) !== S.me.userId || batch.length >= 50) break; batch.push(op); }
         const t0 = Date.now();
         const r = await rpc('st_put_entries', { sessionId: first.sessionId, entries: batch.map(o => wire(o.entry)) });
         if (!r.success) {
@@ -536,7 +555,7 @@ async function flush() {
         await removeOps(done);
         if (bad.length) await removeOps(bad, rej);
       } else {
-        const r = await rpc('st_void_entry', { entryId: first.entryId });
+        const r = await rpc('st_void_entry', { entryId: first.entryId, deviceId: first.deviceId, assignmentEpoch: first.assignmentEpoch });
         if (r.success) await removeOps([first]);
         else if (r.error === 'SESSION_INVALID') throw new AuthError(r.error);
         else await removeOps([first], { [first.k]: r.error });
@@ -750,7 +769,7 @@ function entryRowHtml(e, withUndo) {
   const who = S.users[e.userId] || e.userId;
   const canUndo = withUndo && !e.voided && S.session && S.session.status === 'counting' && (e.userId === S.me.userId || isAdmin());
   return `<div class="row"><div class="main"><div class="name">${esc(name)}</div>
-    <div class="sub">${esc(C.fmtJst(e.clientAt))}・${esc(C.placeLabel(e.place))}・${e.mode === 'replace' ? '数え直し' : '追加'}・${esc(who)}${e.pending ? ' <span class="tag warn">未送信</span>' : ''}${e.voided ? ' <span class="tag">取消</span>' : ''}${e.memo ? '・' + esc(e.memo) : ''}</div></div>
+    <div class="sub">${esc(C.fmtJst(e.clientAt))}・${esc(C.placeLabel(C.location(e.place,e.tier)))}・${e.mode === 'replace' ? '数え直し' : '追加'}・${esc(who)}${e.pending ? ' <span class="tag warn">未送信</span>' : ''}${e.voided ? ' <span class="tag">取消</span>' : ''}${e.memo ? '・' + esc(e.memo) : ''}</div></div>
     <div class="side"><b style="font-size:18px">${num(e.qty)}</b>${canUndo ? `<div><button class="btn sec sm" style="min-height:36px;margin:4px 0 0;padding:4px 10px" data-act="undo" data-id="${esc(e.id)}">取消</button></div>` : ''}</div></div>`;
 }
 
@@ -1084,7 +1103,7 @@ const scan = {
     if (!window.Html5Qrcode) { toast('カメラの部品を読み込めませんでした。手入力をお使いください', 'error'); return; }
     const F = window.Html5QrcodeSupportedFormats;
     try {
-      this.reader = new window.Html5Qrcode('scanBox', { verbose: false, formatsToSupport: [F.EAN_13, F.UPC_A, F.EAN_8] });
+      this.reader = new window.Html5Qrcode('scanBox', { verbose: false, formatsToSupport: [F.EAN_13, F.UPC_A, F.EAN_8, F.QR_CODE].filter(Number.isInteger) });
       await this.reader.start({ facingMode: 'environment' },
         { fps: 24, videoConstraints: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } },
         text => this.onDecode(text), () => {});
@@ -1198,7 +1217,7 @@ function showRejected() {
     <div class="list">${S.rejected.map(o => {
       const e = o.entry; const it = e && e.code && S.index ? S.index.byCode.get(e.code) : null;
       return `<div class="row"><div class="main"><div class="name">${o.type === 'void' ? '取消の操作' : esc(it ? it.name : (e ? (e.code || e.janRaw) : ''))}</div>
-        <div class="sub">${esc(errText(o.error))}${e ? '・' + esc(C.placeLabel(e.place)) + '・' + num(e.qty) : ''}</div></div></div>`;
+        <div class="sub">${esc(errText(o.error))}${e ? '・' + esc(C.placeLabel(C.location(e.place,e.tier))) + '・' + num(e.qty) : ''}</div></div></div>`;
     }).join('')}</div>
     <button class="btn pri" type="button" id="rejOk">確認した（一覧から消す）</button><button class="btn sec" type="button" id="rejClose">閉じる</button>`);
   $('rejClose').onclick = closeSheet;
@@ -1339,6 +1358,12 @@ async function boot() {
   loadPref();
   try { S.deviceId = localStorage.getItem(DEVICE_KEY) || ''; if (!S.deviceId) { S.deviceId = 'd-' + C.uuid(); localStorage.setItem(DEVICE_KEY, S.deviceId); } }
   catch (e) { S.deviceId = 'd-' + C.uuid(); }
+  // 同じスマホの別タブも別の入力端末として扱い、未送信の取り残しを防ぐ。
+  try {
+    let tabId = sessionStorage.getItem('bf_tanaoroshi_tab');
+    if (!tabId) { tabId = C.uuid(); sessionStorage.setItem('bf_tanaoroshi_tab', tabId); }
+    S.deviceId = S.deviceId.slice(0, 55) + ':' + tabId;
+  } catch (e) { return showFatal('この状態では使えません', 'タブの識別情報を保存できません。通常のブラウザで開き直してください。'); }
   try { await idbOpen(); }
   catch (e) { return showFatal('この状態では使えません', '端末に記録を保存できません（プライベートブラウズ等）。通常のSafariで開き直してください。'); }
   try {
@@ -1354,6 +1379,7 @@ async function boot() {
       break;
     } catch (e) {
       if (e instanceof AuthError) return showAuthProblem();
+      if (e.message === 'EMPLOYEE_SCHEMA_REQUIRED') return showFatal('アプリの更新準備中です', '社員利用版のデータベース更新が必要です。管理者へ連絡してください。');
       // 電波が無い: 前回の写しが端末にあれば、それで開いて入力を続けられるようにする（送信は回復後に自動）
       if (i === 0 && await bootOffline()) return;
       if (i >= 2) {
@@ -1371,7 +1397,7 @@ async function boot() {
 }
 async function bootOffline() {
   const b = await kvGet('boot').catch(() => null);
-  if (!b || b.userId !== S.bf.user_id || !b.me || !b.active) return false;
+  if (!b || b.userId !== S.bf.user_id || !b.me || !b.active || b.employeeVersion !== 1) return false;
   S.me = b.me; S.productInfo = b.productInfo;
   try { await loadSession(b.active, true); } catch (e) { return false; }
   S.offline = true; S.firstFailAt = Date.now() - 31000;
@@ -1410,7 +1436,8 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('online', () => flush());
 window.addEventListener('beforeunload', e => { if (S.ops.length) { e.preventDefault(); e.returnValue = ''; } });
-boot();
 </script>
+<script src="employee.js"></script>
+<script>boot();</script>
 </body>
 </html>

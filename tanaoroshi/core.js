@@ -56,7 +56,7 @@
       const it = {
         code: r[0], jan: r[1], janKey: r[2], name: r[3], kana: r[4], unit: r[5], shelf: r[6], tier: r[7],
         discontinued: !!r[8], book: r[9] == null ? null : Number(r[9]), inScope: !!r[10],
-        price: r[11] == null ? null : Number(r[11]), order: i,
+        price: r[11] == null ? null : Number(r[11]), review: r[12] || 'normal', order: i,
       };
       it.searchKey = normSearch(it.name + ' ' + it.kana + ' ' + it.code + ' ' + it.jan);
       list.push(it);
@@ -95,7 +95,7 @@
     return {
       id: r[0], seq: Number(r[1]), kind: r[2], code: r[3], janRaw: r[4], place: r[5], mode: r[6], qty: Number(r[7]),
       inputMethod: r[8], userId: r[9], clientAt: r[10], voided: !!r[11], voidReason: r[12], voidedBy: r[13],
-      stateSeq: Number(r[14]), memo: r[15] || '',
+      stateSeq: Number(r[14]), memo: r[15] || '', tier: r[16] || '', receivedAt: r[17] || '',
     };
   }
 
@@ -113,7 +113,7 @@
         if (e.kind === 'item' && e.mode === 'replace') {
           const victims = [];
           for (const [id, x] of active) {
-            if (x.kind === 'item' && x.code === e.code && x.place === e.place) { victims.push(x); active.delete(id); }
+            if (x.kind === 'item' && x.code === e.code && x.place === e.place && (x.tier || '') === (e.tier || '')) { victims.push(x); active.delete(id); }
           }
           localVictims.set(e.id, victims);
         }
@@ -133,12 +133,13 @@
     const byCode = new Map();
     for (const e of active.values()) {
       if (e.kind !== 'item') continue;
-      const k = e.code + '|' + e.place;
+      const loc = location(e.place, e.tier);
+      const k = e.code + '|' + loc;
       const a = byKey.get(k) || { qty: 0, n: 0, pending: false };
       a.qty += e.qty; a.n += 1; a.pending = a.pending || e.pending;
       byKey.set(k, a);
       const c = byCode.get(e.code) || { total: 0, n: 0, places: {}, pending: false };
-      c.total += e.qty; c.n += 1; c.places[e.place] = (c.places[e.place] || 0) + e.qty; c.pending = c.pending || e.pending;
+      c.total += e.qty; c.n += 1; c.places[loc] = (c.places[loc] || 0) + e.qty; c.pending = c.pending || e.pending;
       byCode.set(e.code, c);
     }
     return { active, byKey, byCode };
@@ -146,8 +147,8 @@
 
   // 「済」の判定（§10.1）。棚番ありは自分の棚に記録があること、棚番なしはどこかに記録があること
   function isCounted(item, view) {
-    if (item.shelf === '') return view.byCode.has(item.code);
-    return view.byKey.has(item.code + '|' + item.shelf);
+    if (item.shelf === '' || item.review === 'accepted') return view.byCode.has(item.code);
+    return view.byKey.has(item.code + '|' + location(item.shelf, item.tier)) || view.byKey.has(item.code + '|' + item.shelf);
   }
 
   // 棚ごとの進捗 {total, counted}
@@ -187,8 +188,15 @@
     return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
   }
 
+  // 棚と段を別に保持し、画面の集計キーだけで連結する。
+  function location(place, tier) { return tier ? place + '~' + tier : place; }
+  function groupIds(view, code, place, tier, janRaw, memo) {
+    return [...view.active.values()].filter(e => e.place === place && (e.tier || '') === (tier || '') &&
+      (code ? e.kind === 'item' && e.code === code : e.kind === 'unknown' && e.janRaw === (janRaw || '') && e.memo === (memo || '')))
+      .map(e => e.id).sort();
+  }
   const shelfLabel = s => (s === '' ? '棚番なし' : s === STOCK ? 'ストック' : s + '棚');
-  const placeLabel = p => (p === STOCK ? 'ストック' : p === '' ? '棚番なし' : p + '棚');
+  const placeLabel = p => { const [place, tier] = String(p).split('~'); return (place === STOCK ? 'ストック' : place === '' ? '棚番なし' : place + '棚') + (tier ? '・' + tier + '段' : ''); };
 
   // 日本時間の表示（ISO文字列 → 'M/D HH:mm'）
   function fmtJst(iso, withDate) {
@@ -203,7 +211,7 @@
   }
 
   return {
-    STOCK, digits, janKey, eanCheckOk, normSearch, buildItems, lookupJan, searchItems, entryFromRow,
+    STOCK, location, groupIds, digits, janKey, eanCheckOk, normSearch, buildItems, lookupJan, searchItems, entryFromRow,
     computeView, isCounted, shelfProgress, needsDiffCheck, toCsv, uuid, shelfLabel, placeLabel, fmtJst, jstDate,
   };
 });
