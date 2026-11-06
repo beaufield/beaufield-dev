@@ -26,7 +26,7 @@ const AUTH_SHEET_ID   = _PROPS.getProperty('AUTH_SHEET_ID');
 const UPDATE_SECRET   = _PROPS.getProperty('UPDATE_SECRET');   // 商品マスター更新用（Power Automate連携）
 const DB_URL          = _PROPS.getProperty('DB_URL');          // §8: SupabaseプロジェクトURL（例 https://xxxx.supabase.co）
 const DB_SECRET_KEY   = _PROPS.getProperty('DB_SECRET_KEY');   // §8: service_role相当のsecret key（apikeyヘッダーにのみ使う）
-const VERSION         = 'v1.41.4';
+const VERSION         = 'v1.41.5';
 const APP_NAME        = 'order-app';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 let _requestMetric = null;
@@ -140,8 +140,9 @@ function validateSession(token, appName) {
 
       if (rowToken === token) {
         if (rowExpires < now) {
-          // 期限切れ → 行を削除してから拒否
-          sh.deleteRow(i + 1);
+          // 期限切れ → 拒否するだけ（v1.41.5〜行は削除しない）。
+          // ロックなしの deleteRow は、同時に走るポータルのログイン時の掃除と行番号がずれて
+          // 別の人の有効な行を消しうる。期限切れ行の掃除はポータルの _saveSession に任せる
           const r = { valid: false };
           cache.put(cacheKey, JSON.stringify(r), 60);
           return r;
@@ -907,7 +908,13 @@ function doPost(e) {
 
   // updateProductMaster: シークレットキー認証（Power Automate用・セッション不要）
   if (action === 'updateProductMaster') {
-    if (p.secret !== UPDATE_SECRET) {
+    // v1.41.5: 商品マスターはDriveからの毎朝の取り込み（updateProductMasterFromDrive）が正規経路。
+    // 合言葉だけで全商品を置き換えられる旧入口は既定で閉じる。再開が必要なときは
+    // スクリプトプロパティ PRODUCT_MASTER_HTTP_ENABLED=true（デプロイ不要・すぐ効く）
+    if (_PROPS.getProperty('PRODUCT_MASTER_HTTP_ENABLED') !== 'true') {
+      return jsonResponse({ success: false, error: 'DISABLED' });
+    }
+    if (!UPDATE_SECRET || p.secret !== UPDATE_SECRET) {
       return jsonResponse({ success: false, error: 'UNAUTHORIZED' });
     }
     try {

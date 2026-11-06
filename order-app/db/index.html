@@ -3,11 +3,13 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://script.google.com https://script.googleusercontent.com https://jlebreiqpqzfsjsunyfw.supabase.co; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>ビューフィールド 発注アプリ（新）</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js" integrity="sha384-weMABwrltA6jWR8DDe9Jp5blk+tZQh7ugpCsF3JwSA53WZM9/14PjS5LAJNHNjAI" crossorigin="anonymous"></script>
+  <!-- v1.90.0-db: 発注書用の3本は起動を止めないよう async。使う直前に ensurePdfLibs で読み込み完了を待つ -->
+  <script async src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous" onerror="window.__pdfLibFailed=true"></script>
+  <script async src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous" onerror="window.__pdfLibFailed=true"></script>
+  <script async src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js" integrity="sha384-weMABwrltA6jWR8DDe9Jp5blk+tZQh7ugpCsF3JwSA53WZM9/14PjS5LAJNHNjAI" crossorigin="anonymous" onerror="window.__pdfLibFailed=true"></script>
   <style>
     :root {
       --primary:      #C9A96E;
@@ -1560,7 +1562,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.89.0-db';
+const APP_VERSION    = 'v1.90.0-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -1682,7 +1684,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderCartResumeBanner();
 
   // H4/H6: DBモードだけ、起動時にhistStoreの読み込みと未確定の操作記録の回収を始める（待たない）
-  if (DATA_BACKEND === 'db') { dbAdapter.ready().catch(() => {}); }
+  if (DATA_BACKEND === 'db') { dbAdapter.ready().catch(() => {}); getDbToken().catch(() => {}); }
 
   const cacheStartedAt = Date.now();
   await loadProductMasterFromCache();
@@ -2822,7 +2824,14 @@ function _dbKeyPrefix(withUser = true) {
 }
 
 /* ---- H2: 通行証（JWT）の管理 ---- */
+// v1.90.0-db: 端末内（localStorage）に保存し、開き直しても期限内なら使い回す（起動のたびのGAS待ちをなくす）。
+// 同じ場所にある全社共通の通行証（bf_session・7日）より短命で権限も狭い。発行時の共通通行証に紐づけ、
+// ログインし直した・別の人に替わったときは使わずに取り直す。
 function _dbTokenKey() { return 'bf_db_token_v1|' + _dbRef(); }
+function _dbTokenSessionTag(session) {
+  const t = session && session.token ? String(session.token) : '';
+  return t ? t.slice(-12) : '';
+}
 function _dbTokenValid(t) {
   return !!(t && t.token && typeof t.exp === 'number' && (t.exp * 1000 - Date.now() > 10 * 60 * 1000));
 }
@@ -2830,11 +2839,12 @@ let _dbTokenPromise = null;
 async function getDbToken() {
   const session = getAuthSession();
   const userId = session && session.user_id;
+  const sessionTag = _dbTokenSessionTag(session);
   try {
-    const raw = sessionStorage.getItem(_dbTokenKey());
+    const raw = localStorage.getItem(_dbTokenKey());
     if (raw) {
       const t = JSON.parse(raw);
-      if (_dbTokenValid(t) && t.userId === userId) return t;
+      if (_dbTokenValid(t) && t.userId === userId && sessionTag && t.sessionTag === sessionTag) return t;
     }
   } catch(e) {}
   if (_dbTokenPromise) return _dbTokenPromise;
@@ -2844,8 +2854,8 @@ async function getDbToken() {
       if (!res || res.success !== true || typeof res.token !== 'string' || typeof res.exp !== 'number') {
         throw new Error((res && res.error) || 'DB_TOKEN_FAILED');
       }
-      const t = { token: res.token, exp: res.exp, userId: res.userId };
-      try { sessionStorage.setItem(_dbTokenKey(), JSON.stringify(t)); } catch(e) {}
+      const t = { token: res.token, exp: res.exp, userId: res.userId, sessionTag };
+      try { localStorage.setItem(_dbTokenKey(), JSON.stringify(t)); } catch(e) {}
       return t;
     } finally {
       _dbTokenPromise = null;
@@ -2854,7 +2864,8 @@ async function getDbToken() {
   return _dbTokenPromise;
 }
 function _dbClearToken() {
-  try { sessionStorage.removeItem(_dbTokenKey()); } catch(e) {}
+  try { localStorage.removeItem(_dbTokenKey()); } catch(e) {}
+  try { sessionStorage.removeItem(_dbTokenKey()); } catch(e) {} // v1.89.0-db以前の保存場所
 }
 // ログアウト時に呼ぶ（H2）。結果未確定の操作記録・送信待ちのoutboxは消さない
 function dbLogoutCleanup() {
@@ -5513,6 +5524,7 @@ const GRANDEX_COORD_MAP = {
 };
 
 async function outputGrandexPDF() {
+  if (!(await ensurePdfLibs())) return;
   // 手書き商品を除外して対象を絞る
   const grandexItems = cartItems.filter(i => !i.isHandwritten);
   const matched = [], unmatched = [];
@@ -5644,6 +5656,7 @@ const CHIYODA_COORD_MAP = {
 };
 
 async function outputChiyodaPDF() {
+  if (!(await ensurePdfLibs())) return;
   // 手書き以外の全商品を対象に、商品名から型番が抽出できたものをmatched、できなかったものをunmatchedに振り分ける
   const targetItems = cartItems.filter(i => !i.isHandwritten);
   const matched = [], unmatched = [];
@@ -5786,6 +5799,7 @@ const ALPENROSE_COORD_MAP = {
 };
 
 async function outputAlpenrosePDF() {
+  if (!(await ensurePdfLibs())) return;
   const items = cartItems.filter(i => !i.isHandwritten);
   const matched = [], unmatched = [];
   for (const item of items) {
@@ -5835,6 +5849,7 @@ async function outputAlpenrosePDF() {
 }
 
 async function outputMelosPDF() {
+  if (!(await ensurePdfLibs())) return;
   const items = cartItems.filter(i => !i.isHandwritten);
   const matched = [], unmatched = [];
   for (const item of items) {
@@ -5908,6 +5923,7 @@ function getAderansCFCode(master) {
 }
 
 async function outputAderansPDF() {
+  if (!(await ensurePdfLibs())) return;
   const items = cartItems.filter(i => !i.isHandwritten);
   const matched = [], unmatched = [];
   for (const item of items) {
@@ -5956,6 +5972,7 @@ async function outputAderansPDF() {
 }
 
 async function outputPDF() {
+  if (!(await ensurePdfLibs())) return;
   if (SatoOxOrderForm.contains(cartItems)) return outputSatoOxPDF();
   showLoading('発注履歴を保存・確認中...');
   try {
@@ -6024,7 +6041,7 @@ function renderPDFPage(container, items, orderNo, pageNum, totalPages) {
       <div style="flex:1;border:2px solid #000;padding:12px 16px;">
         <div style="font-size:11px;margin-bottom:4px;">発注先</div>
         <div style="font-size:20px;font-weight:bold;">${escHtml(currentOrder.supplierName)}　御中</div>
-        ${currentOrder.fax ? `<div style="font-size:12px;margin-top:4px;">FAX: ${currentOrder.fax}</div>` : ''}
+        ${currentOrder.fax ? `<div style="font-size:12px;margin-top:4px;">FAX: ${escHtml(currentOrder.fax)}</div>` : ''}
       </div>
       <div style="width:190px;border:2px solid #000;padding:12px 16px;">
         <div style="font-size:11px;">発注日</div>
@@ -6427,6 +6444,7 @@ async function reOutputCSV(orderNo) {
 
 // 履歴からPDF再出力
 async function reOutputPDF(orderNo) {
+  if (!(await ensurePdfLibs())) return;
   const oxItems=historyDetailCache[orderNo] || [];
   if (oxItems.length && oxItems.every(SatoOxOrderForm.target)) return reOutputSatoOxPDF(orderNo);
   const orderInfo = getHistoryOrderInfo(orderNo);
@@ -6519,6 +6537,7 @@ async function reOutputText(orderNo) {
 
 // 履歴からグランデックス発注書再出力
 async function reOutputGrandexPDF(orderNo) {
+  if (!(await ensurePdfLibs())) return;
   const orderInfo = getHistoryOrderInfo(orderNo);
   let items       = historyDetailCache[orderNo];
   if (!items || !orderInfo) { showToast('データが見つかりません', 'error'); return; }
@@ -6577,6 +6596,7 @@ async function reOutputGrandexPDF(orderNo) {
 
 // 履歴からアルペンローゼ発注書再出力
 async function reOutputAlpenrosePDF(orderNo) {
+  if (!(await ensurePdfLibs())) return;
   const orderInfo = getHistoryOrderInfo(orderNo);
   let items       = historyDetailCache[orderNo];
   if (!items || !orderInfo) { showToast('データが見つかりません', 'error'); return; }
@@ -6637,6 +6657,7 @@ async function reOutputAlpenrosePDF(orderNo) {
 
 // 履歴からメロス発注書再出力
 async function reOutputMelosPDF(orderNo) {
+  if (!(await ensurePdfLibs())) return;
   const orderInfo = getHistoryOrderInfo(orderNo);
   let items       = historyDetailCache[orderNo];
   if (!items || !orderInfo) { showToast('データが見つかりません', 'error'); return; }
@@ -6695,6 +6716,7 @@ async function reOutputMelosPDF(orderNo) {
 
 // 履歴からアデランス発注書再出力
 async function reOutputAderansPDF(orderNo) {
+  if (!(await ensurePdfLibs())) return;
   const orderInfo = getHistoryOrderInfo(orderNo);
   let items       = historyDetailCache[orderNo];
   if (!items || !orderInfo) { showToast('データが見つかりません', 'error'); return; }
@@ -7342,7 +7364,7 @@ function renderInventoryList() {
       const cartRowBg = cartQty > 0 ? 'background:rgba(91,200,232,0.08);' : '';
       return `<div class="history-item" style="display:flex;align-items:center;${rowBorder}${cartRowBg}" onclick="openInventoryQtyModal(${idx})">
         <div style="flex:1;min-width:0">
-          <div style="font-size:14px;font-weight:500;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.4">${isBelow ? '⚠️ ' : ''}${p.name}</div>
+          <div style="font-size:14px;font-weight:500;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.4">${isBelow ? '⚠️ ' : ''}${escHtml(p.name)}</div>
           <div style="font-size:11px;color:var(--text-light);margin-top:2px">${p.shelfNo ? '棚' + escHtml(p.shelfNo) : escHtml(p.code)}</div>
         </div>
         <div style="text-align:right;flex-shrink:0;margin-left:8px">
@@ -10618,8 +10640,34 @@ function downloadBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 500);
 }
 
+// v1.90.0-db: 発注書用ライブラリ（html2canvas・jsPDF・pdf-lib）の読み込み完了を待つ。
+// 起動時は async で読み始めるだけにして、画面の組み立てを止めない。
+const PDF_LIBS_WAIT_MS = 20000;
+function _pdfLibsReady() {
+  return typeof window.html2canvas === 'function' && !!(window.jspdf && window.jspdf.jsPDF)
+    && !!(window.PDFLib && window.PDFLib.PDFDocument);
+}
+async function ensurePdfLibsOrThrow() {
+  if (_pdfLibsReady()) return;
+  const message = '発注書の部品を読み込めませんでした。通信を確認し、画面を再読み込みしてからもう一度お試しください';
+  if (window.__pdfLibFailed) throw new Error(message);
+  showLoading('発注書の部品を読み込み中...');
+  try {
+    const startedAt = Date.now();
+    while (!_pdfLibsReady()) {
+      if (window.__pdfLibFailed || Date.now() - startedAt > PDF_LIBS_WAIT_MS) throw new Error(message);
+      await new Promise(r => setTimeout(r, 100));
+    }
+  } finally { hideLoading(); }
+}
+// 画面のボタンから直接呼ばれる出力関数用。失敗はトーストで知らせ、保存などの処理へ進ませない
+async function ensurePdfLibs() {
+  try { await ensurePdfLibsOrThrow(); return true; }
+  catch (e) { showToast(e.message, 'error'); return false; }
+}
 function escHtml(str) {
-  if (!str) return '';
+  // v1.90.0-db: 0 を「値なし」と扱わない（在庫0個などが空欄に見えていた）
+  if (str === null || str === undefined || str === false || (typeof str === 'number' && Number.isNaN(str))) return '';
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
                     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
@@ -11844,6 +11892,7 @@ async function pacificDigest(bytes) {
   return Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, '0')).join('');
 }
 async function pacificPrepare(items, info) {
+  await ensurePdfLibsOrThrow();
   const drawing = PacificOrderForm.plan(items, info.supplierCode, info.date);
   const bytes = await fetchTemplateAsArrayBuffer(PacificOrderForm.TEMPLATE_KEY);
   return PacificOrderForm.prepare(PDFLib, bytes, drawing, pacificDigest);
@@ -12017,6 +12066,7 @@ function satoOxValidateCart(show=true) {
 }
 function satoOxFingerprint() {return pacificFingerprint();}
 async function satoOxPrepare(items,info) {
+  await ensurePdfLibsOrThrow();
   const drawing=SatoOxOrderForm.plan(items,info.supplierCode,info.date);
   const bytes=await fetchTemplateAsArrayBuffer(SatoOxOrderForm.TEMPLATE_KEY);
   return SatoOxOrderForm.prepare(PDFLib,bytes,drawing,pacificDigest);
