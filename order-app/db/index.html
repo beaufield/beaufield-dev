@@ -891,6 +891,11 @@
 .order-supply-dialog .btn-row {display:flex;flex-wrap:wrap;gap:10px;position:sticky;bottom:0;background:var(--surface,#fff);padding-top:10px;}
 .order-supply-dialog .btn {white-space:normal;min-width:0;}
 #qty-supply-retry {margin-bottom:10px;}
+.order-supply-card.has-attention {border:2px solid #d9822b;background:#fff8ef;}
+.order-supply-card.has-attention h3 {color:#b35c00;}
+.order-supply-ok {color:var(--text-muted,#666);}
+.order-supply-others {margin:8px 0;}
+.order-supply-others > summary {color:var(--text-muted,#666);}
 #qty-supply-retry[hidden] {display:none;}
 #qty-add-btn:disabled {opacity:.5;cursor:wait;}
 </style>
@@ -1555,7 +1560,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.88.0-db';
+const APP_VERSION    = 'v1.88.1-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -12046,11 +12051,16 @@ function orderSupplyRows(items,products,data,local,excludeOrderNos=[]) {
     const decision=row.manual?{kind:'unknown',qty:null,orders:[],label:'手書き商品のため照合できません',note:'商品コードがないため、既存注文と必要数を手動で確認してください。'}:
       ProposalSupply.decide(product,data,local,{excludeOrderNos});
     const projected=Number.isFinite(decision.position)?decision.position+row.qty:null;
-    const balance=projected===null?'必要数は未確認':projected<decision.target?`追加後も${ProposalSupply.fmt(decision.target-projected)}個不足`:
-      projected>decision.target?`基準を${ProposalSupply.fmt(projected-decision.target)}個上回る`:'追加後は基準を満たす';
-    const result=projected===null?`今回${ProposalSupply.fmt(row.qty)}個を追加（${balance}）`:
-      `今回${ProposalSupply.fmt(row.qty)}個を追加すると${ProposalSupply.fmt(projected)}個相当／基準${ProposalSupply.fmt(decision.target)}個（${balance}）`;
-    return {...row,decision,projected,result,needsConfirmation:decision.orders.length>0||decision.qty===null};
+    // 見出しは「今回の数量を足した後」の状態にする。追加前の不足数を見出しにすると、提案どおりの数量でも不足に見える。
+    const balance=projected===null?decision.label:projected<decision.target?`追加後も${ProposalSupply.fmt(decision.target-projected)}個不足`:
+      projected>decision.target?`追加後は基準を${ProposalSupply.fmt(projected-decision.target)}個上回る`:'追加後は基準を満たす';
+    const result=projected===null?`今回${ProposalSupply.fmt(row.qty)}個（必要数は自動判定できません）`:
+      `今回${ProposalSupply.fmt(row.qty)}個を足すと${ProposalSupply.fmt(projected)}個相当／基準${ProposalSupply.fmt(decision.target)}個`;
+    // 入荷未確認の注文がある商品だけを「要確認」にする。系列・在庫更新・手書きなどの判定不能は通常操作でも起きるため警告にしない。
+    const attention=!row.manual&&decision.orders.length>0;
+    // 分析が既存注文を含めたうえで出した提案数以内なら、確認ダイアログまでは出さない（一覧には残す）。
+    const withinProposal=decision.qty!==null&&decision.qty>0&&row.qty<=decision.qty&&decision.orders.every(r=>r.reflected===true&&!r.isDelayed);
+    return {...row,decision,projected,balance,result,attention,needsConfirmation:attention&&!withinProposal};
   });
 }
 function orderSupplyFingerprint() {
@@ -12068,7 +12078,7 @@ function createOrderSupplyList(rows) {
   for(const row of rows) {
     const item=document.createElement('div');item.className='order-supply-item';
     const name=document.createElement('strong');name.textContent=row.name;
-    const status=document.createElement('p');status.className='order-supply-status';status.textContent=row.decision.label;
+    const status=document.createElement('p');status.className='order-supply-status';status.textContent=row.balance;
     const result=document.createElement('p');result.textContent=row.result;
     const details=document.createElement('details'),summary=document.createElement('summary'),note=document.createElement('p');
     summary.textContent='注文記録・計算の内訳';note.textContent=row.decision.note;details.append(summary,note);
@@ -12081,10 +12091,30 @@ function createOrderSupplyList(rows) {
 }
 function paintOrderSupplyReview(review) {
   const host=document.getElementById('confirm-supply-review');if(!host)return;
-  const title=document.createElement('h3');title.textContent='入荷待ちと今回の追加数量';
-  const note=document.createElement('p');note.textContent='分析時点の基準との比較です。未入荷は現物在庫ではなく、発注済みの原数量には一部入荷分を含む場合があります。';
+  const flagged=review.rows.filter(row=>row.attention),others=review.rows.filter(row=>!row.attention);
+  const parts=[];
+  if(flagged.length) {
+    // 入荷待ちがある商品だけを目立たせる。通常の商品は下の折り畳みへ寄せ、大事な行が埋もれないようにする。
+    const title=document.createElement('h3');title.textContent=`⚠️ 入荷待ちの発注がある商品 ${flagged.length}品目`;
+    const note=document.createElement('p');note.textContent='前回の発注がまだ入荷していません。重ねて発注してよいか確認してください（未入荷は現物在庫ではありません）。';
+    parts.push(title,note,createOrderSupplyList(flagged));
+  } else {
+    const ok=document.createElement('p');ok.className='order-supply-ok';ok.textContent=`✓ 入荷待ちの発注はありません（${review.rows.length}品目を確認済み）`;
+    parts.push(ok);
+  }
+  if(flagged.length&&others.length) {
+    const details=document.createElement('details'),summary=document.createElement('summary');
+    summary.textContent=`ほかの${others.length}品目（入荷待ちなし）`;details.className='order-supply-others';
+    details.append(summary,createOrderSupplyList(others));parts.push(details);
+  } else if(!flagged.length&&others.length) {
+    const details=document.createElement('details'),summary=document.createElement('summary');
+    summary.textContent='各商品の在庫・基準を見る';details.className='order-supply-others';
+    details.append(summary,createOrderSupplyList(others));parts.push(details);
+  }
   const retry=document.createElement('button');retry.type='button';retry.className='btn btn-outline btn-sm';retry.textContent='入荷・発注を再確認';retry.addEventListener('click',()=>refreshConfirmOrderSupply());
-  host.replaceChildren(title,note,createOrderSupplyList(review.rows),retry);
+  parts.push(retry);
+  host.classList.toggle('has-attention',flagged.length>0);
+  host.replaceChildren(...parts);
 }
 let confirmSupplyEpoch=0;
 async function refreshConfirmOrderSupply() {
@@ -12103,8 +12133,8 @@ async function refreshConfirmOrderSupply() {
 function showOrderSupplyApproval(rows) {
   return new Promise((resolve,reject)=>{
     const previousFocus=document.activeElement,dialog=document.createElement('dialog');dialog.id='order-supply-approval';dialog.className='order-supply-dialog';dialog.setAttribute('aria-labelledby','order-supply-approval-title');
-    const title=document.createElement('h3');title.id='order-supply-approval-title';title.textContent='既存の発注と追加数量を確認してください';
-    const note=document.createElement('p');note.textContent='入荷未確認の注文、または必要数を自動判定できない商品があります。今回の数量を追加してよいか確認してください。';
+    const title=document.createElement('h3');title.id='order-supply-approval-title';title.textContent='入荷待ちの発注があります';
+    const note=document.createElement('p');note.textContent=`次の${rows.length}品目は、前回の発注がまだ入荷していません。今回の数量を重ねて発注してよいか確認してください。`;
     const actions=document.createElement('div');actions.className='btn-row';
     const cancel=document.createElement('button');cancel.id='order-supply-cancel';cancel.type='button';cancel.className='btn btn-outline';cancel.textContent='戻って見直す';
     const accept=document.createElement('button');accept.id='order-supply-accept';accept.type='button';accept.className='btn btn-primary';accept.textContent='確認してこの数量を追加する';
