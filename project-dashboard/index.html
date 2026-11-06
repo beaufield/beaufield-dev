@@ -169,6 +169,11 @@
   .badge-計画中     { background: #eee; color: #777; }
   .badge-待機中     { background: #eee; color: #777; }
   .badge-要確認     { background: #fff3cd; color: #856404; }
+  /* v1.15.0: 残タスクの無い案件の状態（同期側 P0 ルール） */
+  .badge-安定稼働   { background: #e6f4ea; color: #2e6b3a; }
+  .badge-完了       { background: #e8eaed; color: #3c4043; }
+  .badge-停止       { background: #f1e7e7; color: #8a3b3b; }
+  .badge-アーカイブ { background: #eee; color: #888; }
   /* 資産の種別バッジ（🧰 資産タブ）。状態ではなく分類なので彩度を落として主張させない */
   .badge-kind       { background: #ede9fe; color: #5b4bb7; }
 
@@ -176,6 +181,7 @@
   .ball-Takashi   { background: #fde8e8; color: #c62828; }
   .ball-Claude    { background: #e8eefc; color: #3b5bdb; }
   .ball-環境待ち   { background: #f3e8fd; color: #7e3cad; }
+  .ball-Codex     { background: #e6f4f1; color: #0f6e56; }
 
   .stale-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: bold; }
   .stale-ok   { background: #f0f0f0; color: #999; }
@@ -323,9 +329,9 @@
 
 <div class="tab-bar" id="tab-bar">
   <button class="tab-btn active" data-tab="takashi" onclick="switchTab('takashi')">⏳ Takashi待ち<span class="tab-count" id="cnt-takashi">0</span></button>
-  <button class="tab-btn" data-tab="claude" onclick="switchTab('claude')">🔧 Claude待ち<span class="tab-count" id="cnt-claude">0</span></button>
+  <button class="tab-btn" data-tab="claude" onclick="switchTab('claude')">🔧 AI待ち<span class="tab-count" id="cnt-claude">0</span></button>
   <button class="tab-btn" data-tab="env" onclick="switchTab('env')">🏢 環境待ち<span class="tab-count" id="cnt-env">0</span></button>
-  <button class="tab-btn" data-tab="stale" onclick="switchTab('stale')">🔴 滞留(14日+)<span class="tab-count" id="cnt-stale">0</span></button>
+  <button class="tab-btn" data-tab="stale" onclick="switchTab('stale')">🔴 滞留・停止<span class="tab-count" id="cnt-stale">0</span></button>
   <button class="tab-btn" data-tab="active" onclick="switchTab('active')">🟢 稼働中<span class="tab-count" id="cnt-active">0</span></button>
   <button class="tab-btn" data-tab="all" onclick="switchTab('all')">すべて<span class="tab-count" id="cnt-all">0</span></button>
   <button class="tab-btn" data-tab="assets" onclick="switchTab('assets')">🧰 資産<span class="tab-count" id="cnt-assets">0</span></button>
@@ -380,7 +386,7 @@
   // ============================================================
   const GAS_URL      = 'https://script.google.com/macros/s/AKfycbzkuWEqpJLhERoYlosHIeazlVjl3ipIq8u3x0rp4tCU7BaqPuYt4kP78Ha5Vu4ayNWDCg/exec';
   const PORTAL_URL   = 'https://beaufield.github.io/beaufield-dev/';
-  const APP_VERSION  = '1.14.1';
+  const APP_VERSION  = '1.15.0';
   const USE_MOCK     = false; // ← 開発中は true にして data/dashboard_data.json を見る
 
   document.getElementById('header-version').textContent = 'v' + APP_VERSION;
@@ -399,7 +405,15 @@
   let textExpandedIds  = new Set();   // カード本体クリックで全文表示中のID（複数可）
   let dragState        = null;        // { pointerId, card, container }（PCドラッグ並び替え中の状態）
 
-  const STATUS_ORDER = ['運用中','進行中','レビュー待ち','要対応','計画中','待機中','要確認'];
+  const STATUS_ORDER = ['運用中','進行中','レビュー待ち','要対応','計画中','待機中','要確認','停止','安定稼働','完了','アーカイブ'];
+  // 作業が残っていない状態（v1.15.0〜同期側で付く）。旧データの「運用中＋残タスク0」も同じ扱いにする
+  const IDLE_STATUSES = ['安定稼働','完了','停止','アーカイブ'];
+  // 「次の一手」がこれで始まるなら作業ではない（同期側の NO_PENDING_MARKS / IDLE_ACTION_PREFIXES と揃える）
+  const NO_PENDING_PREFIXES = ['特にやることなし','特にやること無し','特になし','特に無し',
+                               '本番運用を継続','運用を継続','通常利用','通常運用','✅'];
+  // 最新の同期よりこれ以上古い行は「原本から見つからなくなった案件」（GASは欠測行を消さずに残すため）
+  const MISSING_AFTER_HOURS = 36;
+  let missingProjects = [];
   const EFFORT_LEVELS = { S: 1, M: 2, L: 3, XL: 4 };
   const EFFORT_LABELS = { S: 'S・軽い', M: 'M・普通', L: 'L・重い', XL: 'XL・大仕事' };
 
@@ -497,7 +511,7 @@
         if (!Array.isArray(data.projects) || !Array.isArray(data.assets) || !Array.isArray(data.jobs)) {
           throw new Error('応答の形式が想定と違います。再取得してください。');
         }
-        allProjects = data.projects;
+        splitMissingProjects(data.projects);
         allAssets   = data.assets;
         allJobs     = data.jobs;
         document.getElementById('synced-at').textContent =
@@ -554,21 +568,39 @@
   // ============================================================
   // 集計・フィルタ・描画
   // ============================================================
-  // 「運用中」かつ次アクションが残っていない = 本番稼働のみで作業待ちではない案件
-  function isDormant(p) {
-    return p.status_label === '運用中' && (!p.next_actions || !p.next_actions.length);
+  // 「次の一手」に本物の作業が書いてあるか
+  function hasRealNextAction(p) {
+    const t = String(p.next_action_short || '').trim();
+    return !!t && !NO_PENDING_PREFIXES.some(k => t.indexOf(k) === 0);
   }
 
   // 残タスクが1件でもあるか。滞留タブは「やることが残っているのに放置されている」案件だけを出す
-  // （状態が運用中/進行中かは問わない。「特にやることなし」と書いた案件は同期側でnext_actionsが空になる）
+  // v1.15.0: 「次にやること」が空でも「次の一手」に作業があれば残タスクありとみなす
   function hasPendingActions(p) {
-    return Array.isArray(p.next_actions) && p.next_actions.length > 0;
+    return (Array.isArray(p.next_actions) && p.next_actions.length > 0) || hasRealNextAction(p);
+  }
+
+  // 作業待ちではない案件（安定稼働・完了・停止、または旧データの「運用中＋残タスク0」）
+  function isDormant(p) {
+    if (IDLE_STATUSES.indexOf(p.status_label) >= 0) return true;
+    return p.status_label === '運用中' && !hasPendingActions(p);
   }
 
   function effectiveBall(p) {
     if (p.manual_ball && String(p.manual_ball).trim()) return p.manual_ball;
-    if (isDormant(p)) return 'none'; // 稼働中のみの案件は作業タブのノイズにしない
+    if (isDormant(p) || p.ball === 'なし') return 'none'; // 作業待ちでない案件は作業タブのノイズにしない
     return p.ball;
+  }
+
+  // GASは同期に含まれなくなった行（ID変更・除外・原本の削除）を消さずに残すので、
+  // 最新の同期から MISSING_AFTER_HOURS 以上取り残された行は作業タブから外し「すべて」の末尾に畳む
+  function splitMissingProjects(rows) {
+    const times = rows.map(p => Date.parse(p.synced_at)).filter(t => isFinite(t));
+    const newest = times.length ? Math.max.apply(null, times) : NaN;
+    if (!isFinite(newest)) { allProjects = rows; missingProjects = []; return; }
+    const limit = newest - MISSING_AFTER_HOURS * 3600000;
+    allProjects = rows.filter(p => { const t = Date.parse(p.synced_at); return !isFinite(t) || t >= limit; });
+    missingProjects = rows.filter(p => { const t = Date.parse(p.synced_at); return isFinite(t) && t < limit; });
   }
 
   function staleDays(p) {
@@ -584,10 +616,11 @@
     const sd = staleDays(p);
     switch (tab) {
       case 'takashi': return ball === 'Takashi';
-      case 'claude':  return ball === 'Claude';
+      case 'claude':  return ball === 'Claude' || ball === 'Codex';
       case 'env':     return ball === '環境待ち';
-      case 'active':  return p.status_label === '運用中';
-      case 'stale':   return sd !== null && sd >= 14 && hasPendingActions(p);
+      case 'active':  return p.status_label === '運用中' || p.status_label === '安定稼働';
+      case 'stale':   return p.status_label === '停止' ||
+                             (sd !== null && sd >= 14 && hasPendingActions(p) && !isDormant(p));
       case 'all':     return true;
       default:        return true;
     }
@@ -620,11 +653,14 @@
     hideStatus();
 
     if (currentTab === 'all') {
-      const active  = list.filter(p => !isDormant(p));
-      const dormant = list.filter(p => isDormant(p));
+      // 停止は「止まっている」ことに気づいてほしいので畳まずに上へ出す
+      const active  = list.filter(p => !isDormant(p) || p.status_label === '停止');
+      const dormant = list.filter(p => isDormant(p) && p.status_label !== '停止');
       listEl.classList.toggle('dense', active.length <= 8);
       sortList(active).forEach(p => listEl.appendChild(buildCard(p)));
-      if (dormant.length) listEl.appendChild(buildCollapseSection(dormant));
+      if (dormant.length) listEl.appendChild(buildCollapseSection(dormant, '✅ 安定稼働・完了'));
+      const missing = currentCat ? missingProjects.filter(p => p.category === currentCat) : missingProjects;
+      if (missing.length) listEl.appendChild(buildCollapseSection(missing, '📦 原本から見つからなくなった案件'));
     } else {
       listEl.classList.toggle('dense', list.length <= 8);
       sortList(list).forEach(p => listEl.appendChild(buildCard(p)));
@@ -987,7 +1023,7 @@
   }
 
   function buildExpandPanel(p) {
-    const ballOptions = ['', 'Takashi', 'Claude', '環境待ち'].map(v =>
+    const ballOptions = ['', 'Takashi', 'Claude', 'Codex', '環境待ち'].map(v =>
       '<option value="' + v + '"' + ((p.manual_ball || '') === v ? ' selected' : '') + '>' +
       (v === '' ? '（自動判定のまま）' : v) + '</option>').join('');
     const effortOptions = ['', 'S', 'M', 'L', 'XL'].map(v =>
@@ -1012,13 +1048,13 @@
     '</div>';
   }
 
-  function buildCollapseSection(list) {
+  function buildCollapseSection(list, title) {
     const wrap = document.createElement('div');
     wrap.className = 'collapse-section';
     wrap.onclick = function () { wrap.classList.toggle('open'); };
     const bodyDense = list.length <= 8 ? ' dense' : '';
     wrap.innerHTML =
-      '<div class="head"><span>✅ 運用中（' + list.length + '件）</span><span class="arrow">▶</span></div>' +
+      '<div class="head"><span>' + esc(title || '✅ 安定稼働・完了') + '（' + list.length + '件）</span><span class="arrow">▶</span></div>' +
       '<div class="body' + bodyDense + '"></div>';
     const body = wrap.querySelector('.body');
     sortList(list).forEach(p => body.appendChild(buildCard(p)));
@@ -1198,7 +1234,7 @@
 
     if (USE_MOCK) {
       // モック時はローカル state のみ更新（GAS接続なし）
-      const p = allProjects.find(x => x.id === id);
+      const p = allProjects.concat(missingProjects).find(x => x.id === id);
       p.priority = priorityRaw === '' ? null : Number(priorityRaw);
       p.manual_ball = manualBall;
       p.effort = effortVal;
@@ -1224,7 +1260,7 @@
       })
     .then(res => {
       if (!res.success) throw new Error(res.message || res.error || '保存失敗');
-      const p = allProjects.find(x => x.id === id);
+      const p = allProjects.concat(missingProjects).find(x => x.id === id);
       if (p) { p.priority = priorityRaw === '' ? null : Number(priorityRaw); p.manual_ball = manualBall; p.effort = effortVal; p.memo = memo; }
       showToast('保存しました');
       render();
