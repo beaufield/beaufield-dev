@@ -880,6 +880,11 @@
 .prop-adjust-actions {display:flex;gap:8px;position:sticky;bottom:0;background:var(--surface,#fff);padding:12px 0}.prop-adjust-actions button {flex:1;white-space:normal}
 @media(max-width:600px){.prop-adjust-table thead{display:none}.prop-adjust-table tbody,.prop-adjust-table tr,.prop-adjust-table td{display:block}.prop-adjust-table tr{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px}.prop-adjust-table td{border:0;padding:4px;min-width:0!important}.prop-adjust-table td:nth-child(2)::before{content:'数量：';font-weight:bold}.prop-adjust-table td:nth-child(3)::before{content:'在庫日数：';font-weight:bold}.prop-adjust-table td:nth-child(4)::before{content:'金額：';font-weight:bold}}
 /* PROP_ADJUST_STYLE_END */
+/* TAP_FEEDBACK_STYLE (v1.91.0-db): 押している間だけの見た目。再レイアウトの起きない transform・filter・box-shadow だけ */
+button:not(:disabled):active,.btn:not(:disabled):active,.nav-item:active,.tab:active,.qty-recommended:active{transform:scale(.96);filter:brightness(.88);transition-duration:0s}
+.prop-group-head:active,.history-item:active,.search-item:active,.card[onclick]:active{box-shadow:inset 0 0 0 999px rgba(0,0,0,.07);transition-duration:0s}
+@media (prefers-reduced-motion:reduce){button:not(:disabled):active,.btn:not(:disabled):active,.nav-item:active,.tab:active,.qty-recommended:active{transform:none}}
+/* /TAP_FEEDBACK_STYLE */
 </style>
 <style>
 /* 入荷待ち・基準比較はスマートフォンでも折り返し、既存の数量操作を隠さない。 */
@@ -1562,7 +1567,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.90.0-db';
+const APP_VERSION    = 'v1.91.0-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -10762,6 +10767,46 @@ function handleOrderAction(event) {
   ORDER_ACTION_HANDLERS[action](args, el);
 }
 /* === /SAFE ORDER ACTIONS === */
+
+/* === TAP FEEDBACK (v1.91.0-db) ===
+   ① iPhone Safari は touchstart の受け付けがないと :active を出さない。何もしない passive を1本だけ足す
+      （スクロールを止めない）。
+   ② 指を素早く離すと :active は一瞬で消えるため、クリック直後に押した要素だけを 0.24 秒暗く光らせる。
+      Web Animations で描くだけ。クラスの付け外し・再描画・強制レイアウトなし。画面が切り替わる
+      ボタンでは要素ごと消えるので見えない（そこは①の押している間の見た目で手応えを出す）。 */
+const TAP_ACK_SELECTOR = 'button,.btn,.nav-item,.tab,.prop-group-head,.history-item,.search-item,.qty-recommended,[data-order-action],[onclick]';
+function tapAckTarget(target) {
+  const t = target && (target.nodeType === 1 ? target : target.parentElement);
+  const el = t && t.closest && t.closest(TAP_ACK_SELECTOR);
+  if (!el || el === document.body || el === document.documentElement) return null;
+  if (el.disabled || el.getAttribute('aria-disabled') === 'true') return null;
+  if (/^(INPUT|SELECT|TEXTAREA|OPTION|LABEL)$/.test(el.tagName)) return null;
+  return el;
+}
+function tapAck(event) {
+  try {
+    const el = tapAckTarget(event.target);
+    if (!el || typeof el.animate !== 'function') return;
+    if (el._tapAckAnim) el._tapAckAnim.cancel();
+    const base = getComputedStyle(el).boxShadow;
+    const keep = base && base !== 'none' ? ', ' + base : '';
+    el._tapAckAnim = el.animate([
+      { boxShadow: 'inset 0 0 0 999px rgba(0,0,0,.16)' + keep },
+      { boxShadow: 'inset 0 0 0 999px rgba(0,0,0,0)' + keep }
+    ], { duration: 240, easing: 'ease-out' });
+    el._tapAckAnim.onfinish = () => { el._tapAckAnim = null; };
+  } catch (_) {} // 見た目だけの処理。失敗しても操作は止めない
+}
+let tapFeedbackBound = false;
+function bindTapFeedback() {
+  if (tapFeedbackBound) return;
+  tapFeedbackBound = true;
+  document.addEventListener('touchstart', function () {}, { passive: true, capture: true });
+  // 捕捉段階で先に光らせる（各ボタンの処理が画面を描き直す前）
+  document.addEventListener('click', tapAck, true);
+}
+bindTapFeedback();
+/* === /TAP FEEDBACK === */
 
 /* ===================================================
    ひらがな↔カタカナ・半角カナ 正規化
