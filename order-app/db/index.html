@@ -1560,7 +1560,7 @@
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.88.1-db';
+const APP_VERSION    = 'v1.89.0-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -8294,8 +8294,10 @@ function renderProposalList() {
         const mgIds = [];
         g.items.forEach(p => { if (p.groupId && !mgIds.includes(p.groupId)) mgIds.push(p.groupId); });
         const renderItem = (p, c) => renderPropItem(p, c, delayedByCode, orderedByCode);
+        // 最低発注金額の対象外キーワード（ODP＝メイト）の商品は別枠へ（v1.89.0-db）
+        const frameKeywords = propFrameKeywords(code);
         const items = mgIds.map(gid => renderMgBlock(gid, code, renderItem)).join('')
-          + g.items.filter(p => !p.groupId && !SatoOxOrderForm.target(p)).map(p => renderItem(p, code)).join('');
+          + g.items.filter(p => !p.groupId && !SatoOxOrderForm.target(p) && !propFrameMatch(frameKeywords, p.name, p.groupId)).map(p => renderItem(p, code)).join('');
         const totalQty = g.mainItems.reduce((s, p) => s + (p.proposedQty || 0), 0);
         const totalAmount = g.totalAmount;
         const refNote = g.refCount ? `<span style="color:var(--text-light)"> ＋参考${g.refCount}件</span>` : '';
@@ -8334,6 +8336,7 @@ function renderProposalList() {
           <div class="prop-group-body">
             ${items}
             ${satoOxProposalControls(code,g.items,renderItem)}
+            ${propFrameControls(code,g.items,renderItem)}
             <div class="prop-min-order"></div>
             ${propAdjustmentControls(code)}
             <div class="prop-group-summary" id="prop-summary-${escHtml(code)}">選択中: ${checkedItems.length}件 / ${formatYen(checkedAmount)}</div>
@@ -10663,7 +10666,7 @@ const ORDER_ACTION_HANDLERS = Object.freeze({
   toggleProposalGroup: a => toggleProposalGroup(a[0]),
   startOrderFromProposals: a => startOrderFromProposals(a[0]),
   openPropAdjustment: a => openPropAdjustment(a[0]),
-  openPropProductPicker: a => openPropProductPicker(a[0]),
+  openPropProductPicker: a => openPropProductPicker(a[0], a[1]),
   closePropProductPicker: () => closePropProductPicker(),
   addPropProduct: a => addPropProduct(a[0]),
   configurePropProductLot: a => configurePropProductLot(a[0],a[1]),
@@ -11294,8 +11297,28 @@ function propAdjustmentTime(value) {
   const text=String(value||'');return Date.parse(/[zZ]$|[+-]\d{2}:\d{2}$/.test(text)?text:text.replace(' ','T')+'+09:00');
 }
 function propAdjustmentExcludes(value) {return Array.isArray(value)?value:String(value||'').split(/[,、\n]/).map(s=>s.trim()).filter(Boolean);}
+/* 別枠（v1.89.0-db）: 最低発注金額の対象外キーワード（ODP＝メイト）の商品は、金額を組む一覧・商品追加に出さず
+   カード内の別枠でだけ選ぶ。系列ブロック所属品は系列側に残す。発注書は通常商品と同じ。 */
+function propFrameKeywords(supplierCode) {
+  const supplier=masters.suppliers.find(s=>ProposalAdjust.same(s.code,supplierCode));
+  return Number(supplier?.minOrderAmount)>0?propAdjustmentExcludes(supplier.minOrderExcludes):[];
+}
+function propFrameMatch(keywords,name,groupId) {
+  return !groupId&&keywords.some(k=>k&&ProposalAdjust.norm(name).includes(ProposalAdjust.norm(k)));
+}
+function propFrameControls(supplierCode,items,renderItem) {
+  const keywords=propFrameKeywords(supplierCode);if(!keywords.length)return '';
+  const label=keywords.join('・'),rows=(items||[]).filter(p=>propFrameMatch(keywords,p.name,p.groupId));
+  return `<div class="prop-frame" style="margin-top:12px;padding:12px;border:1px solid var(--border);border-radius:8px"><strong>${escHtml(label)}枠</strong><div style="font-size:12px;margin-top:4px">${escHtml(label)}は別枠で選びます。最低発注金額の集計・自動調整・「ほかの商品を追加」には出しません。チェックした分は通常の商品と同じ発注書に入ります。</div>${rows.length?rows.map(p=>renderItem(p,supplierCode)).join(''):`<div style="font-size:12px;margin-top:6px;color:var(--text-light)">今回の提案に${escHtml(label)}はありません。必要なときは下のボタンから追加してください。</div>`}<button class="btn btn-outline" style="margin-top:8px" ${orderAction('openPropProductPicker',supplierCode,'frame')}>＋ ${escHtml(label)}の商品を追加</button></div>`;
+}
 // 提案の採否と独立した商品一覧。追加時にも読戻し、古い在庫・単価で行を作らない。
-const propProductPicker={epoch:0,snapshot:null,supplierCode:''};
+const propProductPicker={epoch:0,snapshot:null,supplierCode:'',mode:'main'};
+// 開いた枠に属さない商品は一覧に出さず、追加もさせない（v1.89.0-db）。
+function propProductPickerInMode(row,snapshot,mode) {
+  const keywords=Number(snapshot.minimumOrder?.amount)>0?snapshot.minimumOrder.excludes||[]:[];
+  const frame=propFrameMatch(keywords,row.name,row.groupId);
+  return mode==='frame'?frame:!frame;
+}
 function propProductPickerReason(row,snapshot) {
   if(row.excluded||row.eolFlagged)return '除外・終売';
   if(snapshot.blockedCodes.includes(row.code))return '発注・入荷・在庫の確認が必要';
@@ -11312,9 +11335,11 @@ function propProductPickerEnsureModal() {
   el.addEventListener('click',e=>{if(e.target===el)closePropProductPicker();});document.body.append(el);
 }
 function closePropProductPicker(){++propProductPicker.epoch;propProductPicker.snapshot=null;closeModal('modal-prop-products');}
-async function openPropProductPicker(supplierCode) {
+async function openPropProductPicker(supplierCode,mode) {
   propProductPickerEnsureModal();const epoch=++propProductPicker.epoch;
-  propProductPicker.snapshot=null;propProductPicker.supplierCode=supplierCode;
+  propProductPicker.snapshot=null;propProductPicker.supplierCode=supplierCode;propProductPicker.mode=mode==='frame'?'frame':'main';
+  const frameLabel=propFrameKeywords(supplierCode).join('・');
+  document.getElementById('prop-products-title').textContent=propProductPicker.mode==='frame'?`${frameLabel}枠に商品を追加`:'ほかの商品を提案へ追加';
   document.getElementById('prop-products-search').value='';openModal('modal-prop-products');
   const box=document.getElementById('prop-products-list');box.textContent='商品・在庫・発注状況を確認しています…';
   try{const snapshot=await propAdjustmentSnapshot(supplierCode);if(epoch!==propProductPicker.epoch)return;propProductPicker.snapshot=snapshot;renderPropProductPicker();}
@@ -11324,7 +11349,7 @@ function renderPropProductPicker() {
   const snapshot=propProductPicker.snapshot;if(!snapshot)return;
   const rule=ProposalAdjust.ruleFor(snapshot.supplier.name),caseLabel=rule?.unitLabel||'ケース';
   const query=ProposalAdjust.norm(document.getElementById('prop-products-search').value),isCase=rule?.kind==='case';
-  const rows=(snapshot.catalog||snapshot.metrics).filter(r=>!query||ProposalAdjust.norm(r.name+' '+r.code).includes(query));
+  const rows=(snapshot.catalog||snapshot.metrics).filter(r=>propProductPickerInMode(r,snapshot,propProductPicker.mode)&&(!query||ProposalAdjust.norm(r.name+' '+r.code).includes(query)));
   document.getElementById('prop-products-list').innerHTML=`<p>${rows.length}商品${rows.length>80?'（先頭80件。検索で絞り込んでください）':''}。数量は${isCase?caseLabel+'数':'個数'}で指定します。</p>`+rows.slice(0,80).map(r=>{
     const reason=propProductPickerReason(r,snapshot),lot=Number(r.lot),step=isCase?1:lot;
     return `<div class="prop-picker-row"><b>${escHtml(r.name)}</b><small>${escHtml(r.code)} ／ 現在在庫 ${escHtml(r.stock)}個 ／ 未入荷 ${escHtml(r.onOrder)}個 ／ ${lot>0?lot+'個'+(isCase?'/'+caseLabel:'単位'):'最低発注数未設定'}${r.manualOnly?' ／ 需要分析なし・手動追加のみ':''}</small>${reason?`<p>${escHtml(reason)}</p>${!lot&&!r.excluded&&!r.eolFlagged?`<button class="btn btn-outline" ${orderAction('configurePropProductLot',r.code,r.name)}>最低発注数を設定</button><p>設定後に商品一覧を開き直してください。</p>`:''}`:`<label>追加する${isCase?caseLabel+'数':'個数'} <input id="prop-product-qty-${r.code}" aria-label="${escHtml(r.name)}の追加数量" type="number" min="${step}" step="${step}" value="${step}"></label> <button class="btn btn-outline" ${orderAction('addPropProduct',r.code)}>提案へ追加</button>`}</div>`;
@@ -11335,7 +11360,7 @@ async function addPropProduct(rawCode) {
   const epoch=++propProductPicker.epoch,supplierCode=propProductPicker.supplierCode,c=ProposalAdjust.code(rawCode),box=document.getElementById('prop-products-list');
   const row=snapshot.metrics.find(r=>r.code===c),isCase=ProposalAdjust.ruleFor(snapshot.supplier.name)?.kind==='case';
   try {
-    if(!row||propProductPickerReason(row,snapshot))throw Error('商品を追加できません。一覧を開き直してください。');
+    if(!row||propProductPickerReason(row,snapshot)||!propProductPickerInMode(row,snapshot,propProductPicker.mode))throw Error('商品を追加できません。一覧を開き直してください。');
     const input=Number(document.getElementById('prop-product-qty-'+c).value),qty=isCase?input*row.lot:input;
     if(!Number.isSafeInteger(input)||input<1||!Number.isSafeInteger(qty)||qty%row.lot)throw Error('最低発注数の単位で正の整数を入力してください。');
     const fingerprint=propAdjustmentFingerprint(supplierCode),fresh=await propAdjustmentSnapshot(supplierCode);
