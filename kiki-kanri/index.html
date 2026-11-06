@@ -647,9 +647,8 @@
 
 <script>
 // ========== APP VERSION ==========
-const APP_VERSION = 'v1.14.2';
+const APP_VERSION = 'v1.15.0';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
-const PORTAL_API_URL = 'https://script.google.com/macros/s/AKfycbzNVW7AaPUTuwneE-M40DTN1clO5VT2yLCHq7cjYvaHqfMfXgVi38UAOsDZQbmmN3wOzw/exec';
 
 // ========== DATA STORE ==========
 const API_URL = 'https://script.google.com/macros/s/AKfycbzWQEPQ89DwT7n38vtLFf1COx0rz13-qKC7GM1dZBiEBYP5GV5H_3J-Olz_rR2ckr4o/exec';
@@ -688,10 +687,12 @@ async function apiGet() {
   return json.result;
 }
 
+// 認証切れ: アプリ内のログイン画面は持たない（v1.15.0〜）。他アプリと同じくポータルへ案内する。
+// 通行証は消さない。GASの通信失敗で誤ってSESSION_INVALIDになったときに、
+// 全アプリからログアウトさせないため（本当に無効ならポータル側で判定される）。
 function _handleSessionInvalid() {
-  localStorage.removeItem(SESSION_KEY);
   currentUser = null;
-  render(); // ログイン画面へ戻す
+  render();
 }
 
 async function apiPost(action, data) {
@@ -735,7 +736,7 @@ async function apiPost(action, data) {
     throw new Error('POSTがGETにリダイレクトされました（GAS設定エラー）');
   }
 
-  // セッション無効の場合はログイン画面へ
+  // セッション無効の場合はポータルへの案内画面へ
   if (json && json.error === 'SESSION_INVALID') {
     _handleSessionInvalid();
     throw new Error('SESSION_INVALID');
@@ -754,223 +755,51 @@ function notifyAsync(text) {
 }
 
 // ========== AUTH ==========
+// ログインはポータルだけで行う（v1.15.0〜。他のポータル経由アプリと同じ形）。
+// このアプリはポータルが保存した通行証（bf_session）を読み、GASが毎回サーバー側で検証する。
+// PIN変更・ログアウトもポータルで行う。
 const SESSION_KEY = 'bf_session'; // ポータルと共通キー
-const SESSION_MS  = 12 * 60 * 60 * 1000; // 12時間
 
 let currentUser = null;
-let authUsers   = [];
-let selectedUser = null;
-let pinValue     = '';
-
-// PIN変更
-let changePinStep    = 0;   // 0=現在PIN入力中, 1=新PIN入力中
-let changePinCurrent = '';  // ステップ0で入力した現在PIN
-let changePinValue   = '';  // 入力中のPIN
 
 function _getBfSession() {
   try {
     const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     const s = JSON.parse(raw);
-    if (!s.user_id) return null;
-    // expires（ポータル形式）またはsaved_at（旧形式）で期限チェック
-    const expiry = s.expires || (s.saved_at ? s.saved_at + SESSION_MS : 0);
-    if (Date.now() > expiry) { localStorage.removeItem(SESSION_KEY); return null; }
+    if (!s || !s.user_id || !s.token) return null;
+    if (!s.expires || Date.now() > Number(s.expires)) return null;
     return s;
   } catch(e) { return null; }
-}
-
-function saveSession(user) {
-  try {
-    const existing = _getBfSession() || {};
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ ...existing, ...user }));
-  } catch(e) {}
 }
 
 function tryAutoLogin() {
   const s = _getBfSession();
   if (!s) return false;
-  currentUser = { user_id: s.user_id, name: s.name, role: s.role || 'user' };
+  currentUser = { user_id: s.user_id, name: s.name };
   return true;
 }
 
-async function logout() {
-  const s = _getBfSession();
-  try {
-    if (s && s.token) {
-      const body = new URLSearchParams({
-        action: 'logout',
-        data: JSON.stringify({ session_token: s.token })
-      });
-      await fetch(PORTAL_API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: body.toString()
-      });
-    }
-  } catch(e) {}
-  localStorage.removeItem(SESSION_KEY);
-  location.replace(PORTAL_URL);
+function goPortal() {
+  location.href = PORTAL_URL;
 }
 
-async function loadAuthUsers() {
-  try {
-    const json = await apiPost('getAuthUsers', {});
-    if (json.status === 'ok') authUsers = json.result.users || [];
-  } catch(e) { authUsers = []; }
-  render();
-}
-
-function renderLogin() {
-  const grid = authUsers.length === 0
-    ? `<div style="text-align:center;color:#9ca3af;padding:32px 0;">ユーザー情報を読み込み中...</div>`
-    : `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-        ${authUsers.map(u => `
-          <button onclick="openLoginPinModal(${htmlJsArg(u.user_id)},${htmlJsArg(u.name)})"
-            style="padding:16px 8px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;font-size:15px;font-weight:600;cursor:pointer;">
-            ${htmlEscape(u.name)}
-          </button>`).join('')}
-       </div>`;
-
+// 認証を確認できないときの案内画面（他アプリと同じく、ポータルから開き直してもらう）
+function renderPortalGuide() {
   return `
-  <div style="background:#1a56db;color:#fff;padding:28px 16px 24px;text-align:center;">
-    <div style="font-size:22px;font-weight:900;letter-spacing:0.04em;">Beaufield</div>
-    <div style="font-size:13px;opacity:0.8;margin-top:4px;">貸出管理アプリ</div>
+  <div class="header">
+    <h1>ビューフィールド貸出管理</h1>
+    <div style="font-size:11px;opacity:0.7;">${htmlEscape(APP_VERSION)}</div>
   </div>
-  <div style="padding:24px 16px;">
-    <div style="font-size:12px;font-weight:700;color:#6b7280;letter-spacing:0.06em;margin-bottom:12px;">ログインするユーザーを選択</div>
-    ${grid}
+  <div class="content">
+    <div class="card" style="padding:24px 16px;text-align:center;">
+      <div style="font-size:16px;font-weight:700;margin-bottom:8px;">ログインの確認ができませんでした</div>
+      <div style="font-size:13px;color:var(--text-sub);margin-bottom:20px;line-height:1.7;">
+        ポータルからもう一度開いてください。<br>貸出管理の権限が無い場合は管理者にご確認ください。
+      </div>
+      <button class="btn btn-primary" onclick="goPortal()">ポータルへ</button>
+    </div>
   </div>`;
-}
-
-function openLoginPinModal(userId, userName) {
-  selectedUser = { user_id: userId, name: userName };
-  pinValue = '';
-  updateLoginPinDots();
-  document.getElementById('login-pin-title').textContent = userName + ' のPINを入力';
-  document.getElementById('login-pin-error').textContent = '';
-  document.getElementById('login-pin-modal').style.display = 'flex';
-}
-
-function closeLoginPinModal() {
-  document.getElementById('login-pin-modal').style.display = 'none';
-  selectedUser = null;
-  pinValue = '';
-}
-
-function loginPinInput(digit) {
-  if (pinValue.length >= 4) return;
-  pinValue += digit;
-  updateLoginPinDots();
-  if (pinValue.length === 4) setTimeout(submitLoginPin, 150);
-}
-
-function loginPinBackspace() {
-  pinValue = pinValue.slice(0, -1);
-  updateLoginPinDots();
-}
-
-function updateLoginPinDots() {
-  for (var i = 0; i < 4; i++) {
-    const el = document.getElementById('lpd' + i);
-    if (el) el.style.background = i < pinValue.length ? '#1a56db' : '#e5e7eb';
-  }
-}
-
-async function submitLoginPin() {
-  if (!selectedUser || pinValue.length !== 4) return;
-  showLoading();
-  document.getElementById('login-pin-error').textContent = '';
-  const pin = pinValue;
-  try {
-    const json = await apiPost('login', { user_id: selectedUser.user_id, pin: pin });
-    if (json.status === 'error') throw new Error(json.error);
-    const result = json.result;
-    currentUser = { user_id: result.user_id, name: result.name, role: result.role || 'user' };
-    // session_token と有効期限もセッションに保存
-    saveSession({
-      user_id: result.user_id,
-      name:    result.name,
-      role:    result.role || 'user',
-      token:   result.session_token || '',
-      expires: result.expires || (Date.now() + SESSION_MS)
-    });
-    closeLoginPinModal();
-    await loadDB();
-  } catch(e) {
-    document.getElementById('login-pin-error').textContent = 'PINが正しくありません';
-    pinValue = '';
-    updateLoginPinDots();
-  } finally {
-    hideLoading();
-  }
-}
-
-// ─── PIN変更 ───────────────────────────────────────────────
-function openChangePinModal() {
-  changePinStep    = 0;
-  changePinCurrent = '';
-  changePinValue   = '';
-  document.getElementById('change-pin-step-label').textContent = '現在のPINを入力してください';
-  document.getElementById('change-pin-error').textContent = '';
-  updateChangePinDots();
-  document.getElementById('change-pin-modal').style.display = 'flex';
-}
-function closeChangePinModal() {
-  document.getElementById('change-pin-modal').style.display = 'none';
-  changePinStep = 0; changePinCurrent = ''; changePinValue = '';
-}
-function changePinInput(digit) {
-  if (changePinValue.length >= 4) return;
-  changePinValue += digit;
-  updateChangePinDots();
-  if (changePinValue.length === 4) setTimeout(processChangePinStep, 150);
-}
-function changePinBackspace() {
-  changePinValue = changePinValue.slice(0, -1);
-  updateChangePinDots();
-}
-function updateChangePinDots() {
-  for (var i = 0; i < 4; i++) {
-    var el = document.getElementById('cpd' + i);
-    if (el) el.style.background = i < changePinValue.length ? '#1a56db' : '#e5e7eb';
-  }
-}
-async function processChangePinStep() {
-  if (changePinStep === 0) {
-    // ステップ0：現在PINを記録してステップ1へ
-    changePinCurrent = changePinValue;
-    changePinValue   = '';
-    changePinStep    = 1;
-    document.getElementById('change-pin-step-label').textContent = '新しいPINを入力してください';
-    document.getElementById('change-pin-error').textContent = '';
-    updateChangePinDots();
-  } else {
-    // ステップ1：新PINでAPIコール
-    const newPin = changePinValue;
-    showLoading();
-    try {
-      const json = await apiPost('changePin', {
-        user_id:     currentUser.user_id,
-        current_pin: changePinCurrent,
-        new_pin:     newPin
-      });
-      if (json.status === 'error') throw new Error(json.error);
-      closeChangePinModal();
-      showToast('PINを変更しました。再ログインしてください ✅');
-      localStorage.removeItem(SESSION_KEY);
-      setTimeout(() => location.replace(PORTAL_URL), 1200);
-    } catch(e) {
-      changePinValue   = '';
-      changePinStep    = 0;
-      changePinCurrent = '';
-      document.getElementById('change-pin-step-label').textContent = '現在のPINを入力してください';
-      document.getElementById('change-pin-error').textContent = '現在のPINが正しくありません';
-      updateChangePinDots();
-    } finally {
-      hideLoading();
-    }
-  }
 }
 
 const DB_CACHE_KEY = 'kiki_db_v1';
@@ -993,6 +822,8 @@ async function loadDB() {
     saveDBCache();
     render();
   } catch(e) {
+    // 認証切れはポータル案内画面を出しているので、通信エラーの表示は重ねない。
+    if (e && e.message === 'SESSION_INVALID') return;
     if (!cached) showToast('通信エラーが発生しました', 'error');
     if (!cached) render();
   } finally {
@@ -1131,7 +962,7 @@ function render() {
   };
 
   if (!currentUser) {
-    app.innerHTML = renderLogin();
+    app.innerHTML = renderPortalGuide();
     afterRender();
     return;
   }
@@ -1150,9 +981,10 @@ function renderNav() {
     { id: 'settings', label: '設定', icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>` },
   ];
 
-  const logoutBtn = `<button class="nav-btn" onclick="logout()" style="color:#dc2626;">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-    <span>退出</span>
+  // ログアウトはポータルで行う。ここではポータルのアプリ一覧へ戻るだけ。
+  const portalBtn = `<button class="nav-btn" onclick="goPortal()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+    <span>ポータル</span>
   </button>`;
 
   return `
@@ -1171,7 +1003,7 @@ function renderNav() {
         <span>${htmlEscape(t.label)}</span>
       </button>`;
     }).join('')}
-    ${logoutBtn}
+    ${portalBtn}
   </nav>`;
 }
 
@@ -1202,7 +1034,7 @@ function renderHome() {
     <h1>ビューフィールド貸出管理</h1>
     <div style="text-align:right;line-height:1.5;">
       <div style="font-size:13px;font-weight:600;">${htmlEscape(currentUser ? currentUser.name : '')}</div>
-      <div style="font-size:11px;opacity:0.7;">${htmlEscape(today().replace(/-/g,'/'))}</div>
+      <div style="font-size:11px;opacity:0.7;">${htmlEscape(today().replace(/-/g,'/'))} ・ ${htmlEscape(APP_VERSION)}</div>
     </div>
   </div>
   <div class="content">
@@ -2546,14 +2378,14 @@ function renderSettings() {
       </div>
     </div>
 
-    <div class="section-title">アカウント設定</div>
+    <div class="section-title">アカウント</div>
     <div class="card">
-      <div class="settings-item" onclick="openChangePinModal()">
-        <span class="settings-label">PINを変更する</span>
+      <div class="settings-item" onclick="goPortal()">
+        <span class="settings-label">PIN変更・ログアウト（ポータルで行います）</span>
         <span class="settings-arrow">›</span>
       </div>
       <div style="padding:8px 12px 12px;font-size:12px;color:var(--text-sub);">
-        ※ このPINはすべてのBeaufieldアプリで共通です
+        ※ PINはすべてのBeaufieldアプリで共通です。ポータル上部の「PIN変更」から変更できます
       </div>
     </div>
 
@@ -3059,61 +2891,5 @@ function recoverPendingLoans_() {
 }
 </script>
 
-<!-- PIN変更モーダル -->
-<div id="change-pin-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;justify-content:center;align-items:flex-end;">
-  <div style="background:#fff;width:100%;max-width:480px;border-radius:20px 20px 0 0;padding:24px 20px 32px;">
-    <div style="text-align:center;font-size:16px;font-weight:700;margin-bottom:4px;">PIN変更</div>
-    <div id="change-pin-step-label" style="text-align:center;font-size:13px;color:#6b7280;margin-bottom:16px;">現在のPINを入力してください</div>
-    <div style="display:flex;justify-content:center;gap:14px;margin-bottom:8px;">
-      <div id="cpd0" style="width:18px;height:18px;border-radius:50%;background:#e5e7eb;"></div>
-      <div id="cpd1" style="width:18px;height:18px;border-radius:50%;background:#e5e7eb;"></div>
-      <div id="cpd2" style="width:18px;height:18px;border-radius:50%;background:#e5e7eb;"></div>
-      <div id="cpd3" style="width:18px;height:18px;border-radius:50%;background:#e5e7eb;"></div>
-    </div>
-    <div id="change-pin-error" style="text-align:center;color:#dc2626;font-size:13px;min-height:20px;margin-bottom:12px;"></div>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
-      <button onclick="changePinInput('1')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">1</button>
-      <button onclick="changePinInput('2')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">2</button>
-      <button onclick="changePinInput('3')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">3</button>
-      <button onclick="changePinInput('4')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">4</button>
-      <button onclick="changePinInput('5')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">5</button>
-      <button onclick="changePinInput('6')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">6</button>
-      <button onclick="changePinInput('7')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">7</button>
-      <button onclick="changePinInput('8')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">8</button>
-      <button onclick="changePinInput('9')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">9</button>
-      <button onclick="closeChangePinModal()" style="padding:18px;font-size:14px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#f3f4f6;cursor:pointer;color:#6b7280;">取消</button>
-      <button onclick="changePinInput('0')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">0</button>
-      <button onclick="changePinBackspace()" style="padding:18px;font-size:22px;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">⌫</button>
-    </div>
-  </div>
-</div>
-
-<!-- ログイン用PINモーダル -->
-<div id="login-pin-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;justify-content:center;align-items:flex-end;">
-  <div style="background:#fff;width:100%;max-width:480px;border-radius:20px 20px 0 0;padding:24px 20px 32px;">
-    <div id="login-pin-title" style="text-align:center;font-size:16px;font-weight:700;margin-bottom:20px;">PINを入力してください</div>
-    <div style="display:flex;justify-content:center;gap:14px;margin-bottom:8px;">
-      <div id="lpd0" style="width:18px;height:18px;border-radius:50%;background:#e5e7eb;"></div>
-      <div id="lpd1" style="width:18px;height:18px;border-radius:50%;background:#e5e7eb;"></div>
-      <div id="lpd2" style="width:18px;height:18px;border-radius:50%;background:#e5e7eb;"></div>
-      <div id="lpd3" style="width:18px;height:18px;border-radius:50%;background:#e5e7eb;"></div>
-    </div>
-    <div id="login-pin-error" style="text-align:center;color:#dc2626;font-size:13px;min-height:20px;margin-bottom:12px;"></div>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
-      <button onclick="loginPinInput('1')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">1</button>
-      <button onclick="loginPinInput('2')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">2</button>
-      <button onclick="loginPinInput('3')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">3</button>
-      <button onclick="loginPinInput('4')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">4</button>
-      <button onclick="loginPinInput('5')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">5</button>
-      <button onclick="loginPinInput('6')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">6</button>
-      <button onclick="loginPinInput('7')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">7</button>
-      <button onclick="loginPinInput('8')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">8</button>
-      <button onclick="loginPinInput('9')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">9</button>
-      <button onclick="closeLoginPinModal()" style="padding:18px;font-size:14px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#f3f4f6;cursor:pointer;color:#6b7280;">取消</button>
-      <button onclick="loginPinInput('0')" style="padding:18px;font-size:22px;font-weight:600;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">0</button>
-      <button onclick="loginPinBackspace()" style="padding:18px;font-size:22px;border:1px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;">⌫</button>
-    </div>
-  </div>
-</div>
 </body>
 </html>

@@ -2,15 +2,12 @@
 // ビューフィールド 貸出管理アプリ — バックエンド
 // ============================================================
 
-const VERSION  = 'v1.12.2';
+const VERSION  = 'v1.13.0';
 const SHEET_ID      = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
 const AUTH_SHEET_ID = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID');
 // SHEET_ID / AUTH_SHEET_ID / LINEWORKS_WEBHOOK はスクリプトプロパティで管理
 const APP_NAME           = 'lending';
-const SESSION_HOURS      = 12;
 const CACHE_TTL_SESSION  = 60; // 権限剥奪・ログアウトを最大1分で反映
-const LOGIN_MAX_ATTEMPTS = 5;
-const LOGIN_LOCK_MINUTES = 10;
 const ss = SpreadsheetApp.openById(SHEET_ID);
 
 // ─── セッション検証 ──────────────────────────────────────────
@@ -79,24 +76,6 @@ function validateSession(token) {
   return { valid: false };
 }
 
-// ─── セッション保存（beaufield-auth の sessions シートに書き込む） ─
-function _saveSession(authSs, token, userId, expiresAt) {
-  let sh = authSs.getSheetByName('sessions');
-  if (!sh) {
-    sh = authSs.insertSheet('sessions');
-    sh.appendRow(['token', 'user_id', 'expires_at']);
-  }
-
-  // 期限切れセッションを遅延クリーンアップ
-  const data = sh.getDataRange().getValues();
-  const now  = Date.now();
-  for (let i = data.length - 1; i >= 1; i--) {
-    if (Number(data[i][2]) < now) sh.deleteRow(i + 1);
-  }
-
-  sh.appendRow([token, userId, expiresAt]);
-}
-
 // ─── レスポンスヘルパー ─────────────────────────────────────
 function _respond(obj) {
   return ContentService
@@ -134,9 +113,6 @@ function doPost(e) {
       if (action === 'saveLoan' && data) data.registeredBy = actorName;
       if (action === 'saveLoanTransaction' && data && data.loan) data.loan.registeredBy = actorName;
       if (action === 'extendDueDate' && data) data.registeredBy = actorName;
-      if (action === 'changePin' && String(data.user_id || '') !== String(auth.user_id)) {
-        return _respond({ status: 'error', error: 'FORBIDDEN' });
-      }
 
     let result;
     if      (action === 'saveDevice')          result = saveDevice(data);
@@ -154,7 +130,6 @@ function doPost(e) {
     else if (action === 'assignLabel')         result = assignLabel(data);
     else if (action === 'extendDueDate')       result = extendDueDate(data);
     else if (action === 'notify')              result = notify(data);
-    else if (action === 'changePin')           result = changePin(data);
     else result = { error: 'Unknown action: ' + action };
 
     return _respond({ status: 'ok', result });
@@ -779,140 +754,9 @@ function sendWeeklyReport() {
 }
 
 // ─── beaufield-auth 認証 ────────────────────────────────────
-
-/**
- * getAuthUsers: lendingアプリにアクセス権があるユーザー一覧を返す（ログイン画面の名前グリッド用）
- * 出力: { users: [{ user_id, name }] }
- */
-function getAuthUsers() {
-  var authSs    = SpreadsheetApp.openById(AUTH_SHEET_ID);
-  var roleRows  = authSs.getSheetByName('user_app_roles').getDataRange().getValues();
-  var authRows  = authSs.getSheetByName('users').getDataRange().getValues();
-
-  // lendingのアクセス権があるuser_idを収集
-  var accessIds = new Set();
-  for (var i = 1; i < roleRows.length; i++) {
-    if (roleRows[i][1] === APP_NAME && roleRows[i][2] !== 'none') {
-      accessIds.add(String(roleRows[i][0]));
-    }
-  }
-
-  // アクティブなユーザーのみ返す
-  var users = [];
-  for (var i = 1; i < authRows.length; i++) {
-    var row = authRows[i];
-    if (accessIds.has(String(row[0])) && (row[3] === true || row[3] === 'TRUE')) {
-      users.push({ user_id: String(row[0]), name: String(row[1]) });
-    }
-  }
-  return { users: users };
-}
-
-/**
- * login: 名前選択 + PIN で認証する（beaufield-auth を使用）
- * 入力: { user_id, pin }
- * 出力: { user_id, name, role }
- */
-function login(data) {
-  var userId = data.user_id;
-  var pin    = data.pin;
-  if (!userId || pin === undefined || pin === null || pin === '') {
-    throw new Error('user_idとpinは必須です');
-  }
-
-  var props = PropertiesService.getScriptProperties();
-  var lockKey = 'login_lockout_' + userId;
-  var lockData = JSON.parse(props.getProperty(lockKey) || '{"count":0,"until":0}');
-  var now = Date.now();
-  if (Number(lockData.until || 0) > now) {
-    var remaining = Math.ceil((Number(lockData.until) - now) / 60000);
-    throw new Error('PIN入力がロックされています。' + remaining + '分後に再試行してください');
-  }
-
-  var authSs  = SpreadsheetApp.openById(AUTH_SHEET_ID);
-  var pinStr  = String(pin).padStart(4, '0');
-
-  // Step 1: user_id + PIN を照合
-  var authRows = authSs.getSheetByName('users').getDataRange().getValues();
-  var authUser = null;
-  for (var i = 1; i < authRows.length; i++) {
-    var row = authRows[i];
-    if (String(row[0]) === userId && (row[3] === true || row[3] === 'TRUE')) {
-      if (String(row[2]).padStart(4, '0') !== pinStr) {
-        lockData.count = Number(lockData.count || 0) + 1;
-        if (lockData.count >= LOGIN_MAX_ATTEMPTS) {
-          lockData.count = 0;
-          lockData.until = now + LOGIN_LOCK_MINUTES * 60 * 1000;
-        }
-        props.setProperty(lockKey, JSON.stringify(lockData));
-        throw new Error('PINが正しくありません');
-      }
-      authUser = { user_id: String(row[0]), name: String(row[1]) };
-      props.deleteProperty(lockKey);
-      break;
-    }
-  }
-  if (!authUser) throw new Error('ユーザーが見つかりません');
-
-  // Step 2: アクセス権確認
-  var roleRows = authSs.getSheetByName('user_app_roles').getDataRange().getValues();
-  var role = null;
-  for (var i = 1; i < roleRows.length; i++) {
-    if (String(roleRows[i][0]) === userId && roleRows[i][1] === APP_NAME && roleRows[i][2] !== 'none') {
-      role = roleRows[i][2];
-      break;
-    }
-  }
-  if (!role) throw new Error('このアプリへのアクセス権限がありません');
-
-  // Step 3: サーバー側セッショントークン発行（beaufield-auth sessions シートに保存）
-  var token     = Utilities.getUuid();
-  var expiresAt = now + SESSION_HOURS * 60 * 60 * 1000;
-  _saveSession(authSs, token, authUser.user_id, expiresAt);
-
-  return { user_id: authUser.user_id, name: authUser.name, role: role, session_token: token, expires: expiresAt };
-}
-
-/**
- * changePin: 本人によるPIN変更（beaufield-auth共通PIN）
- * 入力: { user_id, current_pin, new_pin }
- * 出力: { user_id }
- */
-function changePin(data) {
-  var userId     = data.user_id;
-  var currentPin = data.current_pin;
-  var newPin     = data.new_pin;
-
-  if (!userId || currentPin === undefined || currentPin === null || !newPin) {
-    throw new Error('user_id、current_pin、new_pinは必須です');
-  }
-  if (!/^\d{4}$/.test(String(newPin))) throw new Error('新しいPINは4桁の数字を指定してください');
-
-  var authSs = SpreadsheetApp.openById(AUTH_SHEET_ID);
-  var sheet  = authSs.getSheetByName('users');
-  var rows   = sheet.getDataRange().getValues();
-
-  for (var i = 1; i < rows.length; i++) {
-    if (String(rows[i][0]) === String(userId)) {
-      if (String(rows[i][2]).padStart(4, '0') !== String(currentPin).padStart(4, '0')) {
-        throw new Error('現在のPINが正しくありません');
-      }
-      sheet.getRange(i + 1, 3).setValue(String(newPin));
-      _deleteAuthSessions_(authSs, userId);
-      return { user_id: String(userId), reauth_required: true };
-    }
-  }
-  throw new Error('ユーザーが見つかりません');
-}
-
-function _deleteAuthSessions_(authSs, userId) {
-  var sessions = authSs.getSheetByName('sessions');
-  if (!sessions) return;
-  var rows = sessions.getDataRange().getValues();
-  for (var i = rows.length - 1; i >= 1; i--) {
-    if (String(rows[i][1]) === String(userId)) sessions.deleteRow(i + 1);
-  }
-}
+// v1.13.0: ログイン・ユーザー一覧・PIN変更の処理を削除した。
+// 貸出管理はポータルでログインした通行証（bf_session）を validateSession で確認するだけで、
+// beaufield-auth の users / sessions シートへは書き込まない。PIN変更はポータルで行う。
 
 // ─── テスト用関数（GASエディタから手動実行） ────────────────
 function testNotify() {

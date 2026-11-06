@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.37.3';
+const VERSION = 'v2.38.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -314,9 +314,38 @@ function jsonResponse(data) {
 }
 
 // ===================== セッション検証 =====================
+// v2.38.0: 認証結果を短時間キャッシュする（2026-11-06 総合レビュー P2）。
+// 以前は操作のたびにポータルGASへ問い合わせており、1回1〜3秒が上乗せされていた。
+// - 成功した結果だけを AUTH_CACHE_TTL_SEC 秒保存する（失敗・一時障害は保存しない）
+// - キーは通行証のSHA-256（通行証そのものはキャッシュのキーにも値にも入れない）
+// - 代償: ログアウト・権限取消の反映が最大 AUTH_CACHE_TTL_SEC 秒遅れる
+//   （他アプリはシート直接読み＋15分キャッシュ。ここはより短くしている）
+// - ポータルの通行証は Utilities.getUuid() の形式。形式外は問い合わせ前に拒否し、
+//   でたらめな値で外部通信枠を消費させない
+const AUTH_CACHE_TTL_SEC = 120;
+const AUTH_TOKEN_PATTERN_ = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function authCacheKey_(token) {
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, 'bcart-master:' + token, Utilities.Charset.UTF_8);
+  return 'mt_auth_v1_' + digest.map(b => ('0' + ((b + 256) % 256).toString(16)).slice(-2)).join('');
+}
 function validateSession(session) {
   return apiTimed_('auth', () => {
   if (!session || !session.token) return { ok: false, error: 'UNAUTHORIZED' };
+  const token = String(session.token);
+  if (!AUTH_TOKEN_PATTERN_.test(token)) return { ok: false, error: 'UNAUTHORIZED' };
+  let cache = null, cacheKey = '';
+  try {
+    cache = CacheService.getScriptCache();
+    cacheKey = authCacheKey_(token);
+    const hit = cache.get(cacheKey);
+    if (hit) {
+      const cached = JSON.parse(hit);
+      if (cached && cached.ok === true && cached.user && cached.user.user_id) {
+        apiCount_('authCacheHit', 1);
+        return cached;
+      }
+    }
+  } catch (_) { cache = null; /* キャッシュが使えなくてもポータルで確認する */ }
   try {
     const res = apiFetch_(AUTH_GAS_URL, {
       method: 'post',
@@ -337,7 +366,7 @@ function validateSession(session) {
     if (!data.user_id || !String(data.role || '').trim() || typeof data.is_admin !== 'boolean') {
       return { ok: false, error: 'AUTH_UNAVAILABLE' };
     }
-    return {
+    const result = {
       ok: true,
       user: {
         user_id: data.user_id,
@@ -346,6 +375,10 @@ function validateSession(session) {
         is_admin: data.is_admin === true
       }
     };
+    if (cache && cacheKey) {
+      try { cache.put(cacheKey, JSON.stringify(result), AUTH_CACHE_TTL_SEC); } catch (_) { /* 保存失敗でも結果は返す */ }
+    }
+    return result;
   } catch (e) {
     return { ok: false, error: 'AUTH_UNAVAILABLE' };
   }
@@ -3884,28 +3917,51 @@ function saveSpecialPriceDetails(params) {
   const detailSheet = getOrCreateSheet(SHEET_SP_DETAILS);
   let detailRows = apiReadFull_(detailSheet);
 
+  // v2.38.0: 1件ずつ setValue×4 ＋ 50ms待ち（100件で約400回の書込＋5秒）だったのを、
+  // 「既存行の更新は連続する行ごとに1回」「新規行は最後に1回」のまとめ書きにした（総合レビュー P3）。
+  // 書く値・列・新規行の反映状態（v1）は従来と同じ。間の行を読み直した値で上書きしないよう、
+  // 更新は連続する行のかたまり単位でだけ書く。
+  const nowStr = new Date().toLocaleString('ja-JP');
+  const rowIndexByKey = {};
+  const usedIds = new Set();
+  for (let i = 1; i < detailRows.length; i++) {
+    usedIds.add(String(detailRows[i][0]));
+    const key = String(detailRows[i][1]) + ' ' + String(detailRows[i][2]);
+    if (!(key in rowIndexByKey)) rowIndexByKey[key] = i;   // 従来どおり最初に一致した行を更新する
+  }
+  const updates = [];   // { row: シート行番号, values: [E,F,G,H] }
+  const newRows = [];
   params.items.forEach(item => {
-    let found = false;
-    for (let i = 1; i < detailRows.length; i++) {
-      if (String(detailRows[i][1]) === params.group_id && String(detailRows[i][2]) === String(item.product_set_id)) {
-        detailSheet.getRange(i + 1, 5).setValue(item.product_set_name || '');
-        detailSheet.getRange(i + 1, 6).setValue(item.unit_price);
-        detailSheet.getRange(i + 1, 7).setValue(new Date().toLocaleString('ja-JP'));
-        detailSheet.getRange(i + 1, 8).setValue('');  // ③ applied_atをクリア（未反映）
-        detailRows[i][5] = item.unit_price;
-        found = true;
-        break;
-      }
+    const key = String(params.group_id) + ' ' + String(item.product_set_id);
+    const i = rowIndexByKey[key];
+    if (i !== undefined) {
+      updates.push({ row: i + 1, values: [item.product_set_name || '', item.unit_price, nowStr, ''] });  // ③ applied_atをクリア（未反映）
+      detailRows[i][5] = item.unit_price;
+    } else {
+      // IDは従来と同じ形式。待ち時間を入れないので、既存・同一要求内との重複を確認して作り直す
+      let newId;
+      do {
+        newId = 'D' + new Date().getTime().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 5);
+      } while (usedIds.has(newId));
+      usedIds.add(newId);
+      newRows.push([newId, params.group_id, item.product_set_id, item.product_no || '', item.product_set_name || '', item.unit_price, nowStr, '']);  // ③ applied_at空で追加
     }
-    if (!found) {
-      const newId = 'D' + new Date().getTime().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 5);
-      const newRow = [newId, params.group_id, item.product_set_id, item.product_no || '', item.product_set_name || '', item.unit_price, new Date().toLocaleString('ja-JP'), ''];  // ③ applied_at空で追加
-      detailSheet.appendRow(newRow);
-      spMarkNewSource_(SHEET_SP_DETAILS, detailSheet.getLastRow());
-      detailRows.push(newRow);
-    }
-    Utilities.sleep(50);
   });
+  updates.sort((a, b) => a.row - b.row);
+  for (let k = 0; k < updates.length;) {
+    let end = k;
+    while (end + 1 < updates.length && updates[end + 1].row === updates[end].row + 1) end++;
+    const block = updates.slice(k, end + 1);
+    detailSheet.getRange(block[0].row, 5, block.length, 4).setValues(block.map(u => u.values));
+    k = end + 1;
+  }
+  if (newRows.length) {
+    const firstRow = detailSheet.getLastRow() + 1;
+    detailSheet.getRange(firstRow, 1, newRows.length, 8).setValues(newRows);
+    const schema = spSnapshotSchema_(SHEET_SP_DETAILS, true);
+    schema.sheet.getRange(firstRow, schema.start, newRows.length, 3).setValues(newRows.map(() => ['', '', 'v1']));
+    newRows.forEach(r => detailRows.push(r));
+  }
 
   addHistory({
     userName: params._userName,
