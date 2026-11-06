@@ -12,7 +12,7 @@
  *   SYNC_TOKEN    … 同期スクリプト用の共有シークレット（ランダム長文字列）
  */
 
-const VERSION = 'v1.13.0';
+const VERSION = 'v1.14.0';
 const APP_NAME = 'project-dashboard';
 const CACHE_TTL_SESSION = 60; // 権限変更・ログアウトを最大1分で反映
 let _requestMetric = null;
@@ -79,6 +79,17 @@ const JOB_COLS = [
   'memo', 'disposition'
 ];
 const MANUAL_JOB_COLS = ['memo', 'disposition'];
+
+// signals シート（v1.14.0・刷新計画v2 P1/P2）。原本は各 _handoff.md 先頭の状態ブロック（申告の有無・
+// 止まっている理由）と、dashboard_sync.py（activity_scan.py）が数えた直近8週の週ごとの作業日数。
+// projects に列を足さないのは、projects が列の完全一致を検査しており、列追加はマイグレーションとの
+// 順序事故（v1.5.0）を起こすため。別シートなら初回同期で自動生成され、その手順自体が要らない。
+// activity_from … activity[0] の週の月曜日。以降7日刻み
+const SIGNAL_COLS = ['id', 'declared', 'blocker', 'block_issue', 'activity', 'activity_from', 'synced_at', 'active'];
+// history シート（v1.14.0）。日本時間で1日1組の状態の控え（同じ日の再同期は上書き）。
+// 画面の「昨日から変わったこと」「今週完了」の材料。行は id ではなく 日付+id で一意
+const HISTORY_COLS = ['date', 'id', 'status_label', 'ball', 'next_action_short', 'declared', 'generated_at', 'synced_at'];
+const HISTORY_DAYS_RETURNED = 8;
 
 // ============================================================
 // 初期化（GASエディタから一度だけ手動実行する）
@@ -319,6 +330,13 @@ function doPost(e) {
         }
         return jsonResponse(syncJobs_(p));
       }
+      case 'syncSignals':
+      case 'syncHistory': {
+        if (String(p.token || '') !== prop_('SYNC_TOKEN')) {
+          return jsonResponse({ success: false, error: 'SYNC_TOKEN_INVALID' });
+        }
+        return jsonResponse(p.action === 'syncSignals' ? syncSignals_(p) : syncHistory_(p));
+      }
       case 'reportJobHealth': {
         // 既存の同期認証を使い、通知先・本文をHTTP入力から指定させない。
         if (String(p.token || '') !== prop_('SYNC_TOKEN')) {
@@ -371,6 +389,87 @@ function syncAssets_(p) {
 
 function syncJobs_(p) {
   return syncDataset_(p, 'jobs', JOB_COLS, MANUAL_JOB_COLS, ['checks']);
+}
+
+function syncSignals_(p, testContext) {
+  return syncDataset_(p, 'signals', SIGNAL_COLS, [], ['activity'], testContext);
+}
+
+// Sheetsは 'yyyy-MM-dd' や日時の文字列を日付型に変える。読み戻しは両方の形を受ける
+function dayKey_(value) {
+  if (value && typeof value.getTime === 'function') return Utilities.formatDate(value, 'Asia/Tokyo', 'yyyy-MM-dd');
+  return String(value || '').slice(0, 10);
+}
+
+function cellTime_(value) {
+  if (value && typeof value.getTime === 'function') return value.getTime();
+  return syncTimestamp_(String(value || ''));
+}
+
+function syncHistory_(p, testContext) {
+  const incoming = p.history;
+  if (!Array.isArray(incoming) || !incoming.length) return {success: false, error: 'EMPTY_DATASET'};
+  if (incoming.length > 1000) return {success: false, error: 'DATASET_TOO_LARGE'};
+  const ids = new Set();
+  for (const item of incoming) {
+    if (!item || typeof item.id !== 'string' || !item.id.trim() || ids.has(item.id)) {
+      return {success: false, error: 'INVALID_OR_DUPLICATE_ID'};
+    }
+    ids.add(item.id);
+  }
+  const timestamp = syncTimestamp_(p.generated_at);
+  if (!Number.isFinite(timestamp) || timestamp > Date.now() + 300000) {
+    return {success: false, error: 'INVALID_GENERATED_AT'};
+  }
+  const date = Utilities.formatDate(new Date(timestamp), 'Asia/Tokyo', 'yyyy-MM-dd');
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const ss = testContext ? testContext.spreadsheet : SpreadsheetApp.openById(prop_('DB_SHEET_ID'));
+    let sh = ss.getSheetByName('history');
+    if (!sh) {
+      sh = ss.insertSheet('history');
+      sh.getRange(1, 1, 1, HISTORY_COLS.length).setValues([HISTORY_COLS]).setFontWeight('bold');
+      sh.setFrozenRows(1);
+    }
+    const data = sh.getDataRange().getValues();
+    if (JSON.stringify(data[0]) !== JSON.stringify(HISTORY_COLS)) return {success: false, error: 'SHEET_SCHEMA_MISMATCH'};
+    const col = name => HISTORY_COLS.indexOf(name);
+    const sameDay = new Map();
+    for (let i = 1; i < data.length; i++) {
+      if (dayKey_(data[i][col('date')]) !== date) continue;
+      // 同じ日の控えは最新の同期で上書きする。古い送信が後から届いても戻さない
+      if (cellTime_(data[i][col('generated_at')]) > timestamp) return {success: false, error: 'STALE_SYNC'};
+      sameDay.set(String(data[i][col('id')]), i + 1);
+    }
+    const now = new Date();
+    const rowOf = item => HISTORY_COLS.map(c => {
+      if (c === 'date') return date;
+      if (c === 'declared') return item.declared === true;
+      if (c === 'generated_at') return p.generated_at;
+      if (c === 'synced_at') return now;
+      return literalCell_(item[c] == null ? '' : String(item[c]).slice(0, 200));
+    });
+    const appends = [], updates = [];
+    incoming.forEach(item => {
+      const row = sameDay.get(item.id);
+      if (row) updates.push({row: row, values: rowOf(item)});
+      else appends.push(rowOf(item));
+    });
+    // 連続する行はまとめて1回で書く（同じ日の再同期は前回分が連続して並んでいる）
+    updates.sort((a, b) => a.row - b.row);
+    for (let i = 0; i < updates.length;) {
+      let j = i + 1;
+      while (j < updates.length && updates[j].row === updates[j - 1].row + 1) j++;
+      sh.getRange(updates[i].row, 1, j - i, HISTORY_COLS.length).setValues(updates.slice(i, j).map(u => u.values));
+      i = j;
+    }
+    if (appends.length) sh.getRange(data.length + 1, 1, appends.length, HISTORY_COLS.length).setValues(appends);
+    SpreadsheetApp.flush();
+    return {success: true, date: date, upserted: incoming.length, new_count: appends.length};
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function syncTimestamp_(value) {
@@ -693,9 +792,54 @@ function getData_() {
     if (obj.active === true) projects.push(obj);
     if (obj.synced_at && (!lastSync || obj.synced_at > lastSync)) lastSync = obj.synced_at;
   }
+  attachSignals_(ss, projects);
   // 資産・自動ジョブは同じレスポンスに載せる（往復とセッション検証を増やさないため）
   return { success: true, version: VERSION, synced_at: lastSync,
-           projects: projects, assets: getAssets_(ss), jobs: getJobs_(ss) };
+           projects: projects, assets: getAssets_(ss), jobs: getJobs_(ss), history: getHistory_(ss) };
+}
+
+// 各プロジェクトに申告の有無・止まっている理由・活動量を付ける。signals が無い（P1前）なら未申告扱い
+function attachSignals_(ss, projects) {
+  const sh = ss.getSheetByName('signals');
+  const byId = {};
+  if (sh) {
+    const data = sh.getDataRange().getValues();
+    const header = data[0];
+    for (let i = 1; i < data.length; i++) {
+      const row = {};
+      header.forEach((h, j) => { row[h] = data[i][j]; });
+      if (row.active === true) byId[String(row.id)] = row;
+    }
+  }
+  projects.forEach(p => {
+    const s = byId[p.id];
+    let activity = [];
+    if (s) { try { activity = JSON.parse(s.activity || '[]'); } catch (e) { activity = []; } }
+    p.declared = !!s && s.declared === true;
+    p.blocker = s ? String(s.blocker || '') : '';
+    p.block_issue = s ? String(s.block_issue || '') : '';
+    p.activity = Array.isArray(activity) ? activity : [];
+    p.activity_from = s && s.activity_from ? dayKey_(s.activity_from) : '';
+  });
+}
+
+// 直近 HISTORY_DAYS_RETURNED 日分の状態の控え。画面は前日と比べて「変わったこと」を出す
+function getHistory_(ss) {
+  const sh = ss.getSheetByName('history');
+  if (!sh) return [];
+  const data = sh.getDataRange().getValues();
+  if (data.length < 2) return [];
+  const col = name => data[0].indexOf(name);
+  const days = Array.from(new Set(data.slice(1).map(r => dayKey_(r[col('date')])))).sort();
+  const keep = new Set(days.slice(-HISTORY_DAYS_RETURNED));
+  const out = [];
+  for (let i = 1; i < data.length; i++) {
+    const date = dayKey_(data[i][col('date')]);
+    if (!keep.has(date)) continue;
+    out.push({ date: date, id: String(data[i][col('id')]), status_label: String(data[i][col('status_label')] || ''),
+               ball: String(data[i][col('ball')] || ''), declared: data[i][col('declared')] === true });
+  }
+  return out;
 }
 
 // active な全資産。初回同期前は assets シートが存在しないので、その場合は空配列を返す

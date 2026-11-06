@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>プロジェクトの今</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink-1: #0b0b0b; --ink-2: #52514e; --ink-3: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11,11,11,0.10); --series: #2a78d6;
+  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  --seq-0: #f0efec; --seq-1: #cde2fb; --seq-2: #9ec5f4; --seq-3: #6da7ec; --seq-4: #3987e5; --seq-5: #256abf; --seq-6: #184f95;
+  --hover: rgba(11,11,11,0.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink-1: #f0efec; --ink-2: #c3c2b7; --ink-3: #898781;
+    --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10); --series: #3987e5;
+    --seq-0: #262624; --seq-1: #104281; --seq-2: #184f95; --seq-3: #256abf; --seq-4: #3987e5; --seq-5: #6da7ec; --seq-6: #9ec5f4;
+    --hover: rgba(255,255,255,0.05);
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink-1); font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", sans-serif; font-size: 14px; line-height: 1.5; }
+.wrap { max-width: 1400px; margin: 0 auto; padding: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-bottom: 14px; }
+header h1 { font-size: 20px; margin: 0; }
+header .meta { color: var(--ink-3); font-size: 12px; }
+header .links { margin-left: auto; display: flex; gap: 12px; align-items: center; font-size: 12px; }
+header a { color: var(--series); text-decoration: none; }
+button.refresh { background: none; border: 1px solid var(--axis); border-radius: 8px; color: var(--ink-2); padding: 3px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+#status { color: var(--ink-2); padding: 24px 4px; }
+#status.error { color: var(--critical); }
+.panel { background: var(--surface); border: 1px solid var(--ring); border-radius: 12px; padding: 16px; }
+h2 { font-size: 15px; margin: 0 0 12px; }
+h2 .count { color: var(--ink-3); font-weight: normal; margin-left: 6px; font-size: 13px; }
+.summary { display: grid; grid-template-columns: repeat(4, 1fr) minmax(240px, 1.3fr); gap: 12px; margin-bottom: 16px; }
+.tile { background: var(--surface); border: 1px solid var(--ring); border-radius: 12px; padding: 14px 16px; cursor: pointer; }
+.tile:hover { background: var(--hover); }
+.tile .label { color: var(--ink-2); font-size: 13px; }
+.tile .value { font-size: 40px; font-weight: 700; line-height: 1.1; margin: 4px 0 2px; }
+.tile .sub { color: var(--ink-3); font-size: 12px; }
+.jobs { background: var(--surface); border: 1px solid var(--ring); border-radius: 12px; padding: 12px 16px; }
+.jobs .label { color: var(--ink-2); font-size: 13px; margin-bottom: 6px; }
+.job { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 2px 0; }
+.job .icon { width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; color: #fff; flex: none; }
+.job .icon.warn { color: #0b0b0b; }
+.job .when { color: var(--ink-3); margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.two { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; margin-bottom: 16px; }
+.list-item { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 10px 4px; border-top: 1px solid var(--grid); }
+.list-item:first-of-type { border-top: none; }
+.list-item .name { font-weight: 600; }
+.list-item .next { color: var(--ink-2); grid-column: 1 / 2; }
+.list-item .age { color: var(--ink-2); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.change { padding: 8px 4px; border-top: 1px solid var(--grid); font-size: 13px; }
+.change:first-of-type { border-top: none; }
+.change .from { color: var(--ink-3); text-decoration: line-through; }
+.change .arrow { color: var(--ink-3); margin: 0 4px; }
+.empty { color: var(--ink-3); padding: 8px 4px; font-size: 13px; }
+.board-wrap { overflow-x: auto; margin-bottom: 16px; -webkit-overflow-scrolling: touch; }
+.board { display: flex; gap: 12px; align-items: flex-start; }
+.col { flex: 1 0 230px; background: var(--surface); border: 1px solid var(--ring); border-radius: 12px; padding: 10px; }
+.col.is-empty { flex: 0 0 120px; }
+.col h3 { font-size: 13px; margin: 2px 4px 10px; display: flex; justify-content: space-between; }
+.col h3 .n { color: var(--ink-3); font-weight: normal; }
+.card { background: var(--page); border: 1px solid var(--ring); border-radius: 10px; padding: 10px; margin-bottom: 8px; cursor: pointer; }
+.card:hover { border-color: var(--axis); }
+.card .top { display: flex; gap: 6px; align-items: flex-start; }
+.card .name { font-weight: 600; font-size: 13px; flex: 1; }
+.card .next { color: var(--ink-2); font-size: 12px; margin: 4px 0 6px; }
+.card .blocker { font-size: 12px; margin: 0 0 6px; }
+.card .detail { display: none; font-size: 12px; color: var(--ink-2); border-top: 1px solid var(--grid); margin-top: 6px; padding-top: 6px; }
+.card.open .detail { display: block; }
+.card .detail ul { margin: 4px 0; padding-left: 18px; }
+.card .foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.card .age { color: var(--ink-3); font-size: 11px; margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.who { font-size: 11px; border: 1px solid var(--axis); border-radius: 999px; padding: 0 7px; color: var(--ink-2); white-space: nowrap; flex: none; }
+.who.me { border-color: var(--ink-1); color: var(--ink-1); font-weight: 600; }
+.tag { font-size: 11px; color: var(--ink-3); border: 1px dashed var(--axis); border-radius: 999px; padding: 0 6px; white-space: nowrap; }
+.stall { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--ink-1); }
+.stall .dot { width: 14px; height: 14px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; color: #0b0b0b; background: var(--warning); }
+.stall.serious .dot { background: var(--serious); color: #fff; }
+.compact { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; padding: 5px 4px; border-top: 1px solid var(--grid); }
+.compact:first-of-type { border-top: none; }
+.compact .age { color: var(--ink-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.more { background: none; border: none; color: var(--series); cursor: pointer; padding: 6px 4px; font-size: 12px; }
+.spark { display: block; flex: none; }
+.heat { overflow-x: auto; }
+.heat table { border-collapse: separate; border-spacing: 2px; }
+.heat th { font-weight: normal; color: var(--ink-3); font-size: 11px; padding: 0 4px; font-variant-numeric: tabular-nums; }
+.heat td.rowname { font-size: 12px; padding-right: 8px; white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.heat td.cell { width: 34px; height: 20px; border-radius: 4px; }
+.legend { display: flex; align-items: center; gap: 4px; color: var(--ink-3); font-size: 11px; margin-top: 8px; flex-wrap: wrap; }
+.legend span.sw { width: 16px; height: 12px; border-radius: 3px; display: inline-block; }
+details { margin-top: 10px; }
+details summary { cursor: pointer; color: var(--series); font-size: 12px; }
+.tbl { border-collapse: collapse; font-size: 12px; margin-top: 8px; font-variant-numeric: tabular-nums; }
+.tbl th, .tbl td { border-bottom: 1px solid var(--grid); padding: 3px 8px; text-align: right; }
+.tbl th:first-child, .tbl td:first-child { text-align: left; }
+.note { color: var(--ink-3); font-size: 12px; margin-top: 6px; }
+#tip { position: fixed; pointer-events: none; z-index: 10; display: none; background: var(--surface); color: var(--ink-1); border: 1px solid var(--ring); border-radius: 8px; padding: 6px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); }
+#tip .k { color: var(--ink-3); }
+.board-hint { display: none; color: var(--ink-3); font-size: 12px; margin: -4px 0 8px; }
+@media (max-width: 760px) {
+  .wrap { padding: 12px; }
+  .summary { grid-template-columns: 1fr 1fr; }
+  .summary .jobs { grid-column: 1 / -1; }
+  .tile .value { font-size: 32px; }
+  .two { grid-template-columns: 1fr; }
+  .col { flex: 0 0 78vw; order: var(--m-order); }
+  .col.is-empty { flex: 0 0 34vw; }
+  .board-hint { display: block; }
+  header .links { margin-left: 0; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>プロジェクトの今</h1>
+    <span class="meta" id="meta"></span>
+    <span class="links">
+      <button class="refresh" onclick="loadData()">更新</button>
+      <a href="../">従来の画面</a>
+      <span class="meta" id="version"></span>
+    </span>
+  </header>
+  <div id="status">読み込み中...</div>
+  <div id="app" hidden>
+    <section class="summary" id="summary"></section>
+    <section class="two">
+      <div class="panel" id="me-panel"><h2>あなた待ち<span class="count" id="me-count"></span></h2><div id="me-list"></div></div>
+      <div class="panel"><h2>昨日から変わったこと<span class="count" id="change-count"></span></h2><div id="changes"></div></div>
+    </section>
+    <section class="two">
+      <div class="panel" id="stall-panel"><h2>止まっている<span class="count" id="stall-count"></span></h2><div id="stall-list"></div></div>
+      <div class="panel" id="done-panel"><h2>今週完了<span class="count" id="done-count"></span></h2><div id="done-list"></div></div>
+    </section>
+    <h2 id="board-title">ボード</h2>
+    <p class="board-hint">← 横にスクロールできます →</p>
+    <div class="board-wrap"><div class="board" id="board"></div></div>
+    <section class="panel heat">
+      <h2>活動ヒートマップ<span class="count">（直近8週・動いている案件・1週あたりの作業日数）</span></h2>
+      <div id="heat"></div>
+      <div class="legend">0日
+        <span class="sw" style="background:var(--seq-0)"></span><span class="sw" style="background:var(--seq-1)"></span>
+        <span class="sw" style="background:var(--seq-2)"></span><span class="sw" style="background:var(--seq-3)"></span>
+        <span class="sw" style="background:var(--seq-4)"></span><span class="sw" style="background:var(--seq-5)"></span>
+        <span class="sw" style="background:var(--seq-6)"></span>7日
+      </div>
+      <p class="note">作業日数＝その週に案件フォルダの中で何かが変わった日の数（ファイル更新日・session_logsの日付・gitのコミット日。自動ジョブの出力は除く）。</p>
+      <details><summary>表で見る</summary><div id="heat-table"></div></details>
+    </section>
+  </div>
+</div>
+<div id="tip"></div>
+
+<script>
+  const GAS_URL     = 'https://script.google.com/macros/s/AKfycbzkuWEqpJLhERoYlosHIeazlVjl3ipIq8u3x0rp4tCU7BaqPuYt4kP78Ha5Vu4ayNWDCg/exec';
+  const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
+  const APP_VERSION = '2.0.0';
+  // 手元の確認用（localhost で ?mock=1 のときだけ、同期スクリプトが出したローカルJSONを読む）
+  const USE_MOCK    = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && new URLSearchParams(location.search).has('mock');
+  const MISSING_AFTER_HOURS = 36;   // 従来画面と同じ。GASは原本から消えた行を残すため、取り残された行は出さない
+  const STABLE_SHOW = 8;
+  const WHO = { Takashi: 'あなた', Claude: 'Claude', Codex: 'Codex', '外部': '外部' };
+  const COLS = [
+    { key: '計画中', label: '計画中', mOrder: 6 },
+    { key: '進行中', label: '進行中', mOrder: 3 },
+    { key: '自分待ち', label: 'あなた待ち', mOrder: 1 },
+    { key: '停止', label: '停止', mOrder: 2 },
+    { key: '安定稼働', label: '安定稼働', mOrder: 5 },
+    { key: '完了', label: '完了（今月）', mOrder: 4 },
+  ];
+  const NO_PENDING_PREFIXES = ['特にやることなし', '特にやること無し', '特になし', '特に無し', '本番運用を継続', '運用を継続', '通常利用', '通常運用', '✅'];
+  document.getElementById('version').textContent = 'v' + APP_VERSION;
+
+  let session = null, P = [], JOBS = [], HISTORY = [], openIds = new Set();
+
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const ageText = d => d === null ? '更新日不明' : d === 0 ? '今日' : d + '日前';
+  const dayMs = 86400000;
+  const ymd = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const md = s => { const [y, m, d] = s.split('-').map(Number); return m + '/' + d; };
+  function mondayOf(d) { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; }
+
+  window.onload = function () {
+    if (!USE_MOCK) {
+      try { session = JSON.parse(localStorage.getItem('bf_session')); } catch (e) { session = null; }
+      if (!session || !session.token || !session.expires || Date.now() > session.expires || !session.is_admin) {
+        location.href = PORTAL_URL; return;
+      }
+    }
+    loadData();
+  };
+
+  function loadData() {
+    setStatus('読み込み中...');
+    const req = USE_MOCK
+      ? fetch('../data/dashboard_data.json').then(r => r.json()).then(m => ({ success: true, synced_at: m.generated_at,
+          projects: m.projects.map(p => Object.assign({ synced_at: m.generated_at, activity_from: (m.activity_weeks || [])[0] || '' }, p)),
+          jobs: m.jobs, history: (m.history || []).map(h => Object.assign({ date: ymd(new Date()) }, h)) }))
+      : fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'data', session_token: session.token }) }).then(r => r.json());
+    req.then(data => {
+      if (!data.success) {
+        if (data.error === 'SESSION_INVALID' || data.error === 'FORBIDDEN') { location.href = PORTAL_URL; return; }
+        throw new Error(data.message || data.error || '取得失敗');
+      }
+      if (!Array.isArray(data.projects) || !Array.isArray(data.jobs)) throw new Error('応答の形式が想定と違います。');
+      const times = data.projects.map(p => Date.parse(p.synced_at)).filter(isFinite);
+      const newest = times.length ? Math.max.apply(null, times) : NaN;
+      const rows = isFinite(newest) ? data.projects.filter(p => { const t = Date.parse(p.synced_at); return !isFinite(t) || t >= newest - MISSING_AFTER_HOURS * 3600000; }) : data.projects;
+      P = rows.map(normalize);
+      JOBS = data.jobs;
+      HISTORY = Array.isArray(data.history) ? data.history : [];
+      document.getElementById('meta').textContent = (data.synced_at ? '最終同期 ' + fmtTime(data.synced_at) + ' ・ ' : '') + metaText();
+      document.getElementById('status').hidden = true;
+      document.getElementById('app').hidden = false;
+      render();
+    }).catch(err => setStatus('データの取得に失敗しました。' + (err.message || ''), true));
+  }
+
+  function setStatus(text, isError) {
+    const el = document.getElementById('status');
+    el.hidden = false; el.textContent = text; el.className = isError ? 'error' : '';
+  }
+  function fmtTime(s) { const d = new Date(s); return isNaN(d) ? '' : (d.getMonth() + 1) + '/' + d.getDate() + ' ' + d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0'); }
+
+  // 状態ブロック導入前の推測値（従来の語彙）も同じボードに載せる
+  function hasRealNext(p) { const t = String(p.next_action_short || '').trim(); return !!t && !NO_PENDING_PREFIXES.some(k => t.indexOf(k) === 0); }
+  function normalize(p) {
+    let status = p.status_label || '';
+    const pending = (Array.isArray(p.next_actions) && p.next_actions.length > 0) || hasRealNext(p);
+    if (status === '運用中') status = pending ? '進行中' : '安定稼働';
+    else if (status === 'レビュー待ち') status = '自分待ち';
+    else if (['要確認', '要対応', '待機中'].indexOf(status) >= 0) status = '進行中';
+    else if (COLS.every(c => c.key !== status) && status !== 'アーカイブ') status = '進行中';
+    let who = (p.manual_ball && String(p.manual_ball).trim()) || p.ball || '';
+    if (who === '環境待ち') who = '外部';
+    if (status === '自分待ち' && !p.manual_ball) who = 'Takashi';
+    const last = p.last_update ? new Date(String(p.last_update).slice(0, 10) + 'T00:00:00') : null;
+    const stale = last && !isNaN(last) ? Math.max(0, Math.floor((new Date(ymd(new Date()) + 'T00:00:00') - last) / dayMs)) : null;
+    return { id: String(p.id), name: p.name || p.id, status: status, rawStatus: p.status_label || '', who: who,
+             next: p.next_action_short || '', nextFull: p.next_action_full || '', actions: Array.isArray(p.next_actions) ? p.next_actions : [],
+             blocker: p.blocker || '', declared: p.declared === true, issue: p.block_issue || '', parseOk: p.parse_ok !== false,
+             stale: stale, lastUpdate: last ? ymd(last) : '', category: p.category || '', path: p.path || '',
+             activity: Array.isArray(p.activity) ? p.activity.map(Number) : [], activityFrom: p.activity_from || '' };
+  }
+
+  function metaText() {
+    const declared = P.filter(p => p.declared).length;
+    return P.length + '件 ・ 申告率 ' + declared + '/' + P.length + '（' + (P.length ? Math.round(declared / P.length * 100) : 0) + '%）';
+  }
+
+  function stallLevel(p) {
+    if (p.stale === null) return null;
+    if (p.status === '進行中' && p.stale >= 14) return { cls: p.stale >= 30 ? 'serious' : '', text: p.stale + '日動きなし' };
+    if (p.status === '自分待ち' && p.stale >= 7) return { cls: p.stale >= 14 ? 'serious' : '', text: p.stale + '日待ち' };
+    return null;
+  }
+  const stallBadge = s => s ? '<span class="stall ' + s.cls + '"><span class="dot" aria-hidden="true">!</span>' + esc(s.text) + '</span>' : '';
+  const ageOrStall = p => stallBadge(stallLevel(p)) || ageText(p.stale);
+
+  // 履歴（日次の控え）から、各案件が「完了」になった日を探す。控えが足りなければ null
+  function completedOn(id) {
+    const rows = HISTORY.filter(h => h.id === id).sort((a, b) => a.date < b.date ? -1 : 1);
+    let prev = null;
+    for (const r of rows) { if (r.status_label === '完了' && prev && prev.status_label !== '完了') return r.date; prev = r; }
+    return null;
+  }
+
+  function changes() {
+    const dates = Array.from(new Set(HISTORY.map(h => h.date))).sort();
+    if (dates.length < 2) return { list: [], note: '比べる前日の記録がまだありません（日次の記録は ' + (dates[0] ? md(dates[0]) : '今日') + ' から）。明日から表示されます。' };
+    const today = dates[dates.length - 1], prev = dates[dates.length - 2];
+    const before = {}, after = {};
+    HISTORY.forEach(h => { if (h.date === prev) before[h.id] = h; if (h.date === today) after[h.id] = h; });
+    const byId = Object.fromEntries(P.map(p => [p.id, p]));
+    const list = [];
+    Object.keys(after).forEach(id => {
+      const a = after[id], b = before[id], p = byId[id];
+      if (!p) return;
+      if (!b) { list.push({ p, from: '', to: '新しく見つかった案件' }); return; }
+      if (a.status_label !== b.status_label || a.ball !== b.ball) {
+        list.push({ p, from: b.status_label + '／' + (WHO[b.ball] || b.ball), to: a.status_label + '／' + (WHO[a.ball] || a.ball) });
+      }
+    });
+    return { list, note: md(prev) + ' → ' + md(today) };
+  }
+
+  function render() {
+    const today = new Date(), monday = ymd(mondayOf(today)), daysIntoWeek = (today.getDay() + 6) % 7;
+    const mine = P.filter(p => p.status === '自分待ち' || (p.who === 'Takashi' && ['進行中', '計画中'].indexOf(p.status) >= 0))
+                  .sort((a, b) => (b.stale ?? 0) - (a.stale ?? 0));
+    const active = P.filter(p => p.status === '進行中');
+    const stopped = P.filter(p => p.status === '停止');
+    const stalled = P.filter(p => stallLevel(p));
+    const stuck = stopped.concat(stalled).sort((a, b) => (b.stale ?? 0) - (a.stale ?? 0));
+    const doneWeek = P.filter(p => p.status === '完了' && ((completedOn(p.id) || '') >= monday || (!completedOn(p.id) && p.stale !== null && p.stale <= daysIntoWeek)));
+    const doneMonth = P.filter(p => p.status === '完了' && p.stale !== null && p.stale <= 30);
+    const archived = P.filter(p => p.status === 'アーカイブ' || (p.status === '完了' && (p.stale === null || p.stale > 30)));
+
+    const health = JOBS.map(jobHealth);
+    const badJobs = health.filter(h => h.level !== 'ok').length;
+    document.getElementById('summary').innerHTML = [
+      { label: 'あなた待ち', value: mine.length, sub: mine.length ? '最長 ' + (mine[0].stale ?? '?') + '日' : 'なし', target: 'me-panel' },
+      { label: '進行中', value: active.length, sub: 'AI ' + active.filter(p => p.who !== 'Takashi').length + '件が作業中', target: 'board-title' },
+      { label: '止まっている', value: stuck.length, sub: '停止 ' + stopped.length + '・停滞 ' + stalled.length, target: 'stall-panel' },
+      { label: '今週完了', value: doneWeek.length, sub: '今月 ' + doneMonth.length + '件', target: 'done-panel' },
+    ].map(t => '<div class="tile" data-target="' + t.target + '" role="button" tabindex="0"><div class="label">' + t.label +
+         '</div><div class="value">' + t.value + '</div><div class="sub">' + esc(t.sub) + '</div></div>').join('') +
+      '<div class="jobs"><div class="label">自動ジョブ' + (badJobs ? '（' + badJobs + '件 要確認）' : '') + '</div>' +
+      JOBS.map((j, i) => { const h = health[i]; return '<div class="job" title="' + esc(h.detail) + '"><span class="icon ' + h.level + '" style="background:' + h.color + '" aria-label="' + h.word + '">' + h.icon + '</span>' + esc(j.name) + '<span class="when">' + esc(fmtTime(j.last_run_at)) + '</span></div>'; }).join('') + '</div>';
+    document.querySelectorAll('.tile').forEach(el => el.onclick = () => document.getElementById(el.dataset.target).scrollIntoView({ behavior: 'smooth', block: 'start' }));
+
+    const listItem = p => '<div class="list-item"><div class="name">' + esc(p.name) + (p.declared ? '' : ' <span class="tag">未申告</span>') +
+      '</div><div class="age">' + ageOrStall(p) + '</div><div class="next">' + esc(p.next) + (p.blocker ? '　— ' + esc(p.blocker) : '') + '</div></div>';
+    document.getElementById('me-count').textContent = mine.length + '件';
+    document.getElementById('me-list').innerHTML = mine.map(listItem).join('') || '<div class="empty">なし</div>';
+    document.getElementById('stall-count').textContent = stuck.length + '件';
+    document.getElementById('stall-list').innerHTML = stuck.map(listItem).join('') || '<div class="empty">なし</div>';
+    document.getElementById('done-count').textContent = doneWeek.length + '件';
+    document.getElementById('done-list').innerHTML = doneWeek.map(listItem).join('') || '<div class="empty">今週はまだなし</div>';
+    const ch = changes();
+    document.getElementById('change-count').textContent = ch.list.length ? ch.list.length + '件（' + ch.note + '）' : '';
+    document.getElementById('changes').innerHTML = ch.list.length
+      ? ch.list.map(c => '<div class="change"><b>' + esc(c.p.name) + '</b><br>' + (c.from ? '<span class="from">' + esc(c.from) + '</span><span class="arrow">→</span>' : '') + esc(c.to) + '</div>').join('')
+      : '<div class="empty">' + esc(ch.note || '変化なし') + '</div>';
+
+    renderBoard(doneMonth, archived);
+    renderHeat();
+    bindSparks();
+  }
+
+  function weekLabels(p) {
+    if (!p.activityFrom) return [];
+    const start = new Date(p.activityFrom + 'T00:00:00');
+    return p.activity.map((_, i) => { const d = new Date(start.getTime() + i * 7 * dayMs); return (d.getMonth() + 1) + '/' + d.getDate(); });
+  }
+
+  function spark(p) {
+    if (!p.activity.length) return '';
+    const w = 96, h = 24, n = p.activity.length, max = 7;
+    const x = i => 2 + i * (w - 4) / (n - 1), y = v => h - 3 - v / max * (h - 6);
+    const d = p.activity.map((v, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1)).join(' ');
+    const step = (w - 4) / (n - 1);
+    const hits = p.activity.map((v, i) => '<rect x="' + (x(i) - step / 2) + '" y="0" width="' + step + '" height="' + h + '" fill="transparent" data-i="' + i + '"></rect>').join('');
+    return '<svg class="spark" width="' + w + '" height="' + h + '" data-id="' + esc(p.id) + '" role="img" aria-label="直近8週の作業日数">' +
+      '<line x1="2" x2="' + (w - 2) + '" y1="' + (h - 3) + '" y2="' + (h - 3) + '" stroke="var(--axis)" stroke-width="1"></line>' +
+      '<path d="' + d + '" fill="none" stroke="var(--series)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path>' +
+      '<line class="xh" x1="0" x2="0" y1="2" y2="' + (h - 3) + '" stroke="var(--ink-3)" stroke-width="1" visibility="hidden"></line>' +
+      '<circle class="pt" r="3.5" fill="var(--series)" stroke="var(--surface)" stroke-width="2" visibility="hidden"></circle>' + hits + '</svg>';
+  }
+
+  function card(p) {
+    const who = WHO[p.who];
+    const detail = '<div class="detail">' + (p.nextFull && p.nextFull !== p.next ? '<div>' + esc(p.nextFull) + '</div>' : '') +
+      (p.actions.length ? '<ul>' + p.actions.slice(0, 5).map(a => '<li>' + esc(a) + '</li>').join('') + '</ul>' : '') +
+      '<div>' + esc(p.category) + ' ・ ' + esc(p.path) + (p.lastUpdate ? ' ・ 最終更新 ' + esc(p.lastUpdate) : '') + '</div>' +
+      (p.issue ? '<div>⚠ ' + esc(p.issue) + '</div>' : '') + '</div>';
+    return '<div class="card' + (openIds.has(p.id) ? ' open' : '') + '" data-id="' + esc(p.id) + '">' +
+      '<div class="top"><div class="name">' + esc(p.name) + '</div>' + (who ? '<span class="who' + (p.who === 'Takashi' ? ' me' : '') + '">' + who + '</span>' : '') + '</div>' +
+      (p.next ? '<div class="next">' + esc(p.next) + '</div>' : '') +
+      (p.blocker ? '<div class="blocker">⏸ ' + esc(p.blocker) + '</div>' : '') +
+      '<div class="foot">' + spark(p) + (p.declared ? '' : '<span class="tag" title="' + esc(p.issue || '原本に状態ブロックがないため推測で分類') + '">未申告</span>') +
+      (p.parseOk ? '' : '<span class="tag">要確認</span>') + '<span class="age">' + ageOrStall(p) + '</span></div>' + detail + '</div>';
+  }
+  const compact = p => '<div class="compact"><span>' + esc(p.name) + (p.declared ? '' : ' <span class="tag">未申告</span>') + '</span><span class="age">' + ageText(p.stale) + '</span></div>';
+
+  function renderBoard(doneMonth, archived) {
+    document.getElementById('board').innerHTML = COLS.map(c => {
+      let items = c.key === '完了' ? doneMonth : P.filter(p => p.status === c.key);
+      const byStale = c.key === '自分待ち' || c.key === '停止';
+      items = items.slice().sort((a, b) => byStale ? (b.stale ?? 0) - (a.stale ?? 0) : (a.stale ?? 999) - (b.stale ?? 999));
+      let body;
+      if (c.key === '安定稼働') {
+        body = items.slice(0, STABLE_SHOW).map(compact).join('') +
+          (items.length > STABLE_SHOW ? '<div class="rest" hidden>' + items.slice(STABLE_SHOW).map(compact).join('') + '</div><button class="more" data-n="' + (items.length - STABLE_SHOW) + '">ほか ' + (items.length - STABLE_SHOW) + '件を表示</button>' : '');
+      } else {
+        body = items.map(card).join('') || '<div class="empty">なし</div>';
+      }
+      if (c.key === '完了' && archived.length) body += '<div class="empty">アーカイブ済み ' + archived.length + '件（完了から1か月）</div>';
+      const empty = items.length === 0 && !(c.key === '完了' && archived.length);
+      return '<div class="col' + (empty ? ' is-empty' : '') + '" style="--m-order:' + c.mOrder + '"><h3>' + c.label + '<span class="n">' + items.length + '</span></h3>' + body + '</div>';
+    }).join('');
+    document.querySelectorAll('.more').forEach(b => b.onclick = () => {
+      const rest = b.previousElementSibling; rest.hidden = !rest.hidden;
+      b.textContent = rest.hidden ? 'ほか ' + b.dataset.n + '件を表示' : '閉じる';
+    });
+    document.querySelectorAll('.card').forEach(el => el.onclick = () => {
+      const id = el.dataset.id; if (openIds.has(id)) openIds.delete(id); else openIds.add(id); el.classList.toggle('open');
+    });
+  }
+
+  function renderHeat() {
+    const rows = P.filter(p => p.activity.length && ['進行中', '自分待ち', '停止', '計画中'].indexOf(p.status) >= 0)
+      .sort((a, b) => b.activity.reduce((s, v) => s + v, 0) - a.activity.reduce((s, v) => s + v, 0));
+    if (!rows.length) { document.getElementById('heat').innerHTML = '<div class="empty">活動量の記録がまだありません（次回の同期から集計されます）</div>'; document.getElementById('heat-table').innerHTML = ''; return; }
+    const labels = weekLabels(rows[0]);
+    const head = '<tr><th></th>' + labels.map(w => '<th>' + w + '</th>').join('') + '</tr>';
+    document.getElementById('heat').innerHTML = '<table><thead>' + head + '</thead><tbody>' +
+      rows.map(p => '<tr><td class="rowname" title="' + esc(p.name) + '">' + esc(p.name) + '</td>' +
+        p.activity.map((v, i) => '<td class="cell" style="background:var(--seq-' + Math.min(6, Math.max(0, v)) + ')" data-id="' + esc(p.id) + '" data-i="' + i + '"></td>').join('') + '</tr>').join('') + '</tbody></table>';
+    document.getElementById('heat-table').innerHTML = '<table class="tbl"><thead><tr><th>案件</th>' + labels.map(w => '<th>' + w + '</th>').join('') + '</tr></thead><tbody>' +
+      rows.map(p => '<tr><td>' + esc(p.name) + '</td>' + p.activity.map(v => '<td>' + v + '</td>').join('') + '</tr>').join('') + '</tbody></table>';
+    const byId = Object.fromEntries(P.map(p => [p.id, p]));
+    document.querySelectorAll('td.cell').forEach(td => {
+      td.onpointermove = ev => { const p = byId[td.dataset.id], i = +td.dataset.i; td.style.outline = '2px solid var(--ink-1)';
+        showTip('<b>' + esc(p.name) + '</b><br><span class="k">' + weekLabels(p)[i] + 'の週</span> 作業 ' + p.activity[i] + '日', ev); };
+      td.onpointerleave = () => { td.style.outline = ''; hideTip(); };
+    });
+  }
+
+  const tip = document.getElementById('tip');
+  function showTip(html, ev) {
+    tip.innerHTML = html; tip.style.display = 'block';
+    const r = tip.getBoundingClientRect();
+    let x = ev.clientX + 12, y = ev.clientY + 12;
+    if (x + r.width > innerWidth - 8) x = ev.clientX - r.width - 12;
+    if (y + r.height > innerHeight - 8) y = ev.clientY - r.height - 12;
+    tip.style.left = x + 'px'; tip.style.top = y + 'px';
+  }
+  function hideTip() { tip.style.display = 'none'; }
+
+  function bindSparks() {
+    const byId = Object.fromEntries(P.map(p => [p.id, p]));
+    document.querySelectorAll('svg.spark').forEach(svg => {
+      const p = byId[svg.dataset.id], xh = svg.querySelector('.xh'), pt = svg.querySelector('.pt');
+      svg.onpointermove = ev => {
+        const r = ev.target.closest('rect[data-i]'); if (!r) return;
+        const i = +r.dataset.i, w = 96, h = 24, n = p.activity.length;
+        const x = 2 + i * (w - 4) / (n - 1), y = h - 3 - p.activity[i] / 7 * (h - 6);
+        xh.setAttribute('x1', x); xh.setAttribute('x2', x); xh.setAttribute('visibility', 'visible');
+        pt.setAttribute('cx', x); pt.setAttribute('cy', y); pt.setAttribute('visibility', 'visible');
+        showTip('<span class="k">' + weekLabels(p)[i] + 'の週</span><br>作業 ' + p.activity[i] + '日', ev);
+      };
+      svg.onpointerleave = () => { xh.setAttribute('visibility', 'hidden'); pt.setAttribute('visibility', 'hidden'); hideTip(); };
+      svg.onclick = ev => ev.stopPropagation();
+    });
+  }
+
+  // 従来画面の jobHealth と同じ判定（実行間隔＋猶予を超えたら停止、ログ判定・チェック値で異常/要確認）
+  function jobHealth(j) {
+    const limit = (Number(j.expected_interval_hours) || 24) + (Number(j.grace_hours) || 6);
+    const hrs = j.last_run_at ? (Date.now() - new Date(j.last_run_at)) / 3600000 : NaN;
+    const checks = Array.isArray(j.checks) ? j.checks : [];
+    const bad = (detail, word) => ({ level: 'bad', color: 'var(--critical)', icon: '×', word: word, detail: detail });
+    if (!j.last_run_at || isNaN(hrs)) return bad('実行の記録がありません', '停止');
+    if (hrs > limit) return bad('最終実行から' + Math.floor(hrs) + '時間経過（想定は' + limit + '時間以内）', '停止');
+    if (j.last_status === 'error') return bad(j.last_message || '', '異常終了');
+    if (checks.some(c => c.status === 'fail')) return bad(j.last_message || '', '異常値');
+    if (j.last_status === 'unknown' || checks.some(c => c.status === 'warn'))
+      return { level: 'warn', color: 'var(--warning)', icon: '!', word: '要確認', detail: j.last_message || '' };
+    return { level: 'ok', color: 'var(--good)', icon: '✓', word: '正常', detail: Math.floor(hrs) + '時間前に実行' };
+  }
+</script>
+</body>
+</html>
