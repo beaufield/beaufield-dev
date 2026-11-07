@@ -1,0 +1,21 @@
+<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>シリアル管理・検証</title>
+<style>body{font:16px system-ui;max-width:900px;margin:25px auto;padding:15px;background:#f7fafc;color:#16354a}button,input,select{font:inherit;padding:10px;margin:5px;border:1px solid #b5c5cd;border-radius:6px}button{background:#165d7e;color:white}table{width:100%;background:white;border-collapse:collapse}td,th{border-bottom:1px solid #ddd;padding:10px;text-align:left}#message{white-space:pre-wrap}small{display:block;color:#5f5264}</style>
+<h1>シリアル管理 <span id="version"></span></h1><small>検証環境・架空データ専用</small>
+<p id="message" role="status">接続設定を確認しています。</p>
+<label>商品コード<input id="product"></label><label>シリアル<input id="serial"></label><button id="search">検索</button>
+<table><thead><tr><th>出荷日</th><th>商品</th><th>シリアル</th><th>状態</th></tr></thead><tbody id="rows"></tbody></table><button id="next">次の100件</button>
+<hr><h2>出荷・返品・取消</h2><input type="date" id="date"><select id="kind"><option value="ship">出荷</option><option value="return">返品</option><option value="cancel">取消</option></select><button id="save">登録</button><button id="retry" hidden>同じ操作を再確認</button>
+<h2>月別CSV</h2><label>メーカー<input id="maker"></label><input type="month" id="month"><button id="csv">CSVを作成</button>
+<script src="serial-config.js"></script><script src="serial-client.js"></script><script>
+const APP_VERSION='v3.0.0-test';document.getElementById('version').textContent=APP_VERSION;
+const el=id=>document.getElementById(id),notify=t=>el('message').textContent=t;
+let client,cursor={},filter={},pending=null;
+const session=()=>{try{return JSON.parse(localStorage.getItem('bf_session'));}catch{return null;}};
+try{const c=window.SERIAL_TEST_CONFIG;if(!c||!session()?.token)throw Error('ポータルでログインしてから検証画面を開いてください。');client=new SerialClient({...c,session,issueToken:async token=>{const r=await fetch(c.issuer,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'serialIssueDbToken',session_token:token})});return r.json();}});notify('検証環境に接続できます。検索してください。');}catch(e){notify(e.message);}
+async function page(reset){if(!client)return;if(reset){cursor={};filter={};if(el('product').value)filter.productCode=el('product').value;if(el('serial').value)filter.serial=el('serial').value;}
+try{const p=await client.page(filter,cursor);el('rows').replaceChildren();for(const r of p.rows){const tr=document.createElement('tr');for(const k of ['shipDate','productName','serial','status']){const td=document.createElement('td');td.textContent=r[k]||'';tr.append(td);}el('rows').append(tr);}cursor=p;el('next').disabled=p.done;notify(`${p.rows.length}件表示`);}catch(e){notify(e.message);}}
+el('search').onclick=()=>page(true);el('next').onclick=()=>page(false);
+async function save(){if(!client)return;try{if(!pending)pending={id:crypto.randomUUID(),kind:el('kind').value,payload:{productCode:el('product').value,serials:[el('serial').value],date:el('date').value}};const r=await client.mutate(pending.kind,pending.payload,pending.id);pending=null;el('retry').hidden=true;notify(`処理${r.changed}件、登録済み${r.skipped}件`);}catch(e){el('retry').hidden=false;notify(e.message+'。同じ操作の再確認ができます。画面を閉じずに確認してください。');}}
+el('save').onclick=save;el('retry').onclick=save;
+el('csv').onclick=async()=>{if(!client)return;const chunks=['出荷日,商品コード,商品名,JANコード,シリアルNo,状態,返品日,取消日,取消理由,得意先\r\n'];const fields=['shipDate','productCode','productName','jan','serial','status','returnDate','cancelDate','reason','customer'];const quote=v=>'"'+String(v??'').replaceAll('"','""')+'"';try{const n=await client.csv({maker:el('maker').value,yearMonth:el('month').value},rows=>{chunks.push(rows.map(r=>fields.map(k=>quote(r[k])).join(',')).join('\r\n')+(rows.length?'\r\n':''));});const url=URL.createObjectURL(new Blob(['\ufeff',...chunks],{type:'text/csv;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='出荷シリアルNo管理'+el('month').value+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);notify(n+'件のCSVを作成しました。');}catch(e){chunks.length=0;notify('CSVを破棄しました。再作成してください: '+e.message);}};
+</script></html>
