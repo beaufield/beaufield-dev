@@ -7,7 +7,7 @@
 <hr><h2>出荷・返品・取消</h2><input type="date" id="date"><select id="kind"><option value="ship">出荷</option><option value="return">返品</option><option value="cancel">取消</option></select><button id="save">登録</button><button id="retry" hidden>同じ操作を再確認</button>
 <h2>月別CSV</h2><label>メーカー<input id="maker"></label><input type="month" id="month"><button id="csv">CSVを作成</button>
 <script src="serial-config.js"></script><script src="serial-client.js"></script><script>
-const APP_VERSION='v3.0.1-test';document.getElementById('version').textContent=APP_VERSION;
+const APP_VERSION='v3.0.2-test';document.getElementById('version').textContent=APP_VERSION;
 const el=id=>document.getElementById(id),notify=t=>el('message').textContent=t;
 let client,cursor={},filter={},pending=null;
 const session=()=>{try{return JSON.parse(localStorage.getItem('bf_session'));}catch{return null;}};
@@ -17,6 +17,7 @@ try{const p=await client.page(filter,cursor);el('rows').replaceChildren();for(co
 el('search').onclick=()=>page(true);el('next').onclick=()=>page(false);
 async function save(){if(!client)return;try{if(!pending)pending={id:crypto.randomUUID(),kind:el('kind').value,payload:{productCode:el('product').value,serials:[el('serial').value],date:el('date').value}};const r=await client.mutate(pending.kind,pending.payload,pending.id);pending=null;el('retry').hidden=true;notify(`処理${r.changed}件、登録済み${r.skipped}件`);}catch(e){el('retry').hidden=false;notify(e.message+'。同じ操作の再確認ができます。画面を閉じずに確認してください。');}}
 el('save').onclick=save;el('retry').onclick=save;
-el('csv').onclick=async()=>{if(!client)return;const chunks=['出荷日,商品コード,商品名,JANコード,シリアルNo,状態,返品日,取消日,取消理由,得意先\r\n'];const fields=['shipDate','productCode','productName','jan','serial','status','returnDate','cancelDate','reason','customer'];const quote=v=>'"'+String(v??'').replaceAll('"','""')+'"';try{const n=await client.csv({maker:el('maker').value,yearMonth:el('month').value},rows=>{chunks.push(rows.map(r=>fields.map(k=>quote(r[k])).join(',')).join('\r\n')+(rows.length?'\r\n':''));});const url=URL.createObjectURL(new Blob(['\ufeff',...chunks],{type:'text/csv;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='出荷シリアルNo管理'+el('month').value+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);notify(n+'件のCSVを作成しました。');}catch(e){chunks.length=0;notify('CSVを破棄しました。再作成してください: '+e.message);}};
+el('csv').onclick=async()=>{if(!client)return;const chunks=['出荷日,商品コード,商品名,JANコード,シリアルNo,状態,返品日,取消日,取消理由,得意先\r\n'];const fields=['shipDate','productCode','productName','jan','serial','status','returnDate','cancelDate','reason','customer'];const quote=v=>'"'+String(v??'').replaceAll('"','""')+'"';try{const n=await client.csv({maker:el('maker').value,yearMonth:el('month').value},rows=>{chunks.push(rows.map(r=>fields.map(k=>quote(r[k])).join(',')).join('\r\n')+(rows.length?'\r\n':''));});const url=URL.createObjectURL(new Blob(['\ufeff',...chunks],{type:'text/csv;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='出荷シリアルNo管理'+el('month').value.slice(0,4)+'年'+Number(el('month').value.slice(5))+'月.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);notify(n+'件のCSVを作成しました。');}catch(e){chunks.length=0;notify('CSVを破棄しました。再作成してください: '+e.message);}};
 </script><script src="serial-diagnostics.js"></script></html>
+
 

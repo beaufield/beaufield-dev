@@ -9,7 +9,11 @@ try{
  const serial=await issue('serial-apps'),order=await issue('order-app'),reservation=await issue('yoyaku-kanri');
  await rpc('anonymous','sr_products',{},null);await rpc('invalid_signature','sr_products',{},'invalid');await rpc('wrong_app','sr_products',{},order);
  const begin=performance.now();await Promise.all([...Array.from({length:11},(_,i)=>rpc('serial-'+i,'sr_page',{},serial)),...Array.from({length:3},(_,i)=>rpc('order-'+i,'get_orders',{p:{}},order)),...Array.from({length:3},(_,i)=>rpc('reservation-'+i,'yk_get_snapshot',{},reservation,'yoyaku_api'))]);
- output.textContent=JSON.stringify({scope:'isolated test project; real portal session; read-only RPCs',elapsed_ms:Math.round(performance.now()-begin),results},null,2);
+ const elapsed=Math.round(performance.now()-begin);
+ let cursor={after:0},csvRows=0,seen=new Set(),pages=[],rev=null,hi=null;
+ for(;;){const r=await fetch(c.url+'/rest/v1/rpc/sr_page',{method:'POST',headers:{apikey:c.publicKey,Authorization:'Bearer '+serial,'Content-Type':'application/json'},body:JSON.stringify({p_filter:{maker:'架空メーカー',yearMonth:'2026-11'},p_after:cursor.after,p_highwater:hi,p_revision:rev,p_csv:true})});const d=await r.json();if(!r.ok)throw Error('CSV '+r.status+': '+d.message);pages.push(d.rows.length);if(d.rows.length>500)throw Error('CSV_LIMIT');for(const row of d.rows){csvRows++;seen.add(row.serial);}if(d.done)break;if(d.after<=cursor.after)throw Error('CSV_CURSOR');cursor=d;rev=d.revision;hi=d.highwater;}
+ results.push({label:'csv-real',rows:csvRows,unique_serials:seen.size,pages,success:seen.size===csvRows});
+ output.textContent=JSON.stringify({scope:'isolated test project; real portal session; read-only RPCs',elapsed_ms:elapsed,results},null,2);
 }catch(e){output.textContent=JSON.stringify({error:e.message,results},null,2);}finally{button.disabled=false;}
 };
 })();
