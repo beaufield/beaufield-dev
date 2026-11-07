@@ -1,7 +1,7 @@
 /* 検証環境限定。実セッションの権限で架空データだけを書き込む。秘密・実データは表示しない。 */
 (()=>{
 const area=document.createElement('section');area.style='margin:16px;padding:16px;background:#e8f1ff';
-area.innerHTML='<b>検証専用：保存・復元・切戻し</b><p>本番への接続・通知送信なし。架空データだけで試験します。</p><button id="dr-smoke">保存混在を1回確認</button><button id="dr-load">保存混在を3分確認</button><button id="dr-fence">保存停止・旧世代を確認</button><button id="dr-legacy">旧方式への切戻しを確認</button><pre id="dr-proof"></pre>';
+area.innerHTML='<b>検証専用：保存・復元・切戻し</b><p>本番への接続・通知送信なし。架空データだけで試験します。</p><button id="dr-smoke">保存混在を1回確認</button><button id="dr-load">保存混在を3分確認</button><button id="dr-fence">保存停止・旧世代を確認</button><button id="dr-legacy">旧方式への切戻しを確認</button><button id="dr-restored">復元後の通常保存を確認</button><pre id="dr-proof"></pre>';
 document.body.append(area);const proof=area.querySelector('#dr-proof');const c=window.SERIAL_TEST_CONFIG;
 const tokens={},pending={};let epoch=null,lastPayload=null,lastId=null;
 function assertTest(){if(c.url!=='https://qxzdypqbqduwuwmwnbgk.supabase.co'||!location.pathname.includes('/serial-apps-test/'))throw Error('TEST_ONLY');}
@@ -44,5 +44,16 @@ async function run(waves){
 }
 async function fence(){assertTest();const saved=JSON.parse(sessionStorage.getItem('serial-drill-last')||'null');if(!saved)throw Error('NO_PRIOR_RUN');const r=await rpc('serial-apps','sr_mutate',{p_id:crypto.randomUUID(),p_kind:'ship',p_payload:{...saved.lastPayload,serials:['DR-FENCE-'+crypto.randomUUID().slice(0,8)]}});proof.textContent=JSON.stringify({scope:'old epoch write after closure/reopen',status:r.status,success:r.success,error:r.data.message||r.data.error},null,2);}
 async function legacy(){assertTest();const s=JSON.parse(localStorage.getItem('bf_session'));const r=await fetch(c.issuer,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'serialRecoveryValidation',mode:'cutback',session_token:s?.token})});proof.textContent=JSON.stringify(await r.json(),null,2);}
-for(const [id,fn] of [['#dr-smoke',()=>run(1)],['#dr-load',()=>run(12)],['#dr-fence',fence],['#dr-legacy',legacy]])area.querySelector(id).onclick=async()=>{for(const b of area.querySelectorAll('button'))b.disabled=true;proof.textContent='処理中です。再送せずお待ちください。';try{await fn();}catch(e){proof.textContent=JSON.stringify({success:false,error:e.message});}finally{for(const b of area.querySelectorAll('button'))b.disabled=false;}};
+async function freshRestore(){
+ assertTest();const master=await serialAdapterCall({action:'getProductMaster'});if(!master.success||master.data.length!==58)throw Error('RESTORED_MASTER_COUNT');
+ const product=master.data[0],name='DR-RESTORE-PROBE',date=new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}).replaceAll('-','/');
+ const base={productCode:product.code,productName:product.name,jan:product.jan,maker:product.maker,series:product.series,size:product.size,serials:[name],customer:'検証専用_復元後',method:'単独'};
+ const first=await serialAdapterCall({...base,action:'registerShipping',shipDate:date});
+ const returned=await serialAdapterCall({...base,action:'registerReturn',kind:'返品',returnDate:date});
+ const reship=await serialAdapterCall({...base,action:'registerShipping',shipDate:date});
+ const cancelled=await serialAdapterCall({...base,action:'registerReturn',kind:'取消',returnDate:date});
+ const read=await serialAdapterCall({action:'search',productCode:product.code,serialNo:name,statuses:[]});
+ proof.textContent=JSON.stringify({success:first.registered===1&&returned.updated===1&&reship.registered===1&&cancelled.updated===1&&read.data.length===2,products:master.data.length,registered:first.registered,returned:returned.updated,reshipped:reship.registered,cancelled:cancelled.updated,readback_rows:read.data.length,active:read.data.filter(x=>x.status==='出荷中').length,scope:'normal serial adapter after external restore; synthetic serial only'},null,2);
+}
+for(const [id,fn] of [['#dr-smoke',()=>run(1)],['#dr-load',()=>run(12)],['#dr-fence',fence],['#dr-legacy',legacy],['#dr-restored',freshRestore]])area.querySelector(id).onclick=async()=>{for(const b of area.querySelectorAll('button'))b.disabled=true;proof.textContent='処理中です。再送せずお待ちください。';try{await fn();}catch(e){proof.textContent=JSON.stringify({success:false,error:e.message});}finally{for(const b of area.querySelectorAll('button'))b.disabled=false;}};
 })();
