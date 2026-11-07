@@ -20,12 +20,13 @@ function rcExport_(){
    if(!products.length)products=page.products.map(v=>rcRow_(v,'products'));shipping.push(...page.rows.map(v=>rcRow_(v,'shipping')));
    if(page.rows.length<500)break;after=page.rows[page.rows.length-1].row_id;
   }
-  let id=_PROPS.getProperty('SERIAL_DR_SHEET');if(id)throw Error('RECOVERY_SHEET_ALREADY_EXISTS');if(!id){const created=SpreadsheetApp.create('検証専用_serial_cutback_'+Utilities.formatDate(new Date(),'Asia/Tokyo','yyyyMMdd_HHmmss'));id=created.getId();_PROPS.setProperty('SERIAL_DR_SHEET',id);}
+  let id=_PROPS.getProperty('SERIAL_DR_SHEET');if(id&&_PROPS.getProperty('SERIAL_DR_OPEN')==='true')throw Error('RECOVERY_SHEET_ALREADY_OPEN');if(!id){const created=SpreadsheetApp.create('検証専用_serial_cutback_'+Utilities.formatDate(new Date(),'Asia/Tokyo','yyyyMMdd_HHmmss'));id=created.getId();_PROPS.setProperty('SERIAL_DR_SHEET',id);}
   const ss=SpreadsheetApp.openById(rcSheetId_());ss.setSpreadsheetTimeZone('Asia/Tokyo');const headers=sxSnapshot_();const expected={products:[headers.products[0],...products],shipping:[headers.shipping[0],...shipping]};
-  for(const pair of [['ProductMaster',expected.products],['SerialShipping',expected.shipping]]){let sh=ss.getSheetByName(pair[0]);if(!sh)sh=ss.insertSheet(pair[0]);sh.clearContents();if(sh.getMaxRows()<pair[1].length)sh.insertRowsAfter(sh.getMaxRows(),pair[1].length-sh.getMaxRows());sh.getRange(1,1,pair[1].length,pair[1][0].length).setValues(pair[1]);}
+  const prior={products:ss.getSheetByName('ProductMaster')?.getDataRange().getValues()||[],shipping:ss.getSheetByName('SerialShipping')?.getDataRange().getValues()||[]};const priorTypes={};for(const kind of ['products','shipping'])expected[kind].forEach((row,i)=>row.forEach((v,j)=>{const a=prior[kind][i]?.[j];if(JSON.stringify(sxRaw_([v])[0])!==JSON.stringify(sxRaw_([a])[0])){const type=x=>x instanceof Date?'date':typeof x;const key=kind+'.'+j+':'+type(v)+'->'+type(a);priorTypes[key]=(priorTypes[key]||0)+1;}}));
+  for(const pair of [['ProductMaster',expected.products],['SerialShipping',expected.shipping]]){let sh=ss.getSheetByName(pair[0]);if(!sh)sh=ss.insertSheet(pair[0]);sh.clearContents();if(sh.getMaxRows()<pair[1].length)sh.insertRowsAfter(sh.getMaxRows(),pair[1].length-sh.getMaxRows());const range=sh.getRange(1,1,pair[1].length,pair[1][0].length);range.setNumberFormats(pair[1].map(row=>row.map(v=>v instanceof Date?'yyyy/MM/dd HH:mm:ss.000':typeof v==='string'?'@':'0.###############')));range.setValues(pair[1]);}
   SpreadsheetApp.flush();const actual={products:ss.getSheetByName('ProductMaster').getDataRange().getValues(),shipping:ss.getSheetByName('SerialShipping').getDataRange().getValues()};
   const normalized=v=>({products:v.products.map(sxRaw_),shipping:v.shipping.map(sxRaw_)});const hash=sxHash_(normalized(expected));if(hash!==sxHash_(normalized(actual)))throw Error('CUTBACK_READBACK_MISMATCH');
-  _PROPS.setProperty('SERIAL_DR_OPEN','true');return {success:true,products:products.length,shipping:shipping.length,revision,all_columns_verified:true,sha256:hash};
+  _PROPS.setProperty('SERIAL_DR_OPEN','true');return {success:true,products:products.length,shipping:shipping.length,revision,all_columns_verified:true,prior_type_differences:priorTypes,sha256:hash};
  }finally{lock.releaseLock();}
 }
 function rcLegacy_(p,jwt){
