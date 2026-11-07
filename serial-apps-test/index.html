@@ -1,23 +1,2183 @@
-<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>シリアル管理・検証</title>
-<style>body{font:16px system-ui;max-width:900px;margin:25px auto;padding:15px;background:#f7fafc;color:#16354a}button,input,select{font:inherit;padding:10px;margin:5px;border:1px solid #b5c5cd;border-radius:6px}button{background:#165d7e;color:white}table{width:100%;background:white;border-collapse:collapse}td,th{border-bottom:1px solid #ddd;padding:10px;text-align:left}#message{white-space:pre-wrap}small{display:block;color:#5f5264}</style>
-<h1>シリアル管理 <span id="version"></span></h1><small>検証環境・架空データ専用</small>
-<p id="message" role="status">接続設定を確認しています。</p>
-<label>商品コード<input id="product"></label><label>シリアル<input id="serial"></label><button id="search">検索</button>
-<table><thead><tr><th>出荷日</th><th>商品</th><th>シリアル</th><th>状態</th></tr></thead><tbody id="rows"></tbody></table><button id="next">次の100件</button>
-<hr><h2>出荷・返品・取消</h2><input type="date" id="date"><select id="kind"><option value="ship">出荷</option><option value="return">返品</option><option value="cancel">取消</option></select><button id="save">登録</button><button id="retry" hidden>同じ操作を再確認</button>
-<h2>月別CSV</h2><label>メーカー<input id="maker"></label><input type="month" id="month"><button id="csv">CSVを作成</button>
-<script src="serial-config.js"></script><script src="serial-client.js"></script><script>
-const APP_VERSION='v3.0.2-test';document.getElementById('version').textContent=APP_VERSION;
-const el=id=>document.getElementById(id),notify=t=>el('message').textContent=t;
-let client,cursor={},filter={},pending=null;
-const session=()=>{try{return JSON.parse(localStorage.getItem('bf_session'));}catch{return null;}};
-try{const c=window.SERIAL_TEST_CONFIG;if(!c||!session()?.token)throw Error('ポータルでログインしてから検証画面を開いてください。');client=new SerialClient({...c,session,issueToken:async token=>{const r=await fetch(c.issuer,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'serialIssueDbToken',session_token:token})});return r.json();}});notify('検証環境に接続できます。検索してください。');}catch(e){notify(e.message);}
-async function page(reset){if(!client)return;if(reset){cursor={};filter={};if(el('product').value)filter.productCode=el('product').value;if(el('serial').value)filter.serial=el('serial').value;}
-try{const p=await client.page(filter,cursor);el('rows').replaceChildren();for(const r of p.rows){const tr=document.createElement('tr');for(const k of ['shipDate','productName','serial','status']){const td=document.createElement('td');td.textContent=r[k]||'';tr.append(td);}el('rows').append(tr);}cursor=p;el('next').disabled=p.done;notify(`${p.rows.length}件表示`);}catch(e){notify(e.message);}}
-el('search').onclick=()=>page(true);el('next').onclick=()=>page(false);
-async function save(){if(!client)return;try{if(!pending)pending={id:crypto.randomUUID(),kind:el('kind').value,payload:{productCode:el('product').value,serials:[el('serial').value],date:el('date').value}};const r=await client.mutate(pending.kind,pending.payload,pending.id);pending=null;el('retry').hidden=true;notify(`処理${r.changed}件、登録済み${r.skipped}件`);}catch(e){el('retry').hidden=false;notify(e.message+'。同じ操作の再確認ができます。画面を閉じずに確認してください。');}}
-el('save').onclick=save;el('retry').onclick=save;
-el('csv').onclick=async()=>{if(!client)return;const chunks=['出荷日,商品コード,商品名,JANコード,シリアルNo,状態,返品日,取消日,取消理由,得意先\r\n'];const fields=['shipDate','productCode','productName','jan','serial','status','returnDate','cancelDate','reason','customer'];const quote=v=>'"'+String(v??'').replaceAll('"','""')+'"';try{const n=await client.csv({maker:el('maker').value,yearMonth:el('month').value},rows=>{chunks.push(rows.map(r=>fields.map(k=>quote(r[k])).join(',')).join('\r\n')+(rows.length?'\r\n':''));});const url=URL.createObjectURL(new Blob(['\ufeff',...chunks],{type:'text/csv;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='出荷シリアルNo管理'+el('month').value.slice(0,4)+'年'+Number(el('month').value.slice(5))+'月.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);notify(n+'件のCSVを作成しました。');}catch(e){chunks.length=0;notify('CSVを破棄しました。再作成してください: '+e.message);}};
-</script><script src="serial-diagnostics.js"></script></html>
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>シリアルNo管理アプリ</title>
+<style>
+/* ============================================================
+   リセット・ベース
+============================================================ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif;
+  font-size: 16px;
+  background: #f0f0f0;
+  color: #222;
+  min-height: 100vh;
+}
 
+/* ============================================================
+   メイン画面
+============================================================ */
+/* タブバー */
+.tab-bar {
+  display: flex;
+  background: #fff;
+  border-bottom: 2px solid #ddd;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.tab-btn {
+  flex: 1;
+  padding: 14px 4px;
+  font-size: 15px;
+  font-weight: bold;
+  border: none;
+  background: #fff;
+  color: #666;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  white-space: nowrap;
+}
+.tab-btn.active {
+  color: #1a4a8a;
+  border-bottom-color: #1a4a8a;
+  background: #f0f5ff;
+}
 
+/* タブコンテンツ */
+.tab-content { display: none; padding: 14px; }
+.tab-content.active { display: block; }
+
+/* カード */
+.card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 14px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+}
+
+/* フォーム要素 */
+.field-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 12px;
+  gap: 8px;
+}
+.field-label {
+  font-size: 13px;
+  color: #666;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+input[type="text"],
+input[type="date"] {
+  width: 100%;
+  padding: 10px 12px;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  font-size: 16px;
+  outline: none;
+  background: #fff;
+}
+input[type="text"]:focus,
+input[type="date"]:focus { border-color: #2a6acc; }
+input[type="number"] {
+  padding: 10px 12px;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  font-size: 16px;
+  outline: none;
+  background: #fff;
+}
+input[type="number"]:focus { border-color: #2a6acc; }
+
+/* 選択中商品 */
+.selected-product-bar {
+  background: #f0f5ff;
+  border: 1px solid #b0c8f0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+.selected-product-bar.empty  { color: #c00; font-weight: bold; }
+.selected-product-bar.filled { color: #1a4a8a; font-weight: bold; }
+
+/* 商品候補リスト */
+.product-candidates {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  background: #fff;
+  margin-bottom: 12px;
+}
+.product-candidate-item {
+  padding: 10px 14px;
+  border-bottom: 1px solid #f0f0f0;
+  cursor: pointer;
+  font-size: 14px;
+}
+.product-candidate-item:active { background: #e8f0ff; }
+.product-candidate-item .prod-name { font-weight: bold; color: #222; }
+.product-candidate-item .prod-sub  { color: #888; font-size: 12px; }
+
+/* ボタン群 */
+.btn {
+  padding: 12px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: bold;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-primary { background: #1a4a8a; color: #fff; }
+.btn-orange  { background: #e86010; color: #fff; }
+.btn-blue    { background: #2a6acc; color: #fff; }
+.btn-green   { background: #1a8a4a; color: #fff; }
+.btn-gray    { background: #888;    color: #fff; }
+.btn-danger  { background: #c00;    color: #fff; }
+.btn:active  { opacity: 0.75; }
+.btn:disabled { background: #ccc !important; color: #888 !important; cursor: not-allowed; }
+.btn-full    { width: 100%; }
+.btn-half    { flex: 1; }
+
+/* ラジオボタン */
+.radio-group { display: flex; gap: 24px; align-items: center; }
+.radio-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  cursor: pointer;
+}
+.radio-label input { width: 20px; height: 20px; cursor: pointer; }
+
+/* シリアルリスト */
+.serial-list {
+  background: #f8f8f8;
+  border-radius: 8px;
+  padding: 10px;
+  min-height: 80px;
+  max-height: 220px;
+  overflow-y: auto;
+  margin-bottom: 10px;
+}
+.serial-list-empty {
+  color: #aaa;
+  font-size: 14px;
+  text-align: center;
+  padding: 20px;
+}
+.serial-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: #fff;
+  border-radius: 6px;
+  margin-bottom: 4px;
+  font-size: 14px;
+  border: 1px solid #eee;
+}
+.serial-item .serial-no { font-family: monospace; font-weight: bold; }
+.serial-item .del-btn {
+  background: none;
+  border: none;
+  color: #c00;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.serial-count { font-size: 13px; color: #666; text-align: right; margin-bottom: 6px; }
+
+/* 登録実行ボタンエリア */
+.action-row { display: flex; gap: 10px; margin-top: 8px; }
+
+/* 検索結果 */
+.search-result-item {
+  padding: 8px 12px;
+  border-bottom: 1px solid #f0f0f0;
+}
+.search-result-item:last-child { border-bottom: none; }
+.sri-header { display: flex; justify-content: space-between; align-items: flex-start; }
+.sri-name   { font-weight: bold; font-size: 15px; color: #222; }
+.sri-status {
+  font-size: 13px;
+  font-weight: bold;
+  padding: 2px 8px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+.status-active   { background: #d4edda; color: #155724; }
+.status-returned { background: #cce5ff; color: #004085; }
+.status-canceled { background: #f8d7da; color: #721c24; }
+.sri-sub { font-size: 13px; color: #666; margin-top: 4px; }
+
+/* チェックボックス */
+.check-group { display: flex; gap: 16px; flex-wrap: wrap; }
+.check-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+  cursor: pointer;
+}
+.check-label input { width: 18px; height: 18px; }
+
+/* スキャナーモーダル */
+.scanner-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.85);
+  z-index: 999;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.scanner-overlay.active { display: flex; }
+.scanner-box {
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+  width: 90vw;
+  max-width: 400px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+#scannerContainer {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.scanner-header {
+  background: #222;
+  color: #fff;
+  text-align: center;
+  padding: 12px;
+  font-size: 15px;
+  font-weight: bold;
+}
+.scanner-footer { background: #222; padding: 14px; display: flex; gap: 10px; justify-content: center; }
+
+/* スキャナー補助UI */
+#scannerContainer { position: relative; background: #000; }
+/* 重要: カメラ映像を object-fit:contain で全体表示する。
+   既定の cover だと撮影範囲の上下（または左右）が画面外に切れるのに、
+   デコーダーは切れていない元映像全体を読むため「画面外を読み取る」ズレが起きる。
+   contain にすると「見えている範囲＝読み取る範囲」が完全に一致する（黒帯が出るのは正常）。*/
+#scannerContainer video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+}
+/* 視覚ガイド（中央に合わせる目安。実際は表示されている全体をスキャンする）*/
+.scan-guide {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 70%;
+  height: 40%;
+  border: 2px dashed rgba(0, 230, 118, 0.9);
+  border-radius: 8px;
+  pointer-events: none;
+  z-index: 50;
+  transition: border-color 0.15s;
+}
+.scan-guide.refocus-flash { border-color: rgba(255, 214, 0, 0.95); }
+/* タップで再フォーカスできることを知らせる控えめな案内 */
+.refocus-hint {
+  position: absolute;
+  bottom: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.55);
+  color: #eee;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 10px;
+  pointer-events: none;
+  z-index: 50;
+}
+.scanner-hint {
+  background: #000;
+  color: #ccc;
+  font-size: 12px;
+  text-align: center;
+  padding: 5px 10px;
+}
+.scanner-mode-row {
+  display: flex;
+  gap: 0;
+  justify-content: center;
+  background: #222;
+  padding: 8px 10px 0;
+}
+.scanner-mode-row button {
+  flex: 1;
+  background: #333;
+  color: #bbb;
+  border: 1px solid #555;
+  padding: 9px 0;
+  font-size: 14px;
+  font-weight: bold;
+}
+.scanner-mode-row button:first-child { border-radius: 8px 0 0 8px; }
+.scanner-mode-row button:last-child  { border-radius: 0 8px 8px 0; border-left: none; }
+.scanner-mode-row button.active {
+  background: #2563eb;
+  color: #fff;
+  border-color: #2563eb;
+}
+.scanner-zoom-row {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  background: #222;
+  padding: 8px 0 0;
+}
+.scanner-zoom-row button {
+  background: #444;
+  color: #fff;
+  border: none;
+  border-radius: 14px;
+  padding: 5px 18px;
+  font-size: 13px;
+}
+.scanner-zoom-row button.active {
+  background: #00e676;
+  color: #000;
+  font-weight: bold;
+}
+/* ライブデコード結果 */
+.scanner-live-result {
+  background: #111;
+  color: #4cff91;
+  font-size: 13px;
+  font-family: monospace;
+  padding: 8px 12px;
+  text-align: center;
+  min-height: 34px;
+  word-break: break-all;
+}
+/* 連続スキャン件数 */
+.scanner-count {
+  background: #1a4a8a;
+  color: #fff;
+  font-size: 14px;
+  font-weight: bold;
+  padding: 8px 12px;
+  text-align: center;
+}
+
+/* トースト通知 */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(30,30,30,0.92);
+  color: #fff;
+  padding: 12px 24px;
+  border-radius: 24px;
+  font-size: 14px;
+  z-index: 9999;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+.toast.show    { opacity: 1; }
+.toast.success { background: rgba(20,120,60,0.95); }
+.toast.error   { background: rgba(180,0,0,0.95); }
+.toast.warn    { background: rgba(200,120,0,0.95); }
+
+/* バージョン表示 */
+.version-label {
+  position: fixed;
+  bottom: 6px;
+  right: 10px;
+  font-size: 11px;
+  color: rgba(0,0,0,0.25);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* ユーザー情報バー */
+.user-bar {
+  background: #1a4a8a;
+  color: #fff;
+  padding: 8px 14px;
+  font-size: 13px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* ドロップダウン */
+select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  font-size: 15px;
+  background: #fff;
+  outline: none;
+}
+select:focus { border-color: #2a6acc; }
+
+/* スピナー */
+.loading-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(255,255,255,0.7);
+  z-index: 9000;
+  align-items: center;
+  justify-content: center;
+}
+.loading-overlay.active { display: flex; }
+.loading-overlay { flex-direction: column; gap: 12px; }
+.spinner {
+  width: 48px; height: 48px;
+  border: 5px solid #ddd;
+  border-top-color: #2a6acc;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-msg { font-size: 13px; color: #555; min-height: 1em; }
+
+/* 開始シリアル入力行 */
+.seq-start-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.seq-qty-row   { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.seq-qty-row .qty-input { width: 90px; }
+
+/* 返品単独入力行 */
+.return-input-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+
+/* 認証エラー画面 */
+#authErrorScreen {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #1a4a8a 0%, #2a6acc 100%);
+  padding: 24px;
+}
+.auth-error-box {
+  background: #fff;
+  border-radius: 16px;
+  padding: 36px 28px;
+  width: 100%;
+  max-width: 360px;
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+}
+.auth-error-box h2 { color: #c00; margin-bottom: 12px; }
+.auth-error-box p  { color: #555; margin-bottom: 24px; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<!-- 認証エラー画面（セッションなし・期限切れ時） -->
+<div id="authErrorScreen">
+  <div class="auth-error-box">
+    <h2>ログインが必要です</h2>
+    <p>ポータルからログインしてください。</p>
+    <button class="btn btn-primary btn-full" onclick="location.href=PORTAL_URL">ポータルへ</button>
+  </div>
+</div>
+
+<!-- メイン画面 -->
+<div id="mainScreen" style="display:none;">
+  <!-- ユーザー情報バー -->
+  <div class="user-bar">
+    <span id="userNameBar">---</span>
+    <span id="versionBar" style="font-size:12px;opacity:0.7;"></span>
+  </div>
+
+  <!-- タブバー -->
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('shipping')">出荷登録</button>
+    <button class="tab-btn" onclick="switchTab('return')">返品・取消</button>
+    <button class="tab-btn" onclick="switchTab('search')">検索</button>
+  </div>
+
+  <!-- ========================================================
+       出荷登録タブ
+  ======================================================== -->
+  <div id="tab-shipping" class="tab-content active">
+    <div class="card">
+      <div class="field-row">
+        <span class="field-label">①出荷日</span>
+        <input type="date" id="sh-date" style="flex:1;">
+      </div>
+      <div class="field-row">
+        <span class="field-label">②得意先</span>
+        <input type="text" id="sh-customer" placeholder="サロン名を手入力" style="flex:1;" autocomplete="off">
+      </div>
+    </div>
+
+    <div class="card">
+      <div id="sh-selected-product" class="selected-product-bar empty">商品未選択</div>
+
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        <button class="btn btn-orange" style="min-width:56px;" onclick="openScanner('sh-jan')">③JAN</button>
+        <div style="flex:1;display:flex;align-items:center;gap:6px;">
+          <span style="font-size:13px;color:#888;white-space:nowrap;">商品検索</span>
+          <input type="text" id="sh-product-search" placeholder="商品名・メーカー（部分一致）"
+                 oninput="filterProducts('sh')" style="flex:1;font-size:14px;padding:8px;">
+        </div>
+      </div>
+
+      <div id="sh-product-candidates" class="product-candidates" style="display:none;"></div>
+
+      <div class="field-row" style="margin-bottom:0;">
+        <span class="field-label" style="font-size:13px;color:#888;">④登録方法</span>
+        <div class="radio-group">
+          <label class="radio-label">
+            <input type="radio" name="sh-method" value="単独" onchange="switchMethod('sh','single')" checked> 単独
+          </label>
+          <label class="radio-label">
+            <input type="radio" name="sh-method" value="連番" onchange="switchMethod('sh','seq')"> 連番
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- 単独入力エリア -->
+    <div id="sh-single-area" class="card">
+      <div class="return-input-row">
+        <button class="btn btn-orange" id="sh-single-scan-btn" onclick="openScanner('sh-single-serial')">⑤バーコード</button>
+        <input type="text" id="sh-single-serial" placeholder="⑤シリアルNo" style="flex:1;" autocomplete="off">
+        <button class="btn btn-blue" onclick="addSingleSerial('sh')">追加</button>
+      </div>
+      <div class="serial-count" id="sh-single-count">0件</div>
+      <div class="serial-list" id="sh-single-list"><div class="serial-list-empty">シリアルを追加してください</div></div>
+      <div class="action-row">
+        <button class="btn btn-gray btn-half" onclick="clearSingleList('sh')">クリア</button>
+        <button class="btn btn-primary btn-half" id="sh-single-register-btn"
+                onclick="doRegisterShipping('single')" disabled>⑥登録</button>
+      </div>
+    </div>
+
+    <!-- 連番入力エリア -->
+    <div id="sh-seq-area" class="card" style="display:none;">
+      <div class="seq-start-row">
+        <button class="btn btn-orange" id="sh-seq-scan-btn" onclick="openScanner('sh-seq-start')">⑤バーコード</button>
+        <span style="font-size:12px;color:#888;" id="sh-seq-or">or</span>
+        <input type="text" id="sh-seq-start" placeholder="開始シリアル手入力" style="flex:1;" autocomplete="off">
+      </div>
+      <div class="seq-qty-row">
+        <input type="number" id="sh-seq-qty" class="qty-input" placeholder="⑥連番数" min="1" max="500">
+        <button class="btn btn-blue" style="flex:1;" onclick="generateSeq('sh')">⑦連番作成</button>
+      </div>
+      <div class="serial-count" id="sh-seq-count">0件</div>
+      <div class="serial-list" id="sh-seq-list"><div class="serial-list-empty">連番作成してください</div></div>
+      <div class="action-row">
+        <button class="btn btn-gray btn-half" onclick="clearSeqList('sh')">連番クリア</button>
+        <button class="btn btn-primary btn-half" id="sh-seq-register-btn"
+                onclick="doRegisterShipping('seq')" disabled>⑧登録</button>
+      </div>
+    </div>
+  </div><!-- /tab-shipping -->
+
+  <!-- ========================================================
+       返品・取消タブ
+  ======================================================== -->
+  <div id="tab-return" class="tab-content">
+    <div class="card">
+      <div class="field-row">
+        <span class="field-label">①返品日</span>
+        <input type="date" id="rt-date" style="flex:1;">
+      </div>
+      <div class="field-row" style="margin-bottom:0;">
+        <span class="field-label">②種別</span>
+        <div class="radio-group">
+          <label class="radio-label"><input type="radio" name="rt-kind" value="返品" checked> 返品</label>
+          <label class="radio-label"><input type="radio" name="rt-kind" value="取消"> 取消(間違い)</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div id="rt-selected-product" class="selected-product-bar empty">商品未選択</div>
+
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        <button class="btn btn-orange" style="min-width:56px;" onclick="openScanner('rt-jan')">③JAN</button>
+        <div style="flex:1;display:flex;align-items:center;gap:6px;">
+          <span style="font-size:13px;color:#888;white-space:nowrap;">商品検索</span>
+          <input type="text" id="rt-product-search" placeholder="商品名・メーカー（部分一致）"
+                 oninput="filterProducts('rt')" style="flex:1;font-size:14px;padding:8px;">
+        </div>
+      </div>
+
+      <div id="rt-product-candidates" class="product-candidates" style="display:none;"></div>
+
+      <div class="field-row" style="margin-bottom:0;">
+        <span class="field-label" style="font-size:13px;color:#888;">④登録方法</span>
+        <div class="radio-group">
+          <label class="radio-label">
+            <input type="radio" name="rt-method" value="単独" onchange="switchMethod('rt','single')" checked> 単独
+          </label>
+          <label class="radio-label">
+            <input type="radio" name="rt-method" value="連番" onchange="switchMethod('rt','seq')"> 連番
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- 単独入力エリア -->
+    <div id="rt-single-area" class="card">
+      <div class="return-input-row">
+        <button class="btn btn-orange" id="rt-single-scan-btn" onclick="openScanner('rt-single-serial')">⑤バーコード</button>
+        <input type="text" id="rt-single-serial" placeholder="⑤シリアルNo" style="flex:1;" autocomplete="off">
+        <button class="btn btn-blue" onclick="addSingleSerial('rt')">追加</button>
+      </div>
+      <div class="serial-count" id="rt-single-count">0件</div>
+      <div class="serial-list" id="rt-single-list"><div class="serial-list-empty">シリアルを追加してください</div></div>
+      <div class="action-row">
+        <button class="btn btn-gray btn-half" onclick="clearSingleList('rt')">クリア</button>
+        <button class="btn btn-danger btn-half" id="rt-single-register-btn"
+                onclick="doRegisterReturn('single')" disabled>⑥登録</button>
+      </div>
+    </div>
+
+    <!-- 連番入力エリア -->
+    <div id="rt-seq-area" class="card" style="display:none;">
+      <div class="seq-start-row">
+        <button class="btn btn-orange" id="rt-seq-scan-btn" onclick="openScanner('rt-seq-start')">⑤バーコード</button>
+        <span style="font-size:12px;color:#888;" id="rt-seq-or">or</span>
+        <input type="text" id="rt-seq-start" placeholder="開始シリアル手入力" style="flex:1;" autocomplete="off">
+      </div>
+      <div class="seq-qty-row">
+        <input type="number" id="rt-seq-qty" class="qty-input" placeholder="⑥連番数" min="1" max="500">
+        <button class="btn btn-blue" style="flex:1;" onclick="generateSeq('rt')">⑦連番作成</button>
+      </div>
+      <div class="serial-count" id="rt-seq-count">0件</div>
+      <div class="serial-list" id="rt-seq-list"><div class="serial-list-empty">連番作成してください</div></div>
+      <div class="action-row">
+        <button class="btn btn-gray btn-half" onclick="clearSeqList('rt')">連番クリア</button>
+        <button class="btn btn-danger btn-half" id="rt-seq-register-btn"
+                onclick="doRegisterReturn('seq')" disabled>⑧登録</button>
+      </div>
+    </div>
+  </div><!-- /tab-return -->
+
+  <!-- ========================================================
+       検索タブ
+  ======================================================== -->
+  <div id="tab-search" class="tab-content">
+    <div class="card">
+      <div style="margin-bottom:12px;">
+        <div style="font-size:13px;color:#666;margin-bottom:6px;">期間</div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <input type="date" id="sc-from" style="flex:1;">
+          <span>〜</span>
+          <input type="date" id="sc-to" style="flex:1;">
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <div style="font-size:13px;color:#666;margin-bottom:6px;">状況</div>
+        <div class="check-group">
+          <label class="check-label"><input type="checkbox" id="sc-status-active"   checked> 出荷中</label>
+          <label class="check-label"><input type="checkbox" id="sc-status-returned" checked> 返品済</label>
+          <label class="check-label"><input type="checkbox" id="sc-status-canceled">         取消</label>
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <div style="font-size:13px;color:#666;margin-bottom:6px;">メーカー・シリーズから探す</div>
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <select id="sc-maker" onchange="onMakerChange()" style="flex:1;">
+            <option value="">（メーカー）</option>
+          </select>
+          <select id="sc-series" onchange="onSeriesChange()" style="flex:1;">
+            <option value="">（シリーズ）</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <select id="sc-size" onchange="onSizeChange()" style="flex:1;">
+            <option value="">（サイズ）</option>
+          </select>
+          <select id="sc-product-sel" style="flex:1;">
+            <option value="">（品名）</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <div style="font-size:13px;color:#666;margin-bottom:6px;">指定して探す</div>
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <input type="text" id="sc-prod-name" placeholder="商品名（部分一致・スペースでAND）" style="flex:1;font-size:14px;">
+        </div>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="sc-serial"    placeholder="シリアルNo（完全一致）" style="flex:1;font-size:14px;">
+          <input type="text" id="sc-prod-code" placeholder="商品コード（完全一致）" style="flex:1;font-size:14px;">
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-gray btn-half" onclick="resetSearchConditions()">条件リセット</button>
+        <button class="btn btn-primary btn-half" onclick="doSearch()">検索</button>
+      </div>
+    </div>
+
+    <div class="card" id="search-result-card" style="padding:0;">
+      <div id="sc-result-header" style="padding:12px 14px;border-bottom:1px solid #eee;font-size:14px;color:#666;"></div>
+      <div id="sc-result-list"></div>
+    </div>
+  </div><!-- /tab-search -->
+</div><!-- /mainScreen -->
+
+<!-- スキャナーモーダル -->
+<div class="scanner-overlay" id="scannerOverlay">
+  <div class="scanner-box">
+    <div class="scanner-header" id="scannerTitle">バーコードをかざしてください</div>
+    <div class="scanner-mode-row" id="scannerModeRow" style="display:none;">
+      <button type="button" id="scanModeBarcode" class="active" onclick="switchScanMode('barcode')">📊 バーコード</button>
+      <button type="button" id="scanModeQr" onclick="switchScanMode('qr')">▦ QRコード</button>
+    </div>
+    <div class="scanner-hint" id="scannerHint">📏 中央に大きく・ピタッと止めて（テカる時は角度を変える）</div>
+    <div id="scannerContainer" onclick="requestRefocus()"></div>
+    <div class="scanner-zoom-row" id="scannerZoomRow" style="display:none;">
+      <button type="button" data-z="1" onclick="applyScannerZoom(1)">1×</button>
+      <button type="button" data-z="2" onclick="applyScannerZoom(2)">2×</button>
+      <button type="button" data-z="3" onclick="applyScannerZoom(3)">3×</button>
+      <button type="button" id="scannerTorchBtn" onclick="toggleScannerTorch()" style="display:none;">💡 ライト</button>
+    </div>
+    <div class="scanner-live-result" id="scannerLiveResult">— 認識待ち —</div>
+    <div class="scanner-count" id="scannerCount" style="display:none;"></div>
+    <div class="scanner-footer">
+      <button class="btn btn-gray" onclick="closeScanner()" style="min-width:120px;">キャンセル</button>
+      <button class="btn btn-primary" id="scannerDoneBtn" onclick="finishMultiScan()" style="min-width:120px;display:none;">完了</button>
+    </div>
+  </div>
+</div>
+
+<!-- トースト -->
+<div class="toast" id="toast"></div>
+
+<!-- ローディング -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  <div class="loading-msg" id="loadingMsg"></div>
+</div>
+
+<!-- バージョン -->
+<div class="version-label" id="versionLabel"></div>
+
+<!-- ZXing バーコードスキャナー（CODE128/JAN用） -->
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+" crossorigin="anonymous"></script>
+<!-- jsQR（QRコード専用エンジン。html5-qrcode内蔵のZXingがQR苦手なため併用。iPhone Safariでも動作） -->
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js" integrity="sha384-b5Ya4Bq3qCyz39m2ISh+4DxjAIljdeFwK/BsXLuj9gugaNwAcj/ia15fxNZL9Nlx" crossorigin="anonymous"></script>
+
+<script src="serial-config.js"></script><script src="serial-client.js"></script><script src="serial-adapter.js"></script>
+<script>
+// ============================================================
+// 設定
+// ============================================================
+const GAS_URL = window.SERIAL_TEST_CONFIG.issuer;
+const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
+const SESSION_KEY = 'bf_session';
+const APP_VERSION = 'v3.1.0-test';
+document.getElementById('versionBar').textContent = 'HTML ' + APP_VERSION;
+document.getElementById('versionLabel').textContent = 'HTML ' + APP_VERSION;
+
+// ============================================================
+// アプリ状態
+// ============================================================
+var appState = {
+  userId:   '',
+  userName: '',
+  role:     '',
+  token:    '',
+  products: [],
+  shSelectedProduct: null,
+  rtSelectedProduct: null,
+  shSingleSerials: [],
+  shSeqSerials:    [],
+  rtSingleSerials: [],
+  rtSeqSerials:    [],
+  lastSearchResults: []
+};
+
+var SCAN_TARGET    = '';
+var codeReader     = null;
+var scannerActive  = false;
+var scanMultiMode   = false;
+var scanMultiCount  = 0;
+var scanLastValue   = '';
+var scanLastTime    = 0;
+var scanScannedSet  = new Set();  // 連続スキャンモードでスキャン済みの値を記憶
+var scanCandidate      = '';      // 2フレーム連続一致確定用の候補値
+var scanCandidateCount = 0;
+var scanCandidateTime  = 0;
+var scannerTrack       = null;    // カメラ操作用のビデオトラック（ズーム/ライト。非対応端末はnullのまま）
+var scannerTorchOn     = false;   // ライト点灯状態
+var qrDetectTimer      = null;    // QR並行検出（jsQR）のタイマー
+var qrScanCanvas       = null;    // jsQR用の作業キャンバス
+var qrScanCtx          = null;    // jsQR用の2Dコンテキスト
+var refocusBusy        = false;   // タップ再フォーカス処理の多重実行防止
+var scanMode           = 'barcode'; // シリアルスキャンのモード（'barcode'=高解像度+ズーム / 'qr'=旧設定でQR向け）
+// シリアルNoとして受理する形式（英数字とハイフンのみ。誤読由来の「!」「.」等を含む値は破棄）
+var SERIAL_PATTERN = /^[0-9A-Za-z-]{3,32}$/;
+
+// ============================================================
+// スマホズーム補正（GAS WebApp固定幅対策 — GitHub Pagesでは不要だが残す）
+// ============================================================
+(function fixScale() {
+  var sw = window.screen.width;
+  var iw = window.innerWidth;
+  if (sw > 0 && sw < iw) {
+    var zoom = iw / sw;
+    document.body.style.zoom     = zoom;
+    document.body.style.width    = sw + 'px';
+    document.body.style.maxWidth = sw + 'px';
+    document.body.style.overflowX = 'hidden';
+  }
+})();
+
+// ============================================================
+// 初期化
+// ============================================================
+window.addEventListener('load', function() {
+  var session = getAuthSession();
+  if (!session) {
+    showAuthError();
+    return;
+  }
+  appState.userId   = session.user_id || session.userId || '';
+  appState.userName = session.name    || '';
+  appState.role     = session.is_admin ? 'admin' : 'user';
+  appState.token    = session.token   || '';
+  showMain();
+});
+
+function getAuthSession() {
+  try {
+    var raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    var s = JSON.parse(raw);
+    if (!s || !s.token) return null;
+    if (Date.now() > s.expires) { localStorage.removeItem(SESSION_KEY); return null; }
+    return s;
+  } catch(e) { return null; }
+}
+
+function showAuthError() {
+  document.getElementById('authErrorScreen').style.display = 'flex';
+  document.getElementById('mainScreen').style.display      = 'none';
+}
+
+function showMain() {
+  document.getElementById('authErrorScreen').style.display = 'none';
+  document.getElementById('mainScreen').style.display      = 'block';
+  document.getElementById('userNameBar').textContent       = appState.userName + ' さん';
+
+  var today = todayStr();
+  document.getElementById('sh-date').value = today;
+  document.getElementById('rt-date').value = today;
+  document.getElementById('sc-from').value = today;
+  document.getElementById('sc-to').value   = today;
+
+  document.querySelector('input[name="sh-method"][value="単独"]').checked = true;
+  switchMethod('sh', 'single');
+  document.querySelector('input[name="rt-method"][value="単独"]').checked = true;
+  switchMethod('rt', 'single');
+
+  loadProductMaster();
+}
+
+// ============================================================
+// GAS 通信ヘルパー
+// GAS Webアプリの結果配信（/exec→script.googleusercontent.com）が
+// 同時アクセス無しでも一定確率でHTTP 404を返し、稀にPOSTパラメータが
+// 失われた状態で実行されて正常な200応答としてSESSION_INVALIDが返る
+// （作業中に誤ログアウトする）ことが order-app での実機テストで判明した。
+// GASの実行ログは常に「完了」でエラーが残らないため、サーバー側からは
+// この問題を検知できない（詳細: order-app/通信エラー対策_設計プラン.md）。
+// ============================================================
+
+class GasTransientError extends Error {
+  constructor(detail) { super('GAS_TRANSIENT: ' + detail); this.name = 'GasTransientError'; }
+}
+
+// 読み込みが重いアクションはタイムアウトを長めに取る
+var _GAS_HEAVY_ACTIONS = { getProductMaster: true, search: true };
+function _gasTimeoutFor(action) {
+  return _GAS_HEAVY_ACTIONS[action] ? 60000 : 30000;
+}
+
+// 通信中オーバーレイが開いていれば、再試行中であることをメッセージで知らせる
+function _gasNotifyRetry(attemptNumber) {
+  var overlay = document.getElementById('loadingOverlay');
+  var msgEl   = document.getElementById('loadingMsg');
+  if (overlay && msgEl && overlay.classList.contains('active')) {
+    msgEl.textContent = '接続をやり直しています（' + attemptNumber + '回目）...';
+  }
+}
+
+// catch(e)で表示するエラーメッセージを原因別に出し分ける。
+// GasTransientError/AbortError＝リトライを使い切ってもGAS側の応答が
+// 不安定だっただけ（実際にはネットワークは繋がっている）ことが多いため、
+// 「ネットワークを確認してください」という誤誘導を避ける。
+// TypeError（fetch自体が失敗＝オフライン等の真の通信断）のときだけ従来の文言にする
+function _gasErrorMessage(e) {
+  if (e && e.name === 'TypeError') return '通信エラー。ネットワークを確認してください。';
+  return 'Google側が一時的に混み合っています。もう一度お試しください。';
+}
+
+// 1回分のfetch。404等の非JSON応答・タイムアウトをGasTransientErrorとして検出する
+async function _gasFetchOnce(url, init, timeoutMs) {
+  var ac    = new AbortController();
+  var timer = setTimeout(function() { ac.abort(); }, timeoutMs);
+  try {
+    var res  = await fetch(url, Object.assign({}, init, { signal: ac.signal }));
+    var text = await res.text(); // res.json()ではなくtext()。404のHTMLをここで検出するため
+    if (!res.ok) throw new GasTransientError('HTTP ' + res.status);
+    try { return JSON.parse(text); }
+    catch (e) { throw new GasTransientError('non-JSON response'); }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// 通信エラー（404・タイムアウト・通信断）を最大2回まで自動リトライする（計3試行）。
+// registerShipping/registerReturnはどちらも「出荷中の同一シリアル」を
+// 重複チェックでスキップする設計のため、再送しても二重登録は起きない
+// （盲目的な全再送で安全）。meta.retried は「このやり取りでリトライが
+// 発生したか」をhandler側が知るためのフラグ（出荷登録の重複スキップ表示で使用）
+async function _gasCall(url, init, timeoutMs, meta) {
+  var retries = 2;
+  var lastErr;
+  for (var attempt = 0; attempt <= retries; attempt++) {
+    try {
+      var data = await _gasFetchOnce(url, init, timeoutMs);
+      if (attempt > 0 && meta) meta.retried = true;
+      return data;
+    } catch (e) {
+      lastErr = e;
+      var transient = e.name === 'GasTransientError' || e.name === 'AbortError' || e.name === 'TypeError';
+      if (!transient || attempt === retries) break;
+      _gasNotifyRetry(attempt + 1);
+      await new Promise(function(r) { setTimeout(r, attempt === 0 ? 1000 : 3000); });
+    }
+  }
+  throw lastErr;
+}
+
+// gasGet/gasPost共通処理: 通信レベルのリトライ(_gasCall)に加え、
+// AUTH_UNAVAILABLE（GAS側の認証シート一時読み込み失敗）とSESSION_INVALID
+// （POSTボディ喪失の疑いを含む）を区別して扱う
+async function _gasRequest(url, init, timeoutMs, hasToken, meta) {
+  var data = await _gasCall(url, init, timeoutMs, meta);
+
+  // 認証確認そのものが一時的に失敗しただけ。ログアウトさせず1回だけ全再送する
+  if (data && data.error === 'AUTH_UNAVAILABLE') {
+    _gasNotifyRetry(1);
+    if (meta) meta.retried = true;
+    return await _gasCall(url, init, timeoutMs, meta);
+  }
+
+  // トークンを送っているのにSESSION_INVALID＝POSTボディ喪失の可能性があるので
+  // 1回だけ全再送する。2連続でSESSION_INVALIDのときだけ本当に無効とみなす
+  if (data && data.error === 'SESSION_INVALID' && hasToken) {
+    _gasNotifyRetry(1);
+    if (meta) meta.retried = true;
+    var retryData = await _gasCall(url, init, timeoutMs, meta);
+    if (retryData && retryData.error === 'SESSION_INVALID') {
+      localStorage.removeItem(SESSION_KEY);
+      location.replace(PORTAL_URL);
+    }
+    return retryData;
+  }
+
+  // トークンを送っていないのにSESSION_INVALID＝本当に未ログイン。即送還
+  if (data && data.error === 'SESSION_INVALID' && !hasToken) {
+    localStorage.removeItem(SESSION_KEY);
+    location.replace(PORTAL_URL);
+    return data;
+  }
+
+  return data;
+}
+
+async function gasGet(params, meta) {
+  return await gasPost(params, meta);
+}
+
+async function gasPost(params, meta) { return serialAdapterCall(params, meta); }
+
+// ============================================================
+// タブ切り替え
+// ============================================================
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(function(b, i) {
+    b.classList.remove('active');
+    if (['shipping','return','search'][i] === tab) b.classList.add('active');
+  });
+  document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+  document.getElementById('tab-' + tab).classList.add('active');
+}
+
+// ============================================================
+// 商品マスタ読み込み
+// キャッシュがあれば即座に画面へ反映し（体感速度向上）、裏で最新データを取得して更新する
+// ============================================================
+var PM_CACHE_KEY = 'sa_test_v31_product_master_cache';
+
+async function loadProductMaster() {
+  try {
+    var raw = localStorage.getItem(PM_CACHE_KEY);
+    if (raw) {
+      var cached = JSON.parse(raw);
+      if (cached && cached.products) {
+        appState.products = cached.products;
+        buildMakerDropdown();
+      }
+    }
+  } catch(e) {}
+
+  try {
+    var res = await gasGet({ action: 'getProductMaster' });
+    if (res.success) {
+      appState.products = res.data;
+      buildMakerDropdown();
+      try {
+        localStorage.setItem(PM_CACHE_KEY, JSON.stringify({ products: res.data, savedAt: Date.now() }));
+      } catch(e) {}
+    } else {
+      showToast('商品マスタ読込失敗: ' + res.message, 'error');
+    }
+  } catch(e) {
+    showToast('商品マスタ読込エラー: ' + _gasErrorMessage(e), 'error');
+  }
+}
+
+function buildMakerDropdown() {
+  var makers = {};
+  appState.products.forEach(function(p) { if (p.maker) makers[p.maker] = true; });
+  var sel = document.getElementById('sc-maker');
+  sel.innerHTML = '<option value="">（メーカー）</option>';
+  Object.keys(makers).sort().forEach(function(m) {
+    sel.innerHTML += '<option value="' + esc(m) + '">' + esc(m) + '</option>';
+  });
+}
+
+function onMakerChange() {
+  var maker = document.getElementById('sc-maker').value;
+  // シリーズを絞り込む
+  var sel = document.getElementById('sc-series');
+  sel.innerHTML = '<option value="">（シリーズ）</option>';
+  var series = {};
+  appState.products.forEach(function(p) {
+    if (!maker || p.maker === maker) { if (p.series) series[p.series] = true; }
+  });
+  Object.keys(series).sort().forEach(function(s) {
+    sel.innerHTML += '<option value="' + esc(s) + '">' + esc(s) + '</option>';
+  });
+  // サイズ・品名をリセット
+  document.getElementById('sc-size').innerHTML        = '<option value="">（サイズ）</option>';
+  document.getElementById('sc-product-sel').innerHTML = '<option value="">（品名）</option>';
+}
+
+function onSeriesChange() {
+  var maker  = document.getElementById('sc-maker').value;
+  var series = document.getElementById('sc-series').value;
+  // サイズを絞り込む
+  var sel = document.getElementById('sc-size');
+  sel.innerHTML = '<option value="">（サイズ）</option>';
+  var sizes = {};
+  appState.products.forEach(function(p) {
+    if ((!maker  || p.maker  === maker) &&
+        (!series || p.series === series)) {
+      if (p.size) sizes[p.size] = true;
+    }
+  });
+  Object.keys(sizes).sort().forEach(function(s) {
+    sel.innerHTML += '<option value="' + esc(s) + '">' + esc(s) + '</option>';
+  });
+  // 品名をリセット
+  document.getElementById('sc-product-sel').innerHTML = '<option value="">（品名）</option>';
+}
+
+function onSizeChange() {
+  var maker  = document.getElementById('sc-maker').value;
+  var series = document.getElementById('sc-series').value;
+  var size   = document.getElementById('sc-size').value;
+  // 品名（商品）を絞り込む
+  var sel = document.getElementById('sc-product-sel');
+  sel.innerHTML = '<option value="">（品名）</option>';
+  var prods = appState.products.filter(function(p) {
+    return (!maker  || p.maker  === maker) &&
+           (!series || p.series === series) &&
+           (!size   || p.size   === size);
+  });
+  prods.sort(function(a, b) { return a.name.localeCompare(b.name, 'ja'); });
+  prods.forEach(function(p) {
+    sel.innerHTML += '<option value="' + esc(p.code) + '">' + esc(p.name) + '</option>';
+  });
+}
+
+// ============================================================
+// 商品候補フィルタ・選択
+// ============================================================
+// 半角全角・大文字小文字・スペース正規化（NFKC = 全角英数→半角、半角カナ→全角カナ）
+function normalizeText(str) {
+  return String(str || '').normalize('NFKC').toLowerCase().replace(/[\s　]+/g, ' ').trim();
+}
+// スペース区切りAND部分一致
+function matchesQuery(text, queryNorm) {
+  var t = normalizeText(text);
+  var terms = queryNorm.split(' ').filter(Boolean);
+  return terms.length > 0 && terms.every(function(term) { return t.indexOf(term) >= 0; });
+}
+
+function filterProducts(tab) {
+  var raw          = document.getElementById(tab + '-product-search').value;
+  var q            = normalizeText(raw);
+  var candidatesEl = document.getElementById(tab + '-product-candidates');
+
+  if (!q) { candidatesEl.style.display = 'none'; return; }
+
+  // JAN or 商品コード完全一致 → 自動選択
+  var exact = appState.products.find(function(p) {
+    return normalizeText(p.jan) === q || normalizeText(p.code) === q;
+  });
+  if (exact) {
+    selectProduct(tab, exact);
+    document.getElementById(tab + '-product-search').value = '';
+    candidatesEl.style.display = 'none';
+    return;
+  }
+
+  // 商品名・商品コード・メーカーをAND部分一致で検索
+  var filtered = appState.products.filter(function(p) {
+    return matchesQuery(p.name, q) || matchesQuery(p.code, q) || matchesQuery(p.maker, q);
+  }).slice(0, 20);
+
+  if (filtered.length === 0) { candidatesEl.style.display = 'none'; return; }
+
+  candidatesEl.innerHTML = filtered.map(function(p) {
+    var sub = [p.code, p.maker].filter(Boolean).join(' / ');
+    return '<div class="product-candidate-item" data-tab="' + esc(tab) + '" data-code="' + esc(p.code) + '">' +
+      '<span class="prod-name">' + esc(p.name) + '</span>' +
+      (sub ? '<span style="font-size:11px;color:#aaa;margin-left:8px;">' + esc(sub) + '</span>' : '') +
+    '</div>';
+  }).join('');
+  candidatesEl.querySelectorAll('.product-candidate-item').forEach(function(el) {
+    el.addEventListener('click', function() {
+      selectProductFromList(el.dataset.tab, el.dataset.code);
+    });
+  });
+  candidatesEl.style.display = 'block';
+}
+
+function selectProductFromList(tab, code) {
+  var p = appState.products.find(function(x) { return x.code === code; });
+  if (p) {
+    selectProduct(tab, p);
+    document.getElementById(tab + '-product-search').value = '';
+    document.getElementById(tab + '-product-candidates').style.display = 'none';
+  }
+}
+
+function selectProduct(tab, product) {
+  if (tab === 'sh') appState.shSelectedProduct = product;
+  else              appState.rtSelectedProduct = product;
+
+  var stKey   = normalizeSerialType(product.serialType);  // 'qr' | 'barcode' | 'manual' | ''
+  var stLabel = (stKey === 'qr')      ? '▦ QR'
+              : (stKey === 'manual')  ? '✍ 手入力'
+              : (stKey === 'barcode') ? '📊 バーコード'
+              : '';
+
+  var label = product.name + '（' + product.code + '）';
+  if (product.maker) label += ' / ' + product.maker;
+  if (stLabel)       label += ' ｜ ' + stLabel;
+  var el = document.getElementById(tab + '-selected-product');
+  el.textContent = label;
+  el.className   = 'selected-product-bar filled';
+
+  // シリアル種別が「手入力」の商品は、⑤バーコードスキャンボタンを隠して手入力へ誘導する
+  applySerialTypeUI(tab, stKey);
+
+  showToast('商品選択: ' + product.name + (stKey === 'manual' ? '（手入力）' : ''), 'success');
+}
+
+// シリアル種別「バーコード/QR/手入力/空欄」を内部キーに正規化する。
+// 表記ゆれに強くするため部分一致で判定（例「2次元/QRコード」→qr、「手書き/手動/なし」→manual）。
+function normalizeSerialType(v) {
+  var s = String(v || '').normalize('NFKC').trim();
+  if (!s) return '';
+  var u = s.toUpperCase();
+  if (u.indexOf('QR') >= 0) return 'qr';
+  if (s.indexOf('手') >= 0 || s.indexOf('なし') >= 0 || s.indexOf('無') >= 0 ||
+      u.indexOf('MANUAL') >= 0 || u.indexOf('NONE') >= 0) return 'manual';
+  return 'barcode';  // 「バーコード」「BARCODE」その他 → バーコード（未設定は '' のまま既定動作）
+}
+
+// 種別に応じてタブ内の⑤バーコードボタン表示を切替える（手入力=非表示）
+function applySerialTypeUI(tab, stKey) {
+  var isManual = (stKey === 'manual');
+  ['single', 'seq'].forEach(function(kind) {
+    var btn = document.getElementById(tab + '-' + kind + '-scan-btn');
+    if (btn) btn.style.display = isManual ? 'none' : '';
+  });
+  var or = document.getElementById(tab + '-seq-or');
+  if (or) or.style.display = isManual ? 'none' : '';
+}
+
+// ============================================================
+// 登録方法切り替え
+// ============================================================
+function switchMethod(tab, method) {
+  document.getElementById(tab + '-single-area').style.display = (method === 'single') ? 'block' : 'none';
+  document.getElementById(tab + '-seq-area').style.display    = (method === 'seq')    ? 'block' : 'none';
+}
+
+// ============================================================
+// 単独：シリアル追加・削除
+// ============================================================
+function addSingleSerial(tab) {
+  var inputEl = document.getElementById(tab + '-single-serial');
+  var serial  = inputEl.value.trim();
+  if (!serial) { showToast('シリアルNoを入力してください', 'warn'); return; }
+  var list = (tab === 'sh') ? appState.shSingleSerials : appState.rtSingleSerials;
+  if (list.indexOf(serial) >= 0) { showToast('既に追加済みです: ' + serial, 'warn'); inputEl.value = ''; return; }
+  list.push(serial);
+  inputEl.value = '';
+  renderSingleList(tab);
+  inputEl.focus();
+}
+
+function renderSingleList(tab) {
+  var list    = (tab === 'sh') ? appState.shSingleSerials : appState.rtSingleSerials;
+  var listEl  = document.getElementById(tab + '-single-list');
+  var countEl = document.getElementById(tab + '-single-count');
+  var btnEl   = document.getElementById(tab + '-single-register-btn');
+  countEl.textContent = list.length + '件';
+  if (list.length === 0) {
+    listEl.innerHTML = '<div class="serial-list-empty">シリアルを追加してください</div>';
+    btnEl.disabled = true;
+    return;
+  }
+  btnEl.disabled = false;
+  listEl.innerHTML = list.map(function(s, idx) {
+    return '<div class="serial-item"><span class="serial-no">' + esc(s) + '</span>' +
+      '<button class="del-btn" onclick="removeSingleSerial(\'' + tab + '\',' + idx + ')">×</button></div>';
+  }).join('');
+}
+
+function removeSingleSerial(tab, idx) {
+  ((tab === 'sh') ? appState.shSingleSerials : appState.rtSingleSerials).splice(idx, 1);
+  renderSingleList(tab);
+}
+
+function clearSingleList(tab) {
+  if (tab === 'sh') appState.shSingleSerials = []; else appState.rtSingleSerials = [];
+  renderSingleList(tab);
+}
+
+// ============================================================
+// 連番：生成・削除
+// ============================================================
+function generateSeq(tab) {
+  var start = document.getElementById(tab + '-seq-start').value.trim();
+  var qty   = parseInt(document.getElementById(tab + '-seq-qty').value);
+  if (!start)          { showToast('開始シリアルを入力してください', 'warn'); return; }
+  if (!qty || qty < 1) { showToast('連番数を入力してください', 'warn'); return; }
+  if (qty > 500)       { showToast('連番数は500以下にしてください', 'warn'); return; }
+
+  var match = start.match(/^(.*?)(\d+)$/);
+  if (!match) { showToast('開始シリアルの末尾に数字が必要です', 'error'); return; }
+
+  var prefix   = match[1];
+  var numPart  = match[2];
+  var digits   = numPart.length;
+  var startNum = parseInt(numPart, 10);
+  var list     = (tab === 'sh') ? appState.shSeqSerials : appState.rtSeqSerials;
+  var existing = {};
+  list.forEach(function(s) { existing[s] = true; });
+
+  var added = 0;
+  for (var i = 0; i < qty; i++) {
+    var numStr = String(startNum + i);
+    while (numStr.length < digits) numStr = '0' + numStr;
+    var serial = prefix + numStr;
+    if (!existing[serial]) { list.push(serial); existing[serial] = true; added++; }
+  }
+  renderSeqList(tab);
+  showToast(added + '件の連番を作成しました', 'success');
+}
+
+function renderSeqList(tab) {
+  var list    = (tab === 'sh') ? appState.shSeqSerials : appState.rtSeqSerials;
+  var listEl  = document.getElementById(tab + '-seq-list');
+  var countEl = document.getElementById(tab + '-seq-count');
+  var btnEl   = document.getElementById(tab + '-seq-register-btn');
+  countEl.textContent = list.length + '件';
+  if (list.length === 0) {
+    listEl.innerHTML = '<div class="serial-list-empty">連番作成してください</div>';
+    btnEl.disabled = true;
+    return;
+  }
+  btnEl.disabled = false;
+  listEl.innerHTML = list.map(function(s, idx) {
+    return '<div class="serial-item"><span class="serial-no">' + esc(s) + '</span>' +
+      '<button class="del-btn" onclick="removeSeqSerial(\'' + tab + '\',' + idx + ')">×</button></div>';
+  }).join('');
+}
+
+function removeSeqSerial(tab, idx) {
+  ((tab === 'sh') ? appState.shSeqSerials : appState.rtSeqSerials).splice(idx, 1);
+  renderSeqList(tab);
+}
+
+function clearSeqList(tab) {
+  if (tab === 'sh') appState.shSeqSerials = []; else appState.rtSeqSerials = [];
+  renderSeqList(tab);
+}
+
+// ============================================================
+// 出荷登録：実行
+// ============================================================
+async function doRegisterShipping(method) {
+  var product  = appState.shSelectedProduct;
+  var customer = document.getElementById('sh-customer').value.trim();
+  var shipDate = document.getElementById('sh-date').value;
+  if (!product)  { showToast('商品を選択してください', 'error'); return; }
+  if (!customer) { showToast('得意先を入力してください', 'error'); return; }
+  if (!shipDate) { showToast('出荷日を入力してください', 'error'); return; }
+  var serials = (method === 'single') ? appState.shSingleSerials : appState.shSeqSerials;
+  if (serials.length === 0) { showToast('シリアルNoを追加してください', 'error'); return; }
+
+  if (!confirm(product.name + '\n得意先: ' + customer + '\n' + serials.length + '件を出荷登録しますか？')) return;
+
+  showLoading(true);
+  try {
+    // retryMeta.retried: このリクエストが通信エラーで自動再送された場合にtrueになる。
+    // registerShippingは同一シリアルを重複スキップする設計のため、再送で
+    // 「実は自分の直前の送信がすでに成功していた」ケースが起こりうる
+    // （通信エラー表示 → 実は登録済み、の温床）。この場合はスキップを
+    // 「他の人がすでに出荷登録済み」と誤解させる取消・返品への誘導をしない
+    var retryMeta = { retried: false };
+    var res = await gasPost({
+      action:       'registerShipping',
+      productCode:  product.code,
+      productName:  product.name,
+      jan:          product.jan,
+      shipDate:     shipDate.replace(/-/g, '/'),
+      customer:     customer,
+      method:       (method === 'single') ? '単独' : '連番',
+      serials:      serials,
+      registeredBy: appState.userName || '',
+      maker:        product.maker  || '',
+      series:       product.series || '',
+      size:         product.size   || ''
+    }, retryMeta);
+    if (res.success) {
+
+      // ── スキップなし: 全クリアして終了 ──────────────────────
+      if (res.skipped === 0) {
+        showToast(res.registered + '件登録完了', 'success');
+        if (method === 'single') { appState.shSingleSerials = []; renderSingleList('sh'); }
+        else                     { appState.shSeqSerials = [];    renderSeqList('sh'); }
+        return;
+      }
+
+      // 登録済み分のみリストから除去・スキップ分は保持（取消後に再登録できるよう）
+      var skippedSet = {};
+      res.skippedSerials.forEach(function(s) { skippedSet[s] = true; });
+      if (method === 'single') {
+        appState.shSingleSerials = appState.shSingleSerials.filter(function(s) { return skippedSet[s]; });
+        renderSingleList('sh');
+      } else {
+        appState.shSeqSerials = appState.shSeqSerials.filter(function(s) { return skippedSet[s]; });
+        renderSeqList('sh');
+      }
+
+      // ── 通信リトライが起きた上でのスキップ: おそらく自分の直前の送信が
+      //    通信エラーの陰で実は成功していただけ。取消・返品への誘導はしない ──
+      if (retryMeta.retried) {
+        var toastMsgRetried = res.registered > 0
+          ? res.registered + '件登録完了（' + res.skipped + '件は通信エラー時にすでに登録済みでした）'
+          : res.skipped + '件は通信エラー時にすでに登録済みでした（再登録不要です）';
+        showToast(toastMsgRetried, res.registered > 0 ? 'success' : 'success');
+        return;
+      }
+
+      // ── 一部/全件スキップあり（通常経路＝他者による既存出荷の可能性） ──────
+      var toastMsg = res.registered > 0
+        ? res.registered + '件登録完了（' + res.skipped + '件は出荷中のためスキップ）'
+        : res.skipped + '件すべてが出荷中のためスキップされました';
+      showToast(toastMsg, res.registered > 0 ? 'success' : 'warn');
+
+      // トースト表示後に確認ダイアログ
+      setTimeout(function() {
+        var list    = res.skippedSerials;
+        var preview = list.length <= 5
+          ? list.join('\n')
+          : list.slice(0, 3).join('\n') + '\n…他 ' + (list.length - 3) + '件';
+        var msg2 =
+          'スキップした ' + res.skipped + '件はすでに出荷中です:\n\n' +
+          preview + '\n\n' +
+          '取消・返品処理へ移動しますか？\n' +
+          '（出荷タブのシリアルリストはそのまま保持されます）';
+        if (confirm(msg2)) {
+          goToReturnFromShipping(res.skippedSerials);
+        }
+      }, 600);
+
+    } else {
+      showToast('登録失敗: ' + res.message, 'error');
+    }
+  } catch(e) {
+    showToast(_gasErrorMessage(e), 'error');
+  } finally {
+    showLoading(false);
+  }
+}
+
+// 出荷登録のスキップ分を返品・取消タブにセットして遷移
+function goToReturnFromShipping(skippedSerials) {
+  var product = appState.shSelectedProduct;
+  if (!product) return;
+
+  // 返品タブに商品をセット（出荷登録と同じ商品）
+  selectProduct('rt', product);
+
+  // スキップされたシリアルを返品リストに追加（重複除外）
+  skippedSerials.forEach(function(serial) {
+    if (appState.rtSingleSerials.indexOf(serial) < 0) {
+      appState.rtSingleSerials.push(serial);
+    }
+  });
+  renderSingleList('rt');
+
+  // 単独モード・今日の日付をセット
+  document.querySelector('input[name="rt-method"][value="単独"]').checked = true;
+  switchMethod('rt', 'single');
+  document.getElementById('rt-date').value = todayStr();
+
+  // 返品・取消タブへ遷移
+  switchTab('return');
+  showToast('取消後、出荷タブに戻るとシリアルが残っています', 'success');
+}
+
+// ============================================================
+// 返品・取消：実行
+// ============================================================
+async function doRegisterReturn(method) {
+  var product    = appState.rtSelectedProduct;
+  var returnDate = document.getElementById('rt-date').value;
+  var kind       = document.querySelector('input[name="rt-kind"]:checked').value;
+  if (!product)    { showToast('商品を選択してください', 'error'); return; }
+  if (!returnDate) { showToast('返品日を入力してください', 'error'); return; }
+  var serials = (method === 'single') ? appState.rtSingleSerials : appState.rtSeqSerials;
+  if (serials.length === 0) { showToast('シリアルNoを追加してください', 'error'); return; }
+
+  var label = kind === '取消' ? '取消' : '返品';
+  if (!confirm(product.name + '\n' + serials.length + '件を' + label + '登録しますか？')) return;
+
+  showLoading(true);
+  try {
+    var res = await gasPost({
+      action:      'registerReturn',
+      productCode: product.code,
+      returnDate:  returnDate.replace(/-/g, '/'),
+      kind:        kind,
+      serials:     serials
+    });
+    if (res.success) {
+      var msg = res.updated + '件' + label + '完了';
+      if (res.skipped > 0) msg += '（' + res.skipped + '件は出荷中以外のためスキップ）';
+      showToast(msg, 'success');
+      if (method === 'single') { appState.rtSingleSerials = []; renderSingleList('rt'); }
+      else                     { appState.rtSeqSerials = [];    renderSeqList('rt'); }
+    } else {
+      showToast('登録失敗: ' + res.message, 'error');
+    }
+  } catch(e) {
+    showToast(_gasErrorMessage(e), 'error');
+  } finally {
+    showLoading(false);
+  }
+}
+
+// ============================================================
+// 検索
+// ============================================================
+function resetSearchConditions() {
+  var today = todayStr();
+  document.getElementById('sc-from').value             = today;
+  document.getElementById('sc-to').value               = today;
+  document.getElementById('sc-status-active').checked   = true;
+  document.getElementById('sc-status-returned').checked = true;
+  document.getElementById('sc-status-canceled').checked = false;
+  document.getElementById('sc-maker').value    = '';
+  document.getElementById('sc-series').innerHTML     = '<option value="">（シリーズ）</option>';
+  document.getElementById('sc-size').innerHTML       = '<option value="">（サイズ）</option>';
+  document.getElementById('sc-product-sel').innerHTML = '<option value="">（品名）</option>';
+  document.getElementById('sc-prod-name').value  = '';
+  document.getElementById('sc-serial').value     = '';
+  document.getElementById('sc-prod-code').value  = '';
+  document.getElementById('sc-result-header').textContent = '';
+  document.getElementById('sc-result-list').innerHTML     = '';
+}
+
+async function doSearch() {
+  var statuses = [];
+  if (document.getElementById('sc-status-active').checked)   statuses.push('出荷中');
+  if (document.getElementById('sc-status-returned').checked) statuses.push('返品済');
+  if (document.getElementById('sc-status-canceled').checked) statuses.push('取消');
+  if (statuses.length === 0) { showToast('状況を1つ以上選択してください', 'warn'); return; }
+
+  showLoading(true);
+  try {
+    var res = await gasGet({
+      action:      'search',
+      dateFrom:    document.getElementById('sc-from').value.replace(/-/g, '/'),
+      dateTo:      document.getElementById('sc-to').value.replace(/-/g, '/'),
+      statuses:    statuses,
+      maker:       document.getElementById('sc-maker').value,
+      series:      document.getElementById('sc-series').value,
+      size:        document.getElementById('sc-size').value,
+      productName: document.getElementById('sc-prod-name').value.trim(),
+      serialNo:    document.getElementById('sc-serial').value.trim(),
+      // 品名ドロップダウン選択を優先、なければテキスト入力の商品コード
+      productCode: document.getElementById('sc-product-sel').value ||
+                   document.getElementById('sc-prod-code').value.trim()
+    });
+    if (res.success) renderSearchResults(res.data, res.total);
+    else showToast('検索失敗: ' + res.message, 'error');
+  } catch(e) {
+    showToast(_gasErrorMessage(e), 'error');
+  } finally {
+    showLoading(false);
+  }
+}
+
+function renderSearchResults(data, total) {
+  appState.lastSearchResults = data;
+  document.getElementById('sc-result-header').textContent = data.length + '件表示（1ページ100件）';
+  var listEl = document.getElementById('sc-result-list');
+  if (total === 0) {
+    listEl.innerHTML = '<div style="padding:20px;text-align:center;color:#888;">該当なし</div>';
+    return;
+  }
+  var cls = { '出荷中': 'status-active', '返品済': 'status-returned', '取消': 'status-canceled' };
+  listEl.innerHTML = data.map(function(r, idx) {
+    var c = cls[r.status] || 'status-active';
+    return '<div class="search-result-item">' +
+      '<div class="sri-header">' +
+        '<span class="sri-name">' + esc(r.productName) + '</span>' +
+        '<span class="sri-status ' + c + '">' + esc(r.status) + '</span>' +
+      '</div>' +
+      '<div style="font-size:12px;color:#888;font-family:monospace;margin-top:3px;">' + esc(r.serial) + '</div>' +
+      '<div style="font-size:12px;color:#666;margin-top:2px;">' +
+        (r.shipDate ? esc(r.shipDate) : '—') + '　' +
+        (r.customer ? esc(r.customer) : '—') +
+      '</div>' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">' +
+        '<span style="font-size:12px;color:#999;">登録: ' + (r.registeredBy ? esc(r.registeredBy) : '—') + '</span>' +
+        (r.status === '出荷中'
+          ? '<button class="btn btn-orange" style="padding:3px 10px;font-size:12px;" onclick="goToReturn(' + idx + ')">返品へ</button>'
+          : '') +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function goToReturn(idx) {
+  var r = appState.lastSearchResults[idx];
+  if (!r) return;
+
+  // 商品マスタから商品情報を取得（なければ検索結果の情報で代用）
+  var product = appState.products.find(function(p) { return p.code === r.productCode; });
+  if (!product) {
+    product = { code: r.productCode, name: r.productName, jan: r.jan || '', maker: '', series: '', size: '' };
+  }
+
+  // 商品を返品タブにセット
+  selectProduct('rt', product);
+
+  // シリアルを単独リストに追加（重複は除外）
+  if (appState.rtSingleSerials.indexOf(r.serial) < 0) {
+    appState.rtSingleSerials.push(r.serial);
+    renderSingleList('rt');
+    showToast('返品タブに追加: ' + r.serial, 'success');
+  } else {
+    showToast('すでに返品リストにあります: ' + r.serial, 'warn');
+  }
+
+  // 単独モード・今日の日付をセット
+  document.querySelector('input[name="rt-method"][value="単独"]').checked = true;
+  switchMethod('rt', 'single');
+  document.getElementById('rt-date').value = todayStr();
+
+  // 返品・取消タブへ遷移
+  switchTab('return');
+}
+
+// ============================================================
+// バーコードスキャナー
+// ============================================================
+function openScanner(target) {
+  SCAN_TARGET    = target;
+  scanLastValue  = '';
+  scanLastTime   = 0;
+  scanScannedSet = new Set();  // スキャン済みセットをリセット
+  scanCandidate      = '';
+  scanCandidateCount = 0;
+  scanCandidateTime  = 0;
+  var isJan      = target.endsWith('-jan');
+  var isMulti    = target === 'sh-single-serial' || target === 'rt-single-serial';
+  scanMultiMode  = isMulti;
+  scanMultiCount = 0;
+  // モード切替はシリアル読取時のみ表示（JANは常にEAN固定）。
+  // 既定モードは選択商品のシリアル種別から自動判別（QR種別→QR、その他→バーコード）。
+  // 誤判別に備え、手動切替ボタン（scannerModeRow）は残す。
+  scanMode = 'barcode';
+  if (!isJan) {
+    var tab  = target.substring(0, 2);  // 'sh' or 'rt'
+    var prod = (tab === 'sh') ? appState.shSelectedProduct : appState.rtSelectedProduct;
+    if (prod && normalizeSerialType(prod.serialType) === 'qr') scanMode = 'qr';
+  }
+  document.getElementById('scannerModeRow').style.display = isJan ? 'none' : 'flex';
+  updateScanModeUI();
+  document.getElementById('scannerTitle').textContent = isJan
+    ? '商品JANコードをかざしてください'
+    : 'シリアルNoバーコードをかざしてください';
+  document.getElementById('scannerLiveResult').textContent = '— 認識待ち —';
+  var countEl = document.getElementById('scannerCount');
+  var doneBtn = document.getElementById('scannerDoneBtn');
+  if (isMulti) {
+    countEl.textContent  = 'スキャン済み 0件';
+    countEl.style.display = 'block';
+    doneBtn.style.display = 'inline-block';
+  } else {
+    countEl.style.display = 'none';
+    doneBtn.style.display = 'none';
+  }
+  document.getElementById('scannerOverlay').classList.add('active');
+  startScanner();
+}
+
+function startScanner() {
+  if (scannerActive) return;
+  document.getElementById('scannerContainer').innerHTML = '';
+  document.getElementById('scannerZoomRow').style.display = 'none';
+
+  // スキャン対象ごとに読み取るバーコード形式を絞る（総当たりを減らして高速化＝取りこぼし防止）
+  // ※ 実物ラベルの規格を実測で確定: シリアル=CODE128 と QR / JAN=EAN13（pyzbar解析・2026-06-13）
+  // ・JAN: EAN-13 / UPC-A / EAN-8 のみ
+  // ・シリアル: CODE-128 と QRコード（誤ってJANをかざした時の警告用にEAN-13だけ併用）
+  var F = Html5QrcodeSupportedFormats;
+  var isJan = SCAN_TARGET.endsWith('-jan');
+
+  // OS内蔵エンジン(BarcodeDetector)は使わずZXingに固定（experimentalFeaturesなし）。
+  //   iPhone(iOS18 Safari)で内蔵エンジンが有効になるとQR検出不可＆EAN-13先頭0落ちの不具合が出るため。
+  var scannerConfig = { verbose: false };
+  if (isJan) {
+    // JANスキャナーのみEAN/UPCに限定（シリアルのCODE128を商品コードに誤って拾わないため）
+    scannerConfig.formatsToSupport = [F.EAN_13, F.UPC_A, F.EAN_8];
+  }
+  // ⚠️ シリアルスキャナーは formatsToSupport を指定しない＝全フォーマット対応。
+  //   formatsToSupportでQR_CODEを明示してもライブラリ内のフィルタを通らずQRが読めない
+  //   事象が判明したため、QRが読めていた旧版(v2.8.1)同様に無指定に戻す（CODE128もQRも読める）。
+  codeReader = new Html5Qrcode('scannerContainer', scannerConfig);
+
+  // ===== カメラ設定 =====
+  // 両モードとも720p＋自動2倍ズームの良いカメラ設定にする。
+  //   ※QRモードでズームを切ると、小さいQRに近づきすぎてピントが合わない問題が出たため、
+  //     QRモードでもズームを使い「離れても大きく写る＝ピントが合う距離を保つ」。
+  //   QRの読取はZXing(JS)が苦手なので、QRモードでは別途jsQRを並行起動する。
+  var isQrMode = (!isJan && scanMode === 'qr');
+  var startConfig = {
+    fps: 24,
+    videoConstraints: {
+      facingMode: 'environment',
+      width:  { ideal: 1280 },
+      height: { ideal: 720 }
+    }
+  };
+
+  codeReader.start(
+    { facingMode: 'environment' },
+    startConfig,
+    function(decodedText, decodedResult) {
+      // 読み取れた規格名を取り出す（QRは形式チェックを免除するため）
+      var fmt = '';
+      try { fmt = decodedResult.result.format.formatName; } catch (e) {}
+      onScanResult(decodedText, fmt);
+    },
+    null  // フレームごとのエラーは無視
+  ).then(function() {
+    // 視覚ガイド（中央に合わせる目安）を映像の上に重ねる
+    var container = document.getElementById('scannerContainer');
+    if (container && !container.querySelector('.scan-guide')) {
+      var guide = document.createElement('div');
+      guide.className = 'scan-guide';
+      container.appendChild(guide);
+    }
+    if (container && !container.querySelector('.refocus-hint')) {
+      var rhint = document.createElement('div');
+      rhint.className = 'refocus-hint';
+      rhint.textContent = '👆 ピントが合わない時は画面をタップ';
+      container.appendChild(rhint);
+    }
+    // ズーム/ライトを初期化（両モードとも・ズーム2倍でピントの合う距離を確保）
+    setTimeout(setupScannerCamera, 400);
+    // QRモードはjsQR（QR専用エンジン）を並行起動。ZXingはQRが苦手なため
+    if (isQrMode) setTimeout(startQrJsScan, 500);
+  }).catch(function(err) {
+    showToast('カメラ起動エラー: ' + err, 'error');
+    closeScanner();
+  });
+
+  scannerActive = true;
+}
+
+// シリアルスキャンのモード切替（バーコード⇔QR）。カメラを止めて新設定で起動し直す
+function switchScanMode(mode) {
+  if (mode === scanMode || !scannerActive) return;
+  scanMode = mode;
+  updateScanModeUI();
+  document.getElementById('scannerLiveResult').textContent = '— 認識待ち —';
+  // ズーム/ライトのボタンは一旦隠す（再起動後に対応端末なら再表示）
+  document.getElementById('scannerZoomRow').style.display = 'none';
+  scannerActive = false;
+  stopQrJsScan();
+  if (codeReader) {
+    var r = codeReader;
+    codeReader = null;
+    r.stop().then(function() {
+      document.getElementById('scannerContainer').innerHTML = '';
+      startScanner();
+    }).catch(function() {
+      document.getElementById('scannerContainer').innerHTML = '';
+      startScanner();
+    });
+  } else {
+    startScanner();
+  }
+}
+
+// モード切替ボタンの見た目とヒント文を更新
+function updateScanModeUI() {
+  var bc = document.getElementById('scanModeBarcode');
+  var qr = document.getElementById('scanModeQr');
+  if (bc) bc.classList.toggle('active', scanMode === 'barcode');
+  if (qr) qr.classList.toggle('active', scanMode === 'qr');
+  var hint = document.getElementById('scannerHint');
+  if (hint) {
+    hint.textContent = (scanMode === 'qr')
+      ? '▦ QRコードを枠の中央に大きく映してください'
+      : '📏 中央に大きく・ピタッと止めて（テカる時は角度を変える）';
+  }
+}
+
+// QR専用エンジンjsQRで並行検出する（html5-qrcode内蔵のZXingはQRが苦手なため）。
+// CODE128/JANは従来どおりhtml5-qrcode(ZXing)が担当。iPhone Safariでも動作する。
+function startQrJsScan() {
+  try {
+    if (typeof jsQR === 'undefined') return;  // ライブラリ未ロード時はスキップ
+    var video = document.querySelector('#scannerContainer video');
+    if (!video) return;
+    if (!qrScanCanvas) {
+      qrScanCanvas = document.createElement('canvas');
+      qrScanCtx = qrScanCanvas.getContext('2d', { willReadFrequently: true });
+    }
+    qrDetectTimer = setInterval(function() {
+      try {
+        if (!scannerActive || video.readyState < 2) return;
+        var vw = video.videoWidth, vh = video.videoHeight;
+        if (!vw || !vh) return;
+        // 処理を軽くするため長辺を最大720pxに縮小（QRはこの解像度で十分読める）
+        var scale = Math.min(1, 720 / Math.max(vw, vh));
+        var cw = Math.round(vw * scale), ch = Math.round(vh * scale);
+        qrScanCanvas.width = cw; qrScanCanvas.height = ch;
+        qrScanCtx.drawImage(video, 0, 0, cw, ch);
+        var img = qrScanCtx.getImageData(0, 0, cw, ch);
+        var code = jsQR(img.data, cw, ch, { inversionAttempts: 'dontInvert' });
+        if (code && code.data) {
+          onScanResult(code.data, 'QR_CODE');  // QRは即確定（onScanResult内でQR優遇）
+        }
+      } catch (e) {}
+    }, 180);  // 1秒あたり約5回
+  } catch (e) {}
+}
+
+function stopQrJsScan() {
+  if (qrDetectTimer) { clearInterval(qrDetectTimer); qrDetectTimer = null; }
+}
+
+// カメラ操作（ズーム・ライト）の対応確認と初期化。非対応端末では各ボタンを隠す
+function setupScannerCamera() {
+  try {
+    var video = document.querySelector('#scannerContainer video');
+    if (!video || !video.srcObject) return;
+    var track = video.srcObject.getVideoTracks()[0];
+    if (!track || !track.getCapabilities) return;
+    scannerTrack = track;
+    var caps = track.getCapabilities();
+    var anyControl = false;
+
+    // ズーム（2倍以上に対応していれば表示し、初期2倍を適用）
+    var zoomOk = caps.zoom && caps.zoom.max && caps.zoom.max >= 2;
+    var zb = document.querySelectorAll('#scannerZoomRow button[data-z]');
+    for (var i = 0; i < zb.length; i++) zb[i].style.display = zoomOk ? 'inline-block' : 'none';
+    if (zoomOk) { anyControl = true; applyScannerZoom(2); }
+
+    // ライト（トーチ。暗所でシャッターが速くなりブレ低減。テカリ時は消す）
+    var torchOk = (caps.torch === true);
+    var tb = document.getElementById('scannerTorchBtn');
+    tb.style.display = torchOk ? 'inline-block' : 'none';
+    tb.classList.remove('active');
+    scannerTorchOn = false;
+    if (torchOk) anyControl = true;
+
+    document.getElementById('scannerZoomRow').style.display = anyControl ? 'flex' : 'none';
+  } catch (e) {}
+}
+
+function applyScannerZoom(z) {
+  try {
+    if (!scannerTrack) return;
+    var caps = scannerTrack.getCapabilities();
+    var zoom = Math.max(caps.zoom.min || 1, Math.min(z, caps.zoom.max));
+    scannerTrack.applyConstraints({ advanced: [{ zoom: zoom }] });
+    var btns = document.querySelectorAll('#scannerZoomRow button[data-z]');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].classList.toggle('active', Number(btns[i].getAttribute('data-z')) === z);
+    }
+  } catch (e) {}
+}
+
+// 画面タップで強制的にAF（オートフォーカス）を再実行させる。
+// SafariはfocusMode/focusDistanceを公開しないため直接マクロ指定はできないが、
+// ズームや解像度の制約値をわずかに変えて戻すと、内部でキャプチャ設定が
+// 再評価されオートフォーカスが再ハントされることが経験的に確認されている。
+function requestRefocus() {
+  if (refocusBusy) return;
+  var video = document.querySelector('#scannerContainer video');
+  var track = scannerTrack || (video && video.srcObject && video.srcObject.getVideoTracks()[0]);
+  if (!track) return;
+  refocusBusy = true;
+
+  // 視覚フィードバック（タップを受け付けたことを枠の色でお知らせ）
+  var guide = document.querySelector('#scannerContainer .scan-guide');
+  if (guide) {
+    guide.classList.add('refocus-flash');
+    setTimeout(function() { guide.classList.remove('refocus-flash'); }, 350);
+  }
+  if (navigator.vibrate) navigator.vibrate(30);
+
+  try {
+    var caps = track.getCapabilities ? track.getCapabilities() : {};
+    var settings = track.getSettings ? track.getSettings() : {};
+
+    // 手段1: ズーム対応端末はズーム値を微調整して戻す
+    if (caps.zoom && caps.zoom.max) {
+      var curZoom = settings.zoom || caps.zoom.min || 1;
+      var nudgedZoom = Math.min(caps.zoom.max, curZoom + 0.1);
+      track.applyConstraints({ advanced: [{ zoom: nudgedZoom }] }).then(function() {
+        setTimeout(function() {
+          track.applyConstraints({ advanced: [{ zoom: curZoom }] }).catch(function() {});
+        }, 180);
+      }).catch(function() {});
+    }
+
+    // 手段2: ズーム非対応端末でも効くよう、解像度を微調整して戻す
+    var curW = settings.width  || (video && video.videoWidth)  || 1280;
+    var curH = settings.height || (video && video.videoHeight) || 720;
+    track.applyConstraints({ width: { ideal: curW + 2 }, height: { ideal: curH + 2 } }).then(function() {
+      setTimeout(function() {
+        track.applyConstraints({ width: { ideal: curW }, height: { ideal: curH } }).catch(function() {});
+      }, 200);
+    }).catch(function() {});
+  } catch (e) {}
+
+  setTimeout(function() { refocusBusy = false; }, 500);
+}
+
+// ライトのオン/オフ切り替え
+function toggleScannerTorch() {
+  try {
+    if (!scannerTrack) return;
+    scannerTorchOn = !scannerTorchOn;
+    scannerTrack.applyConstraints({ advanced: [{ torch: scannerTorchOn }] });
+    document.getElementById('scannerTorchBtn').classList.toggle('active', scannerTorchOn);
+  } catch (e) {}
+}
+
+function closeScanner() {
+  // フラグを先に落として多重コールバックを防ぐ
+  scannerActive = false;
+  scanMultiMode = false;
+  stopQrJsScan();  // QR並行検出を停止
+  // ライトが点いていれば消してからトラック参照を破棄
+  try {
+    if (scannerTrack && scannerTorchOn) {
+      scannerTrack.applyConstraints({ advanced: [{ torch: false }] });
+    }
+  } catch (e) {}
+  scannerTrack = null;
+  scannerTorchOn = false;
+  document.getElementById('scannerZoomRow').style.display = 'none';
+  document.getElementById('scannerOverlay').classList.remove('active');
+  if (codeReader) {
+    var reader = codeReader;
+    codeReader = null;
+    // html5-qrcodeのstopは非同期 — 完了後にコンテナをクリア
+    reader.stop().then(function() {
+      document.getElementById('scannerContainer').innerHTML = '';
+    }).catch(function() {
+      document.getElementById('scannerContainer').innerHTML = '';
+    });
+  } else {
+    document.getElementById('scannerContainer').innerHTML = '';
+  }
+}
+
+function finishMultiScan() {
+  closeScanner();
+}
+
+// JANコード正規化（先頭0を除いた12桁に統一）
+// UPC-A(12桁)・EAN-13(13桁・先頭0あり) どちらで来ても同じ12桁になる
+function normalizeJan(val) {
+  var v = String(val || '').replace(/\D/g, '');  // 数字のみ抽出
+  // 13桁で先頭0の場合は12桁に変換（UPC-A互換）
+  if (v.length === 13 && v.charAt(0) === '0') return v.slice(1);
+  return v;
+}
+// janMatchは normalizeJan を使って比較
+function janMatch(dbVal, scanned) {
+  if (!dbVal || !scanned) return false;
+  return normalizeJan(dbVal) === normalizeJan(scanned);
+}
+
+function playBeep() {
+  try {
+    var ctx  = new (window.AudioContext || window.webkitAudioContext)();
+    var gain = ctx.createGain();
+    gain.connect(ctx.destination);
+    // 1音目（高め・短め）
+    var o1 = ctx.createOscillator();
+    o1.connect(gain);
+    o1.type = 'sine';
+    o1.frequency.value = 1046;  // C6
+    gain.gain.setValueAtTime(0.5, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+    o1.start(ctx.currentTime);
+    o1.stop(ctx.currentTime + 0.18);
+  } catch(e) {}
+}
+
+function playErrorBeep() {
+  try {
+    var ctx  = new (window.AudioContext || window.webkitAudioContext)();
+    var gain = ctx.createGain();
+    gain.connect(ctx.destination);
+    var o1 = ctx.createOscillator();
+    o1.connect(gain);
+    o1.type = 'square';
+    o1.frequency.value = 220;  // A3（低め・エラー感）
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+    o1.start(ctx.currentTime);
+    o1.stop(ctx.currentTime + 0.35);
+  } catch(e) {}
+}
+
+// JANコード誤読時のエラーフィードバック（音 + バイブ + ライブ結果欄赤字 + トースト）
+function janErrorFeedback() {
+  playErrorBeep();
+  if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
+  var liveEl = document.getElementById('scannerLiveResult');
+  if (liveEl) {
+    liveEl.style.color = '#ff4444';
+    liveEl.textContent = '⚠ JANコードです！ シリアルNoを読み取ってください';
+    setTimeout(function() { liveEl.style.color = ''; }, 2500);
+  }
+  showToast('JANコードは登録できません', 'error');
+}
+
+// 誤読破棄時のフィードバック（形式不正の読み値を捨てたことを知らせる）
+function misreadFeedback() {
+  playErrorBeep();
+  if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
+  var liveEl = document.getElementById('scannerLiveResult');
+  if (liveEl) {
+    liveEl.style.color = '#ff4444';
+    liveEl.textContent = '⚠ 誤読を破棄しました。もう一度かざしてください';
+    setTimeout(function() { liveEl.style.color = ''; }, 2000);
+  }
+}
+
+// スキャン成功フィードバック（音 + バイブ + 画面フラッシュ）
+function scanFeedback() {
+  // 音
+  playBeep();
+  // バイブ（Android対応、iPhone非対応だがエラーにはならない）
+  if (navigator.vibrate) navigator.vibrate(80);
+  // 映像エリアを白くフラッシュ（iPhoneでのバイブ代替 + 視覚的確認）
+  var container = document.getElementById('scannerContainer');
+  if (container) {
+    var flash = document.createElement('div');
+    flash.style.cssText =
+      'position:absolute;inset:0;background:rgba(255,255,255,0.85);' +
+      'z-index:200;pointer-events:none;border-radius:4px;';
+    container.appendChild(flash);
+    setTimeout(function() {
+      flash.style.transition = 'opacity 0.25s';
+      flash.style.opacity = '0';
+      setTimeout(function() {
+        if (flash.parentNode) flash.parentNode.removeChild(flash);
+      }, 260);
+    }, 80);
+  }
+}
+
+function onScanResult(value, format) {
+  if (!value) return;
+  var now = Date.now();
+  // フォーマット名に "QR" を含めばQRコードとみなす（誤り訂正付きで誤読しない）
+  var isQr = String(format || '').toUpperCase().indexOf('QR') !== -1;
+
+  // ===== 誤読対策①: 同じ値が2フレーム連続で読めるまで確定しない =====
+  // ブレた1フレームの誤デコード（例: 6B2A442 →「6!2A.32」）をここで捨てる。
+  // ※ QRは検出頻度が低く1500ms以内に2連続が揃わない（＝永遠に確定しない）うえ、
+  //   誤り訂正付きで誤読しないため、QRに限り2フレーム確定をスキップし1回で即確定する。
+  if (!isQr) {
+    if (value !== scanCandidate || now - scanCandidateTime > 1500) {
+      scanCandidate      = value;
+      scanCandidateCount = 1;
+      scanCandidateTime  = now;
+      return;  // 1回目はまだ採用しない（次のフレームで同値なら確定）
+    }
+    scanCandidateCount++;
+    scanCandidateTime = now;
+  }
+
+  // 確定済み値の連続フレーム多重検知防止（500ms以内の同値は処理しない）
+  if (value === scanLastValue && now - scanLastTime < 500) return;
+  scanLastValue = value;
+  scanLastTime  = now;
+
+  // ========== JANコード（1件でモーダルを閉じる） ==========
+  if (SCAN_TARGET === 'sh-jan' || SCAN_TARGET === 'rt-jan') {
+    scanFeedback();
+    closeScanner();
+    var tab = SCAN_TARGET === 'sh-jan' ? 'sh' : 'rt';
+    // UPC-A(12桁)とJAN(13桁・先頭0)の差異を吸収して検索
+    var p   = appState.products.find(function(x) { return janMatch(x.jan, value) || janMatch(x.code, value); });
+    if (p) selectProduct(tab, p);
+    else   showToast('商品が見つかりません: ' + value, 'error');
+    return;
+  }
+
+  // ===== 誤読対策②: シリアルNo形式チェック =====
+  // 英数字とハイフン以外の文字を含む値（URL等の異なる形式）は誤読・誤スキャンとして破棄
+  // （13桁数字のJANはこの後の分岐で警告を出す）。
+  // QRシリアルの実際の書式は確認済み（例: LA-E-2008944）でこの形式に適合するため、
+  // QRも含めて全フォーマットでチェックする（v2.9.3〜v2.9.7時点ではQRのみ免除していたが復元）。
+  if (!SERIAL_PATTERN.test(value)) {
+    misreadFeedback();
+    return;
+  }
+
+  // ========== シリアルNo 連続スキャンモード ==========
+  if (scanMultiMode) {
+    // JANコード（13桁の数字のみ）は弾く
+    if (/^\d{13}$/.test(value)) {
+      janErrorFeedback();
+      return;
+    }
+    // 既にスキャン済みの値は無視（同バーコードの再読み込み防止）
+    if (scanScannedSet.has(value)) {
+      document.getElementById('scannerLiveResult').textContent = '⚠ スキャン済み: ' + value;
+      return;
+    }
+    scanFeedback();
+    var inputEl = document.getElementById(SCAN_TARGET);
+    if (inputEl) {
+      inputEl.value = value;
+      if      (SCAN_TARGET === 'sh-single-serial') addSingleSerial('sh');
+      else if (SCAN_TARGET === 'rt-single-serial') addSingleSerial('rt');
+    }
+    scanScannedSet.add(value);  // スキャン済みとして記録
+    scanMultiCount++;
+    document.getElementById('scannerCount').textContent = 'スキャン済み ' + scanMultiCount + '件';
+    document.getElementById('scannerLiveResult').textContent = '✓ ' + value;
+    return;  // モーダルを閉じない
+  }
+
+  // ========== シリアルNo 通常モード（連番開始など） ==========
+  // JANコード（13桁の数字のみ）は弾く
+  if (/^\d{13}$/.test(value)) {
+    janErrorFeedback();
+    return;
+  }
+  scanFeedback();
+  closeScanner();
+  var inputEl2 = document.getElementById(SCAN_TARGET);
+  if (inputEl2) {
+    inputEl2.value = value;
+    showToast('開始シリアルをセットしました: ' + value, 'success');
+  }
+}
+
+// ============================================================
+// ユーティリティ
+// ============================================================
+function todayStr() {
+  var d   = new Date();
+  var y   = d.getFullYear();
+  var m   = String(d.getMonth() + 1).padStart(2, '0');
+  var day = String(d.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + day;
+}
+
+function esc(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+var toastTimer;
+function showToast(msg, type) {
+  var el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className   = 'toast ' + (type || '');
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function() { el.classList.remove('show'); }, 3000);
+}
+
+function showLoading(show) {
+  document.getElementById('loadingOverlay').className = 'loading-overlay' + (show ? ' active' : '');
+  if (!show) document.getElementById('loadingMsg').textContent = '';
+}
+</script>
+<div style="padding:16px;background:#fff3cc">検証Supabase専用・本番切替なし <button onclick="serialNextPage()">次の100件</button><button onclick="serialCsvDownload()">月別CSV</button><button onclick="serialFullRun('import')">実原票を検証DBへ取込</button><button onclick="serialFullRun('csv')">CSV互換を照合</button><button onclick="serialResolvePending()">未確認操作を確認</button><pre id="serial-proof"></pre></div></body>
+</html>
