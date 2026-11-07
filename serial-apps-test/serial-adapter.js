@@ -4,6 +4,7 @@ function serialSession(){try{return JSON.parse(localStorage.getItem('bf_session'
 function serialDatabase(){if(!serialDb){const c=window.SERIAL_TEST_CONFIG;serialDb=new SerialClient({...c,session:serialSession,issueToken:async token=>{const r=await fetch(c.issuer,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:'serialIssueDbToken',session_token:token})});return r.json();}});}return serialDb;}
 function serialPendingKey(){return 'sa_test_v31_pending:'+serialSession()?.user_id;}
 async function serialAdapterCall(p,meta){
+ if(window.serialRecoveryUseLegacy&&window.serialLegacyAdapterCall)return window.serialLegacyAdapterCall(p);
  const db=serialDatabase();
  if(p.action==='getProductMaster')return {success:true,data:await db.rpc('products',{})};
  if(p.action==='search'){
@@ -12,7 +13,8 @@ async function serialAdapterCall(p,meta){
  }
  if(!['registerShipping','registerReturn'].includes(p.action))throw Error('TEST_ACTION_NOT_ALLOWED');
  const kind=p.action==='registerShipping'?'ship':p.kind==='取消'?'cancel':'return';
- const payload={productCode:p.productCode,serials:p.serials,date:p.shipDate||p.returnDate,method:p.method,customer:p.customer};
+ const control=await db.rpc('control',{});if(control.writer!=='db')throw Error('切替中のため保存できません');
+ const payload={writer_epoch:control.epoch,productCode:p.productCode,serials:p.serials,date:p.shipDate||p.returnDate,method:p.method,customer:p.customer};
  const clean=JSON.parse(JSON.stringify(payload)),body=JSON.stringify({kind,payload:clean});
  let pending=JSON.parse(sessionStorage.getItem(serialPendingKey())||'null');
  if(pending&&pending.body!==body)throw Error('未確認の操作があります。「未確認操作を確認」を押してください');

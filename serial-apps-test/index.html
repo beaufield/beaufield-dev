@@ -793,7 +793,7 @@ select:focus { border-color: #2a6acc; }
 const GAS_URL = window.SERIAL_TEST_CONFIG.issuer;
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 const SESSION_KEY = 'bf_session';
-const APP_VERSION = 'v3.1.1-test';
+const APP_VERSION = 'v3.2.0-test';
 document.getElementById('versionBar').textContent = 'HTML ' + APP_VERSION;
 document.getElementById('versionLabel').textContent = 'HTML ' + APP_VERSION;
 
@@ -1038,7 +1038,7 @@ function switchTab(tab) {
 // 商品マスタ読み込み
 // キャッシュがあれば即座に画面へ反映し（体感速度向上）、裏で最新データを取得して更新する
 // ============================================================
-var PM_CACHE_KEY = 'sa_test_v31_product_master_cache';
+var PM_CACHE_KEY = 'sa_test_v32_product_master_cache';
 
 async function loadProductMaster() {
   try {
@@ -2179,5 +2179,5 @@ function showLoading(show) {
   if (!show) document.getElementById('loadingMsg').textContent = '';
 }
 </script>
-<div style="padding:16px;background:#fff3cc">検証Supabase専用・本番切替なし <button onclick="serialNextPage()">次の100件</button><button onclick="serialCsvDownload()">月別CSV</button><button onclick="serialFullRun('import')">実原票を検証DBへ取込</button><button onclick="serialFullRun('csv')">CSV互換を照合</button><button onclick="serialResolvePending()">未確認操作を確認</button><pre id="serial-proof"></pre></div></body>
+<div style="padding:16px;background:#fff3cc">検証Supabase専用・本番切替なし <button onclick="serialNextPage()">次の100件</button><button onclick="serialCsvDownload()">月別CSV</button><button onclick="serialFullRun('import')">実原票を検証DBへ取込</button><button onclick="serialFullRun('csv')">CSV互換を照合</button><button onclick="serialResolvePending()">未確認操作を確認</button><pre id="serial-proof"></pre></div><script src="serial-drill.js"></script></body>
 </html>
