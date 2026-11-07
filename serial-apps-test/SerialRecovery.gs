@@ -38,14 +38,15 @@ function rcLegacy_(p,jwt){
  throw Error('LEGACY_ACTION_NOT_ALLOWED');
 }
 function rcHandle_(p){try{
- const jwt=sxAdmin_(p);if(p.mode==='close'){_PROPS.setProperty('SERIAL_DR_OPEN','false');return jsonResponse({success:true,legacy_closed:true});}
+ let jwt=sxAdmin_(p);if(p.mode==='close'){_PROPS.setProperty('SERIAL_DR_OPEN','false');return jsonResponse({success:true,legacy_closed:true});}
  if(p.mode==='legacy')return jsonResponse(rcLegacy_(p.params||{},jwt));
  if(p.mode!=='cutback')throw Error('UNKNOWN_RECOVERY_MODE');
- const exported=rcExport_();const name='DR-CUTBACK-'+Utilities.getUuid().slice(0,8),q={action:'registerShipping',productCode:'DRTEST-20261107',productName:'検証専用_負荷復元',jan:'0000000000000',maker:'検証専用',series:'検証',size:'1',serials:[name],shipDate:Utilities.formatDate(new Date(),'Asia/Tokyo','yyyy/MM/dd'),customer:'検証専用',method:'単独',registeredBy:'検証専用'};
+ const exported=rcExport_();jwt=sxAdmin_(p);const name='DR-CUTBACK-'+Utilities.getUuid().slice(0,8),q={action:'registerShipping',productCode:'DRTEST-20261107',productName:'検証専用_負荷復元',jan:'0000000000000',maker:'検証専用',series:'検証',size:'1',serials:[name],shipDate:Utilities.formatDate(new Date(),'Asia/Tokyo','yyyy/MM/dd'),customer:'検証専用',method:'単独',registeredBy:'検証専用'};
  const first=rcLegacy_(q,jwt),again=rcLegacy_(q,jwt),returned=rcLegacy_({action:'registerReturn',productCode:q.productCode,serials:[name],returnDate:q.shipDate,kind:'返品'},jwt),reship=rcLegacy_(q,jwt);
  const read=rcLegacy_({action:'search',productCode:q.productCode,serialNo:name,statuses:[]},jwt);
  const success=first.registered===1&&again.registered===0&&again.skipped===1&&returned.updated===1&&reship.registered===1&&read.success&&read.total===2;
- return jsonResponse({success,exported,legacy_write:{registered:first.registered,retry_registered:again.registered,retry_skipped:again.skipped,returned:returned.updated,reship:reship.registered,readback_rows:read.total},source_sheets_written:false,isolated_sheet_only:true});
+ let archived=false;if(success){try{DriveApp.getFileById(rcSheetId_()).setTrashed(true);_PROPS.deleteProperty('SERIAL_DR_SHEET');_PROPS.deleteProperty('SERIAL_DR_OPEN');archived=true;}catch(_){_PROPS.setProperty('SERIAL_DR_OPEN','false');}}
+ return jsonResponse({success,isolated_sheet_trashed:archived,exported,legacy_write:{registered:first.registered,retry_registered:again.registered,retry_skipped:again.skipped,returned:returned.updated,reship:reship.registered,readback_rows:read.total},source_sheets_written:false,isolated_sheet_only:true});
  }catch(e){return jsonResponse({success:false,error:e.message});}}
 
 var RC_COL = {
