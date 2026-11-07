@@ -785,7 +785,7 @@ select:focus { border-color: #2a6acc; }
 <!-- jsQR（QRコード専用エンジン。html5-qrcode内蔵のZXingがQR苦手なため併用。iPhone Safariでも動作） -->
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js" integrity="sha384-b5Ya4Bq3qCyz39m2ISh+4DxjAIljdeFwK/BsXLuj9gugaNwAcj/ia15fxNZL9Nlx" crossorigin="anonymous"></script>
 
-<script src="serial-config.js"></script><script src="serial-client.js"></script><script src="serial-adapter.js"></script>
+<script src="serial-config.js?build=b93ab77f5aee"></script><script src="serial-client.js?build=e3b56b1ebe39"></script><script src="serial-adapter.js?build=562fcd7675ed"></script>
 <script>
 // ============================================================
 // 設定
@@ -793,7 +793,7 @@ select:focus { border-color: #2a6acc; }
 const GAS_URL = window.SERIAL_TEST_CONFIG.issuer;
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
 const SESSION_KEY = 'bf_session';
-const APP_VERSION = 'v3.2.1-test';
+const APP_VERSION = 'v3.2.2-test';
 document.getElementById('versionBar').textContent = 'HTML ' + APP_VERSION;
 document.getElementById('versionLabel').textContent = 'HTML ' + APP_VERSION;
 
@@ -2179,5 +2179,5 @@ function showLoading(show) {
   if (!show) document.getElementById('loadingMsg').textContent = '';
 }
 </script>
-<div style="padding:16px;background:#fff3cc">検証Supabase専用・本番切替なし <button onclick="serialNextPage()">次の100件</button><button onclick="serialCsvDownload()">月別CSV</button><button onclick="serialFullRun('import')">実原票を検証DBへ取込</button><button onclick="serialFullRun('csv')">CSV互換を照合</button><button onclick="serialResolvePending()">未確認操作を確認</button><pre id="serial-proof"></pre></div><script src="serial-drill.js"></script></body>
+<div style="padding:16px;background:#fff3cc">検証Supabase専用・本番切替なし <button onclick="serialNextPage()">次の100件</button><button onclick="serialCsvDownload()">月別CSV</button><button onclick="serialFullRun('import')">実原票を検証DBへ取込</button><button onclick="serialFullRun('csv')">CSV互換を照合</button><button onclick="serialResolvePending()">未確認操作を確認</button><pre id="serial-proof"></pre></div><script src="serial-drill.js?build=c4a07c1a4129"></script></body>
 </html>
