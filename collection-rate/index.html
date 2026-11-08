@@ -338,7 +338,7 @@ td.wrapc .badge:first-child { margin-left: 0; }
 // GAS_URL は公開しても、ポータルのセッションが無ければ SESSION_INVALID しか返らない
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbzMlPPjN1klOBlqbFhKTzDbFtHd2WP1DSXpNzgvG3eJ9WQN2LwmsfsjJ9jWvaprtJ14/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.4.1';
 const ALL_REP = '__ALL__';   // 担当者別の「全社」行を選んだとき（全担当の得意先明細を出す）
 // ローカル確認用: localhost で ?mock=1 のときだけ data/mock.json（variant=xxx なら data/mock_xxx.json）を読む
 const IS_LOCAL = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
@@ -806,8 +806,9 @@ function classify(row, exSet) {
   else { cat = 'other'; amt = 0; }
   return { cat: cat, over: over, amt: amt, m3flag: cat === 'urgent' && row.m3 > 0, debit: row.method === '引', transfer: row.method === '振' };
 }
-function byAmtDesc(a, b) { return b.amt - a.amt || (a.row.code < b.row.code ? -1 : (a.row.code > b.row.code ? 1 : 0)); }
-// 区分ごとの並び（要対応は2か月以上の金額・1か月だけは10月分…の大きい順。当月だけとその他は一緒にたたむ）
+// 区分の中は残高（現在残高）の大きい順。同じ残高はコード順（1.4.1〜。1.4.0 までは区分ごとの金額の大きい順だった）
+function byBalDesc(a, b) { return b.row.bal - a.row.bal || (a.row.code < b.row.code ? -1 : (a.row.code > b.row.code ? 1 : 0)); }
+// 区分ごとの並び（どの区分も残高の大きい順。当月だけとその他は一緒にたたむ）
 function groupRows(rows, exSet) {
   const g = { urgent: [], one: [], cur: [], ex: [] };
   rows.forEach(function (row) {
@@ -818,7 +819,7 @@ function groupRows(rows, exSet) {
     else if (c.cat === 'ex') g.ex.push(item);
     else g.cur.push(item);
   });
-  ['urgent', 'one', 'cur', 'ex'].forEach(function (k) { g[k].sort(byAmtDesc); });
+  ['urgent', 'one', 'cur', 'ex'].forEach(function (k) { g[k].sort(byBalDesc); });
   return g;
 }
 function sumItems(items, f) { return items.reduce(function (s, it) { return s + f(it); }, 0); }
@@ -1035,17 +1036,16 @@ function renderDelay() {
     if (cmp && hasKey(cmp.mark, it.row.code)) s += cmp.mark[it.row.code] === 'new' ? '<span class="badge">新規</span>' : '<span class="badge">継続</span>';
     return s;
   };
-  const telHtml = function (t) { return t ? '<a href="tel:' + esc(t) + '">' + esc(t) + '</a>' : ''; };
   const line = function (it) {
     const r = it.row;
     return '<tr><td>' + esc(r.code) + '</td><td class="name">' + esc(r.name) + '</td>' + (isAllRep ? '<td>' + esc(r.rep) + '</td>' : '') +
-      '<td>' + telHtml(r.tel) + '</td><td>' + (METHOD_JA[r.method] || esc(r.method)) + '</td><td>' + (r.close === '末' ? '末日' : '15日') + '〆 ' + esc(r.due) + '</td>' +
+      '<td>' + (METHOD_JA[r.method] || esc(r.method)) + '</td><td>' + (r.close === '末' ? '末日' : '15日') + '〆 ' + esc(r.due) + '</td>' +
       '<td>' + z(r.m3) + '</td><td>' + z(r.m2) + '</td><td>' + z(r.m1) + '</td><td>' + z(r.m0) + '</td><td>' + yen(r.bal) + '</td><td class="wrapc">' + markHtml(it) + '</td></tr>';
   };
   const sec = function (key, title, items, amtText, extra) {
     return '<tr class="sec"><td colspan="' + cols + '"><b>' + title + '</b> ' + items.length + '件' + (amtText ? ' ／ ' + amtText : '') + (extra || '') + '</td></tr>';
   };
-  let h = '<thead><tr><th>コード</th><th class="l">得意先</th>' + (isAllRep ? '<th>担当</th>' : '') + '<th>電話</th><th>回収方法</th><th>締め・回収日</th>' +
+  let h = '<thead><tr><th>コード</th><th class="l">得意先</th>' + (isAllRep ? '<th>担当</th>' : '') + '<th>回収方法</th><th>締め・回収日</th>' +
     mh.map(function (x) { return '<th>' + x + '</th>'; }).join('') + '<th>残高</th><th>目印</th></tr></thead><tbody>';
   h += sec('urgent', '要対応（請求から2か月以上）', g.urgent, man(sumItems(g.urgent, function (it) { return it.cls.over; })) + '万');
   h += g.urgent.map(line).join('') || '<tr><td colspan="' + cols + '">該当する得意先はありません。</td></tr>';
@@ -1108,7 +1108,7 @@ function preparePrintDelay() {
   const cmp = D.prevAsOf ? compareWithPrev(D.rows, D.prevRows || [], exSet) : null;
   const mh = monthHeads(D.months);
   const now = new Date();
-  const cols = 11 + (isAllRep ? 1 : 0) + 3;
+  const cols = 10 + (isAllRep ? 1 : 0) + 3;
   const mark = function (it) {
     const a = [];
     if (it.cls.m3flag) a.push('3か月以上');
@@ -1120,12 +1120,12 @@ function preparePrintDelay() {
   const line = function (it) {
     const r = it.row;
     return '<tr><td>' + esc(r.code) + '</td><td class="name">' + esc(r.name) + '</td>' + (isAllRep ? '<td>' + esc(r.rep) + '</td>' : '') +
-      '<td>' + esc(r.tel) + '</td><td>' + (METHOD_JA[r.method] || esc(r.method)) + '</td><td>' + (r.close === '末' ? '末日' : '15日') + '〆 ' + esc(r.due) + '</td>' +
+      '<td>' + (METHOD_JA[r.method] || esc(r.method)) + '</td><td>' + (r.close === '末' ? '末日' : '15日') + '〆 ' + esc(r.due) + '</td>' +
       '<td>' + z(r.m3) + '</td><td>' + z(r.m2) + '</td><td>' + z(r.m1) + '</td><td>' + z(r.m0) + '</td><td>' + yen(r.bal) + '</td><td class="wrapc">' + esc(mark(it)) + '</td>' +
       '<td class="hand"></td><td class="hand"></td><td class="hand memo"></td></tr>';
   };
   const sec = function (title, items, amt) { return '<tr class="sec"><td colspan="' + cols + '"><b>' + title + '</b> ' + items.length + '件 ／ ' + man(amt) + '万</td></tr>'; };
-  let h = '<table><thead><tr><th>コード</th><th class="l">得意先</th>' + (isAllRep ? '<th>担当</th>' : '') + '<th>電話</th><th>回収方法</th><th>締め・回収日</th>' +
+  let h = '<table><thead><tr><th>コード</th><th class="l">得意先</th>' + (isAllRep ? '<th>担当</th>' : '') + '<th>回収方法</th><th>締め・回収日</th>' +
     mh.map(function (x) { return '<th>' + x + '</th>'; }).join('') + '<th>残高</th><th>目印</th><th>連絡日</th><th>約束日</th><th>結果・メモ</th></tr></thead>';
   const part = function (title, items, amt) {
     if (!items.length) return '';
