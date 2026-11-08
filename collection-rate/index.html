@@ -73,7 +73,7 @@ a.back { color: var(--accent); text-decoration: none; font-size: 13px; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
 th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
 th { color: var(--muted); font-weight: 600; font-size: 12px; background: var(--surface-2); }
-th:first-child, td:first-child { text-align: left; }
+th:first-child, td:first-child, th.l { text-align: left; }
 th.sub, td.sub { color: var(--muted); font-size: 13px; }
 td.name, td.wrapc { text-align: left; white-space: normal; min-width: 140px; }
 #repTable th:first-child, #repTable td:first-child { position: sticky; left: 0; z-index: 1; background: var(--surface); box-shadow: 1px 0 0 var(--border); }
@@ -105,6 +105,33 @@ footer { text-align: center; color: var(--muted); font-size: 12px; }
   .tile .value { font-size: clamp(16px, 5.2vw, 24px); }
 }
 @media (max-width: 600px) { h1 { font-size: 20px; } .wrap { padding-top: 20px; gap: 18px; } }
+.cardhead { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.cardhead h2 { min-width: 0; }
+.cardhead button { flex-shrink: 0; padding: 4px 12px; font-size: 13px; }
+.print-only { display: none; }
+/* 印刷: 「印刷」ボタンのときは得意先明細だけを白黒で出す（表の見出しはページごとに繰り返す） */
+@media print {
+  :root {
+    --bg: #fff; --surface: #fff; --surface-2: #eee; --border: #999; --ink: #000; --muted: #333;
+    --accent: #000; --good: #000; --danger: #000; --warn: #000; --warn-soft: transparent;
+  }
+  @page { size: A4 portrait; margin: 12mm; }
+  body { background: #fff; color: #000; font-size: 10pt; }
+  .wrap { padding: 0; max-width: none; }
+  .card { box-shadow: none; }
+  body.print-detail .header, body.print-detail #msg, body.print-detail #adminCard, body.print-detail footer,
+  body.print-detail #main > :not(#detailCard), .noprint { display: none !important; }
+  body.print-detail #detailCard { border: 0; padding: 0; }
+  body.print-detail .print-only { display: block; font-size: 9pt; margin: -6px 0 8px; }
+  .tablewrap { overflow: visible; }
+  table { font-size: 9pt; }
+  th, td { padding: 3px 6px; color: #000; }
+  th { -webkit-print-color-adjust: exact; print-color-adjust: exact; background: #eee; }
+  thead { display: table-header-group; }
+  tr { break-inside: avoid; page-break-inside: avoid; }
+  td.name { min-width: 0; }
+  .badge { background: none; color: #000; border: 1px solid #666; }
+}
 </style>
 </head>
 <body>
@@ -167,8 +194,12 @@ footer { text-align: center; color: var(--muted); font-size: 12px; }
       <div class="legend" id="legend"></div>
     </div>
 
-    <div class="card">
-      <h2 id="detailTitle">得意先別明細</h2>
+    <div class="card" id="detailCard">
+      <div class="cardhead">
+        <h2 id="detailTitle">得意先別明細</h2>
+        <button type="button" class="ghost noprint" id="printBtn">印刷</button>
+      </div>
+      <div class="print-only" id="printMeta"></div>
       <div class="tablewrap"><table id="detailTable"></table></div>
       <div class="note">入金が前回請求額に届かなかった得意先と、除外先（残高のあるもの）。金額は円。</div>
     </div>
@@ -234,7 +265,7 @@ footer { text-align: center; color: var(--muted); font-size: 12px; }
 // GAS_URL は公開しても、ポータルのセッションが無ければ SESSION_INVALID しか返らない
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbzMlPPjN1klOBlqbFhKTzDbFtHd2WP1DSXpNzgvG3eJ9WQN2LwmsfsjJ9jWvaprtJ14/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 const ALL_REP = '__ALL__';   // 担当者別の「全社」行を選んだとき（全担当の得意先明細を出す）
 // ローカル確認用: localhost で ?mock=1 のときだけ data/mock.json（variant=xxx なら data/mock_xxx.json）を読む
 const IS_LOCAL = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
@@ -624,15 +655,26 @@ function renderDetail() {
   }
   $('detailTitle').textContent = '得意先別明細' + (ALL || rep ? '（' + (ALL ? '全社' : rep.rep) + '・' + monthLabel(selMonth) + '・' + VLABEL[selView] + '）' : '');
   if (!rows.length) { $('detailTable').innerHTML = '<tr><td>入金が足りなかった得意先はありません。</td></tr>'; return; }
-  $('detailTable').innerHTML = '<tr><th>コード</th><th>得意先</th>' + (ALL ? '<th>担当</th>' : '') + (isAll ? '<th>締め</th>' : '') + '<th>前回請求</th><th>入金</th><th>繰越</th><th>入金割合</th></tr>' +
+  $('detailTable').innerHTML = '<thead><tr><th>コード</th><th class="l">得意先</th>' + (ALL ? '<th>担当</th>' : '') + (isAll ? '<th>締め</th>' : '') + '<th>前回請求</th><th>入金</th><th>繰越</th><th>入金割合</th></tr></thead><tbody>' +
     rows.map(function (c) {
       return '<tr><td>' + esc(c.code) + '</td><td class="name">' + esc(c.name) + (c.ex ? '<span class="badge">除外先</span>' : '') + '</td>' +
         (ALL ? '<td>' + esc(c.repName) + '</td>' : '') +
         (isAll ? '<td>' + esc(c.close) + '〆</td>' : '') +
         '<td>' + yen(c.prev) + '</td><td>' + yen(c.paid) + '</td><td>' + yen(c.carry) + '</td>' +
         '<td>' + (c.prev > 0 ? Math.round(c.paid / c.prev * 100) + '%' : '—') + '</td></tr>';
-    }).join('');
+    }).join('') + '</tbody>';
 }
+
+// 印刷: いま表示している明細（選んだ担当、または全社）だけを印刷する
+function printDetail() {
+  const now = new Date();
+  $('printMeta').textContent = '印刷 ' + now.getFullYear() + '年' + fmtDT(now.toISOString()) + ' ／ データ版 #' + (DATA ? DATA.stateSeq : '—') +
+    ' ／ 最終取り込み ' + (DATA ? fmtDT(lastImported()) : '—') + ' ／ ' + rowsCountText();
+  document.body.classList.add('print-detail');
+  window.print();
+}
+function rowsCountText() { return document.querySelectorAll('#detailTable tbody tr').length + '件'; }
+window.addEventListener('afterprint', function () { document.body.classList.remove('print-detail'); });
 
 // 注記（全員に表示）: 締め月基準の説明と、除外先の遡及
 function renderNotes() {
@@ -779,6 +821,7 @@ Array.prototype.forEach.call(document.querySelectorAll('#seg button'), function 
 $('monthSel').addEventListener('change', function () { selMonth = this.value; render(); });
 $('reloadBtn').addEventListener('click', function () { load(); });
 $('adminBtn').addEventListener('click', function () { location.hash = isAdminPage() ? '' : '#admin'; });
+$('printBtn').addEventListener('click', printDetail);
 window.addEventListener('hashchange', function () { route(); window.scrollTo(0, 0); });
 $('nocacheBtn').addEventListener('click', function () { load({ nocache: true }); });
 $('exSearch').addEventListener('input', renderSearch);
