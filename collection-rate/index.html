@@ -33,8 +33,13 @@ body {
 }
 .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 16px 80px; display: flex; flex-direction: column; gap: 24px; }
 .wrap > * { min-width: 0; }
-.header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
-.header > div { min-width: 0; }
+.header { display: flex; flex-direction: column; gap: 4px; }
+.header > * { min-width: 0; }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.topbar > div { min-width: 0; }
+.topbtns { display: flex; gap: 8px; flex-shrink: 0; }
+.topbtns button { padding: 5px 12px; font-size: 13px; }
+.header .controls { margin-top: 8px; }
 .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; color: var(--accent); }
 h1 { margin: 0; font-size: 24px; font-weight: 700; }
 h2 { margin: 0 0 12px; font-size: 17px; }
@@ -53,8 +58,10 @@ button:disabled { opacity: .5; cursor: default; }
 @media (prefers-color-scheme: dark) { .seg button[aria-pressed="true"], button:not(.ghost):not(.danger) { color: #0F171D; } .seg button[aria-pressed="false"] { color: var(--accent); } }
 a.back { color: var(--accent); text-decoration: none; font-size: 13px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px; box-shadow: var(--shadow); min-width: 0; }
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .tile .label { color: var(--muted); font-size: 13px; }
+.tile .lshort, .tile .mini { display: none; }
+.tile .mini { font-size: 11px; color: var(--muted); line-height: 1.4; white-space: pre-line; }
 .tile .value { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.3; }
 .tile .sub { font-size: 13px; color: var(--muted); }
 .tile .split { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border); font-size: 13px; }
@@ -89,24 +96,37 @@ svg text { fill: var(--muted); font-size: 11px; }
 .small { font-size: 12px; color: var(--muted); }
 footer { text-align: center; color: var(--muted); font-size: 12px; }
 .hidden { display: none !important; }
-@media (max-width: 600px) { .tile .value { font-size: 26px; } h1 { font-size: 20px; } .wrap { padding-top: 20px; } }
+@media (max-width: 760px) {
+  .tiles { gap: 8px; }
+  .card.tile { padding: 10px 10px 9px; border-radius: 12px; }
+  .tile .lfull, .tile .sub, .tile .split { display: none; }
+  .tile .lshort, .tile .mini { display: block; }
+  .tile .label { font-size: 11px; line-height: 1.3; }
+  .tile .value { font-size: clamp(16px, 5.2vw, 24px); }
+}
+@media (max-width: 600px) { h1 { font-size: 20px; } .wrap { padding-top: 20px; gap: 18px; } }
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="header">
-    <div>
-      <a class="back" href="https://beaufield.github.io/beaufield-dev/">← ポータル</a>
-      <div class="eyebrow">営業別 回収率</div>
-      <h1 id="title">回収率</h1>
-      <div class="meta" id="meta">読み込み中…</div>
+    <div class="topbar">
+      <div>
+        <a class="back" href="https://beaufield.github.io/beaufield-dev/">← ポータル</a>
+        <div class="eyebrow">営業別 回収率</div>
+      </div>
+      <div class="topbtns">
+        <button class="ghost hidden" id="adminBtn" type="button">管理</button>
+        <button class="ghost" id="reloadBtn" type="button">更新</button>
+      </div>
     </div>
-    <div class="controls">
+    <h1 id="title">回収率</h1>
+    <div class="meta" id="meta">読み込み中…</div>
+    <div class="controls" id="controls">
       <div class="seg" id="seg" role="group" aria-label="表示する締め">
         <button type="button" data-v="合算" aria-pressed="false">合算</button><button type="button" data-v="末日" aria-pressed="false">末日〆</button><button type="button" data-v="15日" aria-pressed="false">15日〆</button>
       </div>
       <select id="monthSel" aria-label="対象月"></select>
-      <button class="ghost" id="reloadBtn" type="button">更新</button>
     </div>
   </div>
 
@@ -115,20 +135,23 @@ footer { text-align: center; color: var(--muted); font-size: 12px; }
   <div id="main" class="hidden" style="display:flex;flex-direction:column;gap:24px">
     <div class="tiles">
       <div class="card tile">
-        <div class="label" id="tRateLabel">全社 通常回収率</div>
+        <div class="label"><span class="lfull" id="tRateLabel">全社 通常回収率</span><span class="lshort">全社 回収率</span></div>
         <div class="value" id="tRate">—</div>
         <div class="sub" id="tRateSub"></div>
         <div class="split hidden" id="tSplit"></div>
+        <div class="mini" id="tRateMini"></div>
       </div>
       <div class="card tile">
-        <div class="label">滞留残高（除外先の残り）</div>
+        <div class="label"><span class="lfull">滞留残高（除外先の残り）</span><span class="lshort">滞留残高</span></div>
         <div class="value" id="tEx">—</div>
         <div class="sub" id="tExSub"></div>
+        <div class="mini" id="tExMini"></div>
       </div>
       <div class="card tile">
-        <div class="label">通常先の入金 ／ 前回請求</div>
+        <div class="label"><span class="lfull">通常先の入金 ／ 前回請求</span><span class="lshort">通常先の入金</span></div>
         <div class="value" id="tPaid">—</div>
         <div class="sub" id="tPaidSub"></div>
+        <div class="mini" id="tPaidMini"></div>
       </div>
     </div>
 
@@ -158,6 +181,7 @@ footer { text-align: center; color: var(--muted); font-size: 12px; }
 
   <div class="card hidden" id="adminCard">
     <h2>管理（管理者のみ）</h2>
+    <div class="small" style="margin:-6px 0 12px">目標値・除外先・取り込み履歴・変更履歴。右上の「回収率へ」で一覧に戻ります。</div>
     <div id="adminMsg" class="notice hidden"></div>
     <div class="admin-grid">
       <div>
@@ -210,7 +234,8 @@ footer { text-align: center; color: var(--muted); font-size: 12px; }
 // GAS_URL は公開しても、ポータルのセッションが無ければ SESSION_INVALID しか返らない
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbzMlPPjN1klOBlqbFhKTzDbFtHd2WP1DSXpNzgvG3eJ9WQN2LwmsfsjJ9jWvaprtJ14/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
+const ALL_REP = '__ALL__';   // 担当者別の「全社」行を選んだとき（全担当の得意先明細を出す）
 // ローカル確認用: localhost で ?mock=1 のときだけ data/mock.json（variant=xxx なら data/mock_xxx.json）を読む
 const IS_LOCAL = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 const QS = new URLSearchParams(location.search);
@@ -317,7 +342,7 @@ function errText(code) {
 // 前に表示していた数字を消す（古い数字と新しいエラーを混ぜない）
 function clearView() {
   ['tRate', 'tEx', 'tPaid'].forEach(function (id) { $(id).textContent = '—'; $(id).className = 'value'; });
-  ['tRateSub', 'tExSub', 'tPaidSub', 'tSplit', 'repNote', 'chart', 'legend', 'noteBasis', 'noteExcluded'].forEach(function (id) { $(id).textContent = ''; });
+  ['tRateSub', 'tExSub', 'tPaidSub', 'tSplit', 'tRateMini', 'tExMini', 'tPaidMini', 'repNote', 'chart', 'legend', 'noteBasis', 'noteExcluded'].forEach(function (id) { $(id).textContent = ''; });
   ['repTable', 'detailTable'].forEach(function (id) { $(id).innerHTML = ''; });
   $('main').classList.add('hidden');
 }
@@ -342,6 +367,8 @@ function load(extra) {
       DATA = null;
       clearView();
       $('adminCard').classList.add('hidden');
+      $('adminBtn').classList.add('hidden');
+      $('controls').classList.remove('hidden');
       $('title').textContent = '回収率';
       $('meta').textContent = '';
       showMsg(errText(d && d.error || 'UNKNOWN'), 'error');
@@ -351,22 +378,48 @@ function load(extra) {
     DATA = d;
     lastLoad = { sec: (performance.now() - t0) / 1000, server: d.timing ? d.timing.ms / 1000 : null, cache: d.timing ? d.timing.cache : null };
     const isAdmin = d.me && d.me.role === 'admin';
-    $('adminCard').classList.toggle('hidden', !isAdmin);
-    if (!d.months.length) {
-      clearView();
-      selMonth = null;
-      $('monthSel').innerHTML = '';
-      $('title').textContent = '回収率';
-      $('meta').textContent = 'データ版 #' + d.stateSeq + (d.stateAt ? '（' + fmtDT(d.stateAt) + ' 確定）' : '');
-      renderSeg();
-      showMsg('まだデータが取り込まれていません。', 'info');
-      if (isAdmin) renderAdmin();
-      return;
-    }
-    hideMsg();
-    buildMonthSel();
-    render();
+    $('adminBtn').classList.toggle('hidden', !isAdmin);
+    // 管理ページのURL（#admin）を管理者以外が開いたときは一覧に戻す
+    if (!isAdmin && location.hash === '#admin') history.replaceState(null, '', location.pathname + location.search);
+    route();
   });
+}
+
+// 管理ページ（#admin）は管理者だけ。表示の切り替えだけで、データは同じ1回の読み込みを使う
+function isAdminPage() {
+  return location.hash === '#admin' && !!DATA && !!DATA.me && DATA.me.role === 'admin';
+}
+
+function route() {
+  if (!DATA) return;
+  if (isAdminPage()) { renderAdminPage(); return; }
+  $('adminCard').classList.add('hidden');
+  $('controls').classList.remove('hidden');
+  $('adminBtn').textContent = '管理';
+  if (!DATA.months.length) {
+    clearView();
+    selMonth = null;
+    $('monthSel').innerHTML = '';
+    $('title').textContent = '回収率';
+    $('meta').textContent = 'データ版 #' + DATA.stateSeq + (DATA.stateAt ? '（' + fmtDT(DATA.stateAt) + ' 確定）' : '');
+    renderSeg();
+    showMsg('まだデータが取り込まれていません。', 'info');
+    return;
+  }
+  hideMsg();
+  buildMonthSel();
+  render();
+}
+
+function renderAdminPage() {
+  $('main').classList.add('hidden');
+  $('controls').classList.add('hidden');
+  hideMsg();
+  $('adminCard').classList.remove('hidden');
+  $('adminBtn').textContent = '回収率へ';
+  $('title').textContent = '管理';
+  $('meta').textContent = '最終取り込み ' + fmtDT(lastImported()) + ' ／ データ版 #' + DATA.stateSeq + (DATA.stateAt ? '（' + fmtDT(DATA.stateAt) + ' 確定）' : '');
+  renderAdmin();
 }
 
 function renderSeg() {
@@ -396,14 +449,12 @@ function lastImported() {
 
 function render() {
   renderSeg();
-  const isAdmin = DATA.me && DATA.me.role === 'admin';
   if (!selMonth) {
     // 選んだビューだけ0件: 前のビューの数字を残さない。切り替えボタンは押せるまま
     clearView();
     $('title').textContent = '回収率（' + VLABEL[selView] + '）';
     $('meta').textContent = '最終取り込み ' + fmtDT(lastImported()) + ' ／ データ版 #' + DATA.stateSeq + '（' + fmtDT(DATA.stateAt) + ' 確定）';
     showMsg(VLABEL[selView] + 'のデータはまだ取り込まれていません。ほかのビューに切り替えてください。', 'info');
-    if (isAdmin) renderAdmin();
     return;
   }
   $('main').classList.remove('hidden');
@@ -439,6 +490,10 @@ function render() {
   $('tExSub').textContent = (P ? '前月差 ' + signMan(c.exCarry - P.company.exCarry) + '万 ／ ' : '') + '当月の回収 ' + man(c.exPaid) + '万 ／ 除外先 ' + exCount + '件（行）';
   $('tPaid').textContent = man(c.paid) + '万';
   $('tPaidSub').textContent = '前回請求 ' + man(c.prev) + '万（店売り含む全社）';
+  // スマホ（3枚横並び）用の短い説明
+  $('tRateMini').textContent = (T !== null ? '目標比 ' + diffPt(c.rate, T) : '目標 未設定') + (P ? '\n前月 ' + pct(P.company.rate) : '');
+  $('tExMini').textContent = (P ? '前月差 ' + signMan(c.exCarry - P.company.exCarry) + '万' : '') + '\n除外先 ' + exCount + '件';
+  $('tPaidMini').textContent = '前回請求\n' + man(c.prev) + '万';
 
   // 担当者別（担当の集計キーは repCode）
   const prevBy = {};
@@ -446,7 +501,7 @@ function render() {
   const splitRate = function (v, repCode) { const r = repIn(viewOf(selMonth, v), repCode); return r ? pct(r.rate) : '—'; };
   const sales = V.reps.filter(function (r) { return r.sales; });
   const others = V.reps.filter(function (r) { return !r.sales; });
-  if (selRep && !repIn(V, selRep)) selRep = null;
+  if (selRep && selRep !== ALL_REP && !repIn(V, selRep)) selRep = null;
   if (!selRep && sales.length) selRep = sales[0].repCode;
   let h = '<tr><th>担当</th><th>通常回収率</th>' + (isAll ? '<th class="sub">末日〆</th><th class="sub">15日〆</th>' : '') +
     '<th>目標差</th><th>前月</th><th>前回請求</th><th>入金</th><th>滞留残高</th><th>滞留 前月差</th></tr>';
@@ -465,7 +520,7 @@ function render() {
   };
   h += sales.map(function (r) { return rowHtml(r, false); }).join('') + others.map(function (r) { return rowHtml(r, true); }).join('');
   const sv = function (v) { const W = viewOf(selMonth, v); return W ? pct(W.company.rate) : '—'; };
-  h += '<tr><td><b>全社</b></td><td><b>' + pct(c.rate) + '</b></td>' +
+  h += '<tr class="click' + (selRep === ALL_REP ? ' sel' : '') + '" data-rep="' + ALL_REP + '"><td><b>全社</b></td><td><b>' + pct(c.rate) + '</b></td>' +
     (isAll ? '<td class="sub">' + sv('末日') + '</td><td class="sub">' + sv('15日') + '</td>' : '') +
     '<td>' + diffPt(c.rate, T) + '</td><td>' + (P ? pct(P.company.rate) : '—') + '</td>' +
     '<td><b>' + man(c.prev) + '</b></td><td><b>' + man(c.paid) + '</b></td>' +
@@ -477,12 +532,11 @@ function render() {
   });
   $('repNote').textContent = '通常回収率＝入金額÷前回請求額（除外先を除く）。' +
     (isAll ? '合算は15日〆と末日〆の金額を足してから割った率（2つの率の平均ではありません）。「末日〆」「15日〆」列は系統別の率。' : VLABEL[selView] + 'の一覧表だけで計算。') +
-    '「前月」は暦の1か月前（その月に' + VLABEL[selView] + 'のデータが無ければ「—」）。行を押すと下に得意先別の明細が出ます。金額は万円。';
+    '「前月」は暦の1か月前（その月に' + VLABEL[selView] + 'のデータが無ければ「—」）。行を押すと下に得意先別の明細が出ます（全社の行は全担当分）。金額は万円。';
 
   renderChart(T);
   renderDetail();
   renderNotes();
-  if (isAdmin) renderAdmin();
 }
 
 function diffPt(rate, T) {
@@ -549,22 +603,31 @@ function renderChart(T) {
 }
 
 // 得意先別明細: 系統ビューはその系統の行、合算は両系統の行を並べて「締め」列を足す
+// 「全社」行を選んだときは、全担当（店売り含む）の明細を担当列つきで繰越の大きい順に並べる
 function renderDetail() {
   const isAll = selView === '合算';
   const V = viewOf(selMonth, selView);
-  const rep = repIn(V, selRep);
+  const ALL = selRep === ALL_REP;
+  const rep = ALL ? null : repIn(V, selRep);
   let rows = [];
-  if (isAll) {
+  if (ALL) {
+    (isAll ? ['末日', '15日'] : [selView]).forEach(function (v) {
+      const W = viewOf(selMonth, v);
+      if (W) W.reps.forEach(function (r) { rows = rows.concat(r.details.map(function (c) { return Object.assign({ repName: r.rep }, c); })); });
+    });
+    rows.sort(function (a, b) { return b.carry - a.carry; });
+  } else if (isAll) {
     ['末日', '15日'].forEach(function (v) { const r = repIn(viewOf(selMonth, v), selRep); if (r) rows = rows.concat(r.details); });
     rows.sort(function (a, b) { return b.carry - a.carry; });
   } else if (rep) {
     rows = rep.details;
   }
-  $('detailTitle').textContent = '得意先別明細' + (rep ? '（' + rep.rep + '・' + monthLabel(selMonth) + '・' + VLABEL[selView] + '）' : '');
+  $('detailTitle').textContent = '得意先別明細' + (ALL || rep ? '（' + (ALL ? '全社' : rep.rep) + '・' + monthLabel(selMonth) + '・' + VLABEL[selView] + '）' : '');
   if (!rows.length) { $('detailTable').innerHTML = '<tr><td>入金が足りなかった得意先はありません。</td></tr>'; return; }
-  $('detailTable').innerHTML = '<tr><th>コード</th><th>得意先</th>' + (isAll ? '<th>締め</th>' : '') + '<th>前回請求</th><th>入金</th><th>繰越</th><th>入金割合</th></tr>' +
+  $('detailTable').innerHTML = '<tr><th>コード</th><th>得意先</th>' + (ALL ? '<th>担当</th>' : '') + (isAll ? '<th>締め</th>' : '') + '<th>前回請求</th><th>入金</th><th>繰越</th><th>入金割合</th></tr>' +
     rows.map(function (c) {
       return '<tr><td>' + esc(c.code) + '</td><td class="name">' + esc(c.name) + (c.ex ? '<span class="badge">除外先</span>' : '') + '</td>' +
+        (ALL ? '<td>' + esc(c.repName) + '</td>' : '') +
         (isAll ? '<td>' + esc(c.close) + '〆</td>' : '') +
         '<td>' + yen(c.prev) + '</td><td>' + yen(c.paid) + '</td><td>' + yen(c.carry) + '</td>' +
         '<td>' + (c.prev > 0 ? Math.round(c.paid / c.prev * 100) + '%' : '—') + '</td></tr>';
@@ -715,6 +778,8 @@ Array.prototype.forEach.call(document.querySelectorAll('#seg button'), function 
 });
 $('monthSel').addEventListener('change', function () { selMonth = this.value; render(); });
 $('reloadBtn').addEventListener('click', function () { load(); });
+$('adminBtn').addEventListener('click', function () { location.hash = isAdminPage() ? '' : '#admin'; });
+window.addEventListener('hashchange', function () { route(); window.scrollTo(0, 0); });
 $('nocacheBtn').addEventListener('click', function () { load({ nocache: true }); });
 $('exSearch').addEventListener('input', renderSearch);
 $('exCodeBtn').addEventListener('click', function () { addExcluded($('exSearch').value.trim(), $('exCodeBtn')); });
