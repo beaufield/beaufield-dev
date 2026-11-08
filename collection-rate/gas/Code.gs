@@ -1,12 +1,13 @@
 /**
- * 営業別 回収率アプリ（collection-rate）— バックエンドAPI v1.1
+ * 営業別 回収率アプリ（collection-rate）— バックエンドAPI v1.2（回収遅延を追加）
  *
  * 構成: GitHub Pages（index.html）+ この GAS WebApp + Googleシート（DB）
- * 仕様: collection-rate/仕様書_v1.1.md（v1.0 を引き継ぐ）・実装計画_v1.1.md
+ * 仕様: collection-rate/仕様書_v1.1.md・仕様書_v1.2_回収遅延.md・実装計画_v1.1.md・実装計画_v1.2_回収遅延.md
  * 認証: beaufield-auth 共通セッション。user_app_roles に collection-rate のロール
  *       （user / admin）が明示登録されている在籍ユーザーだけが見られる。
  *       取り込み・読み戻し・巻き戻し・診断は、ローカルの取り込みスクリプトから
- *       スクリプトプロパティ IMPORT_KEY で認証する。
+ *       スクリプトプロパティ IMPORT_KEY で認証する（delayImport＝回収遅延の取り込みも同じ）。
+ *       回収遅延の閲覧（action: delay）は、画面と同じポータルのセッション（user / admin）。
  * データ: 得意先名・金額はこのGASとDBシートの中だけで扱い、公開HTMLには埋め込まない。
  *
  * 記録と確定の仕組み（実装計画 §4-5）:
@@ -14,6 +15,8 @@
  *   history シート            … 操作1回につき1行。その操作の後の状態（状態JSON）を丸ごと持つ。追記だけ
  *   スクリプトプロパティ STATE … 今の確定がどの記録行かを指す。これを書いた瞬間がその操作の確定
  *   commits シート            … 確定した版の STATE の写し（確定台帳）。復旧の根拠にだけ使う
+ *   delay_YYYYMMDD_HHmmss シート … 回収遅延一覧表1回分（1基準日）。取り込みのたびに新しく作り、書き換えない。
+ *                                状態 JSON の delays から参照する。自動でも手でも消さない（v1.2 R4）
  *
  * スクリプトプロパティ（コードに直書きしない）:
  *   AUTH_SHEET_ID   … beaufield-auth スプレッドシートのID
@@ -23,7 +26,7 @@
  *   STATE           … 確定ポインタ（このコードだけが書く）
  */
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const APP_NAME = 'collection-rate';
 const CACHE_TTL_SESSION = 60;           // 権限変更・ログアウトを最大1分で反映
 const CACHE_TTL_DATA = 300;             // 集計結果。キーに版と確定日時を入れるので古い値は出ない
@@ -32,19 +35,26 @@ const CACHE_MAX_CHUNKS = 20;
 const START_MONTH = '2026-07';          // 取り込み開始月（新しい期）
 const CLOSES = ['15日', '末日'];
 const VIEWS = ['合算', '末日', '15日'];
-const ACTIONS = ['import', 'exclude_on', 'exclude_off', 'target_set', 'target_clear', 'rollback'];
+const ACTIONS = ['import', 'exclude_on', 'exclude_off', 'target_set', 'target_clear', 'rollback', 'delay_import'];
 const STATE_MAX_CHARS = 45000;
 const KEEP_CHAIN_SHEETS = 5;             // 系列の新しい方から残す rows シートの数
 const KEEP_RECENT_MS = 15 * 60 * 1000;  // 作ってから15分以内の rows シートは残す
 const HISTORY_LIMIT = 30;
 const ROWS_NAME_RE = /^rows_[0-9]{8}_[0-9]{6}(_[0-9]+)?$/;
+const DELAY_NAME_RE = /^delay_[0-9]{8}_[0-9]{6}(_[0-9]+)?$/;
+const DELAY_START = '2026-11-07';          // 回収遅延の取り込み開始日（仕様書 v1.2 D4）
+const DELAY_METHODS = ['現', '振', '引'];
+const DELAY_CLOSES = ['15', '末'];
 const CTRL_RE = /[\u0000-\u001f\u007f]/;
 const NUM_COLS = ['prev', 'paid', 'adj', 'carry'];
+const DELAY_TEXT_COLS = ['asOf', 'rep', 'code', 'name', 'tel', 'method', 'close', 'due'];
+const DELAY_NUM_COLS = ['m3', 'm2', 'm1', 'm0', 'total', 'pay1', 'pay2', 'bal'];
 
 const SHEETS = {
   rows:    ['month', 'close', 'closeDate', 'repCode', 'rep', 'code', 'name', 'prev', 'paid', 'adj', 'carry'],
   history: ['seq', 'parent', 'at', 'by', 'action', 'target', 'before', 'after', 'note', 'rows', 'state'],
-  commits: ['seq', 'row', 'rows', 'at', 'recordedAt']
+  commits: ['seq', 'row', 'rows', 'at', 'recordedAt'],
+  delay:   ['asOf', 'rep', 'code', 'name', 'tel', 'method', 'close', 'due', 'm3', 'm2', 'm1', 'm0', 'total', 'pay1', 'pay2', 'bal']
 };
 
 // 系列をたどった回数（試験で無限ループにならないことを確かめるため）
@@ -168,6 +178,11 @@ function doPost(e) {
         }
         return jsonResponse_(out);
       }
+      case 'delay': {
+        const auth = validateSession_(p.session_token);
+        if (!auth.valid) return sessionInvalid_();
+        return jsonResponse_(getDelay_({ asOf: p.asOf, nocache: auth.role === 'admin' && p.nocache === true }));
+      }
       case 'setExcluded': {
         const auth = validateSession_(p.session_token);
         if (!auth.valid) return sessionInvalid_();
@@ -186,6 +201,9 @@ function doPost(e) {
       case 'import':
         if (!importKeyOk_(p.key)) return jsonResponse_({ success: false, error: 'BAD_KEY' });
         return jsonResponse_(importRows_(p));
+      case 'delayImport':
+        if (!importKeyOk_(p.key)) return jsonResponse_({ success: false, error: 'BAD_KEY' });
+        return jsonResponse_(importDelay_(p));
       case 'importStatus':
         if (!importKeyOk_(p.key)) return jsonResponse_({ success: false, error: 'BAD_KEY' });
         return jsonResponse_(importStatus_(p));
@@ -293,6 +311,93 @@ function validateImportRow_(r) {
   return '';
 }
 
+// ============================================================
+// 回収遅延の入力の決まり（実装計画 v1.2 §1。kaishu_import.py の delay_full_digest と同じ計算）
+// ============================================================
+// YYYY-MM-DD の形で、実在する日か（繰り上がりで通さない）
+function dateReal_(s) {
+  if (typeof s !== 'string' || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(s)) return false;
+  const y = Number(s.slice(0, 4)), m = Number(s.slice(5, 7)), d = Number(s.slice(8, 10));
+  const t = new Date(Date.UTC(y, m - 1, d));
+  return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d;
+}
+
+// 基準日として受け付けるか（形・実在・開始日以降）
+function delayAsOfOk_(s) { return dateReal_(s) && s >= DELAY_START; }
+
+// 基準日から4つの請求月を計算する（年をまたぐ）。m0 = 基準月、m1 = その前月…
+function delayMonths_(asOf) {
+  const base = Number(asOf.slice(0, 4)) * 12 + Number(asOf.slice(5, 7)) - 1;
+  const mm = function (k) {
+    const n = base - k;
+    return String(Math.floor(n / 12)).padStart(4, '0') + '-' + String(n % 12 + 1).padStart(2, '0');
+  };
+  return { m3: mm(3), m2: mm(2), m1: mm(1), m0: mm(0) };
+}
+
+function monthsEqual_(a, b) {
+  if (!isObj_(a) || !isObj_(b)) return false;
+  return ['m3', 'm2', 'm1', 'm0'].every(function (k) { return typeof a[k] === 'string' && a[k] === b[k]; });
+}
+
+// 文字列の列の内容の決まり。外れたら false
+function delayTextRuleOk_(k, s) {
+  if (CTRL_RE.test(s)) return false;
+  switch (k) {
+    case 'asOf': return true; // 外側との一致は別に確かめる
+    case 'code': return /^[0-9]+$/.test(s);
+    case 'tel': return s === '' || /^[0-9-]+$/.test(s);
+    case 'method': return DELAY_METHODS.indexOf(s) >= 0;
+    case 'close': return DELAY_CLOSES.indexOf(s) >= 0;
+    default: return s !== ''; // rep・name・due
+  }
+}
+
+// 送られてきた1行の型と形を確かめる。外れたらエラーコード、通れば ''
+function validateDelayRow_(r, asOf) {
+  if (!isObj_(r)) return 'BAD_TEXT';
+  for (let i = 0; i < DELAY_TEXT_COLS.length; i++) {
+    if (typeof r[DELAY_TEXT_COLS[i]] !== 'string' || CTRL_RE.test(r[DELAY_TEXT_COLS[i]])) return 'BAD_TEXT';
+  }
+  for (let i = 0; i < DELAY_NUM_COLS.length; i++) {
+    const v = r[DELAY_NUM_COLS[i]];
+    if (typeof v !== 'number' || !Number.isSafeInteger(v)) return 'BAD_NUMBER';
+  }
+  if (r.asOf !== asOf) return 'ASOF_MISMATCH';
+  for (let i = 0; i < DELAY_TEXT_COLS.length; i++) {
+    if (!delayTextRuleOk_(DELAY_TEXT_COLS[i], r[DELAY_TEXT_COLS[i]])) return 'BAD_TEXT';
+  }
+  return '';
+}
+
+// 安全な整数の範囲を超えないように足す。超えたら BAD_NUMBER
+function addSafe_(a, b) {
+  const n = a + b;
+  if (!Number.isSafeInteger(n)) throw fail_('BAD_NUMBER', '合計が安全な整数の範囲を超えた');
+  return n;
+}
+
+function cmpDelayCode_(a, b) {
+  const x = String(a.code), y = String(b.code);
+  return x < y ? -1 : (x > y ? 1 : 0);
+}
+
+// 遅延の全文指紋: 16列。文字列はそのまま、整数は10進文字列、列は \u001f、行は \n、code の文字列順
+function delayFullDigest_(rows) {
+  const body = rows.slice().sort(cmpDelayCode_).map(function (r) {
+    return SHEETS.delay.map(function (k) { return String(r[k]); }).join('\u001f');
+  }).join('\n');
+  return hex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, body, Utilities.Charset.UTF_8));
+}
+
+// 検証済みの行から8項目の合計を作る
+function delaySums_(rows) {
+  const s = {};
+  DELAY_NUM_COLS.forEach(function (k) { s[k] = 0; });
+  rows.forEach(function (r) { DELAY_NUM_COLS.forEach(function (k) { s[k] = addSafe_(s[k], r[k]); }); });
+  return s;
+}
+
 // シートから読み戻した数値の文字列を確かめる（'-0'・'007'・小数・空・カンマ入りは拒否）
 function parseStoredInt_(v) {
   const s = String(v);
@@ -339,6 +444,41 @@ function readRowsSheet_(sh, errCode) {
 }
 
 function rowStrings_(r) { return SHEETS.rows.map(function (k) { return String(r[k]); }); }
+
+// 遅延シートを読む（形と型だけを確かめる。件数・指紋は比べない。実装計画 v1.2 §1-3）
+// 外れたら DELAY_UNREADABLE（理由はログ）。見出しが16列とも一致・各行の型・全行の asOf が引数と同じ・コード重複なし・1行以上
+function loadDelaySheet_(sh, asOf) {
+  const v = sh.getDataRange().getValues();
+  const name = sh.getName();
+  if (!v.length || SHEETS.delay.some(function (h, i) { return String(v[0][i]) !== h; })) {
+    throw fail_('DELAY_UNREADABLE', 'delay シートの見出しが違う: ' + name);
+  }
+  const out = [], seen = {};
+  for (let i = 1; i < v.length; i++) {
+    if (v[i].every(function (c) { return c === '' || c === null; })) continue;
+    const o = {};
+    for (let j = 0; j < SHEETS.delay.length; j++) {
+      const k = SHEETS.delay[j];
+      const s = String(v[i][j]);
+      let good = true;
+      if (DELAY_NUM_COLS.indexOf(k) >= 0) {
+        try { o[k] = parseStoredInt_(s); } catch (e) { good = false; }
+      } else {
+        good = delayTextRuleOk_(k, s) && (k !== 'asOf' || s === asOf);
+        o[k] = s;
+      }
+      if (!good) throw fail_('DELAY_UNREADABLE', 'delay シートの値が正しくない: ' + name + ' 行' + (i + 1) + ' 列' + k);
+    }
+    if (seen[o.code]) throw fail_('DELAY_UNREADABLE', 'delay シートにコード重複: ' + name);
+    seen[o.code] = true;
+    out.push(o);
+  }
+  if (!out.length) throw fail_('DELAY_UNREADABLE', 'delay シートに行が無い: ' + name);
+  return out;
+}
+
+// 読めた行から件数と全文指紋を計算する
+function delayActual_(rows) { return { rows: rows.length, full: delayFullDigest_(rows) }; }
 
 function cmpFull_(a, b) {
   if (a.month !== b.month) return a.month < b.month ? -1 : 1;
@@ -401,6 +541,38 @@ function stateInvalid_(st) {
   }
   if (!(st.excludedAt === null || typeof st.excludedAt === 'string')) return 'excludedAt の形が違う';
   if (!(st.targetsAt === null || typeof st.targetsAt === 'string')) return 'targetsAt の形が違う';
+  // 回収遅延（v1.2。無ければ {} として扱う）
+  if (st.delays !== undefined) {
+    if (!isObj_(st.delays)) return '状態の delays の形が違う';
+    const dk = Object.keys(st.delays);
+    for (let i = 0; i < dk.length; i++) {
+      const d = st.delays[dk[i]];
+      if (!isObj_(d)) return '遅延の記録の形が違う: ' + dk[i];
+      if (!delayAsOfOk_(dk[i]) || d.asOf !== dk[i]) return '遅延の記録のキーが基準日として正しくない: ' + dk[i];
+      if (typeof d.sheet !== 'string' || !DELAY_NAME_RE.test(d.sheet)) return '遅延の sheet の形が違う: ' + dk[i];
+      if (!Number.isInteger(d.rows) || d.rows < 1) return '遅延の rows が1以上の整数でない: ' + dk[i];
+      if (typeof d.full !== 'string' || !/^[0-9a-f]{64}$/.test(d.full)) return '遅延の full の形が違う: ' + dk[i];
+      if (!monthsEqual_(d.months, delayMonths_(dk[i]))) return '遅延の months が基準日と合わない: ' + dk[i];
+      if (!isObj_(d.sums) || !DELAY_NUM_COLS.every(function (k) { return Number.isSafeInteger(d.sums[k]); })) return '遅延の sums の形が違う: ' + dk[i];
+    }
+  }
+  return '';
+}
+
+// 状態 JSON が指すシートがすべてあるか（rows シートと遅延の全シート。中身は読まない）。無ければ理由、あれば ''
+// 「状態が正しい」と判断する場所はすべてこの関数を使う（実装計画 v1.2 R8）
+// found（任意）が渡されたら、見つけた rows シートを found.rows に入れる（シートの取得を1回で済ませるため）
+function stateSheetsOk_(ss, st, found) {
+  if (st.rows !== '') {
+    const rs = ss.getSheetByName(st.rows);
+    if (!rs) return '状態の rows シートが無い';
+    if (found) found.rows = rs;
+  }
+  const d = st.delays || {};
+  const keys = Object.keys(d);
+  for (let i = 0; i < keys.length; i++) {
+    if (!ss.getSheetByName(d[keys[i]].sheet)) return '状態の遅延シートが無い: ' + keys[i];
+  }
   return '';
 }
 
@@ -432,11 +604,10 @@ function inspectState_(ss, raw) {
   const why = stateInvalid_(st);
   if (why) return bad(why);
   if (st.rows !== v[9]) return bad('状態 JSON の rows が記録行の rows と違う');
-  let rowsSheet = null;
-  if (st.rows !== '') {
-    rowsSheet = ss.getSheetByName(st.rows);
-    if (!rowsSheet) return bad('状態の rows シートが無い');
-  }
+  const found = { rows: null };
+  const noSheet = stateSheetsOk_(ss, st, found);
+  if (noSheet) return bad(noSheet);
+  const rowsSheet = found.rows;
   return { ok: true, seq: S.seq, row: S.row, rows: S.rows, at: S.at, state: st, stateChars: v[10].length, rowsSheet: rowsSheet };
 }
 
@@ -486,7 +657,7 @@ function buildChain_(cols, head) {
     if (!/^(0|[1-9][0-9]*)$/.test(c[1])) throw chainFail_(cur, 'parent が0以上の整数でない');
     const parent = Number(c[1]);
     if (parent >= cur) throw chainFail_(cur, 'parent が自分以上（自己参照・逆向き）');
-    if (ACTIONS.indexOf(c[4]) < 0) throw chainFail_(cur, 'action が決まった6種類以外');
+    if (ACTIONS.indexOf(c[4]) < 0) throw chainFail_(cur, 'action が決まった7種類以外');
     if (c[2] === '' || isNaN(new Date(c[2]).getTime())) throw chainFail_(cur, 'at が日時として読めない');
     if (c[9] !== '' && !ROWS_NAME_RE.test(c[9])) throw chainFail_(cur, 'rows 列の形が違う');
     if (cur === head.seq && hits[0].row !== head.row) throw chainFail_(cur, '先頭の行番号が STATE と違う');
@@ -722,7 +893,85 @@ function importRows_(p) {
 }
 
 // ============================================================
-// 掃除（取り込みの確定の後だけ。実装計画 §4-5-8）
+// 回収遅延の取り込み（実装計画 v1.2 §3 importDelay_）。新しい操作の種類 delay_import
+// 回収率の rows シート・集計には触れない（R2）
+// ============================================================
+function importDelay_(p) {
+  // ① 入力の確認（ロックの前）
+  const asOf = p.asOf;
+  if (!delayAsOfOk_(asOf)) throw fail_('BAD_ASOF', '基準日の形・実在・開始日');
+  const months = delayMonths_(asOf);
+  if (!monthsEqual_(p.months, months)) throw fail_('BAD_MONTHS', 'months がサーバーの計算と違う');
+  if (!Array.isArray(p.rows) || !p.rows.length) throw fail_('NO_ROWS');
+  for (let i = 0; i < p.rows.length; i++) {
+    const bad = validateDelayRow_(p.rows[i], asOf);
+    if (bad) throw fail_(bad, '送られた行 ' + (i + 1) + ' の型か形が違う');
+  }
+  const seen = {};
+  p.rows.forEach(function (r) {
+    if (seen[r.code]) throw fail_('DUP_CODE', '同じ得意先コードが複数行ある');
+    seen[r.code] = true;
+  });
+  const rows = p.rows.map(function (r) {
+    const o = {};
+    SHEETS.delay.forEach(function (k) { o[k] = r[k]; });
+    return o;
+  });
+  rows.forEach(function (r) {
+    const sum = addSafe_(addSafe_(addSafe_(r.m3, r.m2), r.m1), r.m0);
+    if (sum !== r.total) throw fail_('TOTAL_MISMATCH', 'total が4列の合計と違う: code ' + r.code);
+  });
+  const sums = delaySums_(rows); // 8項目の合計。安全な整数を超えたら BAD_NUMBER
+  const full = delayFullDigest_(rows);
+  if (typeof p.full !== 'string' || p.full !== full) throw fail_('FULL_MISMATCH', 'Python と GAS の全文指紋が違う');
+  const source = (p.source === null || p.source === undefined) ? '' : String(p.source);
+
+  return withLock_(function () {
+    const ss = db_();
+    // ② 前置き
+    const w = beginWrite_(ss);
+    const cur = w.st;
+    // ③ 同じ基準日の記録があり、内容が同じなら変更なし
+    const old = (cur.state.delays || {})[asOf];
+    if (old && old.full === full) return { success: true, changed: false, seq: cur.seq };
+    // ④ 新しいシートに書いて読み戻す
+    const base = 'delay_' + Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyyMMdd_HHmmss');
+    let name = base;
+    for (let n = 2; ss.getSheetByName(name); n++) {
+      if (n > 99) throw fail_('NAME_EXHAUSTED');
+      name = base + '_' + n;
+    }
+    const sh = ss.insertSheet(name);
+    ensureRows_(sh, rows.length + 1);
+    const rng = sh.getRange(1, 1, rows.length + 1, SHEETS.delay.length);
+    rng.setNumberFormat('@');
+    rng.setValues([SHEETS.delay].concat(rows.map(function (r) { return SHEETS.delay.map(function (k) { return String(r[k]); }); })));
+    SpreadsheetApp.flush();
+    let back;
+    try {
+      back = loadDelaySheet_(sh, asOf);
+    } catch (e) {
+      if (e.message === 'DELAY_UNREADABLE') throw fail_('VERIFY_FAILED', '新しい delay シートが読み戻せない');
+      throw e;
+    }
+    const act = delayActual_(back);
+    if (act.rows !== rows.length || act.full !== full) throw fail_('VERIFY_FAILED', '新しい delay シートの件数か指紋が違う');
+    // ⑤ 新しい状態（rows・imports・除外・目標は変えない）
+    const next = copyState_(cur.state);
+    next.delays = next.delays || {};
+    next.delays[asOf] = {
+      asOf: asOf, sheet: name, rows: rows.length, full: full, months: months, sums: sums,
+      source: source, importedAt: w.at
+    };
+    // ⑥ 確定
+    const before = old ? old.rows + '件/' + String(old.full).slice(0, 8) : '';
+    const after = rows.length + '件/' + full.slice(0, 8);
+    return commit_(ss, cur, 'delay_import', 'delay×' + asOf, before, after, source, 'import', next, w.at, null);
+  });
+}
+
+// ============================================================
+// 掃除（取り込みの確定の後だけ。実装計画 §4-5-8。delay_ シートは消さない＝v1.2 R4）
 // ============================================================
 function rowsSheetTime_(name) {
   const m = /^rows_([0-9]{4})([0-9]{2})([0-9]{2})_([0-9]{2})([0-9]{2})([0-9]{2})/.exec(name);
@@ -761,9 +1010,53 @@ function cleanupRows_(ss) {
 }
 
 // ============================================================
+// 復旧・巻き戻しの候補の判定（診断・読み戻しで共通。実装計画 v1.2 R8）
+// ============================================================
+// history シートの row 行の状態 JSON が正しく、rows と遅延の両方のシートがそろうか。正しければ ''、外れたら理由
+function restorableReason_(ss, row, rowsCol) {
+  try {
+    const hs = ss.getSheetByName('history');
+    const T = JSON.parse(String(hs.getRange(row, 11).getValue()));
+    const why = stateInvalid_(T);
+    if (why) return why;
+    if (T.rows !== rowsCol) return '状態 JSON の rows が記録行と違う';
+    return stateSheetsOk_(ss, T);
+  } catch (e) {
+    return '状態 JSON が読めない';
+  }
+}
+
+// ============================================================
+// 回収遅延の読み戻し（1つの基準日分。実装計画 v1.2 §3 importStatus_・§1-3 の表）
+// rec は状態に登録された記録。無ければ未確定として返す。例外にしない（読めないときは readable:false）
+// ============================================================
+function delayCheck_(ss, asOf, rec) {
+  const c = { asOf: asOf, committed: !!rec, readable: null, consistent: false,
+              actualRows: null, actualFull: null,
+              recordRows: rec ? rec.rows : null, recordFull: rec ? rec.full : null, error: null };
+  if (!rec) return c;
+  try {
+    const rows = loadDelaySheet_(ss.getSheetByName(rec.sheet), asOf);
+    const act = delayActual_(rows);
+    c.readable = true;
+    c.actualRows = act.rows;
+    c.actualFull = act.full;
+    c.consistent = act.rows === rec.rows && act.full === rec.full;
+  } catch (e) {
+    if (e.message !== 'DELAY_UNREADABLE') throw e;
+    c.readable = false;
+    c.error = 'DELAY_UNREADABLE';
+  }
+  return c;
+}
+
+// ============================================================
 // 読み戻し（実装計画 §4-5-6）
 // ============================================================
 function importStatus_(p) {
+  // 基準日の指定があれば、形の確認は先に行う（形が違えば BAD_ASOF）
+  const wantAsOf = (p.asOf === undefined || p.asOf === null) ? null : p.asOf;
+  if (wantAsOf !== null && !dateReal_(wantAsOf)) throw fail_('BAD_ASOF', 'status の基準日の形');
   return withLock_(function () {
     const ss = db_();
     const st = readState_(ss);
@@ -796,15 +1089,23 @@ function importStatus_(p) {
       c.consistent = c.committed && c.actualRows === c.recordRows && c.actualDigest === c.recordDigest && c.actualFull === c.recordFull;
       return c;
     });
+    // 回収遅延（登録された基準日。新しい順。未取り込みなら [] と {}）
+    const delays = st.state.delays || {};
+    const delayDates = Object.keys(delays).sort().reverse();
+    const delayChecks = {};
+    (wantAsOf !== null ? [wantAsOf] : delayDates).forEach(function (d) {
+      delayChecks[d] = delayCheck_(ss, d, Object.prototype.hasOwnProperty.call(delays, d) ? delays[d] : null);
+    });
+    // 巻き戻し先に使える版: rollback_ が受け付ける版だけ（rows と遅延の両方のシートがそろう）
     const rollbackable = [];
     for (let i = 0; i < chain.length && rollbackable.length < 10; i++) {
       const c = chain[i];
-      if (c.rows === '' || ss.getSheetByName(c.rows)) rollbackable.push({ seq: c.seq, at: c.at, action: c.action, target: c.target });
+      if (!restorableReason_(ss, c.row, c.rows)) rollbackable.push({ seq: c.seq, at: c.at, action: c.action, target: c.target });
     }
     return {
       success: true, version: VERSION, stateSeq: st.seq, stateAt: st.at, stateChars: st.stateChars,
       ledgerSeq: lg.ledgerSeq, ledgerSynced: lg.synced, ledgerMatchesState: lg.matches,
-      checks: checks, rollbackable: rollbackable
+      checks: checks, delayDates: delayDates, delayChecks: delayChecks, rollbackable: rollbackable
     };
   });
 }
@@ -840,14 +1141,17 @@ function rollback_(p) {
     const why = stateInvalid_(T);
     if (why) throw fail_('ROLLBACK_UNAVAILABLE', '#' + toSeq + ' の状態が正しくない: ' + why);
     if (T.rows !== entry.rows) throw fail_('ROLLBACK_UNAVAILABLE', '#' + toSeq + ' の状態の rows が記録行と違う');
-    if (T.rows !== '' && !ss.getSheetByName(T.rows)) throw fail_('ROLLBACK_UNAVAILABLE', '#' + toSeq + ' の rows シートが消えている');
+    const noSheet = stateSheetsOk_(ss, T);
+    if (noSheet) throw fail_('ROLLBACK_UNAVAILABLE', '#' + toSeq + ' のシートが消えている: ' + noSheet);
 
     const next = copyState_(C);
     const parts = [];
     next.rows = T.rows;
     next.rowsCount = T.rowsCount;
     next.imports = copyState_(T.imports);
+    next.delays = copyState_(T.delays || {});
     if (T.rows !== C.rows || stableJson_(T.imports) !== stableJson_(C.imports)) parts.push('データ');
+    if (stableJson_(T.delays || {}) !== stableJson_(C.delays || {})) parts.push('遅延');
     if (exKeySet_(T) !== exKeySet_(C)) {
       next.excluded = copyState_(T.excluded);
       next.excludedAt = w.at;
@@ -1026,6 +1330,103 @@ function getData_(opts) {
   throw fail_('DATA_UNAVAILABLE', String(lastErr));
 }
 
+// ============================================================
+// 回収遅延の閲覧（実装計画 v1.2 §3-2）。getData_ と同じ作り: ロックなし・3回まで試行・1回の試行の値だけで応答を作る
+// ============================================================
+// 遅延シートを読んで記録と突き合わせる（読めない・違う → STATE_BROKEN）
+function readDelayVerified_(ss, rec) {
+  let rows;
+  try {
+    rows = loadDelaySheet_(ss.getSheetByName(rec.sheet), rec.asOf);
+  } catch (e) {
+    if (e.message === 'DELAY_UNREADABLE') throw fail_('STATE_BROKEN', '遅延シートが読めない: ' + rec.asOf);
+    throw e;
+  }
+  const act = delayActual_(rows);
+  if (act.rows !== rec.rows || act.full !== rec.full) throw fail_('STATE_BROKEN', '遅延シートの件数か指紋が記録と違う: ' + rec.asOf);
+  return rows;
+}
+
+function getDelay_(opts) {
+  opts = opts || {};
+  const t0 = Date.now();
+  // 入力の誤りは試行の前に確かめて即座に返す（再試行しない）
+  const want = (opts.asOf === undefined || opts.asOf === null) ? null : opts.asOf;
+  if (want !== null && !delayAsOfOk_(want)) throw fail_('BAD_ASOF', '基準日の形・実在・開始日');
+  const raws = [];
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) Utilities.sleep(500);
+    try {
+      // この試行で読む値はすべてここから読み直す
+      const raw = PropertiesService.getScriptProperties().getProperty('STATE');
+      raws.push(raw);
+      const ss = db_();
+      const st = readState_(ss, raw);
+      let historyOk = true;
+      try {
+        loadChain_(ss, st);
+      } catch (e) {
+        if (e.message !== 'HISTORY_BROKEN') throw e;
+        historyOk = false;
+      }
+      const S = st.state;
+      const delays = S.delays || {};
+      const list = Object.keys(delays).sort().reverse();
+      let sel = null;
+      if (want !== null) {
+        if (!Object.prototype.hasOwnProperty.call(delays, want)) throw fail_('BAD_ASOF', '登録の無い基準日');
+        sel = want;
+      } else if (list.length) {
+        sel = list[0];
+      }
+      const prev = sel ? (list[list.indexOf(sel) + 1] || null) : null;
+      let cacheUse = 'miss', body = { rows: [], prevRows: [] };
+      if (sel) {
+        const key = 'cr_delay_' + VERSION + '_' + st.seq + '_' + st.at + '_' + sel;
+        let c = opts.nocache ? null : cacheGetChunks_(key);
+        if (c && !(isObj_(c) && Array.isArray(c.rows) && Array.isArray(c.prevRows))) c = null;
+        if (c) {
+          cacheUse = 'hit';
+          body = c;
+        } else {
+          const rows = readDelayVerified_(ss, delays[sel]);
+          const prevRows = prev ? readDelayVerified_(ss, delays[prev]).map(function (r) {
+            return { rep: r.rep, code: r.code, name: r.name, m3: r.m3, m2: r.m2, m1: r.m1, m0: r.m0, bal: r.bal };
+          }) : [];
+          body = { rows: rows.sort(cmpDelayCode_), prevRows: prevRows.sort(cmpDelayCode_) };
+          cachePutChunks_(key, body);
+        }
+      }
+      return {
+        success: true,
+        version: VERSION,
+        stateSeq: st.seq,
+        stateAt: st.at,
+        historyOk: historyOk,
+        dates: list.map(function (d) {
+          const r = delays[d];
+          return { asOf: d, rows: r.rows, importedAt: r.importedAt, source: r.source, months: r.months };
+        }),
+        asOf: sel,
+        prevAsOf: prev,
+        months: sel ? delays[sel].months : null,
+        rows: body.rows,
+        prevRows: body.prevRows,
+        excluded: Object.keys(S.excluded).sort(),
+        timing: { ms: Date.now() - t0, cache: cacheUse }
+      };
+    } catch (e) {
+      if (e.message === 'BAD_ASOF') throw e; // 登録の無い日は再試行しない
+      lastErr = e;
+      Logger.log('遅延の閲覧の読み込みに失敗（' + (attempt + 1) + '回目）: ' + e);
+    }
+  }
+  if (raws.some(function (r) { return r !== raws[0]; })) throw fail_('DATA_UNAVAILABLE', '読み込みの間に版が変わった');
+  if (lastErr && lastErr.message === 'STATE_BROKEN') throw fail_('STATE_BROKEN');
+  throw fail_('DATA_UNAVAILABLE', String(lastErr));
+}
+
 // rows（確定状態の rows シートの行）と状態 JSON（除外先）から、キャッシュに入れる集計を作る
 function buildData_(rowsRaw, state) {
   const nonSales = (PropertiesService.getScriptProperties().getProperty('NON_SALES_REPS') || '店売り')
@@ -1134,18 +1535,7 @@ function diagnose_(p) {
   // 1行の変更記録の列（1〜10列目）
   const histAt = function (row) { return (row >= 2 && row <= lastRow) ? cols[row - 2].map(function (c) { return String(c); }) : null; };
   // その行の状態 JSON が正しく、rows シートがある（'' なら不要）か
-  const restorable = function (row, rowsCol) {
-    try {
-      const T = JSON.parse(String(hs.getRange(row, 11).getValue()));
-      const why = stateInvalid_(T);
-      if (why) return why;
-      if (T.rows !== rowsCol) return '状態 JSON の rows が記録行と違う';
-      if (T.rows !== '' && !ss.getSheetByName(T.rows)) return 'rows シートが無い';
-      return '';
-    } catch (e) {
-      return '状態 JSON が読めない';
-    }
-  };
+  const restorable = function (row, rowsCol) { return restorableReason_(ss, row, rowsCol); };
   // 根拠の行（台帳・E1）を今の DB で照合する。mode: 'values'＝4つの値だけ、'chain'＝＋系列、'full'＝＋状態 JSON と rows シート
   const verify = function (E, mode) {
     if (!/^[1-9][0-9]*$/.test(String(E.seq))) return { ok: false, reason: 'seq が正の整数でない' };
@@ -1241,8 +1631,15 @@ function diagnose_(p) {
   });
 
   // sheets
-  out.sheets = ss.getSheets().filter(function (sh) { return ROWS_NAME_RE.test(sh.getName()); }).map(function (sh) {
-    return { name: sh.getName(), rows: Math.max(0, sh.getLastRow() - 1) };
+  const nowRefs = {};
+  if (insp.ok) Object.keys(insp.state.delays || {}).forEach(function (k) { nowRefs[insp.state.delays[k].sheet] = true; });
+  out.sheets = ss.getSheets().filter(function (sh) { return ROWS_NAME_RE.test(sh.getName()) || DELAY_NAME_RE.test(sh.getName()); }).map(function (sh) {
+    const name = sh.getName(), rowsN = Math.max(0, sh.getLastRow() - 1);
+    if (!DELAY_NAME_RE.test(name)) return { name: name, rows: rowsN };
+    // delay_ シートは削除の判断に使わない（v1.2 R4）。「今の状態から参照されているか」だけを示す
+    const ref = insp.ok ? !!nowRefs[name] : null;
+    return { name: name, rows: rowsN, referenced: ref,
+             note: ref === null ? '確定状態が読めないので判定していません' : (ref ? '今の状態から参照されている' : '今の状態からは参照されていない') };
   });
 
   // e1（照合できるかと、最新の根拠と同じ版か。親子関係は返さない）

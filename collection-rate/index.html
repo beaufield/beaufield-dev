@@ -78,6 +78,9 @@ th.sub, td.sub { color: var(--muted); font-size: 13px; }
 td.name, td.wrapc { text-align: left; white-space: normal; min-width: 140px; }
 #repTable th:first-child, #repTable td:first-child { position: sticky; left: 0; z-index: 1; background: var(--surface); box-shadow: 1px 0 0 var(--border); }
 #repTable th:first-child { background: var(--surface-2); }
+#dRepTable th:first-child, #dRepTable td:first-child { position: sticky; left: 0; z-index: 1; background: var(--surface); box-shadow: 1px 0 0 var(--border); }
+#dRepTable th:first-child { background: var(--surface-2); }
+#dRepTable tr.sel td:first-child, #dRepTable tr.click:hover td:first-child { background: var(--accent-soft); }
 tr.click { cursor: pointer; }
 tr.click:hover td, tr.sel td, #repTable tr.sel td:first-child, #repTable tr.click:hover td:first-child { background: var(--accent-soft); }
 tr.dim td { color: var(--muted); }
@@ -109,13 +112,17 @@ footer { text-align: center; color: var(--muted); font-size: 12px; }
 .cardhead h2 { min-width: 0; }
 .cardhead button { flex-shrink: 0; padding: 4px 12px; font-size: 13px; }
 .print-only { display: none; }
+.pagebar { margin-top: 8px; }
+.badge.bad { background: var(--danger-soft); color: var(--danger); }
+tr.sec td { background: var(--surface-2); text-align: left; font-size: 13px; white-space: normal; }
+td.wrapc .badge:first-child { margin-left: 0; }
+#dPrintArea { display: none; }
 /* 印刷: 「印刷」ボタンのときは得意先明細だけを白黒で出す（表の見出しはページごとに繰り返す） */
 @media print {
   :root {
     --bg: #fff; --surface: #fff; --surface-2: #eee; --border: #999; --ink: #000; --muted: #333;
     --accent: #000; --good: #000; --danger: #000; --warn: #000; --warn-soft: transparent;
   }
-  @page { size: A4 portrait; margin: 12mm; }
   body { background: #fff; color: #000; font-size: 10pt; }
   .wrap { padding: 0; max-width: none; }
   .card { box-shadow: none; }
@@ -131,6 +138,19 @@ footer { text-align: center; color: var(--muted); font-size: 12px; }
   tr { break-inside: avoid; page-break-inside: avoid; }
   td.name { min-width: 0; }
   .badge { background: none; color: #000; border: 1px solid #666; }
+  /* 回収遅延の働きかけシート（A4横）: #dPrintArea だけを出す */
+  body.print-delay .header, body.print-delay #msg, body.print-delay #adminCard, body.print-delay footer, body.print-delay #main,
+  body.print-delay #delayMain > :not(#dPrintArea) { display: none !important; }
+  body.print-delay #dPrintArea { display: block; }
+  #dPrintArea .pt { font-size: 13pt; margin: 0 0 2px; }
+  #dPrintArea .pm { font-size: 9pt; margin: 0 0 8px; }
+  #dPrintArea table { font-size: 8pt; }
+  #dPrintArea th, #dPrintArea td { padding: 2px 4px; border: 1px solid #888; }
+  #dPrintArea td.name { min-width: 0; white-space: nowrap; }
+  #dPrintArea td.hand { height: 9mm; min-width: 17mm; }
+  #dPrintArea td.hand.memo { min-width: 40mm; }
+  #dPrintArea tr.sec td { background: #eee; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  #dPrintArea a { color: inherit; text-decoration: none; }
 }
 </style>
 </head>
@@ -149,6 +169,14 @@ footer { text-align: center; color: var(--muted); font-size: 12px; }
     </div>
     <h1 id="title">回収率</h1>
     <div class="meta" id="meta">読み込み中…</div>
+    <div class="controls pagebar" id="pageSegWrap">
+      <div class="seg" id="pageSeg" role="group" aria-label="表示する画面">
+        <button type="button" data-p="rate" aria-pressed="true">回収率</button><button type="button" data-p="delay" aria-pressed="false">回収遅延</button>
+      </div>
+    </div>
+    <div class="controls hidden" id="delayControls">
+      <select id="dateSel" aria-label="基準日"></select>
+    </div>
     <div class="controls" id="controls">
       <div class="seg" id="seg" role="group" aria-label="表示する締め">
         <button type="button" data-v="合算" aria-pressed="false">合算</button><button type="button" data-v="末日" aria-pressed="false">末日〆</button><button type="button" data-v="15日" aria-pressed="false">15日〆</button>
@@ -210,6 +238,51 @@ footer { text-align: center; color: var(--muted); font-size: 12px; }
     </div>
   </div>
 
+  <div id="delayMain" class="hidden" style="display:flex;flex-direction:column;gap:24px">
+    <div class="tiles">
+      <div class="card tile">
+        <div class="label"><span class="lfull">要対応（2か月以上・除外先を除く）</span><span class="lshort">要対応</span></div>
+        <div class="value" id="dtUrgent">—</div>
+        <div class="sub" id="dtUrgentSub"></div>
+        <div class="mini" id="dtUrgentMini"></div>
+      </div>
+      <div class="card tile">
+        <div class="label"><span class="lfull">うち3か月以上</span><span class="lshort">うち3か月以上</span></div>
+        <div class="value" id="dtM3">—</div>
+        <div class="sub" id="dtM3Sub"></div>
+        <div class="mini" id="dtM3Mini"></div>
+      </div>
+      <div class="card tile">
+        <div class="label"><span class="lfull">1か月だけ（予備軍）</span><span class="lshort">1か月だけ</span></div>
+        <div class="value" id="dtOne">—</div>
+        <div class="sub" id="dtOneSub"></div>
+        <div class="mini" id="dtOneMini"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>担当者別</h2>
+      <div class="tablewrap"><table id="dRepTable"></table></div>
+      <div class="note" id="dRepNote"></div>
+    </div>
+
+    <div class="card" id="dListCard">
+      <div class="cardhead">
+        <h2 id="dListTitle">得意先一覧</h2>
+        <button type="button" class="ghost noprint" id="dPrintBtn">印刷</button>
+      </div>
+      <div class="tablewrap"><table id="dTable"></table></div>
+    </div>
+
+    <div class="card hidden" id="dDoneCard">
+      <h2>回収が進んだ得意先</h2>
+      <div class="tablewrap"><table id="dDoneTable"></table></div>
+    </div>
+
+    <div class="card notes" id="dNotes"></div>
+    <div id="dPrintArea"></div>
+  </div>
+
   <div class="card hidden" id="adminCard">
     <h2>管理（管理者のみ）</h2>
     <div class="small" style="margin:-6px 0 12px">目標値・除外先・取り込み履歴・変更履歴。右上の「回収率へ」で一覧に戻ります。</div>
@@ -265,7 +338,7 @@ footer { text-align: center; color: var(--muted); font-size: 12px; }
 // GAS_URL は公開しても、ポータルのセッションが無ければ SESSION_INVALID しか返らない
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbzMlPPjN1klOBlqbFhKTzDbFtHd2WP1DSXpNzgvG3eJ9WQN2LwmsfsjJ9jWvaprtJ14/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 const ALL_REP = '__ALL__';   // 担当者別の「全社」行を選んだとき（全担当の得意先明細を出す）
 // ローカル確認用: localhost で ?mock=1 のときだけ data/mock.json（variant=xxx なら data/mock_xxx.json）を読む
 const IS_LOCAL = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
@@ -275,7 +348,7 @@ const MOCK_VARIANT = /^[a-z0-9]+$/.test(QS.get('variant') || '') ? QS.get('varia
 
 const VIEWS = ['合算', '末日', '15日'];
 const VLABEL = { '合算': '合算', '末日': '末日〆', '15日': '15日〆' };
-const ACTION_JA = { 'import': '取り込み', 'exclude_on': '除外に追加', 'exclude_off': '除外を解除', 'target_set': '目標を設定', 'target_clear': '目標をクリア', 'rollback': '巻き戻し' };
+const ACTION_JA = { 'import': '取り込み', 'exclude_on': '除外に追加', 'exclude_off': '除外を解除', 'target_set': '目標を設定', 'target_clear': '目標をクリア', 'rollback': '巻き戻し', 'delay_import': '回収遅延の取り込み' };
 const RATE_MSG = '目標値は 1〜150 の数字で入れてください（小数は1桁まで）。';
 const EX_CONFIRM = '過去の月の回収率もすべて変わります。よろしいですか？';
 
@@ -334,8 +407,24 @@ function loadSession() {
 }
 
 // GASへPOST。タイムアウト25秒。結果配信が消えることがあるため、読み取りは1回だけ自動で再試行する
+function mockDelay(asOf) {
+  // ?dvariant=2（基準日2つ）／empty（取り込み無し）／error（STATE_BROKEN）。?derr=<基準日> でその日だけエラー、?dslow=<基準日> でその日だけ1.5秒遅らせる
+  const dv = QS.get('dvariant') || '';
+  if (dv === 'error') return Promise.resolve({ success: false, error: 'STATE_BROKEN' });
+  if (asOf && QS.get('derr') === asOf) return Promise.resolve({ success: false, error: 'STATE_BROKEN' });
+  const file = 'data/mock_delay' + (dv === 'empty' ? '_empty' : (/^[a-z0-9]+$/.test(dv) ? dv : '')) + '.json';
+  return fetch(file, { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
+    if (asOf && d.asOf !== asOf && !(d.byDate && d.byDate[asOf])) return { success: false, error: 'BAD_ASOF' };
+    const out = Object.assign({}, asOf && d.byDate && d.byDate[asOf] ? d.byDate[asOf] : d);
+    delete out.byDate;
+    if (asOf && QS.get('dslow') === asOf) return new Promise(function (res) { setTimeout(function () { res(out); }, 1500); });
+    return out;
+  }).catch(function () { return { success: false, error: 'NETWORK' }; });
+}
+
 function gas(body, retry) {
   if (USE_MOCK) {
+    if (body.action === 'delay') return mockDelay(body.asOf);
     if (body.action !== 'data') return Promise.resolve({ success: false, error: 'MOCK_READONLY' });
     return fetch('data/mock' + (MOCK_VARIANT ? '_' + MOCK_VARIANT : '') + '.json', { cache: 'no-store' })
       .then(function (r) { return r.json(); })
@@ -366,7 +455,8 @@ function errText(code) {
     BUSY: 'ほかの更新と重なりました。少し待ってからもう一度押してください。',
     DATA_UNAVAILABLE: 'データの更新中で読めませんでした。少し待ってから再読み込みしてください。',
     STATE_BROKEN: 'データの記録に問題があります。管理者に連絡してください。',
-    HISTORY_BROKEN: '変更記録のつながりに問題があるため、設定の変更は止まっています（管理者が確認します）。'
+    HISTORY_BROKEN: '変更記録のつながりに問題があるため、設定の変更は止まっています（管理者が確認します）。',
+    BAD_ASOF: '基準日が正しくありません。もう一度「更新」を押してください。'
   })[code] || ('エラー（' + code + '）');
 }
 
@@ -397,6 +487,10 @@ function load(extra) {
       }
       DATA = null;
       clearView();
+      DELAY = null;
+      clearDelayView();
+      $('delayControls').classList.add('hidden');
+      $('pageSegWrap').classList.add('hidden');
       $('adminCard').classList.add('hidden');
       $('adminBtn').classList.add('hidden');
       $('controls').classList.remove('hidden');
@@ -425,8 +519,21 @@ function route() {
   if (!DATA) return;
   if (isAdminPage()) { renderAdminPage(); return; }
   $('adminCard').classList.add('hidden');
-  $('controls').classList.remove('hidden');
   $('adminBtn').textContent = '管理';
+  $('pageSegWrap').classList.remove('hidden');
+  renderPageSeg();
+  if (isDelayPage()) {                       // 回収遅延（#delay）。回収率の画面は隠す
+    $('main').classList.add('hidden');
+    $('controls').classList.add('hidden');
+    hideMsg();
+    showDelayPage();
+    return;
+  }
+  delayReq++;                                // 回収率に戻ったら、まだ届いていない遅延の応答は捨てる
+  delayLoading = false;
+  $('delayMain').classList.add('hidden');
+  $('delayControls').classList.add('hidden');
+  $('controls').classList.remove('hidden');
   if (!DATA.months.length) {
     clearView();
     selMonth = null;
@@ -444,6 +551,9 @@ function route() {
 
 function renderAdminPage() {
   $('main').classList.add('hidden');
+  $('delayMain').classList.add('hidden');
+  $('delayControls').classList.add('hidden');
+  $('pageSegWrap').classList.add('hidden');
   $('controls').classList.add('hidden');
   hideMsg();
   $('adminCard').classList.remove('hidden');
@@ -667,14 +777,373 @@ function renderDetail() {
 
 // 印刷: いま表示している明細（選んだ担当、または全社）だけを印刷する
 function printDetail() {
+  preparePrintDetail();
+  window.print();
+}
+function preparePrintDetail() {
   const now = new Date();
   $('printMeta').textContent = '印刷 ' + now.getFullYear() + '年' + fmtDT(now.toISOString()) + ' ／ データ版 #' + (DATA ? DATA.stateSeq : '—') +
     ' ／ 最終取り込み ' + (DATA ? fmtDT(lastImported()) : '—') + ' ／ ' + rowsCountText();
+  endPrint();                                // 前回のキャンセルなどで残った設定があっても毎回作り直す
+  setPageStyle('portrait');                  // 回収率の明細は縦
   document.body.classList.add('print-detail');
-  window.print();
 }
 function rowsCountText() { return document.querySelectorAll('#detailTable tbody tr').length + '件'; }
-window.addEventListener('afterprint', function () { document.body.classList.remove('print-detail'); });
+window.addEventListener('afterprint', function () { endPrint(); });
+
+// ---------------- 回収遅延（#delay） ----------------
+// 区分と目印の決め方（実装計画 v1.2 §4-1・§4-2）。全社・担当・印刷で同じ関数を使う。画面の外の値に依存しない（Node の試験が取り出して評価する）
+/* classify:start */
+function hasKey(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+// 区分（1つだけ）と目印（複数可）を別々に返す。over = m3 + m2（2か月以上の金額）
+function classify(row, exSet) {
+  const over = row.m3 + row.m2;
+  let cat, amt;
+  if (hasKey(exSet, row.code)) { cat = 'ex'; amt = row.bal; }
+  else if (over > 0) { cat = 'urgent'; amt = over; }
+  else if (row.m1 > 0) { cat = 'one'; amt = row.m1; }
+  else if (row.m0 > 0) { cat = 'cur'; amt = row.m0; }
+  else { cat = 'other'; amt = 0; }
+  return { cat: cat, over: over, amt: amt, m3flag: cat === 'urgent' && row.m3 > 0, debit: row.method === '引', transfer: row.method === '振' };
+}
+function byAmtDesc(a, b) { return b.amt - a.amt || (a.row.code < b.row.code ? -1 : (a.row.code > b.row.code ? 1 : 0)); }
+// 区分ごとの並び（要対応は2か月以上の金額・1か月だけは10月分…の大きい順。当月だけとその他は一緒にたたむ）
+function groupRows(rows, exSet) {
+  const g = { urgent: [], one: [], cur: [], ex: [] };
+  rows.forEach(function (row) {
+    const c = classify(row, exSet);
+    const item = { row: row, cls: c, amt: c.amt };
+    if (c.cat === 'urgent') g.urgent.push(item);
+    else if (c.cat === 'one') g.one.push(item);
+    else if (c.cat === 'ex') g.ex.push(item);
+    else g.cur.push(item);
+  });
+  ['urgent', 'one', 'cur', 'ex'].forEach(function (k) { g[k].sort(byAmtDesc); });
+  return g;
+}
+function sumItems(items, f) { return items.reduce(function (s, it) { return s + f(it); }, 0); }
+// カード・担当者別の集計。m3 は「うち3か月以上」（要対応の内数）
+function totalsOf(rows, exSet) {
+  const g = groupRows(rows, exSet);
+  const m3 = g.urgent.filter(function (it) { return it.cls.m3flag; });
+  return {
+    urgent: { n: g.urgent.length, yen: sumItems(g.urgent, function (it) { return it.cls.over; }) },
+    m3: { n: m3.length, yen: sumItems(m3, function (it) { return it.row.m3; }) },
+    one: { n: g.one.length, yen: sumItems(g.one, function (it) { return it.row.m1; }) },
+    ex: { n: g.ex.length, yen: sumItems(g.ex, function (it) { return it.row.bal; }) }
+  };
+}
+// 前回との比較（前回の行の区分も今の除外先で決める）。返り値:
+//   mark[code] … 'cont'（今回も前回も要対応）／'new'（今回から要対応。前回の一覧に無い場合も）
+//   done[] … 回収が進んだ（前回は要対応で、今回は一覧に無い・要対応でない・over が減った。名前と担当は前回の行のもの）
+//   prevByRep[rep] … 前回の要対応の金額（前回の担当名ごと）。prevReps[rep] … 前回の一覧にある担当
+function compareWithPrev(rows, prevRows, exSet) {
+  const cur = {};
+  rows.forEach(function (r) { cur[r.code] = r; });
+  const prevUrgent = {}, prevByRep = {}, prevReps = {};
+  prevRows.forEach(function (p) {
+    prevReps[p.rep] = true;
+    const c = classify(p, exSet);
+    if (c.cat === 'urgent') {
+      prevUrgent[p.code] = { row: p, over: c.over };
+      prevByRep[p.rep] = (prevByRep[p.rep] || 0) + c.over;
+    }
+  });
+  const mark = {}, done = [];
+  rows.forEach(function (r) {
+    const c = classify(r, exSet);
+    if (c.cat === 'urgent') mark[r.code] = hasKey(prevUrgent, r.code) ? 'cont' : 'new';
+  });
+  Object.keys(prevUrgent).forEach(function (code) {
+    const p = prevUrgent[code];
+    const r = hasKey(cur, code) ? cur[code] : null;
+    const c = r ? classify(r, exSet) : null;
+    const nowOver = c && c.cat === 'urgent' ? c.over : 0;
+    if (!r || nowOver === 0 || nowOver < p.over) done.push({ code: code, name: p.row.name, rep: p.row.rep, prevOver: p.over, nowOver: nowOver, inList: !!r });
+  });
+  done.sort(function (a, b) { return (b.prevOver - b.nowOver) - (a.prevOver - a.nowOver) || (a.code < b.code ? -1 : (a.code > b.code ? 1 : 0)); });
+  return { mark: mark, done: done, prevByRep: prevByRep, prevReps: prevReps };
+}
+/* classify:end */
+
+const METHOD_JA = { '現': '集金', '振': '振込', '引': '引落' };
+let DELAY = null, delayReq = 0, delayLoading = false, selDelayRep = ALL_REP, selDelayDate = null, showCur = false, delayDates = [];
+const monthN = function (m) { return Number(m.slice(5)); };
+const monthHeads = function (mo) { return [monthN(mo.m3) + '月以前', monthN(mo.m2) + '月', monthN(mo.m1) + '月', monthN(mo.m0) + '月']; };
+const dateLabel = function (d) { return Number(d.slice(0, 4)) + '年' + Number(d.slice(5, 7)) + '月' + Number(d.slice(8)) + '日'; };
+const strip = function (s) { return String(s).replace(/\s+/g, ''); };
+const z = function (v) { return v ? yen(v) : ''; };       // 0 は空欄で出す
+
+function isDelayPage() { return location.hash === '#delay'; }
+
+function renderPageSeg() {
+  const delay = isDelayPage();
+  Array.prototype.forEach.call(document.querySelectorAll('#pageSeg button'), function (b) {
+    b.setAttribute('aria-pressed', (b.getAttribute('data-p') === 'delay') === delay ? 'true' : 'false');
+  });
+}
+
+// 担当の並び: 回収率のデータにある担当はその順（担当コード順）、無い担当は印字の名前で後ろ
+function repOrderMap() {
+  const o = {};
+  let n = 0;
+  if (DATA && DATA.months) {
+    DATA.months.slice().reverse().forEach(function (m) {
+      const M = DATA.byMonth[m];
+      const V = M && (M.views['合算'] || M.views['末日'] || M.views['15日']);
+      if (!V) return;
+      V.reps.forEach(function (r) { const k = strip(r.rep); if (!hasKey(o, k)) o[k] = n++; });
+    });
+  }
+  return o;
+}
+
+function clearDelayView() {
+  ['dtUrgent', 'dtM3', 'dtOne'].forEach(function (id) { $(id).textContent = '—'; });
+  ['dtUrgentSub', 'dtM3Sub', 'dtOneSub', 'dtUrgentMini', 'dtM3Mini', 'dtOneMini', 'dRepNote', 'dNotes'].forEach(function (id) { $(id).textContent = ''; });
+  ['dRepTable', 'dTable', 'dDoneTable', 'dPrintArea'].forEach(function (id) { $(id).innerHTML = ''; });
+  $('dDoneCard').classList.add('hidden');
+  $('delayMain').classList.add('hidden');
+}
+
+function loadDelay(asOf) {
+  const my = ++delayReq;                       // 要求ごとに番号を付け、最後に出した要求の応答だけを画面に出す
+  delayLoading = true;
+  DELAY = null;                                // 読み込み中は前の日の数字を持たない
+  clearDelayView();
+  $('title').textContent = '回収遅延';
+  $('meta').textContent = '読み込み中…';
+  hideMsg();
+  gas(Object.assign({ action: 'delay' }, asOf ? { asOf: asOf } : {}), true).then(function (d) {
+    if (my !== delayReq) return;               // 遅れて届いた古い応答で上書きしない
+    delayLoading = false;
+    if (!d || !d.success) {
+      if (d && d.error === 'SESSION_INVALID') {
+        invalidStreak++;
+        if (invalidStreak >= 2) { location.href = PORTAL_URL; return; }
+        return loadDelay(asOf);
+      }
+      if (d && d.error === 'BAD_ASOF' && asOf) { selDelayDate = null; return loadDelay(null); }   // 登録が無くなった日は最新の日で読み直す
+      DELAY = null;
+      clearDelayView();
+      fillDateSel(delayDates, selDelayDate);      // 数字は消すが、ほかの基準日は選べるようにしておく
+      $('title').textContent = '回収遅延';
+      $('meta').textContent = '';
+      showMsg(errText(d && d.error || 'UNKNOWN'), 'error');
+      return;
+    }
+    invalidStreak = 0;
+    DELAY = d;
+    selDelayDate = d.asOf;
+    delayDates = d.dates || [];
+    if (isDelayPage()) renderDelay();
+  });
+}
+
+function showDelayPage() {
+  renderPageSeg();
+  $('delayControls').classList.remove('hidden');
+  $('title').textContent = '回収遅延';
+  if (DELAY) { renderDelay(); return; }
+  if (!delayLoading) loadDelay(selDelayDate);
+}
+
+function fillDateSel(dates, cur) {
+  const sel = $('dateSel');
+  sel.innerHTML = (dates || []).map(function (x) {
+    return '<option value="' + esc(x.asOf) + '"' + (x.asOf === cur ? ' selected' : '') + '>' + dateLabel(x.asOf) + '現在</option>';
+  }).join('');
+  sel.disabled = !(dates || []).length;
+}
+
+function renderDelay() {
+  const D = DELAY;
+  $('title').textContent = '回収遅延';
+  fillDateSel(D.dates, D.asOf);
+  if (!D.asOf) {                               // まだ1回も取り込まれていない
+    clearDelayView();
+    $('meta').textContent = 'データ版 #' + D.stateSeq + (D.stateAt ? '（' + fmtDT(D.stateAt) + ' 確定）' : '');
+    showMsg('回収遅延一覧表はまだ取り込まれていません。', 'info');
+    return;
+  }
+  const info = (D.dates || []).filter(function (x) { return x.asOf === D.asOf; })[0] || {};
+  $('meta').textContent = dateLabel(D.asOf) + '現在の一覧表 ／ 取り込み ' + fmtDT(info.importedAt) + ' ／ データ版 #' + D.stateSeq + '（' + fmtDT(D.stateAt) + ' 確定）' +
+    (D.prevAsOf ? ' ／ 前回: ' + dateLabel(D.prevAsOf) : '');
+  hideMsg();
+  $('delayMain').classList.remove('hidden');
+
+  const exSet = {};
+  (D.excluded || []).forEach(function (c) { exSet[c] = true; });
+  const rows = D.rows;
+  const hasPrev = !!D.prevAsOf;
+  const cmp = hasPrev ? compareWithPrev(rows, D.prevRows || [], exSet) : null;
+  const all = totalsOf(rows, exSet);
+  const prevAll = hasPrev ? totalsOf((D.prevRows || []).map(function (p) { return Object.assign({ method: '' }, p); }), exSet) : null;
+
+  // カード3枚
+  const diffTxt = function (now, prev) { return prev === null ? '' : '前回差 ' + (now - prev >= 0 ? '+' : '') + man(now - prev) + '万'; };
+  const card = function (id, t, prevYen) {
+    $(id).textContent = man(t.yen) + '万';
+    $(id + 'Sub').textContent = t.n + '件' + (prevYen === null ? '' : ' ／ ' + diffTxt(t.yen, prevYen));
+    $(id + 'Mini').textContent = t.n + '件' + (prevYen === null ? '' : '\n' + diffTxt(t.yen, prevYen));
+  };
+  card('dtUrgent', all.urgent, hasPrev ? prevAll.urgent.yen : null);
+  card('dtM3', all.m3, hasPrev ? prevAll.m3.yen : null);
+  card('dtOne', all.one, hasPrev ? prevAll.one.yen : null);
+
+  // 担当者別
+  const ord = repOrderMap();
+  const names = [];
+  rows.forEach(function (r) { if (names.indexOf(r.rep) < 0) names.push(r.rep); });
+  names.sort(function (a, b) {
+    const ia = hasKey(ord, strip(a)) ? ord[strip(a)] : 1e9, ib = hasKey(ord, strip(b)) ? ord[strip(b)] : 1e9;
+    return ia - ib || (a < b ? -1 : (a > b ? 1 : 0));
+  });
+  if (selDelayRep !== ALL_REP && names.indexOf(selDelayRep) < 0) selDelayRep = ALL_REP;
+  const per = {};
+  names.forEach(function (n) { per[n] = totalsOf(rows.filter(function (r) { return r.rep === n; }), exSet); });
+  const repDiff = function (n, nowYen) {
+    if (!hasPrev || !hasKey(cmp.prevReps, n)) return '—';
+    const d = nowYen - (cmp.prevByRep[n] || 0);
+    return (d >= 0 ? '+' : '') + man(d) + '万';
+  };
+  const repRow = function (label, t, diff, key, strong) {
+    const b = function (s) { return strong ? '<b>' + s + '</b>' : s; };
+    return '<tr class="click' + (selDelayRep === key ? ' sel' : '') + '" data-rep="' + esc(key) + '"><td>' + b(esc(label)) + '</td>' +
+      '<td>' + t.urgent.n + '</td><td>' + b(man(t.urgent.yen)) + '</td><td>' + (t.m3.n ? man(t.m3.yen) + '（' + t.m3.n + '件）' : '—') + '</td>' +
+      '<td>' + t.one.n + '</td><td>' + man(t.one.yen) + '</td><td>' + (t.ex.n ? t.ex.n : '—') + '</td><td>' + (t.ex.n ? man(t.ex.yen) : '—') + '</td><td>' + diff + '</td></tr>';
+  };
+  $('dRepTable').innerHTML = '<tr><th>担当</th><th>要対応 件数</th><th>要対応 金額</th><th>うち3か月以上</th><th>1か月だけ 件数</th><th>1か月だけ 金額</th><th>除外先 件数</th><th>除外先 金額</th><th>前回差</th></tr>' +
+    names.map(function (n) { return repRow(n, per[n], repDiff(n, per[n].urgent.yen), n, false); }).join('') +
+    repRow('全社', all, hasPrev ? ((all.urgent.yen - prevAll.urgent.yen >= 0 ? '+' : '') + man(all.urgent.yen - prevAll.urgent.yen) + '万') : '—', ALL_REP, true);
+  Array.prototype.forEach.call(document.querySelectorAll('#dRepTable tr.click'), function (tr) {
+    tr.addEventListener('click', function () { selDelayRep = tr.getAttribute('data-rep'); renderDelay(); });
+  });
+  $('dRepNote').textContent = '金額は万円（要対応・1か月だけは除外先を除く）。「前回差」は要対応の金額が前回からどれだけ増減したか（前回の一覧に無い担当は「—」）。行を押すと下の一覧が切り替わります（全社は全担当分）。';
+
+  // 得意先一覧（選んだ担当／全社）
+  const isAllRep = selDelayRep === ALL_REP;
+  const view = isAllRep ? rows : rows.filter(function (r) { return r.rep === selDelayRep; });
+  const g = groupRows(view, exSet);
+  const mh = monthHeads(D.months);
+  const cols = 10 + (isAllRep ? 1 : 0);
+  const markHtml = function (it) {
+    let s = '';
+    if (it.cls.m3flag) s += '<span class="badge bad">3か月以上</span>';
+    if (it.cls.debit) s += '<span class="badge">引落</span>';
+    if (it.cls.transfer) s += '<span class="badge">振込</span>';
+    if (cmp && hasKey(cmp.mark, it.row.code)) s += cmp.mark[it.row.code] === 'new' ? '<span class="badge">新規</span>' : '<span class="badge">継続</span>';
+    return s;
+  };
+  const telHtml = function (t) { return t ? '<a href="tel:' + esc(t) + '">' + esc(t) + '</a>' : ''; };
+  const line = function (it) {
+    const r = it.row;
+    return '<tr><td>' + esc(r.code) + '</td><td class="name">' + esc(r.name) + '</td>' + (isAllRep ? '<td>' + esc(r.rep) + '</td>' : '') +
+      '<td>' + telHtml(r.tel) + '</td><td>' + (METHOD_JA[r.method] || esc(r.method)) + '</td><td>' + (r.close === '末' ? '末日' : '15日') + '〆 ' + esc(r.due) + '</td>' +
+      '<td>' + z(r.m3) + '</td><td>' + z(r.m2) + '</td><td>' + z(r.m1) + '</td><td>' + z(r.m0) + '</td><td>' + yen(r.bal) + '</td><td class="wrapc">' + markHtml(it) + '</td></tr>';
+  };
+  const sec = function (key, title, items, amtText, extra) {
+    return '<tr class="sec"><td colspan="' + cols + '"><b>' + title + '</b> ' + items.length + '件' + (amtText ? ' ／ ' + amtText : '') + (extra || '') + '</td></tr>';
+  };
+  let h = '<thead><tr><th>コード</th><th class="l">得意先</th>' + (isAllRep ? '<th>担当</th>' : '') + '<th>電話</th><th>回収方法</th><th>締め・回収日</th>' +
+    mh.map(function (x) { return '<th>' + x + '</th>'; }).join('') + '<th>残高</th><th>目印</th></tr></thead><tbody>';
+  h += sec('urgent', '要対応（請求から2か月以上）', g.urgent, man(sumItems(g.urgent, function (it) { return it.cls.over; })) + '万');
+  h += g.urgent.map(line).join('') || '<tr><td colspan="' + cols + '">該当する得意先はありません。</td></tr>';
+  h += sec('one', '1か月だけ（予備軍）', g.one, man(sumItems(g.one, function (it) { return it.row.m1; })) + '万');
+  h += g.one.map(line).join('') || '<tr><td colspan="' + cols + '">該当する得意先はありません。</td></tr>';
+  h += sec('cur', '当月だけ・その他', g.cur, '', ' <button type="button" class="ghost" id="curToggle" style="padding:2px 10px;font-size:12px">' + (showCur ? 'たたむ' : '開く') + '</button>');
+  if (showCur) h += g.cur.map(line).join('') || '<tr><td colspan="' + cols + '">該当する得意先はありません。</td></tr>';
+  h += sec('ex', '除外先（別枠・回収率の除外先。金額は残高）', g.ex, man(sumItems(g.ex, function (it) { return it.row.bal; })) + '万');
+  h += g.ex.map(line).join('') || '<tr><td colspan="' + cols + '">該当する得意先はありません。</td></tr>';
+  $('dTable').innerHTML = h + '</tbody>';
+  const tg = $('curToggle');
+  if (tg) tg.addEventListener('click', function () { showCur = !showCur; renderDelay(); });
+  $('dListTitle').textContent = '得意先一覧（' + (isAllRep ? '全社' : selDelayRep) + '・' + dateLabel(D.asOf) + '現在）';
+
+  // 回収が進んだ得意先（前回があるとき）
+  if (hasPrev) {
+    $('dDoneCard').classList.remove('hidden');
+    $('dDoneTable').innerHTML = cmp.done.length
+      ? '<tr><th>コード</th><th class="l">得意先</th><th>前回の担当</th><th>前回の要対応</th><th>今回</th></tr>' + cmp.done.map(function (d) {
+          return '<tr><td>' + esc(d.code) + '</td><td class="name">' + esc(d.name) + '</td><td>' + esc(d.rep) + '</td><td>' + yen(d.prevOver) + '</td><td>' +
+            (d.inList ? (d.nowOver ? yen(d.nowOver) + '（減った）' : '要対応ではなくなった') : '一覧から消えた') + '</td></tr>';
+        }).join('')
+      : '<tr><td>前回から回収が進んだ得意先はありません。</td></tr>';
+  } else {
+    $('dDoneCard').classList.add('hidden');
+    $('dDoneTable').innerHTML = '';
+  }
+  $('dNotes').innerHTML = '<p>※締日や回収日を変更した得意先は正確に出力されない場合があります（基幹システムの一覧表の注記）。</p>' +
+    '<p>「2か月以上」は請求月からの数え方（' + mh[0] + '・' + mh[1] + 'の未回収）で、支払期日からの日数ではありません。除外先は回収率の除外先の設定に従い、別枠にまとめています。</p>' +
+    (hasPrev ? '<p>「継続」＝前回も要対応／「新規」＝今回から要対応。比較は直前に取り込んだ一覧表（' + dateLabel(D.prevAsOf) + '現在）との間で、前月とは限りません。</p>' : '<p>前回の一覧表がまだ無いため、前回との比較は出していません。</p>');
+}
+
+// ---- 印刷（働きかけシート）。A4横・手書き欄つき。選んでいる担当（または全社）
+function setPageStyle(orient) {
+  const old = document.getElementById('pageStyle');
+  if (old) old.parentNode.removeChild(old);
+  if (!orient) return;
+  const st = document.createElement('style');
+  st.id = 'pageStyle';
+  st.textContent = '@page { size: A4 ' + orient + '; margin: 12mm; }';
+  document.head.appendChild(st);
+}
+function endPrint() {
+  document.body.classList.remove('print-detail');
+  document.body.classList.remove('print-delay');
+  setPageStyle(null);
+}
+function printDelay() {
+  if (preparePrintDelay()) window.print();
+}
+function preparePrintDelay() {
+  if (!DELAY || !DELAY.asOf) return false;
+  const D = DELAY;
+  const exSet = {};
+  (D.excluded || []).forEach(function (c) { exSet[c] = true; });
+  const isAllRep = selDelayRep === ALL_REP;
+  const view = isAllRep ? D.rows : D.rows.filter(function (r) { return r.rep === selDelayRep; });
+  const g = groupRows(view, exSet);
+  const t = totalsOf(view, exSet);
+  const cmp = D.prevAsOf ? compareWithPrev(D.rows, D.prevRows || [], exSet) : null;
+  const mh = monthHeads(D.months);
+  const now = new Date();
+  const cols = 11 + (isAllRep ? 1 : 0) + 3;
+  const mark = function (it) {
+    const a = [];
+    if (it.cls.m3flag) a.push('3か月以上');
+    if (it.cls.debit) a.push('引落');
+    if (it.cls.transfer) a.push('振込');
+    if (cmp && hasKey(cmp.mark, it.row.code)) a.push(cmp.mark[it.row.code] === 'new' ? '新規' : '継続');
+    return a.join('・');
+  };
+  const line = function (it) {
+    const r = it.row;
+    return '<tr><td>' + esc(r.code) + '</td><td class="name">' + esc(r.name) + '</td>' + (isAllRep ? '<td>' + esc(r.rep) + '</td>' : '') +
+      '<td>' + esc(r.tel) + '</td><td>' + (METHOD_JA[r.method] || esc(r.method)) + '</td><td>' + (r.close === '末' ? '末日' : '15日') + '〆 ' + esc(r.due) + '</td>' +
+      '<td>' + z(r.m3) + '</td><td>' + z(r.m2) + '</td><td>' + z(r.m1) + '</td><td>' + z(r.m0) + '</td><td>' + yen(r.bal) + '</td><td class="wrapc">' + esc(mark(it)) + '</td>' +
+      '<td class="hand"></td><td class="hand"></td><td class="hand memo"></td></tr>';
+  };
+  const sec = function (title, items, amt) { return '<tr class="sec"><td colspan="' + cols + '"><b>' + title + '</b> ' + items.length + '件 ／ ' + man(amt) + '万</td></tr>'; };
+  let h = '<table><thead><tr><th>コード</th><th class="l">得意先</th>' + (isAllRep ? '<th>担当</th>' : '') + '<th>電話</th><th>回収方法</th><th>締め・回収日</th>' +
+    mh.map(function (x) { return '<th>' + x + '</th>'; }).join('') + '<th>残高</th><th>目印</th><th>連絡日</th><th>約束日</th><th>結果・メモ</th></tr></thead>';
+  const part = function (title, items, amt) {
+    if (!items.length) return '';
+    return '<tbody>' + sec(title, items, amt) + items.map(line).join('') + '</tbody>';
+  };
+  h += part('要対応（請求から2か月以上）', g.urgent, sumItems(g.urgent, function (it) { return it.cls.over; }));
+  h += part('1か月だけ（予備軍）', g.one, sumItems(g.one, function (it) { return it.row.m1; }));
+  h += part('除外先（別枠・金額は残高）', g.ex, sumItems(g.ex, function (it) { return it.row.bal; }));
+  if (!g.urgent.length && !g.one.length && !g.ex.length) h += '<tbody><tr><td colspan="' + cols + '">印刷する得意先はありません。</td></tr></tbody>';
+  h += '</table>';
+  $('dPrintArea').innerHTML = '<h2 class="pt">回収遅延 働きかけシート（' + esc(isAllRep ? '全社' : selDelayRep) + '・' + dateLabel(D.asOf) + '現在）</h2>' +
+    '<div class="pm">印刷 ' + now.getFullYear() + '年' + fmtDT(now.toISOString()) + ' ／ 要対応 ' + t.urgent.n + '件 ' + man(t.urgent.yen) + '万円（うち3か月以上 ' + t.m3.n + '件 ' + man(t.m3.yen) + '万円）' +
+    ' ／ 1か月だけ ' + t.one.n + '件 ' + man(t.one.yen) + '万円' + ' ／ データ版 #' + esc(D.stateSeq) + '</div>' + h;
+  endPrint();                                    // 前回のキャンセルなどで残った印刷の設定があっても、毎回ここから作り直す
+  setPageStyle('landscape');
+  document.body.classList.add('print-delay');
+  return true;
+}
 
 // 注記（全員に表示）: 締め月基準の説明と、除外先の遡及
 function renderNotes() {
@@ -819,7 +1288,12 @@ Array.prototype.forEach.call(document.querySelectorAll('#seg button'), function 
   });
 });
 $('monthSel').addEventListener('change', function () { selMonth = this.value; render(); });
-$('reloadBtn').addEventListener('click', function () { load(); });
+$('reloadBtn').addEventListener('click', function () { if (isDelayPage()) DELAY = null; load(); });
+Array.prototype.forEach.call(document.querySelectorAll('#pageSeg button'), function (b) {
+  b.addEventListener('click', function () { location.hash = b.getAttribute('data-p') === 'delay' ? '#delay' : ''; });
+});
+$('dateSel').addEventListener('change', function () { selDelayDate = this.value; loadDelay(selDelayDate); });
+$('dPrintBtn').addEventListener('click', printDelay);
 $('adminBtn').addEventListener('click', function () { location.hash = isAdminPage() ? '' : '#admin'; });
 $('printBtn').addEventListener('click', printDetail);
 window.addEventListener('hashchange', function () { route(); window.scrollTo(0, 0); });
@@ -838,6 +1312,12 @@ Array.prototype.forEach.call(document.querySelectorAll('[data-clear]'), function
 });
 
 renderSeg();
+if (USE_MOCK && /^(delay|detail)$/.test(QS.get('printtest') || '')) {
+  const t = setInterval(function () {
+    if (QS.get('printtest') === 'delay' && DELAY && DELAY.asOf && isDelayPage() && !document.body.classList.contains('print-delay')) { clearInterval(t); if (QS.get('printrep')) { selDelayRep = QS.get('printrep'); renderDelay(); } preparePrintDelay(); }
+    if (QS.get('printtest') === 'detail' && DATA && !isDelayPage() && selMonth && !document.body.classList.contains('print-detail')) { clearInterval(t); preparePrintDetail(); }
+  }, 100);
+}
 if (loadSession()) load();
 </script>
 </body>
