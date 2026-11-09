@@ -26,7 +26,7 @@
 // ============================================================
 
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION        = 'v1.3.0';
+const VERSION        = 'v1.4.1';
 const APP_NAME        = 'auth-admin';
 const AUTH_SHEET_ID  = _PROPS.getProperty('AUTH_SHEET_ID');
 
@@ -59,6 +59,7 @@ function doPost(e) {
       return _json({ success: false, error: 'PARAM_LOST' });
     }
     body = JSON.parse(e.postData.contents);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return _json({ success: false, error: 'PARAM_LOST' });
   } catch (err) {
     return _json({ success: false, error: 'PARAM_LOST' });
   }
@@ -66,11 +67,11 @@ function doPost(e) {
   const action = String(body.action || '');
   const token  = String(body.session_token || '');
 
-  let auth = _validateAdmin(token);
+  let auth = _validateAdmin(token, action !== 'getMatrix');
   if (!auth.ok && auth.transient) {
     // 🔴 誤ログアウト対策: 正常な200でSESSION_INVALIDが返る既知の持病があるため、
     //    一時障害シグナルが立った場合だけ1回だけ再検証してから拒否を確定する。
-    auth = _validateAdmin(token);
+    auth = _validateAdmin(token, action !== 'getMatrix');
   }
   if (!auth.ok) {
     return _json({ success: false, error: auth.error || 'SESSION_INVALID' });
@@ -79,6 +80,7 @@ function doPost(e) {
   try {
     switch (action) {
       case 'getMatrix':    return _json(_getMatrix());
+      case 'saveAppOrder': return _json(_saveAppOrder(body, auth.user_id));
       case 'saveMatrix':   return _json(_saveMatrix(body, auth.user_id));
       case 'migrateRoles': return _json(_migrateRoles(body, auth.user_id));
       default:              return _json({ success: false, error: 'UNKNOWN_ACTION' });
@@ -94,14 +96,14 @@ function doPost(e) {
 // order-app/gas/Code.gs の validateSession を移植し、三重ガードを追加したもの。
 // 🔴 sessions/usersシートには一切書き込まない・削除しない）
 // ============================================================
-function _validateAdmin(token) {
+function _validateAdmin(token, fresh) {
   if (!token) return { ok: false, error: 'SESSION_INVALID' };
 
   const cache    = CacheService.getScriptCache();
   const cacheKey = 'sess_authadmin_v1_' + token.slice(-32);
   const cached   = cache.get(cacheKey);
-  if (cached !== null) {
-    try { return JSON.parse(cached); } catch (e) {}
+  if (!fresh && cached !== null) {
+    try { const r = JSON.parse(cached); if (r.expires_at > Date.now()) return r; } catch (e) {}
   }
 
   if (!AUTH_SHEET_ID) return { ok: false, error: 'SESSION_INVALID', transient: true };
@@ -114,10 +116,10 @@ function _validateAdmin(token) {
 
     const sessions = sessSh.getDataRange().getValues();
     const now = Date.now();
-    let userId = null;
+    let userId = null, expiresAt = 0;
     for (let i = 1; i < sessions.length; i++) {
       if (String(sessions[i][0]) === token) {
-        if (Number(sessions[i][2]) > now) userId = String(sessions[i][1]);
+        if (Number(sessions[i][2]) > now) { userId = String(sessions[i][1]); expiresAt = Number(sessions[i][2]); }
         break;
       }
     }
@@ -159,7 +161,7 @@ function _validateAdmin(token) {
     const permitted = isAdmin && role === 'admin' && allowed.indexOf(userId) !== -1;
 
     const result = permitted
-      ? { ok: true, user_id: userId, name: String(userRow[1] || userId) }
+      ? { ok: true, user_id: userId, name: String(userRow[1] || userId), expires_at: expiresAt }
       : { ok: false, error: 'FORBIDDEN' };
 
     cache.put(cacheKey, JSON.stringify(result), CACHE_TTL_AUTH);
@@ -184,274 +186,267 @@ function normRole_(v) {
   return (s === '' || s === 'none') ? '' : s;
 }
 
-// ============================================================
-// getMatrix: マトリクス描画に必要な全データを返す（読み取り専用）
-// ============================================================
-function _getMatrix() {
-  const ss = SpreadsheetApp.openById(AUTH_SHEET_ID);
-
-  const usersSh = ss.getSheetByName('users');
-  const appsSh  = ss.getSheetByName('apps');
-  const rolesSh = ss.getSheetByName('user_app_roles');
-  if (!appsSh) return { success: false, error: 'APPS_SHEET_MISSING' };
-  if (!usersSh || !rolesSh) return { success: false, error: 'INTERNAL_ERROR' };
-
-  // ── users ──────────────────────────────────────────
-  const userRows = usersSh.getDataRange().getValues();
-  const users = [];
-  const knownUserIds = {};
-  for (let i = 1; i < userRows.length; i++) {
-    const r = userRows[i];
-    const uid = String(r[0] || '').trim();
-    if (!uid) continue;
-    knownUserIds[uid] = true;
-    users.push({
-      user_id:    uid,
-      name:       String(r[1] || uid),
-      short_name: String(r[7] || '').trim() || String(r[1] || uid), // H列（存在しない場合はnameを使う）
-      active:     r[3] === true || r[3] === 'TRUE',
-      is_admin:   r[5] === true || r[5] === 'TRUE'
+// マスターの解釈は読取・保存で共有する。不明な設定をuserへ補完しない。
+function _fail(code, detail) { return { success: false, error: code, detail: detail || '' }; }
+function _id(value) { return typeof value === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(value); }
+function _true(value) { return value === true || value === 'TRUE'; }
+function _hash(value) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, value, Utilities.Charset.UTF_8)
+    .map(b => ('0' + ((b + 256) % 256).toString(16)).slice(-2)).join('');
+}
+function _rows(ss, name, columns) {
+  const sheet = ss.getSheetByName(name);
+  if (!sheet) throw new Error('SCHEMA_INVALID:' + name);
+  const rows = sheet.getDataRange().getValues();
+  Object.keys(columns).forEach(col => {
+    if (String((rows[0] || [])[Number(col)] || '').trim() !== columns[col]) throw new Error('SCHEMA_INVALID:' + name);
+  });
+  return rows;
+}
+function _appDefinitions(rows) {
+  const apps = [], byId = Object.create(null), issues = [];
+  rows.slice(1).forEach((r, i) => {
+    const id = String(r[0] || '').trim();
+    if (!id) {
+      if (r.some(v => v !== '' && v != null)) issues.push('appsの' + (i + 2) + '行目にアプリIDがありません');
+      return;
+    }
+    const errors = [];
+    if (!_id(id)) errors.push('アプリIDの形式');
+    const status = String(r[7] || '').trim();
+    if (!['active', 'hidden', 'archived'].includes(status)) errors.push('公開状態');
+    const rawRoles = String(r[4] || '').trim();
+    const roles = rawRoles.split(',').map(v => v.trim().toLowerCase());
+    if (rawRoles && (roles.some(v => !KNOWN_ROLES.includes(v)) || new Set(roles).size !== roles.length)) errors.push('選べる権限');
+    const labels = Object.create(null);
+    const rawLabels = String(r[5] || '').trim();
+    if (rawLabels) rawLabels.split(',').forEach(pair => {
+      const parts = pair.split('=');
+      const key = parts[0].trim().toLowerCase();
+      if (parts.length !== 2 || !roles.includes(key) || !parts[1].trim() || labels[key]) errors.push('権限の表示名');
+      else labels[key] = parts[1].trim();
     });
-  }
-
-  // ── apps（archivedは除外・hiddenは含める） ─────────────
-  const appRows = appsSh.getDataRange().getValues();
-  const apps = [];
-  const knownAppNames = {};
-  for (let a = 1; a < appRows.length; a++) {
-    const ar = appRows[a];
-    const appName = String(ar[0] || '').trim();
-    if (!appName) continue;
-    const status = String(ar[7] || 'active').trim() || 'active';
-    if (status === 'archived') continue;
-    knownAppNames[appName] = true;
-
-    let roleList = String(ar[4] || 'user').split(',')
-      .map(s => s.trim().toLowerCase()).filter(s => s);
-    if (!roleList.some(r => KNOWN_ROLES.indexOf(r) !== -1)) roleList = ['user'];
-
-    const roleLabels = {};
-    String(ar[5] || '').split(',').forEach(pair => {
-      const kv = pair.split('=');
-      if (kv.length === 2 && kv[0].trim()) roleLabels[kv[0].trim().toLowerCase()] = kv[1].trim();
-    });
-
-    apps.push({
-      app_name:    appName,
-      label:       String(ar[1] || appName),
-      icon:        String(ar[2] || '📱'),
-      url:         String(ar[3] || ''),
-      roles:       roleList,
-      role_labels: roleLabels,
-      sort_order:  Number(ar[6]) || 999,
-      status:      status
-    });
-  }
-  apps.sort((x, y) => x.sort_order - y.sort_order);
-
-  // 🆕 v1.3.0: アプリごとの許可ロール索引。
-  // 🔴 KNOWN_ROLES（グローバル）とは別物。'admin' は KNOWN_ROLES には入っているので
-  //    「apps シートでそのアプリに許可されていない admin」は legacy_roles では検出できなかった。
-  //    その値は画面の循環（[''].concat(app.roles)）にも無いため、1クリックで黙って消えていた。
-  const allowedByApp = {};
-  apps.forEach(a => { allowedByApp[a.app_name] = a.roles || []; });
-
-  // ── roles + legacy_roles + duplicate_rows + orphan_* ──
-  // 🔴 全アプリが「最初の一致で break」する挙動に合わせ、同一(user_id,app_name)の
-  //    2行目以降は roles/legacy_roles に反映しない（重複は duplicate_rows で警告するだけ）。
-  const roleRows = rolesSh.getDataRange().getValues();
-  const roles = {};
-  const legacyRoles = [];
-  const outOfVocab = [];   // 🆕 v1.3.0: 値そのものは正しいが、そのアプリでは許可されていないロール
-  const seenPairs = {};
-  const dupCount = {};
-  const orphanAppSet = {};
-  const orphanUserSet = {};
-
-  for (let p = 1; p < roleRows.length; p++) {
-    const rr = roleRows[p];
-    const uid = String(rr[0] || '').trim();
-    const appName = String(rr[1] || '').trim();
-    if (!uid || !appName) continue;
-
-    const key = uid + '/' + appName;
-    if (seenPairs[key]) {
-      dupCount[key] = (dupCount[key] || 1) + 1;
-    } else {
-      seenPairs[key] = true;
-      const roleVal = normRole_(rr[2]);
-      if (roleVal) {
-        if (!roles[uid]) roles[uid] = {};
-        roles[uid][appName] = roleVal;
-        if (KNOWN_ROLES.indexOf(roleVal) === -1) {
-          legacyRoles.push({ user_id: uid, app_name: appName, role: roleVal });
-        } else if (allowedByApp[appName] && allowedByApp[appName].indexOf(roleVal) === -1) {
-          // 🔴 apps シートの roles 語彙に無い。画面では循環に含まれないので、
-          //    放置すると次のクリックで黙って別の値に落ちる
-          outOfVocab.push({ user_id: uid, app_name: appName, role: roleVal,
-                            allowed: allowedByApp[appName] });
+    const sort = Number(r[6]);
+    if (r[6] === '' || !Number.isFinite(sort) || !Number.isInteger(sort) || sort < 0) errors.push('並び順');
+    const app = { app_name: id, label: String(r[1] || id), icon: String(r[2] || '📱'), url: String(r[3] || ''),
+      roles: rawRoles ? roles.filter(v => KNOWN_ROLES.includes(v)) : [], row_key: 'apps-row-' + (i + 2), role_labels: labels, status: status,
+      sort_order: Number.isFinite(sort) ? sort : 999, row: i + 2, raw_sort: r[6], raw_roles: rawRoles, config_errors: errors };
+    if (!byId[id]) byId[id] = app;
+    apps.push(app);
+  });
+  // 発注・在庫の新旧リンクは、既存運用で同じ権限IDを共有している。
+  // URLを限定した既存の2組だけを認め、並び順は行キーで別々に扱う。
+  const linkedPaths = {
+    'order-app': ['/order-app/', '/order-app/db/'],
+    'stock-report': ['/stock-report/', '/stock-report/db/']
+  };
+  Object.keys(byId).forEach(id => {
+    const group = apps.filter(a => a.app_name === id);
+    if (group.length > 1) {
+      const paths = linkedPaths[id];
+      const urls = paths && paths.map(p => 'https://beaufield.github.io/beaufield-dev' + p);
+      const isKnownPair = urls && group.length === 2 && urls.every(url => group.filter(a => a.url === url).length === 1)
+        && ['hidden', 'archived'].includes(group.find(a => a.url === urls[0]).status)
+        && ['active', 'hidden'].includes(group.find(a => a.url === urls[1]).status);
+      if (!isKnownPair) group.forEach(a => a.config_errors.push('アプリIDの重複'));
+      else {
+        const explicit = group.filter(a => a.raw_roles);
+        const choices = explicit[0] && explicit[0].roles;
+        const sameChoices = choices && explicit.every(a => JSON.stringify(a.roles.slice().sort()) === JSON.stringify(choices.slice().sort()));
+        if (!sameChoices) group.forEach(a => a.config_errors.push('共有する権限の設定不一致'));
+        else {
+          group.forEach(a => { if (!a.raw_roles) a.roles = choices.slice(); a.linked_roles = true; });
+          byId[id] = group.find(a => a.url === urls[1]);
         }
       }
     }
-
-    if (!knownAppNames[appName]) orphanAppSet[appName] = true;
-    if (!knownUserIds[uid]) orphanUserSet[uid] = true;
-  }
-
-  const duplicateRows = Object.keys(dupCount).map(key => {
-    const [uid, appName] = key.split('/');
-    return { user_id: uid, app_name: appName, count: dupCount[key] };
+    group.forEach(a => {
+      if (!a.roles.length) a.config_errors.push('選べる権限');
+      if (group.some(g => g.config_errors.length) && !a.config_errors.length) a.config_errors.push('共有先の設定不備');
+    });
   });
-
-  return {
-    success: true,
-    users: users,
-    apps: apps,
-    roles: roles,
-    legacy_roles: legacyRoles,
-    out_of_vocab: outOfVocab,
-    duplicate_rows: duplicateRows,
-    orphan_apps: Object.keys(orphanAppSet),
-    orphan_users: Object.keys(orphanUserSet),
-    fetched_at: Date.now(),
-    version: VERSION
-  };
+  apps.forEach(a => { if (a.config_errors.length) issues.push(a.label + ': ' + a.config_errors.join('・')); });
+  return { apps: apps, byId: byId, issues: issues };
+}
+function _readModel(ss) {
+  const users = _rows(ss, 'users', { 0: 'user_id', 3: 'active', 5: 'is_admin' });
+  const appRows = _rows(ss, 'apps', { 0: 'app_name', 4: 'roles', 5: 'role_labels', 6: 'sort_order', 7: 'status' });
+  const roleRows = _rows(ss, 'user_app_roles', { 0: 'user_id', 1: 'app_name', 2: 'role' });
+  const definitions = _appDefinitions(appRows);
+  const userMap = Object.create(null), userList = [], issues = definitions.issues.slice();
+  users.slice(1).forEach(r => {
+    const id = String(r[0] || '').trim();
+    if (!id) return;
+    const user = { user_id: id, name: String(r[1] || id), short_name: String(r[7] || r[1] || id), active: _true(r[3]), is_admin: _true(r[5]) };
+    if (!_id(id)) issues.push('社員IDの形式が不正です');
+    if (userMap[id]) { userMap[id].duplicate = true; user.duplicate = true; issues.push('社員IDが重複しています: ' + id); }
+    else userMap[id] = user;
+    userList.push(user);
+  });
+  const pairs = Object.create(null);
+  roleRows.slice(1).forEach((r, i) => {
+    const uid = String(r[0] || '').trim(), app = String(r[1] || '').trim();
+    if (!uid || !app) return;
+    const key = uid + '/' + app;
+    if (pairs[key]) pairs[key].count++;
+    else pairs[key] = { row: i + 2, role: normRole_(r[2]), count: 1, user_id: uid, app_name: app };
+  });
+  const visible = definitions.apps.filter(a => a.status !== 'archived')
+    .sort((a, b) => a.sort_order - b.sort_order || a.row - b.row);
+  // 追加・廃止・同順位・元セルの型・行の入替も含め、取得時のマスターを照合する。
+  const revision = _hash(JSON.stringify(appRows));
+  return { apps: visible, definitions: definitions, users: userList, userMap: userMap, pairs: pairs,
+    issues: issues, appRows: appRows, revision: revision };
 }
 
-// ============================================================
-// saveMatrix: 差分をまとめて反映する
-// ============================================================
-function _saveMatrix(payload, actorUserId) {
-  const requestId = String(payload.request_id || '').trim();
-  if (!requestId) return { success: false, error: 'REQUEST_ID_REQUIRED' };
+function _getMatrix() {
+  const ss = SpreadsheetApp.openById(AUTH_SHEET_ID);
+  const m = _readModel(ss), roles = Object.create(null), legacy = [], outside = [], duplicates = [];
+  const orphanApps = new Set(), orphanUsers = new Set(), archived = new Set();
+  Object.keys(m.pairs).forEach(key => {
+    const p = m.pairs[key], app = m.definitions.byId[p.app_name];
+    if (p.count > 1) duplicates.push({ user_id: p.user_id, app_name: p.app_name, count: p.count });
+    if (p.role) {
+      if (!roles[p.user_id]) roles[p.user_id] = Object.create(null);
+      roles[p.user_id][p.app_name] = p.role;
+      if (!KNOWN_ROLES.includes(p.role)) legacy.push({ user_id: p.user_id, app_name: p.app_name, role: p.role });
+      else if (app && app.status !== 'archived' && !app.roles.includes(p.role)) outside.push({ user_id: p.user_id, app_name: p.app_name, role: p.role, allowed: app.roles });
+    }
+    if (!app) orphanApps.add(p.app_name);
+    else if (app.status === 'archived' && p.role) archived.add(p.app_name);
+    if (!m.userMap[p.user_id]) orphanUsers.add(p.user_id);
+  });
+  return { success: true, users: m.users, apps: m.apps, roles: roles, legacy_roles: legacy, out_of_vocab: outside,
+    duplicate_rows: duplicates, orphan_apps: Array.from(orphanApps), orphan_users: Array.from(orphanUsers),
+    archived_roles: Array.from(archived), configuration_errors: m.issues, order_revision: m.revision, fetched_at: Date.now(), version: VERSION };
+}
 
-  const cache   = CacheService.getScriptCache();
-  const idemKey = 'saveMatrix_' + requestId;
-  const cached  = cache.get(idemKey);
-  if (cached !== null) {
-    try { return JSON.parse(cached); } catch (e) {}
-  }
-
-  const changes = Array.isArray(payload.changes) ? payload.changes : [];
-  if (!changes.length) return { success: false, error: 'NO_CHANGES' };
-
+// 書込は事前検証→試行監査→本体→完了監査の順。途中失敗は成功と扱わない。
+// 要求の記録を端末キャッシュに依存せず保持し、不明結果の盲目再実行を防ぐ。
+function _runAdminMutation(kind, payload, actor, content, build) {
+  if (!_id(payload.request_id) || payload.request_id.length < 8) return _fail('REQUEST_ID_REQUIRED');
   const lock = LockService.getScriptLock();
-  let gotLock = false;
-  try { gotLock = lock.tryLock(30000); } catch (e) {}
-  if (!gotLock) return { success: false, error: 'BUSY' };
-
+  if (!lock.tryLock(30000)) return _fail('BUSY');
+  let started = false, journalKey = '', fingerprint = '';
   try {
+    journalKey = 'auth_request_' + _hash(actor + '/' + kind + '/' + payload.request_id);
+    fingerprint = _hash(JSON.stringify(content));
+    const previous = _PROPS.getProperty(journalKey);
+    if (previous) {
+      const record = JSON.parse(previous);
+      if (record.fingerprint !== fingerprint) return _fail('REQUEST_REUSED');
+      return record.status === 'done' ? record.result : _fail('SAVE_UNCERTAIN');
+    }
     const ss = SpreadsheetApp.openById(AUTH_SHEET_ID);
-    const appsSh  = ss.getSheetByName('apps');
-    const rolesSh = ss.getSheetByName('user_app_roles');
-    if (!appsSh || !rolesSh) return { success: false, error: 'INTERNAL_ERROR' };
-
-    // アプリごとの許可ロールを取得（'none' は常に許可）
-    const appRows = appsSh.getDataRange().getValues();
-    const allowedRolesByApp = {};
-    for (let a = 1; a < appRows.length; a++) {
-      const appName = String(appRows[a][0] || '').trim();
-      if (!appName) continue;
-      let list = String(appRows[a][4] || 'user').split(',')
-        .map(s => s.trim().toLowerCase()).filter(s => s);
-      if (!list.length) list = ['user'];
-      allowedRolesByApp[appName] = list;
-    }
-
-    // 同一 (user_id, app_name) が複数あれば最後の1件だけを採用
-    const dedup = {};
-    const order = [];
-    changes.forEach(c => {
-      const uid = String(c.user_id || '').trim();
-      const appName = String(c.app_name || '').trim();
-      if (!uid || !appName) return;
-      const key = uid + '/' + appName;
-      if (!dedup[key]) order.push(key);
-      dedup[key] = {
-        user_id:   uid,
-        app_name:  appName,
-        prev_role: normRole_(c.prev_role),
-        next_role: normRole_(c.next_role) || 'none'
-      };
+    const m = _readModel(ss);
+    const plan = build(ss, m);
+    if (plan.success === false) return plan;
+    _rows(ss, 'role_audit', { 0: 'timestamp', 1: 'actor_user_id', 2: 'target_user_id', 3: 'app_name', 4: 'before', 5: 'after', 6: 'source', 7: 'request_id' });
+    // 完了済みの記録だけ期限付きで整理。不明な要求は自動で捨てない。
+    const all = _PROPS.getProperties();
+    Object.keys(all).filter(k => k.indexOf('auth_request_') === 0).forEach(k => {
+      try { const r = JSON.parse(all[k]); if (r.status === 'done' && Date.now() - r.at > 7 * 86400000) _PROPS.deleteProperty(k); } catch (_) {}
     });
-
-    // next_role の妥当性 ＋ 自己ロックアウト防止（1件でも違反があれば全体を中止）
-    for (let oi = 0; oi < order.length; oi++) {
-      const ch = dedup[order[oi]];
-      const allowedRoles = allowedRolesByApp[ch.app_name];
-      if (!allowedRoles) return { success: false, error: 'UNKNOWN_APP', detail: ch.app_name };
-
-      const nextIsValid = ch.next_role === 'none' || allowedRoles.indexOf(ch.next_role) !== -1;
-      if (!nextIsValid) {
-        return { success: false, error: 'INVALID_ROLE', detail: ch.app_name + '=' + ch.next_role };
-      }
-
-      if (ch.app_name === 'auth-admin' && ch.user_id === actorUserId && ch.next_role !== 'admin') {
-        return { success: false, error: 'SELF_LOCKOUT' };
-      }
-    }
-
-    // 現在のシート値を読み、(user_id, app_name) → 行番号 の対応を作る（最初の一致のみ）
-    const data = rolesSh.getDataRange().getValues(); // [user_id, app_name, role]・1行目ヘッダー
-    const rowIndexByKey = {};
-    const seen = {};
-    for (let i = 1; i < data.length; i++) {
-      const key = String(data[i][0] || '').trim() + '/' + String(data[i][1] || '').trim();
-      if (seen[key]) continue; // 重複行の2件目以降は対象にしない（アプリ側のbreakと同じ挙動）
-      seen[key] = true;
-      rowIndexByKey[key] = i + 1; // シート上の行番号（1始まり）
-    }
-
-    const conflicts = [];
-    const toUpdate = []; // { row, role }
-    const toAppend = [];  // [user_id, app_name, role]
-    const auditEntries = []; // [user_id, app_name, before, after]
-
-    order.forEach(key => {
-      const ch = dedup[key];
-      const rowNum = rowIndexByKey[key];
-      const currentRole = rowNum ? normRole_(data[rowNum - 1][2]) : '';
-
-      if (currentRole !== ch.prev_role) {
-        conflicts.push({
-          user_id: ch.user_id, app_name: ch.app_name,
-          expected: ch.prev_role || 'none', actual: currentRole || 'none'
-        });
-        return;
-      }
-      if (currentRole === ch.next_role) return; // 実質変化なし
-
-      if (rowNum) {
-        toUpdate.push({ row: rowNum, role: ch.next_role });
-      } else if (ch.next_role !== 'none') {
-        toAppend.push([ch.user_id, ch.app_name, ch.next_role]);
-      } else {
-        return; // なし→なしは行を作らない
-      }
-      auditEntries.push([ch.user_id, ch.app_name, currentRole || '', ch.next_role]);
-    });
-
-    // 🔴 書き込みはC列だけ。対象行を個別に更新する（シート全体のsetValuesは使わない）
-    toUpdate.forEach(u => rolesSh.getRange(u.row, 3, 1, 1).setValue(u.role));
-    toAppend.forEach(row => rolesSh.appendRow(row));
-
-    if (auditEntries.length) {
-      _appendAudit(ss, actorUserId, auditEntries, requestId, APP_NAME + ' ' + VERSION);
-    }
-
-    const result = {
-      success: true,
-      applied: toUpdate.length + toAppend.length,
-      conflicts: conflicts
-    };
-    cache.put(idemKey, JSON.stringify(result), CACHE_TTL_IDEMPOTENCY);
+    const record = { fingerprint: fingerprint, status: 'started', at: Date.now() };
+    _PROPS.setProperty(journalKey, JSON.stringify(record));
+    started = true;
+    _appendAudit(ss, actor, plan.audit, payload.request_id, kind + ':開始 ' + VERSION);
+    plan.write();
+    SpreadsheetApp.flush();
+    _appendAudit(ss, actor, plan.audit, payload.request_id, kind + ':完了 ' + VERSION);
+    const result = { success: true, applied: plan.audit.length, conflicts: [] };
+    _PROPS.setProperty(journalKey, JSON.stringify({ fingerprint: fingerprint, status: 'done', at: Date.now(), result: result }));
     return result;
   } catch (e) {
-    Logger.log('_saveMatrix error: ' + e);
-    return { success: false, error: 'INTERNAL_ERROR' };
-  } finally {
-    if (gotLock) lock.releaseLock();
-  }
+    Logger.log('管理保存失敗: ' + kind);
+    if (started) return _fail('SAVE_UNCERTAIN');
+    return _fail(String(e.message || '').indexOf('SCHEMA_INVALID:') === 0 ? 'SCHEMA_INVALID' : 'INTERNAL_ERROR');
+  } finally { lock.releaseLock(); }
+}
+
+function _saveMatrix(payload, actor) {
+  const changes = payload.changes;
+  if (!Array.isArray(changes) || !changes.length || changes.length > 300) return _fail('INVALID_CHANGES');
+  return _runAdminMutation('saveMatrix', payload, actor, changes, (ss, m) => {
+    const seen = new Set(), writes = [], audit = [];
+    for (const c of changes) {
+      if (!c || !_id(c.user_id) || !_id(c.app_name) || typeof c.prev_role !== 'string' || typeof c.next_role !== 'string') return _fail('INVALID_CHANGES');
+      const key = c.user_id + '/' + c.app_name;
+      if (seen.has(key)) return _fail('DUPLICATE_CHANGE', key);
+      seen.add(key);
+      const user = m.userMap[c.user_id], app = m.definitions.byId[c.app_name], pair = m.pairs[key];
+      const next = normRole_(c.next_role), prev = normRole_(c.prev_role);
+      if (!user) return _fail('UNKNOWN_USER', c.user_id);
+      if (user.duplicate) return _fail('DUPLICATE_USER', c.user_id);
+      if (!app) return _fail('UNKNOWN_APP', c.app_name);
+      if (app.status === 'archived') return _fail('ARCHIVED_APP', c.app_name);
+      if (app.config_errors.length) return _fail('APP_CONFIG_INVALID', c.app_name);
+      if (pair && pair.count > 1) return _fail('DUPLICATE_ROLE', key);
+      if (next && !app.roles.includes(next)) return _fail('INVALID_ROLE', c.app_name);
+      if (!user.active && next) return _fail('INACTIVE_USER', c.user_id);
+      if (c.app_name === APP_NAME && c.user_id === actor && next !== 'admin') return _fail('SELF_LOCKOUT');
+      const current = pair ? pair.role : '';
+      if (current !== prev) return _fail('CONFLICT', key);
+      if (current === next) continue;
+      audit.push([c.user_id, c.app_name, current || 'none', next || 'none']);
+      writes.push({ row: pair ? pair.row : 0, user_id: c.user_id, app_name: c.app_name, role: next || 'none' });
+    }
+    return { audit: audit, write: () => {
+      const sh = ss.getSheetByName('user_app_roles');
+      writes.forEach(w => {
+        if (w.row) sh.getRange(w.row, 3).setValue(w.role);
+        else sh.appendRow([w.user_id, w.app_name, w.role]);
+      });
+    } };
+  });
+}
+
+function _saveAppOrder(payload, actor) {
+  if (!Array.isArray(payload.order) || !payload.order.length || payload.order.length > 300 || typeof payload.base_revision !== 'string') return _fail('INVALID_ORDER');
+  return _runAdminMutation('saveAppOrder', payload, actor, [payload.base_revision, payload.order], (ss, m) => {
+    if (m.issues.length) return _fail('APP_CONFIG_INVALID');
+    if (m.revision !== payload.base_revision) return _fail('ORDER_CONFLICT');
+    if (payload.order.length !== m.apps.length || new Set(payload.order).size !== payload.order.length || payload.order.some(id => !_id(id) || !m.apps.some(a => a.row_key === id))) return _fail('INVALID_ORDER');
+    const audit = [], writes = [];
+    payload.order.forEach((id, i) => {
+      const app = m.apps.find(a => a.row_key === id), next = (i + 1) * 10;
+      if (app.raw_sort !== next) { audit.push(['', app.app_name + ':' + app.row_key, String(app.raw_sort), String(next)]); writes.push([app.row, next]); }
+    });
+    return { audit: audit, write: () => {
+      const sh = ss.getSheetByName('apps');
+      // 物理行の入替はしない。対象アプリのG列だけを書き換える。
+      writes.forEach(w => sh.getRange(w[0], 7).setValue(w[1]));
+    } };
+  });
+}
+
+// 警告原因のマスター整合専用。割当値は読取照合のみで、更新対象はapps.E列。
+// 本番承認後にエディタからpreview→applyの順で実行する。自動起動しない。
+function previewBeaufesRoleOptions() {
+  const result = _alignBeaufesRoleOptions(false);
+  Logger.log(JSON.stringify(result)); return result;
+}
+function applyBeaufesRoleOptions() {
+  const result = _alignBeaufesRoleOptions(true);
+  Logger.log(JSON.stringify(result)); return result;
+}
+function _alignBeaufesRoleOptions(apply) {
+  const inspect = m => {
+    const app = m.definitions.byId.beaufes;
+    if (!app || app.config_errors.length || app.status === 'archived') return _fail('APP_CONFIG_INVALID');
+    if (app.raw_roles === 'user,admin') return { success: true, changed: false };
+    if (app.raw_roles !== 'user') return _fail('CONFIG_CONFLICT');
+    return { success: true, changed: true, before: 'user', after: 'user,admin', row: app.row };
+  };
+  if (!apply) return inspect(_readModel(SpreadsheetApp.openById(AUTH_SHEET_ID)));
+  const actor = _allowedUserIds()[0];
+  if (!actor) return _fail('FORBIDDEN');
+  return _runAdminMutation('alignBeaufesRoles', { request_id: 'beaufes-options-user-admin-20261109' }, actor, ['beaufes', 'user', 'user,admin'], (ss, m) => {
+    const p = inspect(m);
+    if (!p.success) return p;
+    return { audit: p.changed ? [['', 'beaufes', 'roles:user', 'roles:user,admin']] : [],
+      write: () => { if (p.changed) ss.getSheetByName('apps').getRange(p.row, 5).setValue('user,admin'); } };
+  });
 }
 
 // ============================================================
@@ -510,16 +505,13 @@ function _migrateRoles(payload, actorUserId) {
       };
     }
 
-    plan.forEach(p => rolesSh.getRange(p.row, 3, 1, 1).setValue(p.after));
-
-    if (plan.length) {
-      const auditEntries = plan.map(p => [p.user_id, p.app_name, p.before, p.after]);
-      _appendAudit(ss, actorUserId, auditEntries, requestId, 'role-migration');
-    }
-
-    const result = { success: true, dry_run: false, applied: plan.length };
-    cache.put(idemKey, JSON.stringify(result), CACHE_TTL_IDEMPOTENCY);
-    return result;
+    // 旧APIからも同じ検証を使う。外側のロックは一度解放して再取得する。
+    if (gotLock) { lock.releaseLock(); gotLock = false; }
+    if (!plan.length) return { success: true, dry_run: false, applied: 0 };
+    const result = _saveMatrix({ request_id: requestId, changes: plan.map(p => ({
+      user_id: p.user_id, app_name: p.app_name, prev_role: p.before, next_role: p.after
+    })) }, actorUserId);
+    return Object.assign({ dry_run: false }, result);
   } catch (e) {
     Logger.log('_migrateRoles error: ' + e);
     return { success: false, error: 'INTERNAL_ERROR' };
@@ -534,7 +526,8 @@ function _migrateRoles(payload, actorUserId) {
 // ============================================================
 function _appendAudit(ss, actorUserId, entries, requestId, source) {
   const sh = ss.getSheetByName('role_audit');
-  if (!sh || !entries.length) return;
+  if (!sh) throw new Error('SCHEMA_INVALID:role_audit');
+  if (!entries.length) return;
 
   const ts = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
   const rows = entries.map(e => [
@@ -652,7 +645,7 @@ function _setupAppsSheet(ss) {
     ['project-dashboard', 'プロジェクトダッシュボード', '📊', 'https://beaufield.github.io/beaufield-dev/project-dashboard/',              'user,admin', '',                           80, 'active', ''],
     ['line-progress',     'LINE登録進捗',             '📈', 'https://beaufield.github.io/beaufield-dev/line-progress/',                   'user,admin', '',                           90, 'active', ''],
     ['route-checker',     'ルート訪問チェッカー',      '🗺️', 'https://beaufield.github.io/beaufield-dev/route-checker/',                  'user',       '',                          100, 'hidden', '当面不使用（portal v1.11.1で一覧から削除・直リンクは有効）'],
-    ['beaufes',           'ビューフェス（社員用）',    '🎪', 'https://beaufield.github.io/beaufield-dev/beaufes/badges.html',              'user',       '',                          110, 'hidden', '社員用の入口はbadges.html。index.htmlは公開申込フォーム'],
+    ['beaufes',           'ビューフェス（社員用）',    '🎪', 'https://beaufield.github.io/beaufield-dev/beaufes/badges.html',              'user,admin', '',                          110, 'hidden', '社員用の入口はbadges.html。index.htmlは公開申込フォーム'],
     ['auth-admin',        '権限管理',                '🔐', '',                                                                             'admin',      '',                          120, 'hidden', 'Phase5完了後にurlを設定しstatusをactiveへ']
   ];
   sheet.getRange(2, 1, rows.length, header.length).setValues(rows);
