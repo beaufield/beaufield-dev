@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- 自動生成: order-app/tools/build_db_pages.py が原本から作る。直接編集しない -->
+<!-- 現行DB画面の原本。旧画面用 build_db_pages.py では再生成しない。 -->
 <html lang="ja">
 <head>
 <meta charset="utf-8">
@@ -193,31 +193,104 @@
     border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary); cursor: pointer;
   }
   .maker-csv-btn:hover { color: var(--text-primary); border-color: var(--series-1); }
+  /* 在庫検索は入力・件数・結果を1画面に収める。スマートフォンは商品カード表示。 */
+  .app-version { font-size: 11px; font-weight: 400; color: var(--text-muted); white-space: nowrap; }
+  .tab-btn[data-tab="inventory"].active { color: var(--status-good); border-color: var(--status-good); }
+  .inventory-form { display: grid; gap: 14px; }
+  .inventory-form label { display: grid; gap: 6px; font-size: 13px; }
+  .inventory-form input[type="search"], .inventory-form select {
+    width: 100%; min-width: 0; font: inherit; font-size: 16px; padding: 10px;
+    border: 1px solid var(--baseline); border-radius: 8px; color: var(--text-primary); background: var(--surface-1);
+  }
+  .inventory-form .inventory-check { display: flex; align-items: center; gap: 8px; }
+  .inventory-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .inventory-button { font: inherit; font-size: 14px; padding: 10px 16px; min-height: 44px; border-radius: 8px;
+    border: 1px solid var(--baseline); background: var(--surface-1); color: var(--text-primary); cursor: pointer; }
+  .inventory-primary { color: var(--surface-1); background: var(--text-primary); }
+  .inventory-button:disabled { opacity: .45; cursor: default; }
+  .inventory-button:focus-visible, .tab-btn:focus-visible { outline: 2px solid var(--series-excess); outline-offset: 3px; }
+  .inventory-note { font-size: 13px; color: var(--text-secondary); margin: 12px 0; overflow-wrap: anywhere; }
+  .inventory-status { min-height: 24px; margin: 14px 0; font-size: 14px; white-space: pre-line; }
+  .inventory-status.is-error { color: var(--status-critical); }
+  .inventory-results { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .inventory-results th { text-align: left; font-size: 12px; color: var(--text-secondary); padding: 10px 8px; }
+  .inventory-results td { border-top: 1px solid var(--gridline); padding: 14px 8px; vertical-align: top; overflow-wrap: anywhere; }
+  .inventory-product { font-weight: 600; }
+  .inventory-codes { font-size: 12px; color: var(--text-secondary); margin-top: 6px; overflow-wrap: anywhere; }
+  .inventory-stock { font-size: 22px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .inventory-stock small { font-size: 12px; margin-left: 5px; font-weight: 400; }
+  .inventory-badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid var(--baseline); border-radius: 4px; font-size: 11px; }
+  .inventory-pager { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 16px; }
+  @media (max-width: 600px) {
+    .tabs { gap: 5px; }
+    .tab-btn { font-size: 12px; padding: 10px 4px; }
+    .inventory-results, .inventory-results tbody { display: block; }
+    .inventory-results thead { display: none; }
+    .inventory-results tr { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin: 10px 0; background: var(--surface-1); }
+    .inventory-results td { padding: 0; border: 0; }
+    .inventory-results td:first-child { grid-column: 1 / -1; }
+    .inventory-results td[data-label="仕入先"] { grid-column: 1 / -1; color: var(--text-secondary); font-size: 12px; }
+    .inventory-results td[data-label="棚番号"]::before { content: '棚番号 '; color: var(--text-secondary); font-size: 12px; }
+    .inventory-results td[data-label="棚番号"] { align-self: center; text-align: right; }
+  }
+
 </style>
 </head>
 <body>
 <div class="wrap">
 
   <header class="page">
-    <h1>📊 在庫レポート（新）</h1>
+    <h1>📊 在庫レポート <span class="app-version" id="appVersion"></span></h1>
     <p id="headerSub">読み込み中…</p>
   </header>
 
-  <div id="loadingBox" class="state-box">
-    <p>読み込み中…</p>
-  </div>
-
-  <div id="errorBox" class="state-box" style="display:none">
-    <p id="errorMsg"></p>
-    <button id="retryBtn" type="button">再読み込み</button>
-  </div>
-
-  <div id="mainContent" style="display:none">
-
-    <div class="tabs" role="tablist">
-      <button class="tab-btn active" data-tab="dead" id="tabBtnDead" type="button">🧹 死蔵在庫</button>
-      <button class="tab-btn" data-tab="excess" id="tabBtnExcess" type="button">📦 過剰在庫</button>
+  <div id="mainContent">
+    <div class="tabs" role="tablist" aria-label="在庫レポートの種類">
+      <button class="tab-btn" data-tab="dead" id="tabBtnDead" type="button" role="tab" aria-controls="panelDead" aria-selected="false">🧹 死蔵在庫</button>
+      <button class="tab-btn" data-tab="excess" id="tabBtnExcess" type="button" role="tab" aria-controls="panelExcess" aria-selected="false">📦 過剰在庫</button>
+      <button class="tab-btn" data-tab="inventory" id="tabBtnInventory" type="button" role="tab" aria-controls="panelInventory" aria-selected="false">🔎 在庫検索</button>
     </div>
+    <div id="reportState">
+      <div id="loadingBox" class="state-box"><p>レポートを読み込んでいます…</p></div>
+      <div id="errorBox" class="state-box" style="display:none">
+        <p id="errorMsg" role="alert"></p><button id="retryBtn" type="button">再読み込み</button>
+        <p><a id="reportPortal" href="#">ポータルを開く</a></p>
+      </div>
+    </div>
+    <!-- 在庫検索はレポートの取得結果から独立して利用する。 -->
+    <section class="tab-panel" data-tab="inventory" id="panelInventory" role="tabpanel" aria-labelledby="tabBtnInventory" style="display:none">
+      <section class="section">
+        <h2>在庫検索</h2>
+        <form id="inventoryForm" class="inventory-form">
+          <label for="inventoryQuery">商品名・商品コード・JAN
+            <input id="inventoryQuery" type="search" enterkeyhint="search" autocomplete="off" placeholder="例：シャンプー 500" aria-describedby="inventoryHelp">
+          </label>
+          <label for="inventorySupplier">仕入先
+            <select id="inventorySupplier"><option value="">すべての仕入先</option></select>
+          </label>
+          <label class="inventory-check"><input id="inventoryInStock" type="checkbox">在庫ありのみ</label>
+          <div class="inventory-actions">
+            <button class="inventory-button inventory-primary" type="submit" id="inventorySearchBtn">検索</button>
+            <button class="inventory-button" type="button" id="inventoryRefreshBtn">再取得</button>
+          </div>
+        </form>
+        <p class="inventory-note" id="inventoryHelp">空白で区切ると、すべての語を含む商品を探します。在庫は最後に取り込まれた値です。</p>
+        <p class="inventory-note" id="inventoryImportedAt">取込日時：確認前</p>
+        <p class="inventory-status" id="inventoryStatus" role="status" aria-live="polite">検索する商品や仕入先を指定してください。</p>
+        <div id="inventoryResults" aria-busy="false">
+          <table class="inventory-results" aria-label="在庫検索結果">
+            <thead><tr><th scope="col">商品</th><th scope="col">仕入先</th><th scope="col">在庫数</th><th scope="col">棚番号</th></tr></thead>
+            <tbody id="inventoryRows"></tbody>
+          </table>
+        </div>
+        <nav class="inventory-pager" aria-label="検索結果のページ">
+          <button class="inventory-button" type="button" id="inventoryPrev" disabled>前へ</button>
+          <span id="inventoryCount">0件</span>
+          <button class="inventory-button" type="button" id="inventoryNext" disabled>次へ</button>
+        </nav>
+        <p class="inventory-note"><a id="inventoryPortal" href="#" hidden>ポータルからログインし直す</a></p>
+      </section>
+    </section>
 
     <!-- ============ 死蔵在庫タブ ============ -->
     <div class="tab-panel" data-tab="dead" id="panelDead">
@@ -369,6 +442,7 @@
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
 const SESSION_KEY = 'bf_session';
+const APP_VERSION = 'v1.4.0';
 
 function getAuthSession() {
   try {
@@ -380,16 +454,27 @@ function getAuthSession() {
   } catch { return null; }
 }
 
+// 読取通信は15秒で打ち切り、再取得できる状態へ戻す。
+async function stockFetch(url, options) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    // ヘッダー受信後に本文が停止した場合も時間内に打ち切る。
+    const data = await response.json();
+    return { status: response.status, data };
+  } finally { clearTimeout(timer); }
+}
 async function gasPostOnce(params) {
   const body = Object.keys(params)
     .map(k => encodeURIComponent(k) + '=' + encodeURIComponent(params[k]))
     .join('&');
-  const res = await fetch(GAS_URL, {
+  const res = await stockFetch(GAS_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body
   });
-  return res.json();
+  return res.data;
 }
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -398,14 +483,16 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
    Supabase(DB)モード（Supabase移行 §11）。DATA_BACKEND='gas' のままなら以下は使われず、動作は今までと同じ。
    切替の日（発注アプリと同じ日）に 'db' にし、DB_URL・DB_PUBLISHABLE_KEY を本番projectの値にする
 =================================================== */
-const DATA_BACKEND       = 'db'; // 新画面（本番DB）用の値。build_db_pages.py が生成
-const DB_URL             = 'https://jlebreiqpqzfsjsunyfw.supabase.co'; // 新画面（本番DB）用の値。build_db_pages.py が生成
-const DB_PUBLISHABLE_KEY = 'sb_publishable_YXncOJtKml1dfGRdxHns-w_TcE2-Ypg'; // 新画面（本番DB）用の値。build_db_pages.py が生成
+const DATA_BACKEND       = 'db'; // 現行DB画面の接続先
+const DB_URL             = 'https://jlebreiqpqzfsjsunyfw.supabase.co'; // 現行DB画面の接続先
+const DB_PUBLISHABLE_KEY = 'sb_publishable_YXncOJtKml1dfGRdxHns-w_TcE2-Ypg'; // 現行DB画面の接続先
 const DB_TOKEN_KEY       = 'bf_db_token_sr_v1';
 
 async function getDbTokenSR(forceNew) {
   const session = getAuthSession();
   const userId = session && session.user_id;
+  if (!session || !session.token) throw Object.assign(new Error('SESSION_INVALID'), { code: 'SESSION_INVALID' });
+  const owner = inventoryIdentity();
   if (!forceNew) {
     try {
       const t = JSON.parse(sessionStorage.getItem(DB_TOKEN_KEY) || 'null');
@@ -414,134 +501,123 @@ async function getDbTokenSR(forceNew) {
     } catch (e) { /* 使えなければ取り直す */ }
   }
   const res = await gasPostOnce({ action: 'issueDbToken', app: 'stock-report', session_token: session.token });
+  if (inventoryIdentity() !== owner) throw Object.assign(new Error('IDENTITY_CHANGED'), { code: 'IDENTITY_CHANGED' });
   if (!res || res.success !== true) {
     const err = new Error((res && res.error) || 'TOKEN_FAILED');
-    err.businessResult = res || { success: false, error: 'TOKEN_FAILED' };
+    err.code = (res && res.error) || 'TOKEN_FAILED';
     throw err;
   }
   try { sessionStorage.setItem(DB_TOKEN_KEY, JSON.stringify({ token: res.token, exp: res.exp, userId: res.userId || userId })); } catch (e) { /* 保存できなくても動く */ }
   return res.token;
 }
 
-// 応答は現行の getStockReport と同じ形 { success, dead, excess, analyzedAt } / { success:false, error }
-async function dbStockReportOnce() {
-  let token;
-  try { token = await getDbTokenSR(false); }
-  catch (e) { if (e.businessResult) return e.businessResult; throw e; }
-  const call = async tk => fetch(DB_URL + '/rest/v1/rpc/get_stock_report', {
-    method: 'POST',
-    headers: { apikey: DB_PUBLISHABLE_KEY, Authorization: 'Bearer ' + tk, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ p: {} })
-  });
-  let res = await call(token);
-  if (res.status === 401 || res.status === 403) { // 通行証の期限切れ等。1回だけ取り直す
-    try { sessionStorage.removeItem(DB_TOKEN_KEY); } catch (e) { /* 続行 */ }
-    try { token = await getDbTokenSR(true); }
-    catch (e) { if (e.businessResult) return e.businessResult; throw e; }
-    res = await call(token);
+// 在庫レポート用の通行証だけを使う共通読取。認証再確認は1回に制限する。
+async function stockRpc(name, p) {
+  const owner = inventoryIdentity();
+  if (!owner) throw Object.assign(new Error('SESSION_INVALID'), { code: 'SESSION_INVALID' });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const token = await getDbTokenSR(attempt > 0);
+    if (inventoryIdentity() !== owner) throw Object.assign(new Error('IDENTITY_CHANGED'), { code: 'IDENTITY_CHANGED' });
+    const res = await stockFetch(DB_URL + '/rest/v1/rpc/' + name, {
+      method: 'POST',
+      headers: { apikey: DB_PUBLISHABLE_KEY, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p })
+    });
+    if (inventoryIdentity() !== owner) throw Object.assign(new Error('IDENTITY_CHANGED'), { code: 'IDENTITY_CHANGED' });
+    const denied = res.status === 401 || res.status === 403 || res.data?.error === 'SESSION_INVALID';
+    if (denied) {
+      try { sessionStorage.removeItem(DB_TOKEN_KEY); } catch { /* 保存不可でも再確認する */ }
+      if (attempt === 0) continue;
+      throw Object.assign(new Error('SESSION_INVALID'), { code: 'SESSION_INVALID' });
+    }
+    if (res.status >= 400) throw new Error('DB_HTTP_' + res.status);
+    if (!res.data || typeof res.data.success !== 'boolean') throw new Error('INVALID_RESPONSE');
+    return res.data;
   }
-  if (res.status >= 500 || res.status === 404 || res.status === 400) throw new Error('DB_HTTP_' + res.status); // 呼び出し側の再試行対象
-  return res.json();
 }
 
-function fetchStockOnce(params) {
-  return DATA_BACKEND === 'db' ? dbStockReportOnce() : gasPostOnce(params);
+let currentTab = 'dead';
+let reportReady = false, reportLoading = false, reportRequest = 0;
+let reportFailure = '', reportSubtitle = '';
+let reportOwner = null;
+function forgetStockReport() {
+  reportRequest++; reportReady = false; reportLoading = false; reportSubtitle = '';
+  for (const id of ['dead-tierFilter','dead-statRow','dead-chart','dead-topItemsTbody','dead-makerTbody',
+    'excess-statRow','excess-chart','excess-topItemsTbody','excess-makerTbody']) document.getElementById(id).replaceChildren();
 }
-
-/* ===================================================
-   画面状態の切り替え
-=================================================== */
-function showLoading() {
-  document.getElementById('loadingBox').style.display = '';
-  document.getElementById('errorBox').style.display = 'none';
-  document.getElementById('mainContent').style.display = 'none';
+function tabFromHash() {
+  return ['dead', 'excess', 'inventory'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'dead';
 }
-function showError(message) {
-  document.getElementById('loadingBox').style.display = 'none';
-  document.getElementById('errorBox').style.display = '';
-  document.getElementById('mainContent').style.display = 'none';
-  document.getElementById('errorMsg').textContent = message;
-}
-function showMain() {
-  document.getElementById('loadingBox').style.display = 'none';
-  document.getElementById('errorBox').style.display = 'none';
-  document.getElementById('mainContent').style.display = '';
-}
-
-/* ===================================================
-   データ取得（order-app GAS の getStockReport 専用エンドポイントを使う。
-   getOrderProposalsとは別扱いのセッション検証＝app_name='stock-report'なので、
-   発注アプリの利用権限が無いユーザーでもこのレポートだけは見られる）
-=================================================== */
-async function fetchStockData() {
-  const session = getAuthSession();
-  if (!session || !session.token) {
-    location.replace(PORTAL_URL);
-    return null;
+function syncReportPanels() {
+  const isReport = currentTab !== 'inventory';
+  document.getElementById('reportState').style.display = isReport && !reportReady ? '' : 'none';
+  document.getElementById('loadingBox').style.display = reportLoading ? '' : 'none';
+  document.getElementById('errorBox').style.display = reportFailure ? '' : 'none';
+  document.getElementById('errorMsg').textContent = reportFailure;
+  for (const [name, suffix] of [['dead','Dead'],['excess','Excess'],['inventory','Inventory']]) {
+    const active = currentTab === name;
+    document.getElementById('panel' + suffix).style.display = active && (name === 'inventory' || reportReady) ? '' : 'none';
+    const button = document.getElementById('tabBtn' + suffix);
+    button.classList.toggle('active', active); button.setAttribute('aria-selected', String(active));
   }
-
-  const params = { action: 'getStockReport', session_token: session.token };
-
-  let data = null;
-  let networkFailed = false;
+  document.getElementById('headerSub').textContent = isReport ?
+    (reportSubtitle || (reportLoading ? 'レポートを読み込み中…' : 'レポートの読み込みを確認してください。')) :
+    '商品マスターに取り込まれた在庫数と棚番号を検索します。';
+}
+async function loadReport() {
+  const owner = inventoryIdentity();
+  const request = ++reportRequest;
+  reportOwner = owner; reportReady = false; reportLoading = true; reportFailure = ''; reportSubtitle = '';
+  syncReportPanels();
   try {
-    data = await fetchStockOnce(params);
-  } catch (e) {
-    networkFailed = true;
-  }
-
-  // 通信自体の失敗、または一時的な認証確認失敗（AUTH_UNAVAILABLE）は1回だけ再試行する
-  if (networkFailed || (data && data.error === 'AUTH_UNAVAILABLE')) {
-    await delay(1200);
-    try {
-      data = await fetchStockOnce(params);
-      networkFailed = false;
-    } catch (e) {
-      networkFailed = true;
+    const data = await stockRpc('get_stock_report', {});
+    if (request !== reportRequest || inventoryIdentity() !== owner) return;
+    if (!data.success) throw Object.assign(new Error(data.error), { code: data.error });
+    setReportDateStamp(data.analyzedAt);
+    // 再取得で同じDOMへイベントを重ねないよう、操作要素を初期状態へ戻す。
+    for (const id of ['excess-expandAllBtn','excess-collapseAllBtn','excess-makerSearch']) {
+      const old = document.getElementById(id); old.replaceWith(old.cloneNode(true));
     }
+    renderDead(data.dead || []); renderExcess(data.excess || []);
+    reportReady = true;
+    reportSubtitle = `分析日時: ${data.analyzedAt || '—'} 時点（発注アプリで「確認済み」にした商品は除いています）`;
+  } catch (error) {
+    if (request !== reportRequest || inventoryIdentity() !== owner) return;
+    reportFailure = error.code === 'SESSION_INVALID' ?
+      '在庫レポートの閲覧権限を確認し、ポータルから開き直してください。' :
+      'レポートの読み込みに失敗しました。「再読み込み」で再試行できます。在庫検索タブも利用できます。';
+  } finally {
+    if (inventoryIdentity() !== owner) handleStockIdentityChange();
+    else if (request === reportRequest) { reportLoading = false; syncReportPanels(); }
   }
-
-  if (networkFailed) {
-    showError('通信に失敗しました。ネットワーク状態を確認して再読み込みしてください。');
-    return null;
-  }
-
-  // SESSION_INVALID もシート読み込みの一時的な失敗で返ることがあるため、
-  // トークンを送っている場合は1回だけ再確認してから送還する
-  if (data && data.error === 'SESSION_INVALID') {
-    await delay(1200);
-    try { data = await fetchStockOnce(params); } catch (e) { /* 下のチェックで拾う */ }
-  }
-
-  if (!data || data.success !== true) {
-    if (data && data.error === 'SESSION_INVALID') {
-      // ここまで来て2回ともSESSION_INVALIDなら、権限が無いか本当に未ログイン。
-      // GAS側はこの2つを区別しないため、無言でポータルへ飛ばさず理由が分かる文言を出す。
-      localStorage.removeItem(SESSION_KEY);
-      showError('このレポートを表示できませんでした（認証エラー）。このレポートの閲覧権限が必要です。権限が無い場合は管理者にご確認ください。ログインし直す場合はポータルからやり直してください。');
-      return null;
-    }
-    showError('読み込みに失敗しました。再読み込みしてください。');
-    return null;
-  }
-
-  return data;
 }
-
-/* ===================================================
-   タブ切り替え
-=================================================== */
+function handleStockIdentityChange() {
+  const owner = inventoryIdentity();
+  if (owner === inventory.owner && owner === reportOwner) return;
+  forgetStockReport(); reportFailure = '';
+  reportOwner = owner; clearInventory(); inventory.owner = owner;
+  invEl('Query').value = ''; invEl('InStock').checked = false;
+  try { sessionStorage.removeItem(DB_TOKEN_KEY); } catch { /* 続行 */ }
+  syncReportPanels();
+  inventoryMessage('利用者が変わりました。再取得してください。');
+  showTab(currentTab);
+}
 function showTab(tab) {
-  const isDead = tab === 'dead';
-  document.getElementById('panelDead').style.display = isDead ? '' : 'none';
-  document.getElementById('panelExcess').style.display = isDead ? 'none' : '';
-  document.getElementById('tabBtnDead').classList.toggle('active', isDead);
-  document.getElementById('tabBtnExcess').classList.toggle('active', !isDead);
-  if (location.hash !== '#' + tab) history.replaceState(null, '', '#' + tab);
+  const owner = inventoryIdentity();
+  if ((reportOwner !== null && reportOwner !== owner) || (inventory.owner !== null && inventory.owner !== owner)) {
+    currentTab = ['dead','excess','inventory'].includes(tab) ? tab : 'dead';
+    handleStockIdentityChange(); return;
+  }
+  currentTab = ['dead','excess','inventory'].includes(tab) ? tab : 'dead';
+  syncReportPanels();
+  if (location.hash !== '#' + currentTab) history.replaceState(null, '', '#' + currentTab);
+  if (currentTab === 'inventory') {
+    if (!inventory.initialized && !inventory.busy) searchInventory(0, true);
+  } else if (!reportReady && !reportLoading) loadReport();
 }
-
-document.getElementById('tabBtnDead').addEventListener('click', () => showTab('dead'));
-document.getElementById('tabBtnExcess').addEventListener('click', () => showTab('excess'));
+for (const [tab, suffix] of [['dead','Dead'],['excess','Excess'],['inventory','Inventory']]) {
+  document.getElementById('tabBtn' + suffix).addEventListener('click', () => showTab(tab));
+}
 
 /* ===================================================
    共通ヘルパー
@@ -1025,48 +1101,173 @@ function renderExcess(rawExcess) {
   });
 }
 
-/* ===================================================
-   初期化
-=================================================== */
-async function init() {
-  showLoading();
-  document.getElementById('headerSub').textContent = '読み込み中…';
-
-  let data;
-  try {
-    data = await fetchStockData();
-  } catch (e) {
-    showError('予期しないエラーが発生しました。再読み込みしてください。');
-    return;
-  }
-  if (!data) return; // fetchStockData 側で既にエラー表示・送還済み
-
-  setReportDateStamp(data.analyzedAt);
-
-  try {
-    renderDead(data.dead || []);
-    renderExcess(data.excess || []);
-  } catch (e) {
-    showError('レポートの描画に失敗しました。再読み込みしてください。');
-    return;
-  }
-
-  const analyzedAt = data.analyzedAt || '—';
-  document.getElementById('headerSub').textContent =
-    `分析日時: ${analyzedAt} 時点（毎朝7時に自動更新・発注アプリで「確認済み」にした商品は除いています）`;
-
-  const initialTab = location.hash === '#excess' ? 'excess' : 'dead';
-  showTab(initialTab);
-  showMain();
+/* 在庫検索の状態はレポートから独立させ、古い応答を後から表示しない。 */
+const inventory = { request: 0, initialized: false, busy: false, version: null, offset: 0,
+  total: 0, hasMore: false, criteria: null, owner: null, failed: false };
+const invEl = id => document.getElementById('inventory' + id);
+function normalizeInventoryQuery(value) {
+  return String(value).normalize('NFKC').toLowerCase().replace(/[ぁ-ゖ]/g,
+    c => String.fromCharCode(c.charCodeAt(0) + 0x60)).replace(/\s+/gu, ' ').trim();
 }
-
-document.getElementById('retryBtn').addEventListener('click', init);
-window.addEventListener('hashchange', () => {
-  const tab = location.hash === '#excess' ? 'excess' : 'dead';
-  showTab(tab);
+function inventoryIdentity() {
+  const s = getAuthSession();
+  return s && s.token ? JSON.stringify([s.user_id, s.token]) : null;
+}
+function clearInventory() {
+  inventory.request++; inventory.version = null; inventory.initialized = false;
+  inventory.criteria = null; inventory.offset = 0; inventory.total = 0;
+  inventory.hasMore = false; inventory.busy = false; inventory.failed = false;
+  invEl('Rows').replaceChildren();
+  invEl('Supplier').replaceChildren(new Option('すべての仕入先', ''));
+  invEl('Count').textContent = '0件'; invEl('ImportedAt').textContent = '取込日時：確認前';
+  invEl('Results').setAttribute('aria-busy', 'false');
+  invEl('Prev').disabled = true; invEl('Next').disabled = true;
+  invEl('Portal').hidden = true;
+}
+function inventoryMessage(message, error = false) {
+  invEl('Status').textContent = message;
+  invEl('Status').classList.toggle('is-error', error);
+}
+function inventoryCriteria() {
+  return { query: invEl('Query').value, supplierCode: invEl('Supplier').value,
+    inStockOnly: invEl('InStock').checked };
+}
+function renderInventory(data) {
+  const selected = invEl('Supplier').value;
+  const options = [new Option('すべての仕入先', '')];
+  for (const supplier of data.suppliers || []) {
+    // 空コードは「全仕入先」と区別できないので選択肢に加えない。
+    if (supplier.code) options.push(new Option(`${supplier.name}（${supplier.code}）`, supplier.code));
+  }
+  invEl('Supplier').replaceChildren(...options);
+  // 消えた仕入先の条件を勝手に全仕入先へ変えない。
+  if (selected && !options.some(o => o.value === selected)) invEl('Supplier').add(new Option('指定した仕入先（' + selected + '）', selected));
+  invEl('Supplier').value = selected;
+  invEl('ImportedAt').textContent = '取込日時：' + (data.importedAt || '不明') + '（日本時間）';
+  const fragment = document.createDocumentFragment();
+  for (const item of data.items || []) {
+    const tr = document.createElement('tr');
+    const product = document.createElement('td');
+    const name = document.createElement('div'); name.className = 'inventory-product';
+    name.textContent = item.name || '名称未設定';
+    if (item.discontinued) { const badge = document.createElement('span'); badge.className = 'inventory-badge'; badge.textContent = '廃番'; name.append(badge); }
+    const codes = document.createElement('div'); codes.className = 'inventory-codes';
+    codes.textContent = `商品コード ${item.code} ／ JAN ${item.jan || '—'}`;
+    product.append(name, codes); tr.append(product);
+    for (const [label, value] of [['仕入先', item.supplierName], ['在庫数', item.stock], ['棚番号', item.shelfNo]]) {
+      const td = document.createElement('td'); td.dataset.label = label;
+      if (label === '在庫数') {
+        td.className = 'inventory-stock'; td.textContent = value == null ? '未設定' : value;
+        const unit = document.createElement('small'); unit.textContent = item.unit || '—'; td.append(unit);
+      } else td.textContent = value || '—';
+      tr.append(td);
+    }
+    fragment.append(tr);
+  }
+  invEl('Rows').replaceChildren(fragment);
+  inventory.version = data.productVersion; inventory.offset = data.offset;
+  inventory.total = data.total; inventory.hasMore = data.hasMore;
+  invEl('Count').textContent = data.total ? `${data.offset + 1}〜${data.offset + data.items.length}件 / ${data.total}件` : '0件';
+  inventoryMessage(data.needsCondition ? '検索する商品や仕入先を指定してください。' :
+    data.total ? `${data.total}件の商品が見つかりました。` : '条件に一致する商品はありません。');
+}
+async function searchInventory(offset = 0, metadataOnly = false, restarted = false) {
+  const owner = inventoryIdentity();
+  if (owner !== inventory.owner) { clearInventory(); inventory.owner = owner; }
+  if (!owner) {
+    inventoryMessage('ログインが必要です。ポータルから開き直してください。', true);
+    invEl('Portal').hidden = false; return;
+  }
+  const criteria = metadataOnly ? { query: '', supplierCode: '', inStockOnly: false } :
+    (offset > 0 && inventory.criteria ? { ...inventory.criteria } : inventoryCriteria());
+  const normalized = normalizeInventoryQuery(criteria.query);
+  const request = ++inventory.request;
+  inventory.busy = false;
+  if ([...normalized].length > 100 || (normalized && normalized.split(' ').length > 6)) {
+    inventory.failed = true; invEl('Rows').replaceChildren(); invEl('Count').textContent = '未検索';
+    invEl('Results').setAttribute('aria-busy', 'false');
+    invEl('Prev').disabled = true; invEl('Next').disabled = true;
+    inventoryMessage('検索語は100文字・6語以内で入力してください。', true); return;
+  }
+  if (!metadataOnly && !normalized && !criteria.supplierCode && !criteria.inStockOnly) {
+    invEl('Rows').replaceChildren(); inventory.total = 0; inventory.hasMore = false; inventory.criteria = null;
+    invEl('Count').textContent = '0件'; invEl('Prev').disabled = true; invEl('Next').disabled = true;
+    invEl('Results').setAttribute('aria-busy', 'false');
+    inventoryMessage('検索する商品や仕入先を指定してください。'); return;
+  }
+  inventory.criteria = metadataOnly ? null : { ...criteria };
+  inventory.busy = true; inventory.failed = false;
+  invEl('Portal').hidden = true; invEl('Results').setAttribute('aria-busy', 'true');
+  // 新条件の実行中に前条件の数量を見せない。
+  invEl('Rows').replaceChildren(); invEl('Count').textContent = '検索中…';
+  invEl('Prev').disabled = true; invEl('Next').disabled = true;
+  inventoryMessage(metadataOnly ? '取込情報を確認しています…' : '検索しています…');
+  const p = { ...criteria, offset };
+  if (offset > 0 && inventory.version != null) p.productVersion = inventory.version;
+  try {
+    const data = await stockRpc('search_stock_inventory', p);
+    if (request !== inventory.request || inventoryIdentity() !== owner) return;
+    if (data.error === 'DATA_UPDATED' && !restarted) {
+      inventory.version = null;
+      await searchInventory(0, false, true);
+      if (!inventory.failed) inventoryMessage('データが更新されたため、1ページ目から表示し直しました。');
+      return;
+    }
+    if (data.success !== true) throw Object.assign(new Error(data.error), { code: data.error });
+    renderInventory(data); inventory.initialized = true;
+  } catch (error) {
+    if (request !== inventory.request || inventoryIdentity() !== owner) return;
+    inventory.failed = true; invEl('Count').textContent = '取得失敗';
+    if (error.code === 'SESSION_INVALID') {
+      // 権限取消が確認されたら、非表示の分析結果も再認証なしでは表示しない。
+      forgetStockReport(); reportFailure = '在庫レポートの閲覧権限を確認してください。'; syncReportPanels();
+    }
+    const messages = { SESSION_INVALID: '在庫レポートの閲覧権限を確認し、ポータルから開き直してください。',
+      DATA_NOT_READY: '在庫データの準備ができていません。時間をおいて再取得してください。',
+      INPUT_INVALID: '検索条件を確認してください。検索語は100文字・6語以内です。',
+      DATA_UPDATED: '在庫データが更新中です。再取得してください。',
+      IDENTITY_CHANGED: '利用者が変わりました。ポータルから開き直してください。' };
+    inventoryMessage(messages[error.code] || '取得に失敗しました。通信状態を確認して「再取得」を押してください。', true);
+    invEl('Portal').hidden = !['SESSION_INVALID', 'IDENTITY_CHANGED'].includes(error.code);
+  } finally {
+    if (inventoryIdentity() !== owner) handleStockIdentityChange();
+    else if (request === inventory.request) {
+      inventory.busy = false; invEl('Results').setAttribute('aria-busy', 'false');
+      invEl('Prev').disabled = inventory.failed || inventory.offset === 0 || !inventory.total;
+      invEl('Next').disabled = inventory.failed || !inventory.hasMore;
+    }
+  }
+}
+// 入力変更でページと進行中の応答を無効にする。入力だけでは通信しない。
+function inventoryConditionChanged() {
+  inventory.request++; inventory.offset = 0; inventory.version = null;
+  inventory.criteria = null; inventory.total = 0; inventory.hasMore = false; inventory.busy = false;
+  invEl('Rows').replaceChildren(); invEl('Count').textContent = '未検索';
+  invEl('Results').setAttribute('aria-busy', 'false');
+  invEl('Prev').disabled = true; invEl('Next').disabled = true;
+  inventoryMessage('条件を変更しました。「検索」を押してください。');
+}
+invEl('Form').addEventListener('submit', event => { event.preventDefault(); searchInventory(); });
+invEl('RefreshBtn').addEventListener('click', () => searchInventory(0, !inventory.criteria && !normalizeInventoryQuery(invEl('Query').value) && !invEl('Supplier').value && !invEl('InStock').checked));
+invEl('Prev').addEventListener('click', () => searchInventory(Math.max(0, inventory.offset - 50)));
+invEl('Next').addEventListener('click', () => searchInventory(inventory.offset + 50));
+invEl('Query').addEventListener('input', inventoryConditionChanged);
+invEl('Supplier').addEventListener('change', inventoryConditionChanged);
+invEl('InStock').addEventListener('change', inventoryConditionChanged);
+invEl('Portal').href = PORTAL_URL;
+window.addEventListener('storage', event => {
+  if (event.key === SESSION_KEY || event.key === null) handleStockIdentityChange();
+});
+window.addEventListener('focus', () => {
+  if (inventory.owner !== inventoryIdentity()) handleStockIdentityChange();
 });
 
-init();
+// 初期化はタブを先に表示し、必要なデータだけを取得する。
+document.getElementById('appVersion').textContent = APP_VERSION;
+document.getElementById('reportPortal').href = PORTAL_URL;
+document.getElementById('retryBtn').addEventListener('click', () => loadReport());
+window.addEventListener('hashchange', () => showTab(tabFromHash()));
+showTab(tabFromHash());
 </script>
 </body>
 </html>
