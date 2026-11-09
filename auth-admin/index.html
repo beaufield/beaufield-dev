@@ -212,389 +212,292 @@
   .modal .modal-footer { padding: 12px 16px; border-top: 1px solid #eee; display: flex; justify-content: flex-end; gap: 8px; }
   .modal .conflict-line { color: #c62828; }
   .modal .result-line { padding: 4px 0; }
+
+  /* 操作対象が権限か並び順かを常に分かるようにする。 */
+  button { font-family: inherit; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  button:focus-visible { outline: 3px solid #e59717; outline-offset: 2px; }
+  .toolbar button, .order-controls button { border: 1px solid #c7ceda; border-radius: 6px; padding: 9px 12px; background: #fff; color: #1a237e; }
+  .toolbar .mode { font-weight: bold; color: #1a237e; }
+  .notice { padding: 10px 14px; background: #edf5ff; border-bottom: 1px solid #bfd5ef; font-size: 12px; color: #254768; }
+  .notice:empty { display: none; }
+  .order-mode .cell { opacity: .45; }
+  .order-controls { display: flex; gap: 5px; margin-top: 7px; }
+  .order-controls button { min-width: 44px; min-height: 44px; font-size: 16px; }
+  table.matrix td.cell { min-width: 56px; height: 52px; padding: 3px; cursor: default; }
+  .role-button { width: 100%; min-width: 46px; min-height: 44px; border: 0; background: transparent; border-radius: 6px; color: inherit; }
+  table.matrix td.cell .mark { width: auto; min-width: 38px; padding: 0 4px; font-size: 11px; }
+  table.matrix td.app-col .role-note { display: block; font-size: 10px; line-height: 1.5; color: #596879; margin-top: 4px; }
+  table.matrix td.app-col { min-width: 190px; }
+  .status-line { min-height: 20px; font-size: 12px; color: #a33124; }
+  .modal { max-width: 600px; }
+  .modal-footer button { padding: 10px 14px; border: none; border-radius: 6px; min-height: 44px; }
+  .order-list { margin: 8px 0 8px 22px; line-height: 1.9; }
+  .order-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .preview-banner { padding: 10px 14px; background: #e4f3e8; color: #175f32; font-size: 13px; font-weight: bold; }
+  @media (max-width: 600px) {
+    header h1 { font-size: 18px; }
+    header .version { margin-left: 0; }
+    table.matrix td.app-col, table.matrix th.app-col { min-width: 155px; max-width: 175px; }
+    .toolbar { gap: 8px; }
+    .order-compare { grid-template-columns: 1fr; }
+    .save-bar { padding: 10px; }
+  }
+
 </style>
 </head>
 <body>
-
 <header>
   <h1>🔐 権限管理</h1>
   <span class="fetched-at" id="fetchedAt"></span>
-  <button onclick="reload()">再読込</button>
+  <button id="reloadButton" onclick="reload()">再読込</button>
   <span class="version" id="versionLine"></span>
 </header>
-
 <div class="legend" id="legend"></div>
-
 <div class="toolbar">
+  <span class="mode" id="modeLabel">権限の編集</span>
   <label><input type="checkbox" id="showRetired" onchange="render()"> 退職者も表示</label>
+  <button id="orderModeButton" onclick="startOrderMode()">並び順を変更</button>
+  <span id="statusLine" class="status-line" role="status" aria-live="polite"></span>
 </div>
-
-<div class="warnings" id="warnings"></div>
-
-<main>
-  <div id="content" class="loading">読み込み中...</div>
-</main>
-
+<div class="notice" id="notice"></div>
+<div class="warnings" id="warnings" role="status"></div>
+<main><div id="content" class="loading">読み込み中...</div></main>
 <div class="save-bar" id="saveBar">
-  <span class="count" id="saveCount">変更 0件</span>
+  <span class="count" id="saveCount"></span>
   <div class="btns">
-    <button class="btn-cancel" onclick="cancelChanges()">取消</button>
+    <button class="btn-cancel" id="cancelButton" onclick="cancelChanges()">取消</button>
     <button class="btn-save" id="btnSave" onclick="openSaveDialog()">保存</button>
   </div>
 </div>
-<div class="footer-note">反映まで最大1分（Bカート受注確認は最大5分）／対象者が再ログインすれば即時反映されます</div>
-
+<div class="footer-note">権限が反映されるまでの時間はアプリにより異なります。並び順はポータルで約1分後に再読込して確認してください。</div>
 <div class="modal-backdrop" id="saveModal">
-  <div class="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="saveModalTitle">
     <h2 id="saveModalTitle">変更内容</h2>
     <div class="modal-body" id="saveModalBody"></div>
-    <div class="modal-footer" id="saveModalFooter">
-      <button class="btn-cancel" onclick="closeSaveDialog()">戻る</button>
-      <button class="btn-save" id="btnConfirmSave" onclick="confirmSave()">この内容で保存</button>
-    </div>
+    <div class="modal-footer" id="saveModalFooter"></div>
   </div>
 </div>
 
 <script>
-  // ============================================================
-  // 設定
-  // ============================================================
   const GAS_URL     = 'https://script.google.com/macros/s/AKfycbwqJC73zLlmofD0uflPEjnYqFjzw8XopAzfRp5SbsdV36ckiQAyziBTmNl5vg2f6x5m/exec';
-  const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
-  const APP_VERSION = 'v1.1.0';
-  const SESSION_KEY = 'bf_session'; // ポータルと共通
+  const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
+  const APP_VERSION = 'v1.2.1';
+  const SESSION_KEY = 'bf_session';
+  let session = null, matrix = null, dirty = Object.create(null), saving = false;
+  let orderMode = false, draftOrder = [], pendingRequest = null, loading = false, reconciling = false;
+  const $ = id => document.getElementById(id);
+  const baseOrder = () => matrix ? matrix.apps.map(a => a.row_key) : [];
+  const orderDirty = () => orderMode && JSON.stringify(draftOrder) !== JSON.stringify(baseOrder());
+  const hasChanges = () => Object.keys(dirty).length > 0 || orderDirty();
 
-  let session   = null;
-  let matrix    = null;   // getMatrix() の生の応答
-  let dirty     = {};     // key(user_id/app_name) -> { user_id, app_name, prev_role, next_role }
-  let saving    = false;
-
-  // ============================================================
-  // 初期化
-  // ============================================================
   window.onload = function () {
-    try { session = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch (e) { session = null; }
-    if (!session || !session.token || !session.expires || Date.now() > session.expires) {
-      location.href = PORTAL_URL;
-      return;
-    }
-    document.getElementById('versionLine').textContent = APP_VERSION;
-    window.addEventListener('beforeunload', function (e) {
-      if (Object.keys(dirty).length > 0) { e.preventDefault(); e.returnValue = ''; }
-    });
+    try { session = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch (_) {}
+    if (!session || !session.token || !session.expires || Date.now() > session.expires) { location.href = PORTAL_URL; return; }
+    $('versionLine').textContent = APP_VERSION;
+    window.addEventListener('beforeunload', e => { if (hasChanges() || pendingRequest) { e.preventDefault(); e.returnValue = ''; } });
     loadMatrix();
   };
 
+  function message(text) { $('statusLine').textContent = text; }
   function reload() {
-    if (Object.keys(dirty).length > 0) {
-      if (!confirm('未保存の変更があります。破棄して再読込しますか？')) return;
-    }
-    dirty = {};
+    if (saving || loading) return;
+    if ((hasChanges() || pendingRequest) && !confirm('未保存の編集を取り消し、最新の状態を読み込みますか？')) return;
     loadMatrix();
   }
-
-  // ============================================================
-  // データ取得
-  // ============================================================
-  function loadMatrix() {
-    document.getElementById('content').className = 'loading';
-    document.getElementById('content').textContent = '読み込み中...';
-
-    gasPost('getMatrix', {})
-      .then(res => {
-        if (!res.success) {
-          if (res.error === 'SESSION_INVALID' || res.error === 'FORBIDDEN') {
-            location.href = PORTAL_URL;
-            return;
-          }
-          throw new Error(res.error || '取得に失敗しました');
-        }
-        matrix = res;
-        dirty = {};
-        renderAll();
-      })
-      .catch(err => {
-        document.getElementById('content').className = 'error-box';
-        document.getElementById('content').textContent = '読み込みに失敗しました。\n' + (err.message || err);
-      });
-  }
-
-  // ============================================================
-  // 描画
-  // ============================================================
-  function renderAll() {
-    document.getElementById('fetchedAt').textContent =
-      '取得: ' + new Date(matrix.fetched_at).toLocaleString('ja-JP');
-    renderLegend();
-    renderWarnings();
-    render();
+  async function loadMatrix() {
+    if (loading || saving) return;
+    loading = true; syncControls();
+    $('content').className = 'loading'; $('content').textContent = '読み込み中...';
+    try {
+      const res = await gasPost('getMatrix', {});
+      if (!res.success) throw new Error(errorText(res));
+      if (!Array.isArray(res.apps) || !Array.isArray(res.users) || !res.order_revision) throw new Error('新しいサーバーへの反映を確認してください。');
+      matrix = res; dirty = Object.create(null); orderMode = false; draftOrder = baseOrder(); pendingRequest = null; reconciling = false;
+      $('saveModal').className = 'modal-backdrop';
+      $('fetchedAt').textContent = '取得: ' + new Date(res.fetched_at).toLocaleString('ja-JP');
+      loading = false;
+      renderLegend(); renderWarnings(); message(''); render();
+    } catch (e) {
+      $('content').className = 'error-box'; $('content').textContent = '読み込みに失敗しました。\n' + e.message;
+      // 照合に失敗しても保存内容を再編集しない。再読込が成功するまで下書きを保持。
+      message('再読込してください。下書きは保持されています。');
+    } finally { loading = false; syncControls(); }
   }
 
   function renderLegend() {
-    const seen = {};
-    let chips = '<span class="chip"><span class="swatch none">−</span>なし</span>';
-    matrix.apps.forEach(app => {
-      app.roles.forEach(r => {
-        const label = (app.role_labels && app.role_labels[r]) || r;
-        const key = r + ':' + label;
-        if (seen[key]) return;
-        seen[key] = true;
-        chips += '<span class="chip"><span class="swatch on">' + escapeHtml(markFor(r, app)) + '</span>' + escapeHtml(label) + '</span>';
-      });
-    });
-    chips += '<span class="chip"><span class="swatch legacy">?</span>旧ロール（要移行）</span>';
-    document.getElementById('legend').innerHTML = chips;
+    $('legend').innerHTML = '<span class="chip">− なし</span><span class="chip"><b>利用</b> user</span>' +
+      '<span class="chip"><b>管理</b> admin</span><span class="chip">役割の意味は各アプリ名の下に表示</span>';
   }
-
   function renderWarnings() {
-    const el = document.getElementById('warnings');
     const lines = [];
-    if (matrix.legacy_roles && matrix.legacy_roles.length) {
-      lines.push('⚠️ 旧ロール語彙が残っています（' + matrix.legacy_roles.length + '件）: ' +
-        matrix.legacy_roles.map(r => r.user_id + '/' + r.app_name + '=' + r.role).join(', '));
-    }
-    if (matrix.out_of_vocab && matrix.out_of_vocab.length) {
-      // 🔴 これを出さないと「なぜか admin が選べない／消えた」が原因不明のまま残る
-      lines.push('⚠️ apps シートで許可されていないロールが入っています（' +
-        matrix.out_of_vocab.length + '件）: ' +
-        matrix.out_of_vocab.map(r => r.user_id + '/' + r.app_name + '=' + r.role +
-          '（このアプリで選べるのは ' + ((r.allowed && r.allowed.length) ? r.allowed.join('/') : 'なし のみ') + '）'
-        ).join(', ') +
-        ' 。値は保持されクリックで元に戻せますが、選べるようにするには apps シートの roles 列を直してください。');
-    }
-    if (matrix.duplicate_rows && matrix.duplicate_rows.length) {
-      lines.push('⚠️ user_app_roles に重複行があります（保存は最初の行だけを更新します）: ' +
-        matrix.duplicate_rows.map(r => r.user_id + '/' + r.app_name + '(' + r.count + '行)').join(', '));
-    }
-    if (matrix.orphan_apps && matrix.orphan_apps.length) {
-      lines.push('⚠️ apps シートに未登録のアプリ名があります: ' + matrix.orphan_apps.join(', '));
-    }
-    if (matrix.orphan_users && matrix.orphan_users.length) {
-      lines.push('⚠️ users シートに存在しない user_id への権限行があります: ' + matrix.orphan_users.join(', '));
-    }
-    if (lines.length) {
-      el.innerHTML = lines.map(l => '<div class="w-line">' + escapeHtml(l) + '</div>').join('');
-      el.className = 'warnings visible';
-    } else {
-      el.className = 'warnings';
-      el.innerHTML = '';
-    }
+    (matrix.configuration_errors || []).forEach(e => lines.push('設定を確認してください: ' + e));
+    (matrix.out_of_vocab || []).forEach(r => {
+      const app = matrix.apps.find(a => a.app_name === r.app_name);
+      lines.push((app ? app.label : r.app_name) + 'に選択肢外の権限「' + r.role + '」があります。現在の割当は保持しています。選択肢の設定を確認してください。');
+    });
+    if ((matrix.legacy_roles || []).length) lines.push('標準以外の権限があります。自動変換せず、対象の役割を確認してください。');
+    (matrix.duplicate_rows || []).forEach(r => lines.push('権限行が重複しています: ' + r.user_id + ' / ' + r.app_name + '。この組の変更は保存できません。'));
+    if ((matrix.orphan_apps || []).length) lines.push('未登録のアプリへの割当があります: ' + matrix.orphan_apps.join(', '));
+    if ((matrix.orphan_users || []).length) lines.push('存在しない社員への割当があります: ' + matrix.orphan_users.join(', '));
+    $('warnings').innerHTML = lines.map(l => '<div class="w-line">⚠ ' + escapeHtml(l) + '</div>').join('');
+    $('warnings').className = lines.length ? 'warnings visible' : 'warnings';
   }
-
+  function roleText(role, app) {
+    if (!role || role === 'none') return 'なし';
+    const base = role === 'user' ? '利用' : role === 'admin' ? '管理' : '設定外: ' + role;
+    const label = app && app.role_labels && app.role_labels[role];
+    return label ? base + '（' + label + '）' : base;
+  }
+  function cellKey(userId, appName) { return userId + '/' + appName; }
+  function blocked(user, app) {
+    return user.duplicate || (app.config_errors || []).length > 0 ||
+      (matrix.duplicate_rows || []).some(r => r.user_id === user.user_id && r.app_name === app.app_name);
+  }
   function render() {
     if (!matrix) return;
-    const showRetired = document.getElementById('showRetired').checked;
-    const users = matrix.users.filter(u => showRetired || u.active);
-    const apps  = matrix.apps;
-
-    let html = '<div class="matrix-wrap"><table class="matrix"><thead><tr><th class="app-col">アプリ</th>';
-    users.forEach(u => {
-      html += '<th class="' + (u.active ? '' : 'retired') + '">' + escapeHtml(u.short_name) + '</th>';
-    });
+    const users = matrix.users.filter(u => $('showRetired').checked || u.active);
+    const apps = orderMode ? draftOrder.map(id => matrix.apps.find(a => a.row_key === id)) : matrix.apps;
+    let html = '<div class="matrix-wrap' + (orderMode ? ' order-mode' : '') + '"><table class="matrix"><thead><tr><th class="app-col">アプリ</th>';
+    users.forEach(u => { html += '<th class="' + (u.active ? '' : 'retired') + '">' + escapeHtml(u.short_name) + '</th>'; });
     html += '</tr></thead><tbody>';
-
-    apps.forEach(app => {
-      html += '<tr>';
-      html += '<td class="app-col' + (app.status === 'hidden' ? ' hidden-app' : '') + '">' +
-        escapeHtml(app.icon) + ' ' + escapeHtml(app.label) +
-        (app.status === 'hidden' ? '<span class="app-note">非表示中（タイル非公開）</span>' : '') +
-        '</td>';
-      users.forEach(u => {
-        const key = cellKey(u.user_id, app.app_name);
-        const savedRole = (matrix.roles[u.user_id] && matrix.roles[u.user_id][app.app_name]) || '';
-        const role = dirty[key] ? dirty[key].next_role : savedRole;
-        const isChanged = !!dirty[key] && dirty[key].next_role !== dirty[key].prev_role;
-        html += '<td class="cell' + (u.active ? '' : ' retired-col') + (isChanged ? ' changed' : '') +
-          '" onclick="cycleCell(\'' + escUid(u.user_id) + '\',\'' + escUid(app.app_name) + '\')" ' +
-          'title="' + escapeHtml(u.name + ' / ' + app.label) + '">' +
-          '<span class="mark ' + markClass(role) + '">' + escapeHtml(markFor(role, app)) + '</span>' +
-          '</td>';
-      });
-      html += '</tr>';
+    apps.forEach((app, ai) => {
+      const notes = app.roles.map(r => roleText(r, app)).join(' / ');
+      html += '<tr><td class="app-col' + (app.status === 'hidden' ? ' hidden-app' : '') + '">' + escapeHtml(app.icon + ' ' + app.label) +
+        (app.status === 'hidden' ? '<span class="app-note">非表示中（ポータル非公開）</span>' : '') + '<span class="role-note">' + escapeHtml(notes) + '</span>';
+      if (orderMode) html += '<div class="order-controls"><button data-move="' + ai + '" data-direction="-1" aria-label="' + escapeHtml(app.label + 'を上へ') + '"' + (ai === 0 ? ' disabled' : '') + '>↑</button>' +
+        '<button data-move="' + ai + '" data-direction="1" aria-label="' + escapeHtml(app.label + 'を下へ') + '"' + (ai === apps.length - 1 ? ' disabled' : '') + '>↓</button></div>';
+      html += '</td>';
+      users.forEach((u, ui) => {
+        const key = cellKey(u.user_id, app.app_name), saved = (matrix.roles[u.user_id] || {})[app.app_name] || '';
+        const role = dirty[key] ? dirty[key].next_role : saved;
+        const disabled = orderMode || blocked(u, app) || (u.user_id === session.user_id && app.app_name === 'auth-admin');
+        html += '<td class="cell' + (u.active ? '' : ' retired-col') + (dirty[key] ? ' changed' : '') + '"><button class="role-button" data-cell="' + ai + ',' + ui + '"' +
+          (disabled ? ' disabled' : '') + ' aria-label="' + escapeHtml(u.name + ' / ' + app.label + ' / ' + roleText(role, app)) + '">' +
+          '<span class="mark ' + (!role ? 'none' : ['user', 'admin'].includes(role) ? 'on' : 'legacy') + '">' +
+          escapeHtml(!role ? '−' : role === 'user' ? '利用' : role === 'admin' ? '管理' : '設定外') + '</span></button></td>';
+      }); html += '</tr>';
     });
-    html += '</tbody></table></div>';
-
-    document.getElementById('content').className = '';
-    document.getElementById('content').innerHTML = html;
-    updateSaveBar();
+    $('content').className = ''; $('content').innerHTML = html + '</tbody></table></div>';
+    $('content').querySelectorAll('[data-cell]').forEach(b => { b.onclick = () => {
+      const [a, u] = b.dataset.cell.split(',').map(Number); cycleCell(users[u].user_id, apps[a].app_name);
+    }; });
+    $('content').querySelectorAll('[data-move]').forEach(b => { b.onclick = () => moveApp(Number(b.dataset.move), Number(b.dataset.direction)); });
+    syncControls();
   }
-
-  function markClass(role) {
-    if (!role) return 'none';
-    if (role === 'admin' || role === 'user') return 'on';
-    return 'legacy';
+  function syncControls() {
+    const busy = saving || loading || !!pendingRequest || reconciling;
+    $('reloadButton').disabled = saving || loading;
+    $('orderModeButton').disabled = busy || orderMode || !matrix || !!(matrix.configuration_errors || []).length;
+    $('showRetired').disabled = busy;
+    $('cancelButton').disabled = busy;
+    $('btnSave').disabled = busy || (!Object.keys(dirty).length && !orderDirty());
+    $('btnSave').textContent = orderMode ? '順番を保存' : '権限を保存';
+    $('modeLabel').textContent = orderMode ? '並び順の編集' : '権限の編集';
+    $('notice').textContent = orderMode ? '↑↓で移動してください。ポータルも全員共通で同じ順番になります。権限の割当は変わりません。' :
+      (matrix && (matrix.archived_roles || []).length ? '廃止済みアプリの割当は保持しています。全社管理者の設定はこの画面では変更しません。' : '全社管理者の設定はこの画面では変更しません。');
+    $('saveBar').className = (orderMode || Object.keys(dirty).length) ? 'save-bar visible' : 'save-bar';
+    $('saveCount').textContent = orderMode ? (orderDirty() ? '並び順を変更しています' : '↑↓でアプリを移動') : '権限の変更 ' + Object.keys(dirty).length + '件';
+    $('content').querySelectorAll('button').forEach(b => { if (busy) b.disabled = true; });
   }
-  function markFor(role, app) {
-    if (!role) return '−';
-    const label = (app.role_labels && app.role_labels[role]) || role;
-    return label.charAt(0);
-  }
-
-  // ============================================================
-  // セル操作（タップ＝循環）
-  // ============================================================
-  function cellKey(userId, appName) { return userId + '/' + appName; }
-
   function cycleCell(userId, appName) {
-    const app = matrix.apps.find(a => a.app_name === appName);
-    if (!app) return;
-    const key = cellKey(userId, appName);
-    const savedRole = (matrix.roles[userId] && matrix.roles[userId][appName]) || '';
-    const current = dirty[key] ? dirty[key].next_role : savedRole;
-
-    // 循環順: なし → roles[0] → roles[1] → … → なし
-    // 🔴 v1.1.0: いま入っている値が apps シートの語彙に無くても、循環から外さない。
-    //    以前は未知値を「なし」扱いにしていたため、1クリックで黙ってその値が消え、
-    //    二度と戻せなかった（例: beaufes の roles が 'user' だけなのに admin が入っている行）。
-    //    保存済みの値と編集中の値の両方を末尾に足して、必ず元に戻せるようにする。
-    const cycle = [''].concat(app.roles);
-    [savedRole, current].forEach(v => {
-      if (v && cycle.indexOf(v) === -1) cycle.push(v);
-    });
-    let idx = cycle.indexOf(current);
-    if (idx === -1) idx = 0;
-    const next = cycle[(idx + 1) % cycle.length];
-
-    if (next === savedRole) {
-      delete dirty[key]; // 元に戻った
-    } else {
-      dirty[key] = { user_id: userId, app_name: appName, prev_role: savedRole, next_role: next };
-    }
+    if (saving || loading || pendingRequest || reconciling || orderMode) return;
+    const app = matrix.apps.find(a => a.app_name === appName && a.status === 'active') || matrix.apps.find(a => a.app_name === appName), user = matrix.users.find(u => u.user_id === userId);
+    if (!app || !user || blocked(user, app) || (userId === session.user_id && appName === 'auth-admin')) return;
+    const key = cellKey(userId, appName), saved = (matrix.roles[userId] || {})[appName] || '';
+    const current = dirty[key] ? dirty[key].next_role : saved;
+    // 退職者は剥奪のみ可能。未知の保存値は保持し、元に戻せるようにする。
+    const cycle = user.active ? ['', ...app.roles] : ['', saved];
+    if (saved && !cycle.includes(saved)) cycle.push(saved);
+    const next = cycle[(Math.max(0, cycle.indexOf(current)) + 1) % cycle.length];
+    if (next === saved) delete dirty[key];
+    else dirty[key] = { user_id: userId, app_name: appName, prev_role: saved, next_role: next };
+    message(''); render();
+  }
+  function startOrderMode() {
+    if (!matrix || saving || loading || pendingRequest || reconciling) return;
+    if (Object.keys(dirty).length) { message('権限の変更を保存するか、取消してから並び順を変更してください。'); return; }
+    orderMode = true; draftOrder = baseOrder(); message(''); render();
+  }
+  function moveApp(index, direction) {
+    if (!orderMode || saving || loading || pendingRequest || reconciling) return;
+    const next = index + direction;
+    if (next < 0 || next >= draftOrder.length) return;
+    [draftOrder[index], draftOrder[next]] = [draftOrder[next], draftOrder[index]];
     render();
+    // 再描画後も移動ボタンへ戻し、キーボードで続けて操作できるようにする。
+    const button = $('content').querySelector('[data-move="' + next + '"][data-direction="' + direction + '"]');
+    if (button && !button.disabled) button.focus();
   }
-
-  function updateSaveBar() {
-    const n = Object.keys(dirty).length;
-    const bar = document.getElementById('saveBar');
-    if (n > 0) {
-      bar.className = 'save-bar visible';
-      document.getElementById('saveCount').textContent = '変更 ' + n + '件';
-    } else {
-      bar.className = 'save-bar';
-    }
-  }
-
   function cancelChanges() {
-    dirty = {};
-    render();
+    if (saving || loading || pendingRequest || reconciling) return;
+    dirty = Object.create(null); draftOrder = baseOrder(); orderMode = false; message('変更を取り消しました。'); render();
   }
 
-  // ============================================================
-  // 保存フロー
-  // ============================================================
   function openSaveDialog() {
-    const changes = Object.values(dirty);
-    if (!changes.length) return;
-
+    if (!hasChanges() || saving || loading || pendingRequest || reconciling) return;
     let body = '';
-    changes.forEach(c => {
-      const u = matrix.users.find(x => x.user_id === c.user_id);
-      const app = matrix.apps.find(x => x.app_name === c.app_name);
-      body += '<div class="diff-row"><span class="who">' +
-        escapeHtml((u ? u.name : c.user_id) + ' / ' + (app ? app.label : c.app_name)) +
-        '</span><span class="change">' + escapeHtml(roleText(c.prev_role, app)) + ' → ' + escapeHtml(roleText(c.next_role, app)) +
-        '</span></div>';
-    });
-
-    document.getElementById('saveModalTitle').textContent = '変更内容（' + changes.length + '件）';
-    document.getElementById('saveModalBody').innerHTML = body;
-    document.getElementById('saveModalFooter').innerHTML =
-      '<button class="btn-cancel" onclick="closeSaveDialog()">戻る</button>' +
-      '<button class="btn-save" id="btnConfirmSave" onclick="confirmSave()">この内容で保存</button>';
-    document.getElementById('saveModal').className = 'modal-backdrop visible';
-  }
-
-  function roleText(role, app) {
-    if (!role) return 'なし';
-    if (app && app.role_labels && app.role_labels[role]) return app.role_labels[role];
-    return role;
-  }
-
-  function closeSaveDialog() {
-    document.getElementById('saveModal').className = 'modal-backdrop';
-  }
-
-  function confirmSave() {
-    if (saving) return;
-    saving = true;
-    const btn = document.getElementById('btnConfirmSave');
-    if (btn) { btn.disabled = true; btn.textContent = '保存中...'; }
-
-    const changes = Object.values(dirty).map(c => ({
-      user_id: c.user_id, app_name: c.app_name, prev_role: c.prev_role, next_role: c.next_role
-    }));
-    const requestId = genRequestId();
-
-    gasPost('saveMatrix', { request_id: requestId, changes: changes })
-      .then(res => {
-        saving = false;
-        if (!res.success) {
-          if (res.error === 'SESSION_INVALID' || res.error === 'FORBIDDEN') {
-            location.href = PORTAL_URL;
-            return;
-          }
-          document.getElementById('saveModalBody').innerHTML =
-            '<div class="result-line conflict-line">保存に失敗しました: ' + escapeHtml(res.error || 'INTERNAL_ERROR') +
-            (res.detail ? ' (' + escapeHtml(res.detail) + ')' : '') + '</div>';
-          document.getElementById('saveModalFooter').innerHTML =
-            '<button class="btn-cancel" onclick="closeSaveDialog()">閉じる</button>';
-          return;
-        }
-
-        let msg = '<div class="result-line">✅ ' + res.applied + '件を保存しました。</div>';
-        if (res.conflicts && res.conflicts.length) {
-          msg += '<div class="result-line conflict-line">⚠️ ' + res.conflicts.length + '件は他の変更と競合したため反映されませんでした:</div>';
-          res.conflicts.forEach(c => {
-            msg += '<div class="result-line conflict-line">・' + escapeHtml(c.user_id + '/' + c.app_name) +
-              '（期待値 ' + escapeHtml(c.expected) + ' / 実際 ' + escapeHtml(c.actual) + '）</div>';
-          });
-        }
-        document.getElementById('saveModalBody').innerHTML = msg;
-        document.getElementById('saveModalFooter').innerHTML =
-          '<button class="btn-save" onclick="closeSaveDialog(); dirty={}; loadMatrix();">閉じる（最新の状態を読み込む）</button>';
-      })
-      .catch(err => {
-        saving = false;
-        document.getElementById('saveModalBody').innerHTML =
-          '<div class="result-line conflict-line">通信エラー: ' + escapeHtml(err.message || String(err)) +
-          '<br>下書きは保持されています。もう一度お試しください。</div>';
-        document.getElementById('saveModalFooter').innerHTML =
-          '<button class="btn-cancel" onclick="closeSaveDialog()">閉じる</button>' +
-          '<button class="btn-save" onclick="confirmSave()">再試行</button>';
+    if (orderMode) {
+      const list = ids => '<ol class="order-list">' + ids.map(id => '<li>' + escapeHtml(matrix.apps.find(a => a.row_key === id).label) + '</li>').join('') + '</ol>';
+      body = '<p>並び順だけを保存します。社員ごとの権限は変わりません。</p><div class="order-compare"><div><b>変更前</b>' + list(baseOrder()) + '</div><div><b>変更後</b>' + list(draftOrder) + '</div></div>';
+      pendingRequest = { action: 'saveAppOrder', data: { request_id: genRequestId(), base_revision: matrix.order_revision, order: draftOrder.slice() } };
+    } else {
+      const changes = Object.values(dirty).map(c => ({ ...c }));
+      changes.forEach(c => {
+        const u = matrix.users.find(x => x.user_id === c.user_id), app = matrix.apps.find(a => a.app_name === c.app_name && a.status === 'active') || matrix.apps.find(a => a.app_name === c.app_name);
+        body += '<div class="diff-row"><span>' + escapeHtml(u.name + ' / ' + app.label) + '</span><b>' + escapeHtml(roleText(c.prev_role, app) + ' → ' + roleText(c.next_role, app)) + '</b></div>';
       });
+      pendingRequest = { action: 'saveMatrix', data: { request_id: genRequestId(), changes: changes } };
+    }
+    $('saveModalTitle').textContent = orderMode ? '並び順の確認' : '権限の変更内容';
+    $('saveModalBody').innerHTML = body;
+    $('saveModalFooter').innerHTML = '<button class="btn-cancel" onclick="closeSaveDialog()">戻る</button><button class="btn-save" id="btnConfirmSave" onclick="confirmSave()">この内容で保存</button>';
+    $('saveModal').className = 'modal-backdrop visible'; syncControls(); $('btnConfirmSave').focus();
   }
-
-  function genRequestId() {
-    if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
-    return 'req-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  function closeSaveDialog() {
+    if (saving || reconciling) return;
+    pendingRequest = null; $('saveModal').className = 'modal-backdrop'; render();
   }
-
-  // ============================================================
-  // GAS 通信
-  // ============================================================
+  async function confirmSave() {
+    if (saving || !pendingRequest) return;
+    saving = true; syncControls();
+    $('saveModalFooter').innerHTML = '<button disabled>保存中...</button>';
+    try {
+      const res = await gasPost(pendingRequest.action, pendingRequest.data);
+      // 成功/失敗いずれも再取得を挟む。結果不明のまま下書きを再編集しない。
+      reconciling = true;
+      $('saveModalBody').textContent = res.success ? (orderMode ? '並び順を保存しました。権限の割当は変更していません。' : res.applied + '件の権限を保存しました。') : errorText(res);
+      $('saveModalFooter').innerHTML = '<button class="btn-save" onclick="loadMatrix()">最新の状態を確認</button>';
+    } catch (_) {
+      reconciling = true;
+      $('saveModalBody').textContent = '応答を確認できませんでした。保存済みの可能性があります。同じ内容で結果を確認するか、最新の状態を読み込んでください。';
+      $('saveModalFooter').innerHTML = '<button class="btn-cancel" onclick="loadMatrix()">最新の状態を確認</button><button class="btn-save" onclick="confirmSave()">同じ内容で結果を確認</button>';
+    } finally { saving = false; syncControls(); }
+  }
+  function errorText(res) {
+    const messages = { SESSION_INVALID: 'セッションを確認できません。ポータルからログインし直してください。', FORBIDDEN: 'この操作を行う権限がありません。',
+      UNKNOWN_USER: '存在しない社員への保存を停止しました。', DUPLICATE_USER: '社員IDが重複しています。', INACTIVE_USER: '退職者には新しい権限を付与できません。',
+      UNKNOWN_APP: 'アプリが見つかりません。', ARCHIVED_APP: '廃止済みアプリへの保存を停止しました。', INVALID_ROLE: 'このアプリで選べない権限です。',
+      SELF_LOCKOUT: '自分の権限管理の管理権限は外せません。', DUPLICATE_ROLE: '権限行が重複しているため保存を停止しました。',
+      CONFLICT: 'ほかの画面で権限が変更されました。最新の状態を確認してください。', ORDER_CONFLICT: 'アプリ一覧や順番が変更されました。最新の状態で並べ替え直してください。',
+      APP_CONFIG_INVALID: 'アプリ一覧の設定に不備があります。設定を確認してください。', SCHEMA_INVALID: '管理データの構成を確認してください。変更は確定していません。',
+      BUSY: 'ほかの保存処理が実行中です。少し待って最新の状態を確認してください。', SAVE_UNCERTAIN: '保存結果が確定できません。最新の状態を確認し、監査記録を照合してください。',
+      REQUEST_REUSED: '保存の識別情報が一致しません。最新の状態を確認してください。', INVALID_ORDER: '並び順の一覧が一致しません。最新の状態を確認してください。' };
+    return messages[res.error] || '処理を確認できませんでした。最新の状態を確認してください。';
+  }
+  function genRequestId() { return window.crypto && crypto.randomUUID ? crypto.randomUUID() : 'req-' + Date.now() + '-' + Math.random().toString(36).slice(2); }
   async function gasPost(action, data) {
-    const res = await fetch(GAS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(Object.assign({ action: action, session_token: session.token }, data))
-    });
-    return res.json();
+    const abort = new AbortController(), timer = setTimeout(() => abort.abort(), 45000);
+    try {
+      const res = await fetch(GAS_URL, { method: 'POST', signal: abort.signal, headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: action, session_token: session.token, ...data }) });
+      if (!res.ok) throw new Error('HTTP_ERROR');
+      return await res.json();
+    } finally { clearTimeout(timer); }
   }
-
-  // ============================================================
-  // ヘルパー
-  // ============================================================
   function escapeHtml(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
-  // onclick属性の中に安全に埋め込むため、シングルクォート・バックスラッシュだけ最小限エスケープする
-  // （user_id / app_name は英数字とハイフンのみの想定だが、想定外文字が来ても属性を壊さないための保険）
-  function escUid(s) {
-    return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-  }
-</script>
 
+</script>
 </body>
 </html>
