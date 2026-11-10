@@ -1567,7 +1567,7 @@ button:not(:disabled):active,.btn:not(:disabled):active,.nav-item:active,.tab:ac
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.92.0-db';
+const APP_VERSION    = 'v1.93.0-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -8468,6 +8468,24 @@ const MG_SOLO_GROUPS = ['MILFY', 'RELABEL'];
 function mgIsSolo(groupId) { return MG_SOLO_GROUPS.includes(groupId); }
 /* === /MG SOLO ORDER === */
 
+/* === MG JAN SORT (test:mg-jan-sort) === */
+// まとめ発注ブロックの中をJANコード順に並べる系列（v1.93.0-db）。
+// 千代田化学ミルフィは色番が多く、配分順のままだと何が入っていて何が入っていないかを確かめにくいため。
+// 区分（今回発注する／不足だが未配分／在庫十分）は残し、それぞれの中だけ並べ替える。
+// JANは商品マスターから引く（提案データ自体には無い）。JANの無い商品は末尾・同じならコード順
+const MG_JAN_SORT_GROUPS = ['MILFY'];
+function mgSortByJan(groupId, items) {
+  if (!MG_JAN_SORT_GROUPS.includes(groupId)) return items;
+  const janByCode = new Map(productMaster.map(p => [p.code, String(p.jan || '')]));
+  return items.slice().sort((a, b) => {
+    const ja = janByCode.get(a.code) || '', jb = janByCode.get(b.code) || '';
+    if ((ja !== '') !== (jb !== '')) return ja !== '' ? -1 : 1;
+    return ja.localeCompare(jb, undefined, { numeric: true })
+        || String(a.code).localeCompare(String(b.code), undefined, { numeric: true });
+  });
+}
+/* === /MG JAN SORT === */
+
 function mgStatusById(groupId) {
   return (proposalsData.groupStatus || []).find(s => s.groupId === groupId) || null;
 }
@@ -8958,7 +8976,7 @@ function mgIsShort(p) {
 
 function renderMgBlock(groupId, supplierCode, renderItem) {
   const st = mgStatusById(groupId);
-  const items = mgItemsOf(groupId).filter(p => p.supplierCode === supplierCode);
+  const items = mgSortByJan(groupId, mgItemsOf(groupId).filter(p => p.supplierCode === supplierCode));
   if (!st || items.length === 0) return '';
   const cfg   = mgConfigById(groupId);
   const label = mgLabel(st, cfg);          // '本' か 'ケース'
