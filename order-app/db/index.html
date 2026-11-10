@@ -1567,7 +1567,7 @@ button:not(:disabled):active,.btn:not(:disabled):active,.nav-item:active,.tab:ac
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.93.0-db';
+const APP_VERSION    = 'v1.94.0-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -11205,17 +11205,19 @@ const ProposalAdjust = (() => {
     const rule=ruleFor(snapshot.supplier.name,source), blocked=new Set((snapshot.blockedCodes||[]).map(code));
     if(rule?.kind==='core' && rule.codes.length!==3) throw Error('オキシロンコア2Lの3種類を分析・商品マスターで確認できません。');
     const scoped=new Set(rule?.codes||[]);
-    // ケース・系列の指定範囲は、分析後注文などを黙って除いて計算しない。
-    if(source.some(r=>blocked.has(r.code) && (base.has(r.code)||scoped.has(r.code)&&!r.manualOnly)))
-      throw Error('対象商品に分析後の発注・入荷遅延・残数不明・在庫更新があります。入荷と分析を確認してから調整してください。');
+    // ケースの指定範囲は、数量を読めない商品を黙って除いて計算しない（v1.94.0-db: 入荷遅延・分析後の発注・在庫の変化は止める理由にしない）。
+    if(source.some(r=>blocked.has(r.code) && scoped.has(r.code) && !r.manualOnly))
+      throw Error('ケース条件の対象に、在庫・未入荷の数量を確認できない商品があります。分析の更新後に調整してください。');
     const ignored=[], rows=[];
     const minYen=Number(snapshot.minimumOrder?.amount||0);
     if(!Number.isFinite(minYen)||minYen<0||minYen>1000000) throw Error('最低発注金額の設定を確認してください。');
     for(const r of source) {
       const original=base.get(r.code)||0, inRule=scoped.has(r.code);
       if(r.manualOnly&&!original){ignored.push(r.code);continue;}
-      const unusable=r.excluded||r.eolFlagged||excluded.has(r.code)||blocked.has(r.code);
-      if(unusable && original) throw Error('選択商品に除外・終売・今回除外・入荷確認対象があります。選択を確認してください。');
+      // 数量を読めない商品でも、選んだ数量はそのまま残す（自動では増やさない）。
+      const held=blocked.has(r.code) && original>0;
+      const unusable=r.excluded||r.eolFlagged||excluded.has(r.code)||blocked.has(r.code)&&!held;
+      if(unusable && original) throw Error('選択商品に除外・終売・今回除外の商品があります。選択を確認してください。');
       if(unusable) {ignored.push(r.code);continue;}
       if([r.stock,r.onOrder,r.recommended,r.recentDemandMonthly,r.unitCost,r.lot].some(v=>v===null||v===''||!Number.isFinite(Number(v)))) {
         if(original||inRule)throw Error('対象商品の在庫・需要・単価・最低発注数が不足しています。');
@@ -11227,7 +11229,7 @@ const ProposalAdjust = (() => {
         ignored.push(r.code);continue;
       }
       if(r.groupId && inRule) throw Error('既存の系列条件と今回のケース条件が重なっています。設定の確認が必要です。');
-      const adjustable=!r.manualOnly && !r.groupId && demand>0 && (inRule || !rule && r.minimumOrderEligible);
+      const adjustable=!held && !r.manualOnly && !r.groupId && demand>0 && (inRule || !rule && r.minimumOrderEligible);
       if(!adjustable && !original) {ignored.push(r.code);continue;}
       if(demand<0 || Number(r.onOrder)<0 || Number(r.recommended)<0) throw Error('需要・未入荷・在庫基準の分析値を確認してください。');
       const start=(adjustable||inRule)?Math.ceil(original/lot)*lot:original;
@@ -11235,13 +11237,14 @@ const ProposalAdjust = (() => {
       // 手動選択は保持。自動の追加分は在庫日数の上限内だけにする。
       const max=adjustable?Math.max(start,Math.floor(Math.max(0,cap-pos)/lot)*lot):start;
       if(max/lot>10000) throw Error('候補数量が大きすぎます。在庫上限を小さくしてください。');
-      rows.push({...r,lot,demand,pos,start,original,max,adjustable,inRule,cents:Math.round(cost*100),eligible:!!r.minimumOrderEligible});
+      rows.push({...r,lot,demand,pos,start,original,max,adjustable,held,inRule,cents:Math.round(cost*100),eligible:!!r.minimumOrderEligible});
     }
     if([...base.keys()].some(c=>!rows.some(r=>r.code===c))) throw Error('選択商品の安全な配分を確認できません。');
     const startingAmount=rows.reduce((s,r)=>s+(r.eligible?r.start*r.cents:0),0), minimum=Math.ceil(minYen*100);
     const unit=rule?.kind==='core'?rule.increment/rule.pack:rule?.increment||0;
     const baseBlocks=rule?rows.filter(r=>r.inRule).reduce((s,r)=>s+r.start/r.lot,0):0;
-    const warnings=[];
+    const warnings=(Array.isArray(snapshot.supplyNotes)?snapshot.supplyNotes:[]).map(String);
+    if(rows.some(r=>r.held)) warnings.push('在庫・未入荷の数量を確認できない選択商品は、選んだ数量のまま残し、自動では増やしていません。');
     if(rows.some(r=>r.start && r.demand<=0)) warnings.push('需要のない手動選択品は数量を維持し、自動の増量対象から外しています。');
     if(rows.some(r=>r.start && r.demand>0 && (r.pos+r.start)*30.4/r.demand>maxDays)) warnings.push('手動選択または単位への切上げで在庫上限を超える商品があります。追加前に確認してください。');
     let work=0;
@@ -11303,7 +11306,7 @@ const ProposalAdjust = (() => {
     }
     const allResults=rows.map((r,i)=>({...r,qty:best.quantities[i],addedQty:best.quantities[i]-r.original,amount:best.quantities[i]*r.cents/100,
       daysBefore:r.demand>0?r.pos*30.4/r.demand:null,daysAfter:r.demand>0?(r.pos+best.quantities[i])*30.4/r.demand:null,
-      reason:best.quantities[i]>r.original?(r.pos<Number(r.recommended)?'在庫不足を補い、発注条件を満たす':'在庫日数と追加負担を比較して補充'):best.quantities[i]===0?'今回の注文は不要':'現在の選択を保持'}));
+      reason:best.quantities[i]>r.original?(r.pos<Number(r.recommended)?'在庫不足を補い、発注条件を満たす':'在庫日数と追加負担を比較して補充'):best.quantities[i]===0?'今回の注文は不要':r.held?'数量を確認できないため選択数量のまま':'現在の選択を保持'}));
     const result=allResults.filter(r=>r.qty>0);
     const eligibleAmount=result.reduce((s,r)=>s+(r.eligible?r.amount:0),0);
     if(eligibleAmount+1e-6<minYen||result.some(r=>r.qty<r.original||!Number.isSafeInteger(r.qty)))throw Error('配分の検算に失敗しました。');
@@ -11354,7 +11357,7 @@ async function propAdjustmentSnapshot(supplierCode) {
   const result=await gasGet({action:'getAiOrderMetrics',supplierCode,analysisId});
   if(!result?.success || result.analysisId!==analysisId || !result.rows?.length)throw Error('同じ世代の需要分析値を取得できません。');
   const hidden=new Set([...(live.exclusions||[]),...(live.eol||[])].map(r=>ProposalAdjust.code(typeof r==='object'?r.code:r)));
-  const blocked=new Set(),local=_readOrderedLocal(),pending=live.pendingOrders||[];
+  const blocked=new Set(),local=_readOrderedLocal(),pending=live.pendingOrders||[],supply={delayed:0,after:0,stock:0};
   const metrics=result.rows.map(row=>{
     const c=ProposalAdjust.code(row.code),master=products.products?.find(p=>ProposalAdjust.code(p.code)===c && ProposalAdjust.same(p.supplierCD,supplierCode));
     if(!master)throw Error('分析の商品を最新の商品マスターで照合できません。');
@@ -11366,14 +11369,20 @@ async function propAdjustmentSnapshot(supplierCode) {
     if(!Number.isSafeInteger(lot)||lot<1||!Number.isSafeInteger(itemUnit)||itemUnit<1)throw Error('最低発注数を確認できません。');
     const data={...live,proposals:[{...row,code:c,proposedQty:Math.max(0,Math.ceil(Number(row.recommended)-Number(row.stock)-Number(row.onOrder)))}]};
     const decision=ProposalSupply.decide({code:c,stock:master.stock,reorderPoint:row.recommended},data,local);
-    if(['delayed','ordered','pending_unknown','stock_changed','unknown'].includes(decision.kind))blocked.add(c);
-    const records=pending.filter(p=>ProposalAdjust.code(p.code)===c&&Number(p.qty)>0);
-    if(Number(row.onOrder)>records.reduce((s,p)=>s+Number(p.qty),0))blocked.add(c);
-    // 単価・帳簿在庫は最新マスターを再読取。同世代の分析値との差は補充対象にしない。
-    if(master.stock===null||master.stock===''||!Number.isFinite(Number(master.stock))||Number(master.stock)!==Number(row.stock) ||
-       master.purchasePrice===null||master.purchasePrice===''||!Number.isFinite(Number(master.purchasePrice))||Math.abs(Number(master.purchasePrice)-Number(row.unitCost))>.001)blocked.add(c);
+    // v1.94.0-db: 入荷遅延・分析後の発注・在庫の変化では止めない。分析時点（在庫＋分析の未入荷＋分析後の発注）と
+    // 今（最新在庫＋今の未入荷の全注文）の両方で数え、多い方を使う＝追加しすぎない側。数量そのものが読めない商品だけ外す。
+    const masterStock=propAdjustNum(master.stock),orders=Array.isArray(decision.orders)?decision.orders:[];
+    if(decision.kind==='unknown'||masterStock===null||propAdjustNum(master.purchasePrice)===null)blocked.add(c);
+    const after=orders.filter(o=>o.reflected!==true).reduce((s,o)=>s+o.qty,0),allQty=orders.reduce((s,o)=>s+o.qty,0);
+    const atAnalysis=Number(row.stock)+Number(row.onOrder)+after,useNow=masterStock!==null&&masterStock+allQty>atAnalysis;
+    const stock=useNow?masterStock:row.stock,onOrder=useNow?allQty:Number(row.onOrder)+after;
+    if(!blocked.has(c)){
+      if(orders.some(o=>o.isDelayed))supply.delayed++;
+      if(after>0)supply.after++;
+      if(masterStock!==Number(row.stock))supply.stock++;
+    }
     const excludes=propAdjustmentExcludes(supplier.minOrderExcludes);
-    return {code:c,name:String(row.name),supplierCode,stock:row.stock,onOrder:row.onOrder,recommended:row.recommended,
+    return {code:c,name:String(row.name),supplierCode,stock,onOrder,recommended:row.recommended,
       recentDemandMonthly:row.recentDemandMonthly,unitCost:master.purchasePrice,lot:lot*itemUnit/gcd(lot,itemUnit),groupId:gid,
       excluded:!!row.excluded||hidden.has(c),eolFlagged:!!row.eolFlagged||master.discontinued==='廃番',
       minimumOrderEligible:Number(supplier.minOrderAmount)>0&&!gid&&!excludes.some(k=>k&&ProposalAdjust.norm(row.name).includes(ProposalAdjust.norm(k)))};
@@ -11385,8 +11394,10 @@ async function propAdjustmentSnapshot(supplierCode) {
     if(!ProposalAdjust.same(master.supplierCD,supplierCode)||metrics.some(r=>r.code===c))continue;
     const override=lotFind(live.lotOverrides,c),gid=mgGroupIdForProduct(supplierCode,master.name,c)||'';
     const records=pending.filter(p=>ProposalAdjust.code(p.code)===c&&Number(p.qty)>0);
-    if(records.length||local.some(r=>ProposalAdjust.code(r.code)===c&&r.savedAt>stamp))blocked.add(c);
-    const row={code:c,name:String(master.name),supplierCode,stock:master.stock,onOrder:records.reduce((s,p)=>s+Number(p.qty),0),
+    // 未入荷・分析後の発注がある商品も止めず、まだ一覧に載っていない端末内の発注控えも未入荷に足す（v1.94.0-db）。
+    const lines=new Set(records.map(p=>p.orderNo)),unsynced=local.filter(r=>ProposalAdjust.code(r.code)===c&&r.savedAt>stamp&&!lines.has(r.orderNo)&&propAdjustNum(r.qty)>0);
+    if(propAdjustNum(master.stock)===null)blocked.add(c);
+    const row={code:c,name:String(master.name),supplierCode,stock:master.stock,onOrder:records.reduce((s,p)=>s+Number(p.qty),0)+unsynced.reduce((s,r)=>s+Number(r.qty),0),
       recommended:0,recentDemandMonthly:0,unitCost:master.purchasePrice,lot:override?Number(override.lot):null,groupId:gid,
       excluded:hidden.has(c),eolFlagged:master.discontinued==='廃番',manualOnly:true,
       minimumOrderEligible:Number(supplier.minOrderAmount)>0&&!gid&&!propAdjustmentExcludes(supplier.minOrderExcludes).some(k=>k&&ProposalAdjust.norm(master.name).includes(ProposalAdjust.norm(k)))};
@@ -11395,7 +11406,7 @@ async function propAdjustmentSnapshot(supplierCode) {
   // 次の確認でも比較するため、数量判断に使った全入力を保持する。時刻だけの変化は除く。
   return {analysisId,analysisInputAt:live.analysisInputAt,supplier:{code:supplierCode,name:supplier.name},metrics,
     catalog:[...metrics,...catalog].sort((a,b)=>a.code.localeCompare(b.code)),
-    blockedCodes:[...blocked].sort(),minimumOrder:{amount:Number(supplier.minOrderAmount)||0,excludes:propAdjustmentExcludes(supplier.minOrderExcludes)},
+    blockedCodes:[...blocked].sort(),supplyNotes:propAdjustSupplyNotes(supply),minimumOrder:{amount:Number(supplier.minOrderAmount)||0,excludes:propAdjustmentExcludes(supplier.minOrderExcludes)},
     pending:pending.map(r=>[r.orderNo,ProposalAdjust.code(r.code),r.qty,r.inAnalysis,r.isDelayed]).sort(),
     local:local.map(r=>[r.orderNo,r.code,r.qty,r.savedAt]).sort()};
 }
@@ -11474,6 +11485,13 @@ function propAdjustmentTime(value) {
   const text=String(value||'');return Date.parse(/[zZ]$|[+-]\d{2}:\d{2}$/.test(text)?text:text.replace(' ','T')+'+09:00');
 }
 function propAdjustmentExcludes(value) {return Array.isArray(value)?value:String(value||'').split(/[,、\n]/).map(s=>s.trim()).filter(Boolean);}
+function propAdjustNum(value) {return value===null||value===undefined||typeof value==='boolean'||String(value).trim()===''||!Number.isFinite(Number(value))?null:Number(value);}
+// v1.94.0-db: 止めずに計算した商品を、計算結果の上に件数で知らせる。
+function propAdjustSupplyNotes(s) {
+  return [s.delayed?`入荷予定を過ぎた未入荷がある${s.delayed}品は、これから届く分として未入荷に数えています。到着を確認してください。`:'',
+    s.after?`分析後に発注した${s.after}品は、その数量を未入荷に足して計算しています。`:'',
+    s.stock?`分析後に在庫数が変わった${s.stock}品は、分析時点と今のうち在庫＋未入荷が多い方で計算しています（追加しすぎないため）。`:''].filter(Boolean);
+}
 /* 別枠（v1.89.0-db）: 最低発注金額の対象外キーワード（ODP＝メイト）の商品は、金額を組む一覧・商品追加に出さず
    カード内の別枠でだけ選ぶ。系列ブロック所属品は系列側に残す。発注書は通常商品と同じ。 */
 function propFrameKeywords(supplierCode) {
@@ -11498,7 +11516,7 @@ function propProductPickerInMode(row,snapshot,mode) {
 }
 function propProductPickerReason(row,snapshot) {
   if(row.excluded||row.eolFlagged)return '除外・終売';
-  if(snapshot.blockedCodes.includes(row.code))return '発注・入荷・在庫の確認が必要';
+  if(snapshot.blockedCodes.includes(row.code))return '在庫・未入荷の数量を確認できない';
   if(row.groupId)return '系列ブロックから調整してください';
   if([row.stock,row.onOrder,row.recommended,row.recentDemandMonthly,row.unitCost,row.lot].some(x=>x===null||x===''||!Number.isFinite(Number(x))))return '分析値・最低発注数の確認が必要';
   if(!Number.isSafeInteger(Number(row.lot))||Number(row.lot)<1||Number(row.unitCost)<=0)return '最低発注数・単価の確認が必要';
