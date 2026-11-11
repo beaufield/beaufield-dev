@@ -1567,7 +1567,7 @@ button:not(:disabled):active,.btn:not(:disabled):active,.nav-item:active,.tab:ac
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.94.0-db';
+const APP_VERSION    = 'v1.95.0-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -3871,6 +3871,7 @@ function goToSelect() {
 }
 
 function goToConfirm() {
+  try { neiGuardCart(); } catch(e) { showToast(e.message,'error'); return; }
   if (!satoOxValidateCart()) return;
   if (cartItems.length === 0) { showToast('商品が追加されていません', 'error'); return; }
   const mismatches = cartItems.filter(item =>
@@ -5019,7 +5020,7 @@ async function _recoverOrderEntry(entry) {
 
   // 未検出は未登録の確定ではない。同じrequestId・同じ固定payloadで1回だけ収束再送する。
   // UNKNOWNは照会を済ませてから、実際の再送直前に専用注文の条件を検査する。
-  try { SatoOxOrderForm.guard(JSON.parse(entry.params.items),entry.params.supplierCode,entry.params.date); }
+  try { neiGuardItems(JSON.parse(entry.params.items),entry.params.supplierCode); SatoOxOrderForm.guard(JSON.parse(entry.params.items),entry.params.supplierCode,entry.params.date); }
   catch(e) { _markOrderEntry(entry,'STALE',e.message); throw e; }
   _markOrderEntry(entry, 'RECOVERING');
   // ⚠️ tryで囲むのは「結果が曖昧になりうる通信そのもの」だけにする（v1.67.0）。
@@ -5061,6 +5062,7 @@ async function _processOrderEntry(entry, initialSend) {
   if (_orderOutboxInFlight.has(entry.requestId)) return _orderOutboxInFlight.get(entry.requestId);
   const task = (async () => {
     if (!initialSend) return _recoverOrderEntry(entry);
+    neiGuardItems(JSON.parse(entry.params.items), entry.params.supplierCode);
     SatoOxOrderForm.guard(JSON.parse(entry.params.items), entry.params.supplierCode, entry.params.date);
     _markOrderEntry(entry, 'SENDING');
     // ⚠️ _recoverOrderEntry と同じ理由で、tryは通信だけを囲む（v1.67.0）
@@ -5215,6 +5217,7 @@ async function _approveDuplicateOrder(entry, conflicts) {
 
 async function saveOrderToGAS(outputType) {
   satoOxGuardCart();
+  if (!savedOrderNo) neiGuardCart();
   // H4: DBモードだけ、押し直し・再読み込みの直前に「知っている失効」を確認してから進む
   if (DATA_BACKEND === 'db') {
     try { await dbAdapter.ready(); } catch(e) { /* IndexedDBが読めなくてもメモリだけで進む */ }
@@ -8108,7 +8111,7 @@ async function loadProposals(force = false) {
         if (p.refOnly) propUncheckedItems.add(p.supplierCode + '|' + p.code);
       });
       proposalsData = {
-        proposals:  (res.proposals || []).map(p => SatoOxOrderForm.target(p) ? _dbApplyLot(p,12) : p),
+        proposals:  (res.proposals || []).map(p => ProposalAdjust.isNei(p) ? _dbApplyLot(p,6) : SatoOxOrderForm.target(p) ? _dbApplyLot(p,12) : p),
         analyzedAt: res.analyzedAt || '',
         analysisInputAt: res.analysisInputAt || '',
         analysisId: res.analysisId || '',
@@ -8519,9 +8522,17 @@ function mgItemUnitList(cfg) {
   }).filter(Boolean).sort((a, b) => b.pattern.length - a.pattern.length);
 }
 function mgIsCaseUnit(cfg) { return !!cfg && cfg.unitKind === 'ケース'; }
+// ネイだけは最低24本。24本の倍数へ切り上げず、以降も6本ずつ増減できる。
+function mgIsMinimum(cfg) { return cfg?.groupId === 'NEI'; }
+function neiGuardItems(items, supplierCode) {
+  const error = ProposalAdjust.neiError(items, supplierCode);
+  if (error) throw new Error(error);
+}
+function neiGuardCart() { neiGuardItems(cartItems, currentOrder.supplierCode); }
 // その商品の1ブロックが何個か
 function mgUnitFor(cfg, name) {
   if (!cfg) return 1;
+  if (mgIsMinimum(cfg)) return 6;
   const list = mgItemUnitList(cfg);
   const n = mgNormName(name);
   for (const e of list) if (n.indexOf(e.pattern) >= 0) return e.unit;
@@ -8587,6 +8598,7 @@ function mgGroupIdForProduct(supplierCode, name, code) {
   const n = mgNormName(name);
   const supp = String(supplierCode || '').replace(/^0+/, '');
   for (const g of (proposalsData.orderGroups || [])) {
+    if (g.groupId === 'NEI' && (supp !== '58' || !ProposalAdjust.isNei({code}))) continue;
     if (g.supplierCode && String(g.supplierCode).replace(/^0+/, '') !== supp) continue;
     if ((g.excludeCodes || []).some(c => String(c).replace(/^0+/, '') === String(code || '').replace(/^0+/, ''))) continue;
     if (!(g.nameIncludes || []).every(k => n.indexOf(mgNormName(k)) >= 0)) continue;
@@ -8855,10 +8867,12 @@ function mgRebuild(groupId, lots, keepPins = true, changedCode) {
   const maxLots     = mgMaxLots(cfg);
   const lotCount    = Math.min(Math.max(1, lots || st.lots || 1), maxLots || Infinity);
   const groupBlocks = mgGroupBlocks(st, cfg);
-  const targetBlocks = lotCount * groupBlocks;
-  const target = targetBlocks * mgScale(cfg);   // 表示用（本単位＝本数 / ケース単位＝ケース数）
-  propMgLots[groupId] = lotCount;
   const pins = propMgPins[groupId] || {};
+  const pinBlocks = items.reduce((s,p) => s + (pins[p.code] || 0) / mgUnitFor(cfg,p.name), 0);
+  const targetBlocks = mgIsMinimum(cfg)
+    ? Math.max(groupBlocks, Math.ceil(lotCount * groupBlocks), Math.ceil(pinBlocks)) : lotCount * groupBlocks;
+  const target = targetBlocks * mgScale(cfg);   // 表示用（本単位＝本数 / ケース単位＝ケース数）
+  propMgLots[groupId] = mgIsMinimum(cfg) ? targetBlocks / groupBlocks : lotCount;
   propMgQty[groupId] = mgAllocate(items, targetBlocks, cfg, pins);
   const newQty = propMgQty[groupId];
   // 配分された商品だけチェックON。既存の propUncheckedItems に流し込むので
@@ -8901,7 +8915,7 @@ function mgRebuild(groupId, lots, keepPins = true, changedCode) {
     });
     if (decreased.length > 0) diffNote = `（${decreased.slice(0, 2).join('・')}${decreased.length > 2 ? ' 他' : ''}）`;
   }
-  showToast(`${st.groupName}を${mgQtyText(placed, placedPieces, label)}（${lotCount}ロット）で組みました${diffNote}`, 'success');
+  showToast(`${st.groupName}を${mgQtyText(placed, placedPieces, label)}${mgIsMinimum(cfg) ? '（各6本単位・合計24本以上）' : `（${lotCount}ロット）`}で組みました${diffNote}`, 'success');
 }
 
 // 手動固定（ピン）を設定する。組成済み（発注時期 or 組んだことがある）ならその場で再配分し、
@@ -8981,6 +8995,8 @@ function renderMgBlock(groupId, supplierCode, renderItem) {
   const cfg   = mgConfigById(groupId);
   const label = mgLabel(st, cfg);          // '本' か 'ケース'
   const unit  = st.groupUnit || 0;         // 発注単位（label の単位で数えた値）
+  const minimumOnly = mgIsMinimum(cfg);
+  const unitText = minimumOnly ? `${unit}${escHtml(label)}以上・各6本単位` : `${unit}${escHtml(label)}単位`;
   const maxLots = mgMaxLots(cfg);          // 0＝上限なし（v1.75.0）
   const subRules = mgSubUnitList(cfg);     // サイズ別の偶数単位（v1.75.0）
   const skipped = propMgSkipped.has(groupId);
@@ -8997,7 +9013,7 @@ function renderMgBlock(groupId, supplierCode, renderItem) {
     return `
     <div class="prop-mg skipped" data-group-id="${escAttr(groupId)}" data-group-unit="${unit}" data-unit-label="${escAttr(label)}">
       <div class="prop-mg-head">
-        <div class="prop-mg-title">📦 ${escHtml(st.groupName)}<span class="prop-mg-unit">${unit}${escHtml(label)}単位</span></div>
+        <div class="prop-mg-title">📦 ${escHtml(st.groupName)}<span class="prop-mg-unit">${unitText}</span></div>
         <div class="prop-mg-state">⏭ 今回は発注しません（${items.length}商品・すべてチェックOFF${
           shortCount > 0 ? ` ／ 在庫が推奨を下回っている商品 ${shortCount}件` : ''}）</div>
         ${skipBox}
@@ -9043,11 +9059,14 @@ function renderMgBlock(groupId, supplierCode, renderItem) {
     const startLabel = pinnedCount > 0 ? `🛒 手動指定を含めて今すぐ${unit}${label}を組む` : `🛒 今すぐ${unit}${label}を組む`;
     acts.push(`<button class="prop-mg-btn primary" ${orderAction('mgRebuild', groupId, 1)}>${startLabel}</button>`);
   }
-  if (maxLots === 0 || maxLots >= 2) {
+  if (minimumOnly) {
+    acts.push(`<button class="prop-mg-btn" ${orderAction('mgRebuild', groupId, (Math.max(unit,total) + 6) / unit)}>＋6本を組む</button>`);
+    if (total > unit) acts.push(`<button class="prop-mg-btn" ${orderAction('mgRebuild', groupId, Math.max(unit,total - 6) / unit)}>−6本を組む</button>`);
+  } else if (maxLots === 0 || maxLots >= 2) {
     acts.push(`<button class="prop-mg-btn" ${orderAction('mgRebuild', groupId, 2)}>${unit * 2}${label}（2ロット）にする</button>`);
   }
   if ((st.lots || 1) > 1 || (propMgQty[groupId] && total > unit)) {
-    acts.push(`<button class="prop-mg-btn" ${orderAction('mgRebuild', groupId, 1)}>${unit}${label}（1ロット）に戻す</button>`);
+    acts.push(`<button class="prop-mg-btn" ${orderAction('mgRebuild', groupId, 1)}>${unit}${label}${minimumOnly ? "" : "（1ロット）"}に戻す</button>`);
   }
 
   const restBtn = rest.length > 0
@@ -9080,13 +9099,14 @@ function renderMgBlock(groupId, supplierCode, renderItem) {
     ruleParts.push(`同じサイズどうしの合計を${subRules.every(e => e.step === 2) ? '偶数' : '指定の倍数'}${escHtml(label)}にする（${
       (cfg.subUnits || []).map(t => escHtml(String(t).replace(/:2$/, ''))).join(' / ')}）`);
   }
+  if (minimumOnly) ruleParts.push('ネイ4商品だけで合計24本以上・各商品6本単位（30本・36本も可）。通常商品の送料無料6箱とは別集計');
   if (maxLots === 1) ruleParts.push(`合計はちょうど${unit}${escHtml(label)}`);
   const ruleNote = ruleParts.length > 0 ? `<div class="prop-mg-rule">📏 ${ruleParts.join('・')}</div>` : '';
 
   return `
   <div class="prop-mg${st.due ? ' due' : ''}" data-group-id="${escAttr(groupId)}" data-group-unit="${unit}" data-unit-label="${escAttr(label)}" data-max-lots="${maxLots}">
     <div class="prop-mg-head">
-      <div class="prop-mg-title">📦 ${escHtml(st.groupName)}<span class="prop-mg-unit">${unit}${escHtml(label)}単位</span></div>
+      <div class="prop-mg-title">📦 ${escHtml(st.groupName)}<span class="prop-mg-unit">${unitText}</span></div>
       ${ruleNote}
       <div class="prop-mg-state">${state}</div>
       <div class="prop-mg-state">${summary}</div>
@@ -9140,6 +9160,13 @@ function updatePropMgTotal(mgEl) {
   // サイズ別の偶数単位・ロット上限（v1.75.0）。どちらも無い系列では何も足さない（従来表示のまま）
   const subs = mgSubTotals(subEntries);
   const subNg = mgSubViolationText(subs, label);
+  if (mgEl.dataset.groupId === 'NEI') {
+    const invalid = subEntries.some(e => !Number.isInteger(e.blocks) || e.blocks < 0);
+    const ok = total >= 24 && !invalid;
+    el.className = 'prop-mg-total ' + (ok ? 'ok' : 'ng');
+    el.textContent = `ネイ合計 ${total}本 ／ 各6本単位・合計24本以上 ` + (ok ? '✅' : invalid ? '⚠️ 各商品6本単位にしてください' : `⚠️ あと${24-total}本`);
+    return;
+  }
   const maxLots = parseInt(mgEl.dataset.maxLots, 10) || 0;
   const overMax = maxLots > 0 && total > unit * maxLots + 0.005;
   if (Math.abs(total % unit) < 0.005 && !subNg && !overMax) {
@@ -9878,8 +9905,8 @@ function collectPickedFrom(rootEl, supplierCode) {
     // チェックONでも数量0（手動でその商品を除外した行など）はカートに入れない。
     // parseInt(値) || p.proposedQty だと「明示的に0にした」行が誤って proposedQty に化けるため、
     // 入力値が数値として読めない（空欄など）ときだけ proposedQty にフォールバックする
-    const rawQty = SatoOxOrderForm.target(p) ? Number(el.querySelector('.prop-qty').value) : parseInt(el.querySelector('.prop-qty').value, 10);
-    const qty = Number.isNaN(rawQty) && !SatoOxOrderForm.target(p) ? p.proposedQty : rawQty;
+    const rawQty = (SatoOxOrderForm.target(p) || ProposalAdjust.isNei(p)) ? Number(el.querySelector('.prop-qty').value) : parseInt(el.querySelector('.prop-qty').value, 10);
+    const qty = Number.isNaN(rawQty) && !SatoOxOrderForm.target(p) && !ProposalAdjust.isNei(p) ? p.proposedQty : rawQty;
     if (qty < 1) return;
     picked.push({ p, qty });
   });
@@ -9899,6 +9926,7 @@ function startOrderFromProposals(supplierCode) {
     picked = regular;
   }
   if (picked.length === 0) { showToast('商品にチェックを入れてください', 'error'); return; }
+  try { neiGuardItems(picked.map(x=>({code:x.p.code,qty:x.qty})),supplierCode); } catch(e) { showToast(e.message,'error'); return; }
   /* PROP_ADJUST_START_GUARD */
   const unitError=propAdjustmentUnitError(masters.suppliers.find(s=>s.code===supplierCode)?.name,
     picked.map(r=>({code:r.p.code,qty:r.qty})),proposalsData.proposals.filter(p=>p.supplierCode===supplierCode));
@@ -9951,7 +9979,9 @@ function startOrderFromMgGroup(groupId, supplierCode) {
   // たかしさん確認（2026-09-17）: リラベールも止めずに警告して進ませる
   const problems = [];
   const maxLots = mgMaxLots(cfg);
-  if (unit > 0 && Math.abs(total % unit) >= 0.005) {
+  if (mgIsMinimum(cfg)) {
+    try { neiGuardItems(picked.map(x=>({code:x.p.code,qty:x.qty})),supplierCode); } catch(e) { showToast(e.message,'error'); return; }
+  } else if (unit > 0 && Math.abs(total % unit) >= 0.005) {
     const over  = Math.round((total % unit) * 100) / 100;
     const short = Math.round((unit - over) * 100) / 100;
     problems.push(`合計${total}${label}は${unit}${label}単位になっていません（あと${short}${label}で${
@@ -9993,7 +10023,7 @@ function cartItemsFromProposalPicked(supplierCode, picked) {
 // picked: [{ p: 提案行, qty: 発注数 }]。仕入先カード全体からでも、まとめ発注グループ
 // ブロック単体からでも、ここに流し込めば以降はまったく同じ経路で動く
 function startOrderWithPicked(supplierCode, picked, toastLabel) {
-  try { SatoOxOrderForm.guard(cartItemsFromProposalPicked(supplierCode,picked),supplierCode,resolveOrderDate()); }
+  try { neiGuardItems(picked.map(x=>({code:x.p.code,qty:x.qty})),supplierCode); SatoOxOrderForm.guard(cartItemsFromProposalPicked(supplierCode,picked),supplierCode,resolveOrderDate()); }
   catch(e) { showToast(e.message,'error'); return; }
   if (picked.length === 0) { showToast('商品にチェックを入れてください', 'error'); return; }
 
@@ -10079,7 +10109,7 @@ async function aiOrderConsultLive() {
       const lot=Number(manualLot?manualLot.lot:row.lot);
       if(!Number.isInteger(lot) || lot<1 || !Number.isInteger(itemUnit) || itemUnit<1) throw new Error('商品の発注単位が不正です。');
       if(cfg && !rules.some(g=>g.groupId===gid)) rules.push({groupId:gid,groupUnit:Number(cfg.groupUnit),
-        unsupported:mgIsCaseUnit(cfg) || mgSubUnitList(cfg).length>0,solo:mgIsSolo(gid)});
+        unsupported:mgIsMinimum(cfg) || mgIsCaseUnit(cfg) || mgSubUnitList(cfg).length>0,solo:mgIsSolo(gid)});
       products.push({code:row.code,supplierCD:supplierCode,discontinued:String(master.discontinued||'')});
       return {code:String(row.code),name:String(row.name),supplierCode,stock:Number(row.stock),onOrder:Number(row.onOrder),
         recentDemandMonthly:Number(row.recentDemandMonthly),recommended:Number(row.recommended),lot:lot*itemUnit/gcd(lot,itemUnit),unitCost:cost,
@@ -10126,7 +10156,7 @@ async function aiOrderReadLiveSnapshot(supplierCode) {
       const lot=Number(manualLot?manualLot.lot:row.lot);
       if(!Number.isInteger(lot) || lot<1 || !Number.isInteger(itemUnit) || itemUnit<1) throw new Error('商品の発注単位が不正です。');
       if(cfg && !rules.some(g=>g.groupId===gid)) rules.push({groupId:gid,groupUnit:Number(cfg.groupUnit),
-        unsupported:mgIsCaseUnit(cfg) || mgSubUnitList(cfg).length>0,solo:mgIsSolo(gid)});
+        unsupported:mgIsMinimum(cfg) || mgIsCaseUnit(cfg) || mgSubUnitList(cfg).length>0,solo:mgIsSolo(gid)});
       products.push({code:row.code,supplierCD:supplierCode,discontinued:String(master.discontinued||'')});
       return {code:String(row.code),name:String(row.name),supplierCode,stock:Number(row.stock),onOrder:Number(row.onOrder),
         recentDemandMonthly:Number(row.recentDemandMonthly),recommended:Number(row.recommended),lot:lot*itemUnit/gcd(lot,itemUnit),unitCost:cost,
@@ -11180,12 +11210,22 @@ const ProposalAdjust = (() => {
   const norm = s => String(s ?? '').normalize('NFKC').replace(/\s+/g, '').toLowerCase();
   const code = s => /^\d+$/.test(String(s ?? '').trim()) ? String(s).trim().padStart(6, '0') : String(s ?? '').trim();
   const same = (a,b) => String(a ?? '').replace(/^0+/, '') === String(b ?? '').replace(/^0+/, '');
+  // ネイ4品はパシフィック通常商品の箱数へ合算しない。コードで対象を限定する。
+  const isNei = row => ['012500','012501','012502','012503'].includes(code(row?.code));
+  function neiError(items, supplierCode='58') {
+    const rows=(items||[]).filter(isNei);
+    if(!rows.length)return '';
+    if(!same(supplierCode,'58'))return 'ネイシリーズの発注先はパシフィックプロダクツです。';
+    if(rows.some(r=>!Number.isSafeInteger(r.qty)||r.qty<6||r.qty%6))return 'ネイシリーズは各商品6本単位で指定してください。';
+    const total=rows.reduce((s,r)=>s+r.qty,0);
+    return total<24?`ネイシリーズだけで合計24本以上が必要です（現在${total}本・あと${24-total}本）。`:'';
+  }
   const gcd = (a,b) => b ? gcd(b,a%b) : a;
   function ruleFor(name, metrics=[]) {
     const n=norm(name);
     if(n==='ソフジャパン') return {kind:'case',minimum:6,increment:1,label:'合計6ケース以上',codes:metrics.map(r=>code(r.code))};
     // 送料無料の目安。通常の発注では6箱未満も許可し、ボタンでの補充時だけ6箱を目指す。
-    if(n==='パシフィックプロダクツ') return {kind:'case',minimum:6,increment:1,freeShipping:true,unitLabel:'箱',label:'内箱6箱以上で送料無料',codes:metrics.map(r=>code(r.code))};
+    if(n==='パシフィックプロダクツ') return {kind:'case',minimum:6,increment:1,freeShipping:true,unitLabel:'箱',label:'内箱6箱以上で送料無料',codes:metrics.filter(r=>!isNei(r)).map(r=>code(r.code))};
     if(n==='earthwalkrepublic') return {kind:'core',increment:30,pack:5,label:'オキシロンコア2L：5本刻み・合計30本単位',
       codes:metrics.filter(r=>norm(r.name).includes('オキシロンコア2l')).map(r=>code(r.code))};
     return null;
@@ -11315,10 +11355,9 @@ const ProposalAdjust = (() => {
       minimumAmount:minYen,totalCases:rule?.kind==='case'?target:null,coreQty:rule?.kind==='core'?target*5:null,ignoredCodes:ignored,warnings,
       objective:'現在の選択を保持し、不足日数を最小化、次に追加在庫の金額×保有日数を最小化、同点は購入金額を優先',work};
   }
-  return {norm,code,same,ruleFor,calculate};
+  return {norm,code,same,isNei,neiError,ruleFor,calculate};
 })();
 if(typeof module!=='undefined')module.exports=ProposalAdjust;
-
 /* 発注条件の調整は提案の選択だけを変更する。保存・注文送信は既存の確認フローで行う。 */
 const propAdjustment={epoch:0,preview:null,excluded:new Set(),maxDays:60};
 function propAdjustmentControls(supplierCode) {
@@ -11581,7 +11620,8 @@ function updatePropCaseStatus(group) {
   const metrics=proposalsData.proposals.filter(p=>ProposalAdjust.same(p.supplierCode,supplierCode));
   const selection=propAdjustmentSelection(supplierCode).filter(r=>r.checked&&r.qty>0);
   const error=propAdjustmentUnitError(supplier?.name,selection,metrics);
-  const total=selection.reduce((sum,r)=>{const p=metrics.find(p=>ProposalAdjust.code(p.code)===r.code),override=lotFind(proposalsData.lotOverrides,r.code);return sum+r.qty/Number(override?override.lot:p?.lot);},0);
+  const scope=new Set(ProposalAdjust.ruleFor(supplier?.name,metrics).codes);
+  const total=selection.filter(r=>scope.has(ProposalAdjust.code(r.code))).reduce((sum,r)=>{const p=metrics.find(p=>ProposalAdjust.code(p.code)===r.code),override=lotFind(proposalsData.lotOverrides,r.code);return sum+r.qty/Number(override?override.lot:p?.lot);},0);
   // 送料無料は表示と任意の補充だけに使い、6箱未満でも通常の発注へ進める。
   const status=error||(!Number.isFinite(total)?'最低発注数を確認してください':rule.freeShipping?(total>=rule.minimum?'送料無料の6箱以上を満たしています':`送料無料まであと${rule.minimum-total}箱（6箱未満でも送料ありで発注できます）`):'合計6ケース以上を満たしています');
   el.textContent=`選択中：${Number.isFinite(total)?Math.round(total*100)/100:'未確認'}${rule.unitLabel||'ケース'} ／ ${selection.length?status:'商品を選択してください'}`;
@@ -11601,7 +11641,6 @@ function propAdjustmentUnitError(supplierName,selected,metrics) {
   if(rule.freeShipping)return '';
   return total<(rule.minimum||rule.increment)||total%rule.increment?rule.label+'になるように調整してください。':'';
 }
-
 </script>
 <!-- PROP_ADJUST_EMBED_END -->
 <!-- PACIFIC_FORM_EMBED_BEGIN -->
