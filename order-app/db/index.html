@@ -1567,7 +1567,7 @@ button:not(:disabled):active,.btn:not(:disabled):active,.nav-item:active,.tab:ac
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.95.0-db';
+const APP_VERSION    = 'v1.95.1-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -5260,29 +5260,124 @@ const CLIPBOARD_TIMEOUT_MS = 3000;
 
 async function copyToClipboard(text) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
+    let timer;
     try {
       await Promise.race([
         navigator.clipboard.writeText(text),
-        new Promise((_, reject) => setTimeout(
-          () => reject(new Error('clipboard write timeout')), CLIPBOARD_TIMEOUT_MS))
+        new Promise((_, reject) => { timer = setTimeout(
+          () => reject(new Error('clipboard write timeout')), CLIPBOARD_TIMEOUT_MS); })
       ]);
       return true;
-    } catch(e) {}
+    } catch(e) {} finally { clearTimeout(timer); }
   }
   // フォールバック: textarea + execCommand（iOS Safari・古いブラウザ対応）
+  const previousFocus = document.activeElement;
+  let ta;
   try {
-    const ta = document.createElement('textarea');
+    ta = document.createElement('textarea');
     ta.value = text;
+    ta.readOnly = true;
     ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
-    document.body.appendChild(ta);
+    // モーダル表示中は、その外側へ置いた要素にフォーカスできない。
+    (document.querySelector('dialog[open]') || document.body).appendChild(ta);
     ta.focus();
     ta.select();
-    const ok = document.execCommand('copy');
-    document.body.removeChild(ta);
-    return ok;
+    ta.setSelectionRange(0, ta.value.length);
+    return document.execCommand('copy');
   } catch(e) {
     return false;
+  } finally {
+    if (ta) ta.remove();
+    if (previousFocus && previousFocus.isConnected) previousFocus.focus({ preventScroll: true });
   }
+}
+
+// iPhoneでは保存のawait後にコピーを始めると、クリック由来の許可が失われる。
+// クリック中にPromise付きの書込みを予約し、保存確認後だけ本文を渡す。
+// 保存失敗・失効・照会失敗ならPromiseを拒否し、未確認の本文をコピーしない。
+function _beginConfirmedTextCopy() {
+  let accept, cancel;
+  const content = new Promise((resolve, reject) => { accept = resolve; cancel = reject; });
+  content.catch(() => {});
+  let writing = null;
+  try {
+    if (navigator.clipboard && navigator.clipboard.write && typeof ClipboardItem !== 'undefined') {
+      writing = Promise.resolve(navigator.clipboard.write([
+        new ClipboardItem({ 'text/plain': content })
+      ])).then(() => true, () => false);
+    }
+  } catch(e) { /* 非対応端末では保存確認後に従来方式を試す */ }
+  return {
+    cancel() { cancel(new Error('order text not confirmed')); },
+    async complete(text) {
+      accept(new Blob([text], { type: 'text/plain' }));
+      if (writing) {
+        let timer;
+        try {
+          const copied = await Promise.race([
+            writing,
+            new Promise(resolve => { timer = setTimeout(() => resolve(false), CLIPBOARD_TIMEOUT_MS); })
+          ]);
+          if (copied) return true;
+        } finally { clearTimeout(timer); }
+      }
+      return copyToClipboard(text);
+    }
+  };
+}
+
+// コピー拒否時も保存済み本文をその場で再コピー・手動選択できるようにする。
+// この画面の操作は発注保存やダウンロードを再実行しない。
+function _showOrderTextCopyResult(text, copied) {
+  if (copied) {
+    showToast('テキストをコピー＆ダウンロードしました', 'success');
+    return;
+  }
+  showToast('テキストは出力済みです。「コピーする」を押してください', 'error');
+  document.getElementById('order-text-copy-dialog')?.remove();
+  const dialog = document.createElement('dialog');
+  dialog.id = 'order-text-copy-dialog';
+  dialog.setAttribute('aria-labelledby', 'order-text-copy-title');
+  dialog.style.cssText = 'margin:auto;width:min(440px,calc(100% - 32px));max-height:calc(100dvh - 32px);overflow:auto;box-sizing:border-box;border:0;border-radius:12px;padding:20px';
+  const title = document.createElement('h3');
+  title.id = 'order-text-copy-title';
+  title.textContent = '発注内容をコピー';
+  const message = document.createElement('p');
+  message.textContent = 'テキストは出力済みです。下のボタンでコピーしてください。';
+  const field = document.createElement('textarea');
+  field.value = text;
+  field.readOnly = true;
+  field.setAttribute('aria-label', '保存確認済みの発注内容');
+  field.style.cssText = 'width:100%;box-sizing:border-box;min-height:180px;font-size:16px;margin:12px 0';
+  const copy = document.createElement('button');
+  copy.type = 'button';
+  copy.className = 'btn btn-primary';
+  copy.textContent = '📋 コピーする';
+  copy.addEventListener('click', async () => {
+    copy.disabled = true;
+    try {
+      if (await copyToClipboard(text)) {
+        dialog.close();
+        showToast('発注内容をコピーしました', 'success');
+      } else {
+        message.textContent = '自動コピーできませんでした。本文を長押しして「コピー」を選んでください。';
+        field.focus();
+        field.select();
+        field.setSelectionRange(0, field.value.length);
+      }
+    } finally { copy.disabled = false; }
+  });
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'btn btn-outline';
+  close.textContent = '閉じる';
+  close.style.marginTop = '8px';
+  close.addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', () => dialog.remove());
+  dialog.append(title, message, field, copy, close);
+  document.body.appendChild(dialog);
+  dialog.showModal();
+  copy.focus();
 }
 
 // 発注用ファイルを出す前に、GASの保存が確定したことを明示する。
@@ -5364,6 +5459,7 @@ async function outputText() {
   if (SatoOxOrderForm.contains(cartItems)) return outputSatoOxPDF();
   const lines = cartItems.map(i => `${i.name} × ${i.qty}${i.unit || ''}`);
   const text  = lines.join('\n');
+  const clipboard = _beginConfirmedTextCopy();
 
   showLoading('発注履歴を保存・確認中...');
   try {
@@ -5374,14 +5470,13 @@ async function outputText() {
     downloadBlob(blob, `${currentOrder.supplierName}_${dateStr}.txt`);
     _finishExternalOutput();
   } catch(e) {
+    clipboard.cancel();
     showToast('テキストは出力していません: ' + _gasErrorMessage(e), 'error');
     return;
   } finally { hideLoading(); }
 
-  const copied = await copyToClipboard(text);
-  showToast(copied ? 'テキストをコピー＆ダウンロードしました'
-                   : 'テキストを出力しました（クリップボードへのコピーはできませんでした）',
-            copied ? 'success' : 'error');
+  const copied = await clipboard.complete(text);
+  _showOrderTextCopyResult(text, copied);
 }
 
 // Web発注先の発注記録として保存（アプリからは送信しない。Phase H）
@@ -6521,28 +6616,35 @@ async function reOutputText(orderNo) {
   const orderInfo = getHistoryOrderInfo(orderNo);
   let items       = historyDetailCache[orderNo];
   if (!items || !orderInfo) { showToast('データが見つかりません', 'error'); return; }
-  // H6⑤: DBモードでは再出力の直前に今も有効かを確認する（GASモードでは今と同じ・確認しない）
-  if (DATA_BACKEND === 'db') {
-    const confirmed = await _confirmHistoryOrderActive(orderNo);
-    if (!confirmed.ok) {
-      showToast(confirmed.reason === 'not_found'
-        ? 'この発注はすでに修正（または削除）されています。出力していません'
-        : '最新の状態を確認できないため出力できません。通信を確認してもう一度お試しください', 'error');
-      return;
+  const clipboard = _beginConfirmedTextCopy();
+  try {
+    // H6⑤: DBモードでは再出力の直前に今も有効かを確認する（GASモードでは今と同じ・確認しない）
+    if (DATA_BACKEND === 'db') {
+      const confirmed = await _confirmHistoryOrderActive(orderNo);
+      if (!confirmed.ok) {
+        clipboard.cancel();
+        showToast(confirmed.reason === 'not_found'
+          ? 'この発注はすでに修正（または削除）されています。出力していません'
+          : '最新の状態を確認できないため出力できません。通信を確認してもう一度お試しください', 'error');
+        return;
+      }
+      items = confirmed.items;
     }
-    items = confirmed.items;
+
+    const text = items.map(i => `${i.name} × ${i.qty}${i.unit || ''}`).join('\n');
+
+    // ダウンロードを先に確定させる（クリップボード書き込みは待たされることがあるため）
+    const bom  = new Uint8Array([0xEF, 0xBB, 0xBF]);
+    const blob = new Blob([bom, text], { type: 'text/plain;charset=utf-8' });
+    const dateStr = (orderInfo.date || '').replace(/\//g, '');
+    downloadBlob(blob, `${orderInfo.supplierName}_${dateStr}_${orderNo}.txt`);
+
+    const copied = await clipboard.complete(text);
+    _showOrderTextCopyResult(text, copied);
+  } catch(e) {
+    clipboard.cancel();
+    showToast('テキストは出力していません: ' + _gasErrorMessage(e), 'error');
   }
-
-  const text = items.map(i => `${i.name} × ${i.qty}${i.unit || ''}`).join('\n');
-
-  // ダウンロードを先に確定させる（クリップボード書き込みは待たされることがあるため）
-  const bom  = new Uint8Array([0xEF, 0xBB, 0xBF]);
-  const blob = new Blob([bom, text], { type: 'text/plain;charset=utf-8' });
-  const dateStr = (orderInfo.date || '').replace(/\//g, '');
-  downloadBlob(blob, `${orderInfo.supplierName}_${dateStr}_${orderNo}.txt`);
-
-  const copied = await copyToClipboard(text);
-  showToast(copied ? 'テキストをコピー＆ダウンロードしました' : 'テキストを再出力しました', 'success');
 }
 
 // 履歴からグランデックス発注書再出力
