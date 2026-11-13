@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.40.0';
+const VERSION = 'v2.40.1';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -5496,6 +5496,9 @@ function nightlyStockSync(dryRun) {
     // CSVの商品コード→在庫数マップ（calcDiffsと同じキー正規化: 先頭ゼロをparseIntで吸収）
     const csvStockMap = {};
     csvData.rows.forEach(row => {
+      // CSV側で在庫管理する商品だけを、同期と要確認通知の共通対象にする。
+      // 「しない」・空欄は在庫数が残っていても比較に使用しない。
+      if ((row['在庫有無'] || '') !== 'する') return;
       const code = row['コード'];
       if (!code) return;
       const codeKey = String(parseInt(code, 10) || code);
