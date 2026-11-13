@@ -1413,7 +1413,7 @@ body:has(#busyOverlay.open, #progressOverlay.open) #netBusy { display: none; }
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = 'v2.24.0';
+const APP_VERSION = 'v2.25.0';
 // 画面で新しく選べる表示方法。保存済みの旧設定は勝手に変換しない。
 const JODAI_DISPLAY_TYPES = ['メーカー希望小売価格', '非表示', 'オープン'];
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
@@ -6544,7 +6544,7 @@ function draftCardHtml(d) {
     return '<tr>' +
       '<td>' + esc(s.code) + '</td>' +
       '<td><input type="text" id="draft-set-name-' + d.draftId + '-' + i + '" value="' + escAttr(s.setName) + '"></td>' +
-      '<td>' + (s.unitPrice || 0) + '円' + (d.draftType === 'campaign_product' ? ' × ' + s.quantity + '入 = ' + ((s.unitPrice || 0) * s.quantity).toLocaleString() + '円' : '') + '</td>' +
+      '<td>' + (s.campaignRole === 'gift' ? '<strong>無料特典</strong> ' : '') + (s.unitPrice || 0) + '円' + (d.draftType === 'campaign_product' ? ' × ' + s.quantity + '入 = ' + ((s.unitPrice || 0) * s.quantity).toLocaleString() + '円' : '') + '</td>' +
       '<td>' + (s.jodai || 0) + '円</td>' +
       '<td>' + (s.shiire || 0) + '円</td>' +
       '<td>' + esc(s.lastSaleDate || '') + '</td>' +
@@ -6628,7 +6628,7 @@ function collectDraftSets(draftId) {
     const input = document.getElementById('draft-set-name-' + draftId + '-' + i);
     return {
       code: s.code, jan: s.jan, unitPrice: s.unitPrice, jodai: s.jodai, shiire: s.shiire, unit: s.unit,
-      lastSaleDate: s.lastSaleDate, setName: input ? input.value : s.setName, quantity: s.quantity, stockFlag: s.stockFlag, stockParentJson: s.stockParentJson, stock: s.stock
+      lastSaleDate: s.lastSaleDate, setName: input ? input.value : s.setName, quantity: s.quantity, stockFlag: s.stockFlag, stockParentJson: s.stockParentJson, stock: s.stock, campaignRole: s.campaignRole || ''
     };
   });
 }
@@ -6681,7 +6681,7 @@ function confirmCampaignRegistration(message) {
     dialog.style.cssText = 'max-width:640px;width:90%;border:1px solid #ddd;border-radius:12px;padding:24px';
     const title = document.createElement('h3'); title.textContent = 'キャンペーン商品を非表示で登録';
     const text = document.createElement('p'); text.style.whiteSpace = 'pre-wrap';
-    text.textContent = message + '\n\n確定価格・入数を維持します。親商品は非表示、セットは表示で登録します。';
+    text.textContent = message + '\n\n確定価格・入数を維持します。親商品は非表示、セットは表示で登録します。無料特典は0円で登録し、個数・香りの条件は受注後に確認します。';
     const cancel = document.createElement('button'); cancel.className = 'btn btn-gray'; cancel.textContent = 'キャンセル';
     const submit = document.createElement('button'); submit.className = 'btn btn-success'; submit.textContent = 'この内容で非表示登録';
     const finish = function(ok) { dialog.close(); dialog.remove(); resolve(ok); };

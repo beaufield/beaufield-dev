@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.39.0';
+const VERSION = 'v2.40.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -1679,7 +1679,7 @@ function bulkRegisterProduct(params) {
   if (!tagResult.ok) return tagResult;
   let campaignOptions = null;
   if (params.campaignDraft === true) {
-    try { campaignOptions = (params.sets || []).map(campaignSetOptions_); }
+    try { campaignOptions = (params.sets || []).map(s => campaignSetOptions_(s, params.sets)); }
     catch (error) { return {ok: false, error: error.message}; }
     if (!campaignOptions.length) return {ok: false, error: 'セットがありません'};
   }
@@ -2216,7 +2216,7 @@ function getDrafts(params) {
     if (!r[0]) continue;
     if (!setsByDraft[r[0]]) setsByDraft[r[0]] = [];
     setsByDraft[r[0]].push({
-      code: String(r[1]), setName: r[2], jan: String(r[3] || ''), unitPrice: r[4], jodai: r[5], shiire: r[6], unit: r[7], lastSaleDate: r[8], quantity: r[9] || 1, stockFlag: r[10], stockParentJson: r[11] || "", stock: r[12]
+      code: String(r[1]), setName: r[2], jan: String(r[3] || ''), unitPrice: r[4], jodai: r[5], shiire: r[6], unit: r[7], lastSaleDate: r[8], quantity: r[9] || 1, stockFlag: r[10], stockParentJson: r[11] || "", stock: r[12], campaignRole: r[13] || ""
     });
   }
 
@@ -2282,9 +2282,9 @@ function updateDraft(params) {
     }
     params.sets.forEach(s => {
       const setRow = [params.draftId, String(s.code || ''), s.setName || '', String(s.jan || ''), s.unitPrice || '', s.jodai || '', s.shiire || '', s.unit || '', s.lastSaleDate || ''];
-      // キャンペーンだけ追加4列を保持。通常ドラフトの保存形式は維持する。
+      // キャンペーンだけ入数・在庫・購入/無料特典区分を保持する。
       if (rows[rowIdx - 1][2] === 'campaign_product') {
-        setRow.push(s.quantity, s.stockFlag, s.stockParentJson || '', s.stock);
+        setRow.push(s.quantity, s.stockFlag, s.stockParentJson || '', s.stock, s.campaignRole || '');
       }
       setSheet.appendRow(setRow);
     });
@@ -2297,18 +2297,38 @@ function updateDraft(params) {
 // 承認＝登録実行。CSV最新値で価格をリフレッシュし、シートの現在値を正として非表示登録する
 
 // 認証は既存approveDraftのポータル権限を使用。AI用キーの許可操作を増やさない。
-function campaignSetOptions_(set) {
+function campaignSetOptions_(set, allSets) {
   const quantity = Number(set.quantity);
   const price = Number(set.csvPrice), cost = Number(set.csvShiire);
+  const role = String(set.campaignRole || '');
+  if (!['', 'purchase', 'gift'].includes(role)) throw new Error('購入・無料特典の区分が不正です');
+  const gift = role === 'gift';
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 255 ||
-      !Number.isFinite(price) || price < 0 || !Number.isFinite(cost) || cost < 0 || price < cost) {
+      !Number.isFinite(price) || price < 0 || !Number.isFinite(cost) || cost < 0 || (!gift && price < cost)) {
     throw new Error('キャンペーンの価格・原価・入数が不正です');
+  }
+  let giftFields = {};
+  if (gift) {
+    // 無料特典だけの登録や、特典区分を使った有料品の原価割れ登録は認めない。
+    const code = String(set.code || '').trim().replace(/^0+(?=\d)/, '');
+    const purchases = (Array.isArray(allSets) ? allSets : []).filter(s =>
+      String(s.campaignRole || '') !== 'gift' &&
+      String(s.code || '').trim().replace(/^0+(?=\d)/, '') === code);
+    const purchase = purchases.length === 1 ? purchases[0] : null;
+    if (!code || price !== 0 || quantity !== 1 || !purchase ||
+        Number(purchase.quantity) !== 1 || !Number.isFinite(Number(purchase.csvPrice)) ||
+        Number(purchase.csvPrice) <= 0 || Number(purchase.csvPrice) < cost ||
+        Number(purchase.csvShiire) !== cost) {
+      throw new Error('無料特典は同じ実原価・品番の購入用商品と組み合わせ、0円・入数1で登録してください');
+    }
+    // 価格グループ1/10へ上代・原価が販売価格として入るのを防ぐ。実原価はドラフトに保持する。
+    giftFields = {group_price: {'1': {fixed_price: 0}, '10': {fixed_price: 0}}};
   }
   const flag = Number(set.stockFlag);
   if (flag === 0) {
     const stock = Number(set.stock);
     if (!Number.isInteger(stock) || stock < 0) throw new Error('初期在庫が不正です');
-    return {quantity: quantity, stock_flag: 0, stock: stock};
+    return Object.assign({quantity: quantity, stock_flag: 0, stock: stock}, giftFields);
   }
   if (flag !== 100) throw new Error('キャンペーンの在庫無制限は許可しません');
   let parent;
@@ -2317,7 +2337,7 @@ function campaignSetOptions_(set) {
       Object.keys(parent).some(id => !/^[1-9]\d*$/.test(id) || !Number.isInteger(parent[id]) || parent[id] < 1)) {
     throw new Error('共有在庫の参照先・数量が不正です');
   }
-  return {quantity: quantity, stock_flag: 100, stock_parent: parent};
+  return Object.assign({quantity: quantity, stock_flag: 100, stock_parent: parent}, giftFields);
 }
 
 function approveDraft(params) {
@@ -2343,7 +2363,7 @@ function approveDraft(params) {
         code: String(setRows[i][1]), setName: String(setRows[i][2] || ''), janCode: String(setRows[i][3] || ''),
         csvPrice: campaign ? Number(setRows[i][4]) : (Number(setRows[i][4]) || 0), csvKouri: Number(setRows[i][5]) || 0,
         csvShiire: campaign ? Number(setRows[i][6]) : (Number(setRows[i][6]) || 0), csvUnit: String(setRows[i][7] || ''),
-        quantity: setRows[i][9], stockFlag: setRows[i][10], stockParentJson: setRows[i][11] || '', stock: setRows[i][12]
+        quantity: setRows[i][9], stockFlag: setRows[i][10], stockParentJson: setRows[i][11] || '', stock: setRows[i][12], campaignRole: String(setRows[i][13] || '')
       });
     }
   }
@@ -2353,7 +2373,7 @@ function approveDraft(params) {
   const notes = [];
   if (campaign) {
     // 外部書込の前に全セットを検証。失敗時はBカートへ要求しない。
-    try { rawSets.forEach(campaignSetOptions_); }
+    try { rawSets.forEach(s => campaignSetOptions_(s, rawSets)); }
     catch (error) { return {ok: false, error: error.message}; }
   }
   let sets = rawSets;
