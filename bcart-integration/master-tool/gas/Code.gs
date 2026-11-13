@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.38.0';
+const VERSION = 'v2.39.0';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -1677,11 +1677,17 @@ function addSetToProduct(params) {
 function bulkRegisterProduct(params) {
   const tagResult = normalizeDraftProductTag_(params.productTag);
   if (!tagResult.ok) return tagResult;
+  let campaignOptions = null;
+  if (params.campaignDraft === true) {
+    try { campaignOptions = (params.sets || []).map(campaignSetOptions_); }
+    catch (error) { return {ok: false, error: error.message}; }
+    if (!campaignOptions.length) return {ok: false, error: 'セットがありません'};
+  }
   const productBody = {
     products: [Object.assign({
       name:        params.productName,
       category_id: params.categoryId,
-      flag:        params.productFlag || '非表示',
+      flag:        params.campaignDraft === true ? '非表示' : (params.productFlag || '非表示'),
       feature_id1: params.featureId1 || null,
       feature_id2: params.featureId2 || null,
       feature_id3: params.featureId3 || null
@@ -1712,7 +1718,7 @@ function bulkRegisterProduct(params) {
   const results = [];
   let successCount = 0;
 
-  for (const s of sets) {
+  for (const [setIndex, s] of sets.entries()) {
     const setBody = {
       product_sets: [Object.assign({
         product_id:  createdProductId,
@@ -1726,7 +1732,7 @@ function bulkRegisterProduct(params) {
         stock_flag:  1,
         tax_type_id: params.taxTypeId || 1,
         set_flag:    params.setFlag || '非表示'
-      }, buildJodaiFields_(s.csvKouri, s.csvShiire, params.jodaiType))]
+      }, buildJodaiFields_(s.csvKouri, s.csvShiire, params.jodaiType), campaignOptions ? campaignOptions[setIndex] : {})]
       // view_group_filterはproducts側のみで設定する（product_setsには設定しない・Takashi確定 2026-07-12）
     };
     const res = bcartPost('/product_sets', setBody);
@@ -2210,7 +2216,7 @@ function getDrafts(params) {
     if (!r[0]) continue;
     if (!setsByDraft[r[0]]) setsByDraft[r[0]] = [];
     setsByDraft[r[0]].push({
-      code: String(r[1]), setName: r[2], jan: String(r[3] || ''), unitPrice: r[4], jodai: r[5], shiire: r[6], unit: r[7], lastSaleDate: r[8]
+      code: String(r[1]), setName: r[2], jan: String(r[3] || ''), unitPrice: r[4], jodai: r[5], shiire: r[6], unit: r[7], lastSaleDate: r[8], quantity: r[9] || 1, stockFlag: r[10], stockParentJson: r[11] || "", stock: r[12]
     });
   }
 
@@ -2275,7 +2281,12 @@ function updateDraft(params) {
       if (setRows[i - 1][0] === params.draftId) setSheet.deleteRow(i);
     }
     params.sets.forEach(s => {
-      setSheet.appendRow([params.draftId, String(s.code || ''), s.setName || '', String(s.jan || ''), s.unitPrice || '', s.jodai || '', s.shiire || '', s.unit || '', s.lastSaleDate || '']);
+      const setRow = [params.draftId, String(s.code || ''), s.setName || '', String(s.jan || ''), s.unitPrice || '', s.jodai || '', s.shiire || '', s.unit || '', s.lastSaleDate || ''];
+      // キャンペーンだけ追加4列を保持。通常ドラフトの保存形式は維持する。
+      if (rows[rowIdx - 1][2] === 'campaign_product') {
+        setRow.push(s.quantity, s.stockFlag, s.stockParentJson || '', s.stock);
+      }
+      setSheet.appendRow(setRow);
     });
   }
 
@@ -2284,6 +2295,31 @@ function updateDraft(params) {
 }
 
 // 承認＝登録実行。CSV最新値で価格をリフレッシュし、シートの現在値を正として非表示登録する
+
+// 認証は既存approveDraftのポータル権限を使用。AI用キーの許可操作を増やさない。
+function campaignSetOptions_(set) {
+  const quantity = Number(set.quantity);
+  const price = Number(set.csvPrice), cost = Number(set.csvShiire);
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 255 ||
+      !Number.isFinite(price) || price < 0 || !Number.isFinite(cost) || cost < 0 || price < cost) {
+    throw new Error('キャンペーンの価格・原価・入数が不正です');
+  }
+  const flag = Number(set.stockFlag);
+  if (flag === 0) {
+    const stock = Number(set.stock);
+    if (!Number.isInteger(stock) || stock < 0) throw new Error('初期在庫が不正です');
+    return {quantity: quantity, stock_flag: 0, stock: stock};
+  }
+  if (flag !== 100) throw new Error('キャンペーンの在庫無制限は許可しません');
+  let parent;
+  try {parent = JSON.parse(set.stockParentJson || '');} catch (_) {throw new Error('共有在庫の形式が不正です');}
+  if (!parent || Array.isArray(parent) || typeof parent !== 'object' || !Object.keys(parent).length ||
+      Object.keys(parent).some(id => !/^[1-9]\d*$/.test(id) || !Number.isInteger(parent[id]) || parent[id] < 1)) {
+    throw new Error('共有在庫の参照先・数量が不正です');
+  }
+  return {quantity: quantity, stock_flag: 100, stock_parent: parent};
+}
+
 function approveDraft(params) {
   const parentSheet = getOrCreateSheet(SHEET_DRAFT);
   const parentRows = apiReadFull_(parentSheet);
@@ -2298,14 +2334,16 @@ function approveDraft(params) {
   const tagResult = normalizeDraftProductTag_(draft[2] === 'add_to_existing' || !tagColumn ? '' : draft[21]);
   if (!tagResult.ok) return tagResult;
   const setRows = apiReadFull_(getOrCreateSheet(SHEET_DRAFT_SETS));
+  const campaign = draft[2] === 'campaign_product';
   const rawSets = [];
   for (let i = 1; i < setRows.length; i++) {
     if (setRows[i][0] === params.draftId) {
       // Sheetsが数値化した値をBCART API用に文字列へ正規化（product_no/jan_codeは文字列型必須。数値のまま送ると422になる）
       rawSets.push({
         code: String(setRows[i][1]), setName: String(setRows[i][2] || ''), janCode: String(setRows[i][3] || ''),
-        csvPrice: Number(setRows[i][4]) || 0, csvKouri: Number(setRows[i][5]) || 0,
-        csvShiire: Number(setRows[i][6]) || 0, csvUnit: String(setRows[i][7] || '')
+        csvPrice: campaign ? Number(setRows[i][4]) : (Number(setRows[i][4]) || 0), csvKouri: Number(setRows[i][5]) || 0,
+        csvShiire: campaign ? Number(setRows[i][6]) : (Number(setRows[i][6]) || 0), csvUnit: String(setRows[i][7] || ''),
+        quantity: setRows[i][9], stockFlag: setRows[i][10], stockParentJson: setRows[i][11] || '', stock: setRows[i][12]
       });
     }
   }
@@ -2313,8 +2351,13 @@ function approveDraft(params) {
 
   // CSV最新値でのリフレッシュ（ドラフト保存後に販売管理側で価格改定された場合の取りこぼし防止）
   const notes = [];
+  if (campaign) {
+    // 外部書込の前に全セットを検証。失敗時はBカートへ要求しない。
+    try { rawSets.forEach(campaignSetOptions_); }
+    catch (error) { return {ok: false, error: error.message}; }
+  }
   let sets = rawSets;
-  const csvData = loadCsvFromDrive();
+  const csvData = campaign ? {ok: false} : loadCsvFromDrive();
   if (csvData.ok) {
     const csvMap = {};
     csvData.rows.forEach(row => {
@@ -2347,6 +2390,8 @@ function approveDraft(params) {
         csvUnit: freshUnit || s.csvUnit
       };
     });
+  } else if (campaign) {
+    notes.push('キャンペーン確定価格・入数で非表示登録');
   } else {
     notes.push('CSV読み込み失敗のためドラフト保存時の値で登録: ' + csvData.error);
   }
@@ -2378,7 +2423,7 @@ function approveDraft(params) {
       _userName: params._userName, productName: productName, categoryId: categoryId,
       featureId1: featureId1, featureId2: featureId2, featureId3: featureId3,
       productFlag: '非表示', setFlag: '表示', jodaiType: jodaiType, taxTypeId: taxTypeId,
-      viewGroupFilter: viewGroupFilter, productTag: tagResult.tag, sets: sets
+      viewGroupFilter: viewGroupFilter, productTag: tagResult.tag, sets: sets, campaignDraft: campaign
     });
     if (!bulkRes.ok) return Object.assign(bulkRes, { notes: notes });  // 全セット失敗＝ロールバック済み。ドラフトは下書きのまま
     productId = bulkRes.productId;

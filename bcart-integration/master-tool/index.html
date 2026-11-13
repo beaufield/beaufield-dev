@@ -1413,7 +1413,7 @@ body:has(#busyOverlay.open, #progressOverlay.open) #netBusy { display: none; }
 <script>
 // ===================== 設定 =====================
 const PORTAL_URL = 'https://beaufield.github.io/beaufield-dev/';
-const APP_VERSION = 'v2.23.0';
+const APP_VERSION = 'v2.24.0';
 // 画面で新しく選べる表示方法。保存済みの旧設定は勝手に変換しない。
 const JODAI_DISPLAY_TYPES = ['メーカー希望小売価格', '非表示', 'オープン'];
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbybKTVZGHChqJTUE11DS3WVzXtZcR0rusCfXIiLabtJ8HWwo1pmB18rTNbiE2w0cpRB/exec';
@@ -6544,7 +6544,7 @@ function draftCardHtml(d) {
     return '<tr>' +
       '<td>' + esc(s.code) + '</td>' +
       '<td><input type="text" id="draft-set-name-' + d.draftId + '-' + i + '" value="' + escAttr(s.setName) + '"></td>' +
-      '<td>' + (s.unitPrice || 0) + '円</td>' +
+      '<td>' + (s.unitPrice || 0) + '円' + (d.draftType === 'campaign_product' ? ' × ' + s.quantity + '入 = ' + ((s.unitPrice || 0) * s.quantity).toLocaleString() + '円' : '') + '</td>' +
       '<td>' + (s.jodai || 0) + '円</td>' +
       '<td>' + (s.shiire || 0) + '円</td>' +
       '<td>' + esc(s.lastSaleDate || '') + '</td>' +
@@ -6628,7 +6628,7 @@ function collectDraftSets(draftId) {
     const input = document.getElementById('draft-set-name-' + draftId + '-' + i);
     return {
       code: s.code, jan: s.jan, unitPrice: s.unitPrice, jodai: s.jodai, shiire: s.shiire, unit: s.unit,
-      lastSaleDate: s.lastSaleDate, setName: input ? input.value : s.setName
+      lastSaleDate: s.lastSaleDate, setName: input ? input.value : s.setName, quantity: s.quantity, stockFlag: s.stockFlag, stockParentJson: s.stockParentJson, stock: s.stock
     };
   });
 }
@@ -6673,7 +6673,26 @@ function saveDraftOnly(draftId, btn) {
   });
 }
 
-function approveDraftOne(draftId, btn) {
+
+// キャンペーンは画面内の確認を使う。ブラウザー標準ダイアログの操作停止を避ける。
+function confirmCampaignRegistration(message) {
+  return new Promise(function(resolve) {
+    const dialog = document.createElement('dialog');
+    dialog.style.cssText = 'max-width:640px;width:90%;border:1px solid #ddd;border-radius:12px;padding:24px';
+    const title = document.createElement('h3'); title.textContent = 'キャンペーン商品を非表示で登録';
+    const text = document.createElement('p'); text.style.whiteSpace = 'pre-wrap';
+    text.textContent = message + '\n\n確定価格・入数を維持します。親商品は非表示、セットは表示で登録します。';
+    const cancel = document.createElement('button'); cancel.className = 'btn btn-gray'; cancel.textContent = 'キャンセル';
+    const submit = document.createElement('button'); submit.className = 'btn btn-success'; submit.textContent = 'この内容で非表示登録';
+    const finish = function(ok) { dialog.close(); dialog.remove(); resolve(ok); };
+    cancel.addEventListener('click',function(){finish(false);});
+    submit.addEventListener('click',function(){finish(true);});
+    dialog.addEventListener('cancel',function(event){event.preventDefault();finish(false);});
+    dialog.append(title,text,cancel,submit); document.body.appendChild(dialog); dialog.showModal();
+  });
+}
+
+async function approveDraftOne(draftId, btn) {
   if (draftRegistrationBusy) return;
   if (draftNeedsReview(draftId)) { showToast('登録結果を確認してから登録対象へ戻してください', true); return; }
   const original = draftList.find(function(d) { return d.draftId === draftId; });
@@ -6685,7 +6704,8 @@ function approveDraftOne(draftId, btn) {
     showToast('カテゴリーを選択してください', true);
     return;
   }
-  if (!confirm('「' + payload.productName + '」を非表示状態でBCARTに登録します。よろしいですか？')) return;
+  const message = '「' + payload.productName + '」を非表示状態でBCARTに登録します。よろしいですか？';
+  if (!(original && original.draftType === 'campaign_product' ? await confirmCampaignRegistration(message) : confirm(message))) return;
   btn.disabled = true;
   btn.textContent = '登録中...';
   showBusyOverlay('登録中...');
@@ -6727,11 +6747,12 @@ async function approveSelectedDrafts() {
     const error = draftProductTagError(p) || (!p.productName || !p.productName.trim() ? '商品名を入力してください' :
       job.draft.draftType !== 'add_to_existing' && !p.categoryId ? 'カテゴリーを選択してください' :
       !p.sets.length ? 'セットがありません' :
-      p.sets.some(function(s) { return !String(s.code || '').trim() || !String(s.setName || '').trim(); }) ? 'コード・セット名を入力してください' : '');
+      p.sets.some(function(s) { return (job.draft.draftType !== 'campaign_product' && !String(s.code || '').trim()) || !String(s.setName || '').trim(); }) ? 'コード・セット名を入力してください' : '');
     if (error) { showToast((p.productName || job.draft.draftId) + ': ' + error, true); return; }
   }
   const names = jobs.slice(0, 10).map(function(j) { return '・' + j.payload.productName; }).join('\n');
-  if (!confirm('選択した' + jobs.length + '商品を非表示状態でBカートに登録します。\n画面の編集内容も保存します。\n\n' + names + (jobs.length > 10 ? '\nほか' + (jobs.length - 10) + '商品' : '') + '\n\nよろしいですか？')) return;
+  const campaignBatch = jobs.some(j => j.draft.draftType === 'campaign_product');
+  if (!(campaignBatch ? await confirmCampaignRegistration('選択した' + jobs.length + '商品を非表示状態でBカートに登録します。\n画面の編集内容も保存します。\n\n' + names + (jobs.length > 10 ? '\nほか' + (jobs.length - 10) + '商品' : '') + '\n\nよろしいですか？') : confirm('選択した' + jobs.length + '商品を非表示状態でBカートに登録します。\n画面の編集内容も保存します。\n\n' + names + (jobs.length > 10 ? '\nほか' + (jobs.length - 10) + '商品' : '') + '\n\nよろしいですか？'))) return;
 
   draftRegistrationBusy = true;
   ++draftLoadGeneration; // 処理前に開始した一覧取得の応答で編集欄が上書きされるのを防ぐ
