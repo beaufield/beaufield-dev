@@ -8,7 +8,7 @@
 //   AUTH_GAS_URL        : portal GAS WebApp URL（セッション検証用）
 //   PRICE_AUDIT_FOLDER_ID : 特価もれ検出の集計CSV(price_audit_seed.csv/price_audit_activity.csv)保管Driveフォルダ ID
 
-const VERSION = 'v2.40.1';
+const VERSION = 'v2.40.2';
 
 // ===================== 設定 =====================
 const BCART_BASE_URL = 'https://api.bcart.jp/api/v1';
@@ -5509,14 +5509,21 @@ function nightlyStockSync(dryRun) {
       csvStockMap[codeKey] = Math.max(0, num);
     });
 
-    let skipZeroKeep = 0, skipNoCsv = 0, skipNoDiff = 0;
+    let target = 0, skipZeroKeep = 0, skipNoCsv = 0, skipNoDiff = 0;
     const updates = [];
     const needCheck = [];
 
     stockRes.data.forEach(s => {
+      // APIの絞り込みに加えて実際の在庫区分を確認し、通常在庫管理のセットだけを扱う。
+      if (!s || (s.stock_flag !== 0 && s.stock_flag !== '0')) return;
       const productNo = s.product_no;
       if (!productNo) return;
-      const bcartStock = Number(s.stock) || 0;
+      // 在庫数の欠損や不正値を欠品の0へ変換しない。
+      const rawStock = s.stock;
+      if (typeof rawStock !== 'number' && (typeof rawStock !== 'string' || rawStock.trim() === '')) return;
+      const bcartStock = Number(rawStock);
+      if (!Number.isInteger(bcartStock)) return;
+      target++;
       const hasCsv = csvStockMap.hasOwnProperty(productNo);
 
       if (bcartStock === 0) {
@@ -5536,13 +5543,13 @@ function nightlyStockSync(dryRun) {
 
     if (isDry) {
       logStockSync_({
-        mode: 'dry', target: stockRes.data.length, updated: updates.length,
+        mode: 'dry', target: target, updated: updates.length,
         skipZeroKeep: skipZeroKeep, skipNoCsv: skipNoCsv, skipNoDiff: skipNoDiff,
         needCheck: needCheck.length
       });
       logStockSyncDetail_('dry', updates.map(u => ({ product_no: u.product_no, name: u._name, before: u._before, after: u.stock, status: '予定' })), needCheck);
       return {
-        ok: true, dryRun: true, target: stockRes.data.length, planned: updates.length,
+        ok: true, dryRun: true, target: target, planned: updates.length,
         updates: updates, skipZeroKeep: skipZeroKeep, skipNoCsv: skipNoCsv, skipNoDiff: skipNoDiff,
         needCheck: needCheck
       };
@@ -5566,7 +5573,7 @@ function nightlyStockSync(dryRun) {
     }
 
     logStockSync_({
-      mode: 'real', target: stockRes.data.length, updated: updatedCount,
+      mode: 'real', target: target, updated: updatedCount,
       skipZeroKeep: skipZeroKeep, skipNoCsv: skipNoCsv, skipNoDiff: skipNoDiff,
       needCheck: needCheck.length, error: patchErrors.join(' / ')
     });
@@ -5579,14 +5586,14 @@ function nightlyStockSync(dryRun) {
       notifyStockSyncAlert_('【在庫夜間同期】一部の更新に失敗しました\n' + patchErrors.join('\n'));
     }
     if (needCheck.length > 0) {
-      const lines = needCheck.slice(0, 20).map(n => '・' + n.product_no + ' ' + n.name + '（CSV在庫' + n.csvStock + '）');
-      let msg = '【在庫夜間同期】BCART在庫0（欠品設定中）だがCSV在庫が0より大きい商品が' + needCheck.length + '件あります（自動同期対象外・現状の0を維持）\n' + lines.join('\n');
+      const lines = needCheck.slice(0, 20).map(n => '・' + n.product_no + ' ' + n.name + '（販売管理在庫' + n.csvStock + '）');
+      let msg = '【在庫夜間同期】Bカートで通常在庫管理の在庫が0、販売管理の在庫が1以上の商品セットが' + needCheck.length + '件あります（Bカートの在庫0を維持）\n' + lines.join('\n');
       if (needCheck.length > 20) msg += '\n…他' + (needCheck.length - 20) + '件';
       notifyStockSyncAlert_(msg);
     }
 
     return {
-      ok: true, dryRun: false, target: stockRes.data.length, updated: updatedCount,
+      ok: true, dryRun: false, target: target, updated: updatedCount,
       skipZeroKeep: skipZeroKeep, skipNoCsv: skipNoCsv, skipNoDiff: skipNoDiff,
       needCheck: needCheck, errors: patchErrors
     };
