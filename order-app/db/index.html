@@ -6,6 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://script.google.com https://script.googleusercontent.com https://jlebreiqpqzfsjsunyfw.supabase.co; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>ビューフィールド 発注アプリ（新）</title>
+  <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png">
   <!-- v1.90.0-db: 発注書用の3本は起動を止めないよう async。使う直前に ensurePdfLibs で読み込み完了を待つ -->
   <script async src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous" onerror="window.__pdfLibFailed=true"></script>
   <script async src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous" onerror="window.__pdfLibFailed=true"></script>
@@ -1567,7 +1568,7 @@ button:not(:disabled):active,.btn:not(:disabled):active,.nav-item:active,.tab:ac
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.96.1-db';
+const APP_VERSION    = 'v1.97.0-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
