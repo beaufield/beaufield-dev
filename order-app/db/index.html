@@ -1568,7 +1568,7 @@ button:not(:disabled):active,.btn:not(:disabled):active,.nav-item:active,.tab:ac
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.97.1-db';
+const APP_VERSION    = 'v1.97.2-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -8068,7 +8068,7 @@ function renderPropItem(p, code, delayedByCode, orderedByCode) {
     </div>
     ${stockNeg ? `<div class="prop-pending-warn">⚠️ 在庫マイナス（${p.stock}）：欠品・バックオーダー中の可能性</div>` : ''}
     <div class="prop-item-stats">
-      <span>在庫 <b style="${stockNeg ? 'color:var(--danger)' : ''}">${p.stock}</b> ${onOrder}→ 推奨 <b>${p.recommended}</b></span>
+      <span>在庫 <b style="${stockNeg ? 'color:var(--danger)' : ''}">${p.stock}</b> ${onOrder}→ 推奨 <b>${p.recommended ?? '—'}</b></span>
       <span>発注数 <input type="number" class="prop-qty" value="${qty}" min="0" step="${step}">${caseRule?`（1${adjustmentRule.unitLabel||'ケース'}=${step}個）`:''}</span>
       <span class="prop-qty-chips">${chips}</span>
       <button type="button" class="prop-lot-btn" ${orderAction('openLotModal', p.code, p.name)}>最低発注数 ${p.lot} ✏️</button>
@@ -11590,21 +11590,25 @@ function propAdjustmentFingerprint(supplierCode) {
   return JSON.stringify([proposalsData.analysisId,proposalsData.analysisInputAt,propAdjustmentSelection(supplierCode),
     [...propAdjustment.excluded].sort(),[...propMgSkipped].sort(),propMgPins,propMgQty,masters.suppliers.find(s=>ProposalAdjust.same(s.code,supplierCode))?.minOrderAmount]);
 }
-async function propAdjustmentSnapshot(supplierCode) {
+async function propAdjustmentInputs(supplierCode) {
   const results=await Promise.all([gasGet({action:'getOrderProposals'}),gasGet({action:'getMasters'}),gasGet({action:'getProductMaster'})]);
   const [live,settings,products]=results;
   if(results.some(r=>r?.success!==true))throw Error('最新の提案・仕入条件・商品を取得できません。');
-  const analysisId=live.analysisId;
-  const stamp=propAdjustmentTime(live.analysisInputAt||live.analyzedAt);
-  if(!analysisId || analysisId!==proposalsData.analysisId || live.analysisInputAt!==proposalsData.analysisInputAt)
-    throw Error('分析が更新されました。提案タブを更新し、選択し直してください。');
-  if(!Number.isFinite(stamp)||Date.now()-stamp>36*3600000)throw Error('分析が古いか日時を確認できません。分析更新後に調整してください。');
   const supplier=settings.suppliers?.find(s=>ProposalAdjust.same(s.code,supplierCode));
   if(!supplier)throw Error('最新の発注先設定がありません。');
   const displayed=masters.suppliers.find(s=>ProposalAdjust.same(s.code,supplierCode));
   if(!displayed || Number(displayed.minOrderAmount||0)!==Number(supplier.minOrderAmount||0) ||
      JSON.stringify(propAdjustmentExcludes(displayed.minOrderExcludes))!==JSON.stringify(propAdjustmentExcludes(supplier.minOrderExcludes)) || displayed.name!==supplier.name)
     throw Error('発注先の条件が更新されています。発注先と提案を更新してから調整してください。');
+  return {live,supplier,products};
+}
+async function propAdjustmentSnapshot(supplierCode) {
+  const {live,supplier,products}=await propAdjustmentInputs(supplierCode);
+  const analysisId=live.analysisId;
+  const stamp=propAdjustmentTime(live.analysisInputAt||live.analyzedAt);
+  if(!analysisId || analysisId!==proposalsData.analysisId || live.analysisInputAt!==proposalsData.analysisInputAt)
+    throw Error('分析が更新されました。提案タブを更新し、選択し直してください。');
+  if(!Number.isFinite(stamp)||Date.now()-stamp>36*3600000)throw Error('分析が古いか日時を確認できません。分析更新後に調整してください。');
   const result=await gasGet({action:'getAiOrderMetrics',supplierCode,analysisId});
   if(!result?.success || result.analysisId!==analysisId || !result.rows?.length)throw Error('同じ世代の需要分析値を取得できません。');
   const hidden=new Set([...(live.exclusions||[]),...(live.eol||[])].map(r=>ProposalAdjust.code(typeof r==='object'?r.code:r)));
@@ -11761,18 +11765,55 @@ function propFrameControls(supplierCode,items,renderItem) {
 }
 // 提案の採否と独立した商品一覧。追加時にも読戻し、古い在庫・単価で行を作らない。
 const propProductPicker={epoch:0,snapshot:null,supplierCode:'',mode:'main'};
+async function propProductPickerSnapshot(supplierCode) {
+  const {live,supplier,products}=await propAdjustmentInputs(supplierCode);
+  const analysisId=live.analysisId||'',analysisInputAt=live.analysisInputAt||'';
+  if(analysisId!==(proposalsData.analysisId||'')||analysisInputAt!==(proposalsData.analysisInputAt||''))
+    throw Error('分析が更新されました。提案タブを更新し、選択し直してください。');
+  if(!Array.isArray(live.pendingOrders)||!Array.isArray(products.products))
+    throw Error('商品・未入荷情報を確認できません。一覧を開き直してください。');
+
+  // 手動追加は最新の商品マスターと発注状況を使う。公開分析は発注単位の参照に使う。
+  const details=analysisId?await gasGet({action:'getAiOrderMetrics',supplierCode,analysisId}).catch(()=>null):null;
+  const supplierRows=rows=>new Map((rows||[]).filter(r=>ProposalAdjust.same(r.supplierCode??supplierCode,supplierCode))
+    .map(r=>[ProposalAdjust.code(r.code),r]));
+  const proposals=supplierRows(live.proposals);
+  const metrics=supplierRows(details?.success===true&&details.analysisId===analysisId&&Array.isArray(details.rows)?details.rows:[]);
+  const hidden=new Set([...(live.exclusions||[]),...(live.eol||[])].map(r=>ProposalAdjust.code(typeof r==='object'?r?.code:r)));
+  const minimumOrder={amount:Number(supplier.minOrderAmount)||0,excludes:propAdjustmentExcludes(supplier.minOrderExcludes)};
+  const localLimit=Date.now()-ORDERED_LOCAL_GRACE_MS;
+  const local=_readOrderedLocal().filter(r=>r.savedAt>localLimit);
+  const catalog=[];
+  for(const master of products.products) {
+    if(!ProposalAdjust.same(master.supplierCD,supplierCode))continue;
+    const c=ProposalAdjust.code(master.code),proposal=proposals.get(c),metric=metrics.get(c);
+    const flags=[proposal,metric].some(r=>r?.excluded||r?.eolFlagged);
+    if(!c||hidden.has(c)||flags||['廃番','廃盤','廃版','終売','y'].includes(ProposalAdjust.norm(master.discontinued)))continue;
+    const name=String(master.name),groupId=proposal?.groupId||metric?.groupId||mgGroupIdForProduct(supplierCode,name,c)||'';
+    const override=lotFind(live.lotOverrides,c),rawLot=propAdjustNum(override?override.lot:metric?.lot??proposal?.lot);
+    const lot=Number.isSafeInteger(rawLot)&&rawLot>0?rawLot:null;
+    const server=live.pendingOrders.filter(r=>ProposalAdjust.code(r.code)===c);
+    const orderNos=new Set(server.map(r=>r.orderNo));
+    const pending=[...server,...local.filter(r=>ProposalAdjust.code(r.code)===c&&!orderNos.has(r.orderNo))];
+    const balance=pending.map(r=>propAdjustNum(r.qty));
+    const onOrder=balance.some(qty=>qty===null||qty<0)?null:balance.reduce((sum,qty)=>sum+qty,0);
+    catalog.push({code:c,name,groupId,lot,estimatedLot:!override&&lot!==null,
+      stock:propAdjustNum(master.stock),onOrder,unitCost:propAdjustNum(master.purchasePrice),
+      pending:pending.map(r=>[r.orderNo,r.qty,r.isDelayed===true]).sort()});
+  }
+  return {analysisId,analysisInputAt,supplier:{code:supplierCode,name:supplier.name},minimumOrder,catalog};
+}
 // 開いた枠に属さない商品は一覧に出さず、追加もさせない（v1.89.0-db）。
 function propProductPickerInMode(row,snapshot,mode) {
   const keywords=Number(snapshot.minimumOrder?.amount)>0?snapshot.minimumOrder.excludes||[]:[];
   const frame=propFrameMatch(keywords,row.name,row.groupId);
   return mode==='frame'?frame:!frame;
 }
-function propProductPickerReason(row,snapshot) {
-  if(row.excluded||row.eolFlagged)return '除外・終売';
-  if(snapshot.blockedCodes.includes(row.code))return '在庫・未入荷の数量を確認できない';
+function propProductPickerReason(row) {
+  if(row.stock===null||row.onOrder===null)return '在庫・未入荷の数量を確認できません';
   if(row.groupId)return '系列ブロックから調整してください';
-  if([row.stock,row.onOrder,row.recommended,row.recentDemandMonthly,row.unitCost,row.lot].some(x=>x===null||x===''||!Number.isFinite(Number(x))))return '分析値・最低発注数の確認が必要';
-  if(!Number.isSafeInteger(Number(row.lot))||Number(row.lot)<1||Number(row.unitCost)<=0)return '最低発注数・単価の確認が必要';
+  if(!(row.unitCost>0))return '仕入単価を確認できません';
+  if(!Number.isSafeInteger(row.lot)||row.lot<1)return '最低発注数を確認してください';
   return '';
 }
 function propProductPickerEnsureModal() {
@@ -11790,37 +11831,52 @@ async function openPropProductPicker(supplierCode,mode) {
   document.getElementById('prop-products-title').textContent=propProductPicker.mode==='frame'?`${frameLabel}枠に商品を追加`:'ほかの商品を提案へ追加';
   document.getElementById('prop-products-search').value='';openModal('modal-prop-products');
   const box=document.getElementById('prop-products-list');box.textContent='商品・在庫・発注状況を確認しています…';
-  try{const snapshot=await propAdjustmentSnapshot(supplierCode);if(epoch!==propProductPicker.epoch)return;propProductPicker.snapshot=snapshot;renderPropProductPicker();}
+  try{const snapshot=await propProductPickerSnapshot(supplierCode);if(epoch!==propProductPicker.epoch)return;propProductPicker.snapshot=snapshot;renderPropProductPicker();}
   catch(e){if(epoch===propProductPicker.epoch)box.textContent=e.message;}
 }
 function renderPropProductPicker() {
   const snapshot=propProductPicker.snapshot;if(!snapshot)return;
   const rule=ProposalAdjust.ruleFor(snapshot.supplier.name),caseLabel=rule?.unitLabel||'ケース';
   const query=ProposalAdjust.norm(document.getElementById('prop-products-search').value),isCase=rule?.kind==='case';
-  const rows=(snapshot.catalog||snapshot.metrics).filter(r=>propProductPickerInMode(r,snapshot,propProductPicker.mode)&&(!query||ProposalAdjust.norm(r.name+' '+r.code).includes(query)));
-  document.getElementById('prop-products-list').innerHTML=`<p>${rows.length}商品${rows.length>80?'（先頭80件。検索で絞り込んでください）':''}。数量は${isCase?caseLabel+'数':'個数'}で指定します。</p>`+rows.slice(0,80).map(r=>{
-    const reason=propProductPickerReason(r,snapshot),lot=Number(r.lot),step=isCase?1:lot;
-    return `<div class="prop-picker-row"><b>${escHtml(r.name)}</b><small>${escHtml(r.code)} ／ 現在在庫 ${escHtml(r.stock)}個 ／ 未入荷 ${escHtml(r.onOrder)}個 ／ ${lot>0?lot+'個'+(isCase?'/'+caseLabel:'単位'):'最低発注数未設定'}${r.manualOnly?' ／ 需要分析なし・手動追加のみ':''}</small>${reason?`<p>${escHtml(reason)}</p>${!lot&&!r.excluded&&!r.eolFlagged?`<button class="btn btn-outline" ${orderAction('configurePropProductLot',r.code,r.name)}>最低発注数を設定</button><p>設定後に商品一覧を開き直してください。</p>`:''}`:`<label>追加する${isCase?caseLabel+'数':'個数'} <input id="prop-product-qty-${r.code}" aria-label="${escHtml(r.name)}の追加数量" type="number" min="${step}" step="${step}" value="${step}"></label> <button class="btn btn-outline" ${orderAction('addPropProduct',r.code)}>提案へ追加</button>`}</div>`;
+  const rows=snapshot.catalog.filter(r=>propProductPickerInMode(r,snapshot,propProductPicker.mode)&&(!query||ProposalAdjust.norm(r.name+' '+r.code).includes(query)))
+    .map(row=>({row,reason:propProductPickerReason(row)}))
+    .sort((a,b)=>Number(Boolean(a.reason))-Number(Boolean(b.reason))||a.row.code.localeCompare(b.row.code));
+  const list=document.getElementById('prop-products-list');
+  if(!rows.length){list.textContent='検索条件に合う商品はありません。';return;}
+  list.innerHTML=`<p>${rows.length}商品${rows.length>80?'（先頭80件。検索で絞り込んでください）':''}。数量は${isCase?caseLabel+'数':'個数'}で指定します。</p>`+rows.slice(0,80).map(({row:r,reason})=>{
+    const lot=r.lot,step=isCase?1:lot;
+    const lotLabel=Number.isSafeInteger(lot)&&lot>0?`${lot}個${isCase?'/'+caseLabel:'単位'}${r.estimatedLot?'（分析の推定）':''}`:'最低発注数未設定';
+    const quantityLabel=value=>value===null?'未確認':escHtml(value)+'個';
+    const price=r.unitCost>0?` ／ 単価 ${formatYen(r.unitCost)}（税抜）`:'';
+    const configure=r.lot===null&&!r.groupId?`<button class="btn btn-outline" ${orderAction('configurePropProductLot',r.code,r.name)}>最低発注数を設定</button><p>設定後に商品一覧を開き直してください。</p>`:'';
+    const add=`<label>追加する${isCase?caseLabel+'数':'個数'} <input id="prop-product-qty-${escHtml(r.code)}" aria-label="${escHtml(r.name)}の追加数量" type="number" min="${step}" step="${step}" value="${step}"></label> <button class="btn btn-outline" ${orderAction('addPropProduct',r.code)}>提案へ追加</button>`;
+    return `<div class="prop-picker-row"><b>${escHtml(r.name)}</b><small>${escHtml(r.code)} ／ 現在在庫 ${quantityLabel(r.stock)} ／ 未入荷 ${quantityLabel(r.onOrder)} ／ ${lotLabel}${price}</small>${reason?`<p>${escHtml(reason)}</p>${configure}`:add}</div>`;
   }).join('');
 }
 async function addPropProduct(rawCode) {
   const snapshot=propProductPicker.snapshot;if(!snapshot)return;
   const epoch=++propProductPicker.epoch,supplierCode=propProductPicker.supplierCode,c=ProposalAdjust.code(rawCode),box=document.getElementById('prop-products-list');
-  const row=snapshot.metrics.find(r=>r.code===c),isCase=ProposalAdjust.ruleFor(snapshot.supplier.name)?.kind==='case';
+  const row=snapshot.catalog.find(r=>r.code===c),isCase=ProposalAdjust.ruleFor(snapshot.supplier.name)?.kind==='case';
   try {
-    if(!row||propProductPickerReason(row,snapshot)||!propProductPickerInMode(row,snapshot,propProductPicker.mode))throw Error('商品を追加できません。一覧を開き直してください。');
+    if(!row||propProductPickerReason(row)||!propProductPickerInMode(row,snapshot,propProductPicker.mode))throw Error('商品を追加できません。一覧を開き直してください。');
     const input=Number(document.getElementById('prop-product-qty-'+c).value),qty=isCase?input*row.lot:input;
     if(!Number.isSafeInteger(input)||input<1||!Number.isSafeInteger(qty)||qty%row.lot)throw Error('最低発注数の単位で正の整数を入力してください。');
-    const fingerprint=propAdjustmentFingerprint(supplierCode),fresh=await propAdjustmentSnapshot(supplierCode);
+    const fingerprint=propAdjustmentFingerprint(supplierCode),fresh=await propProductPickerSnapshot(supplierCode);
     if(epoch!==propProductPicker.epoch)return;
-    if(propAdjustmentFingerprint(supplierCode)!==fingerprint||JSON.stringify(fresh)!==JSON.stringify(snapshot))throw Error('商品・在庫・発注・選択が変わりました。一覧を開き直してください。');
+    const basis=(s,r)=>JSON.stringify([s.analysisId,s.analysisInputAt,s.supplier,s.minimumOrder,r]);
+    if(propAdjustmentFingerprint(supplierCode)!==fingerprint||basis(fresh,fresh.catalog.find(r=>r.code===c))!==basis(snapshot,row))
+      throw Error('商品・在庫・発注・選択が変わりました。一覧を開き直してください。');
     // 選択中なら加算、未選択なら指定数量で再選択する。保存やカート追加は呼ばない。
     const next=proposalsData.proposals.map(p=>({...p}));
     let p=next.find(p=>ProposalAdjust.same(p.supplierCode,supplierCode)&&ProposalAdjust.code(p.code)===c);
     const selection=propAdjustmentSelection(supplierCode).find(p=>p.code===c),original=selection?.checked?selection.qty:0;
     if(!Number.isSafeInteger(original)||original<0||!Number.isSafeInteger(original+qty))throw Error('現在の数量を確認してください。');
-    if(!p){p={...row,supplierCode,supplierName:fresh.supplier.name,pattern:'手動追加',refOnly:false,groupId:''};next.push(p);}
-    p.proposedQty=original+qty;p.amount=p.proposedQty*Number(row.unitCost);p._manualAddition=true;
+    if(!p){
+      p={code:c,name:row.name,supplierCode,supplierName:fresh.supplier.name,stock:row.stock,onOrder:row.onOrder,
+        recommended:null,manualOnly:true,pattern:'手動追加',refOnly:false,groupId:''};
+      next.push(p);
+    }
+    p.lot=row.lot;p.unitCost=row.unitCost;p.proposedQty=original+qty;p.amount=p.proposedQty*row.unitCost;p._manualAddition=true;
     p.note='提案外の商品を手動追加。最低発注数の単位で数量を調整できます。';
     proposalsData.proposals=next;propUncheckedItems.delete(p.supplierCode+'|'+p.code);propAdjustment.excluded.delete(supplierCode+'|'+c);
     closePropProductPicker();reRenderProposalsKeepScroll();showToast('商品を提案へ追加しました。数量を調整してから発注画面へ進んでください。','success');
