@@ -653,7 +653,7 @@
 
 <script>
 // ========== APP VERSION ==========
-const APP_VERSION = 'v1.15.1';
+const APP_VERSION = 'v1.15.2';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
 
 // ========== DATA STORE ==========
@@ -1452,9 +1452,11 @@ function renderDeviceDetail() {
 function renderLoanForm() {
   const device = db.devices.find(d => d.id === viewData.deviceId);
   if (!device) return '';
-  const activeReps = db.salesReps.filter(r => r.active);       // 操作者：全員
-  const salesReps  = activeReps.filter(r => r.isSales === true); // 営業担当：営業フラグONのみ
-  const lastOp = getLastOperator();
+  const pending = readPendingLoan(loanPendingKey(device.id, '貸出'));
+  const draft = pending?.loan;
+  const salesReps = db.salesReps.filter(r => r.active && r.isSales === true).map(r => r.name);
+  // 保存結果が不明な入力は、担当者の表示設定が変わっても同じ内容で照合できる。
+  if (draft?.salesRep && !salesReps.includes(draft.salesRep)) salesReps.push(draft.salesRep);
 
   return `
   <div class="header">
@@ -1468,31 +1470,33 @@ function renderLoanForm() {
       <div style="font-size:17px;font-weight:700;">${htmlEscape(device.name)}</div>
     </div>
 
+    ${draft ? '<p role="status">前回の登録結果が未確認です。表示された内容で再試行できます。</p>' : ''}
     <div class="form-section">
       <div class="form-label">操作者</div>
       <div style="padding:10px 12px;background:#f3f4f6;border-radius:8px;font-size:15px;font-weight:600;">${htmlEscape(currentUser ? currentUser.name : '')}</div>
     </div>
     <div class="form-section">
       <div class="form-label">貸出先サロン名 <span class="required">*</span></div>
-      <input class="form-input" id="f-salon" placeholder="例: ○○サロン 渋谷店" autocomplete="off">
+      <input class="form-input" id="f-salon" placeholder="例: ○○サロン 渋谷店" autocomplete="off" value="${htmlEscape(draft?.loanTo)}">
     </div>
     <div class="form-section">
       <div class="form-label">営業担当 <span class="required">*</span></div>
       <select class="form-select" id="f-rep">
         <option value="">選択してください</option>
-        ${salesReps.map(r => `<option value="${htmlEscape(r.name)}">${htmlEscape(r.name)}</option>`).join('')}
+        ${salesReps.map(name => `<option value="${htmlEscape(name)}"${name === draft?.salesRep ? ' selected' : ''}>${htmlEscape(name)}</option>`).join('')}
       </select>
     </div>
     <div class="form-section">
       <div class="form-label">返却予定日 <span style="color:var(--text-sub);font-weight:400;">(未定の場合は空欄)</span></div>
-      <input class="form-input" id="f-duedate" type="date" min="${htmlEscape(today())}">
+      <input class="form-input" id="f-duedate" type="date" min="${htmlEscape(draft?.returnDueDate || today())}" value="${htmlEscape(draft?.returnDueDate)}">
     </div>
     <div class="form-section">
       <div class="form-label">備考</div>
-      <input class="form-input" id="f-notes" placeholder="任意">
+      <input class="form-input" id="f-notes" placeholder="任意" value="${htmlEscape(draft?.notes)}">
     </div>
     <div class="form-section">
       <div class="form-label">画像 <span style="color:var(--text-sub);font-weight:400;">(任意)</span></div>
+      ${draft?.imageUrl ? '<p>再試行ではアップロード済みの写真を使います。</p>' : ''}
       <input type="file" id="f-img-loan" accept="image/*,.heic,.heif" style="display:none" onchange="handleImageSelect('loan', this)">
       <div id="img-preview-loan" style="display:none;margin-bottom:8px;">
         <div data-image-status role="status"></div>
@@ -1562,8 +1566,7 @@ async function submitLoan(deviceId) {
 function renderReturnForm() {
   const device = db.devices.find(d => d.id === viewData.deviceId);
   if (!device) return '';
-  const activeReps = db.salesReps.filter(r => r.active);
-  const lastOp = getLastOperator();
+  const draft = readPendingLoan(loanPendingKey(device.id, '返却'))?.loan;
 
   return `
   <div class="header">
@@ -1578,17 +1581,18 @@ function renderReturnForm() {
       <div style="font-size:13px;color:var(--text-sub);margin-top:4px;">${htmlEscape(device.loanTo||'')} より返却</div>
     </div>
 
+    ${draft ? '<p role="status">前回の登録結果が未確認です。表示された内容で再試行できます。</p>' : ''}
     <div class="form-section">
       <div class="form-label">操作者</div>
       <div style="padding:10px 12px;background:#f3f4f6;border-radius:8px;font-size:15px;font-weight:600;">${htmlEscape(currentUser ? currentUser.name : '')}</div>
     </div>
     <div class="form-section">
       <div class="form-label">返却日</div>
-      <input class="form-input" id="f-retdate" type="date" value="${htmlEscape(today())}">
+      <input class="form-input" id="f-retdate" type="date" value="${htmlEscape(draft?.date || today())}">
     </div>
     <div class="form-section">
       <div class="form-label">備考</div>
-      <input class="form-input" id="f-notes" placeholder="任意">
+      <input class="form-input" id="f-notes" placeholder="任意" value="${htmlEscape(draft?.notes)}">
     </div>
     <p id="registration-error" role="alert"></p>
     <button class="btn btn-danger" onclick="submitReturn(${htmlNumber(device.id)})">返却登録する</button>
@@ -2998,10 +3002,12 @@ function clearPendingLoan(key) {
 async function saveLoanOperation_(device, loan) {
   const key = loanPendingKey(device.id, loan.type);
   let pending = readPendingLoan(key);
-  const intent = function(value) {
-    return JSON.stringify(['deviceId','type','loanTo','salesRep','date','returnDueDate','notes'].map(k => String(value[k] || '')));
-  };
-  if (pending && intent(pending.loan) !== intent(loan)) throw new Error('前回の保存結果が未確認です。再読み込みして貸出履歴を確認してください。');
+  const fields = ['deviceId', 'type', 'loanTo', 'salesRep', 'returnDueDate', 'notes'];
+  // 貸出日は画面入力で決まらないので、日付をまたいでも初回の送信内容を再利用する。
+  if (loan.type === '返却') fields.push('date');
+  if (pending && fields.some(key => String(pending.loan[key] ?? '') !== String(loan[key] ?? ''))) {
+    throw new Error('前回の登録結果が未確認です。画面を開き直すと前回の入力で再試行できます。');
+  }
   if (!pending) {
     const imageUrl = loan.type === '貸出' ? await uploadPendingImage('loan') : null;
     const target = { id: device.id };
