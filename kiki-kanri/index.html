@@ -600,6 +600,12 @@
     gap: 10px;
     flex-direction: column;
   }
+  #registration-error:not(:empty) {
+    color: var(--danger);
+    font-size: 14px;
+    margin: 0 0 12px;
+    overflow-wrap: anywhere;
+  }
   .loading-spinner {
     width: 32px; height: 32px;
     border: 3px solid var(--border);
@@ -647,7 +653,7 @@
 
 <script>
 // ========== APP VERSION ==========
-const APP_VERSION = 'v1.15.0';
+const APP_VERSION = 'v1.15.1';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
 
 // ========== DATA STORE ==========
@@ -660,7 +666,6 @@ let db = {
   makers: [],
   labels: [],
   nextDeviceId: 1,
-  nextLoanId: 1,
   nextRepId: 1,
   nextMakerId: 1,
 };
@@ -706,34 +711,22 @@ async function apiPost(action, data) {
 
   const requestBody = params.toString();
 
-  let res;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), action === 'uploadImage' ? 60000 : 45000);
+  let json;
   try {
-    res = await fetch(API_URL, {
+    const res = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: requestBody,
+      signal: controller.signal,
     });
-  } catch (networkErr) {
-    throw new Error('ネットワークエラー: ' + networkErr.message);
-  }
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '(本文取得不可)');
-    throw new Error(`HTTPエラー ${res.status}: ${errText}`);
-  }
-
-  let json;
-  try {
-    const rawText = await res.text();
-    json = JSON.parse(rawText);
-  } catch (parseErr) {
-    throw new Error('レスポンスのJSONパースに失敗: ' + parseErr.message);
-  }
-
-  // POSTがGETにリダイレクトされた場合の検出:
-  // doGetのレスポンス（devicesキーがある）が返ってきた場合はエラー扱い
-  if (json && 'devices' in json && !('status' in json)) {
-    throw new Error('POSTがGETにリダイレクトされました（GAS設定エラー）');
+    if (!res.ok) throw new Error('HTTP_' + res.status);
+    json = await res.json();
+  } catch (e) {
+    throw new Error(controller.signal.aborted ? 'TIMEOUT' : 'CONNECTION_ERROR');
+  } finally {
+    clearTimeout(timeout);
   }
 
   // セッション無効の場合はポータルへの案内画面へ
@@ -742,7 +735,7 @@ async function apiPost(action, data) {
     throw new Error('SESSION_INVALID');
   }
 
-  if (!json || json.status !== 'ok' || (json.result && json.result.success === false)) {
+  if (!json || json.status !== 'ok' || (json.result && (json.result.success === false || json.result.error))) {
     throw new Error((json && (json.error || (json.result && json.result.error))) || '保存結果を確認できません');
   }
   return json;
@@ -810,7 +803,8 @@ function saveDBCache() {
 
 async function loadDB() {
   // キャッシュがあれば即レンダリング（体感速度を上げる）
-  const cached = localStorage.getItem(DB_CACHE_KEY);
+  let cached;
+  try { cached = localStorage.getItem(DB_CACHE_KEY); } catch (e) {}
   if (cached) {
     try { db = JSON.parse(cached); render(); } catch(e) {}
   }
@@ -845,7 +839,13 @@ function genId(prefix, num) {
   return prefix + String(num).padStart(6, '0');
 }
 
-function today() { return new Intl.DateTimeFormat('sv-SE', {timeZone: 'Asia/Tokyo'}).format(new Date()); }
+const jstDateFormat = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+function today() {
+  const parts = Object.fromEntries(jstDateFormat.formatToParts(new Date()).map(p => [p.type, p.value]));
+  return parts.year + '-' + parts.month + '-' + parts.day;
+}
 
 function getDeviceInfo() {
   const ua = navigator.userAgent;
@@ -915,6 +915,43 @@ let viewStack = [];
 let viewData = {};
 let pendingImages = {}; // { reg: [img0,img1,img2], loan: img, edit: [img0,img1,img2] }
 let clearedSlots  = {}; // edit用: { 0:true, 1:true, 2:true } 削除済みスロット追跡
+let registrationSaving = false;
+const pendingLoanRequests = new Map();
+
+function showRegistrationError(error) {
+  const code = error.message;
+  if (code === 'SESSION_INVALID') return;
+  const messages = {
+    FORBIDDEN: '商品やラベルの登録・編集には管理権限が必要です。貸出と返却は営業権限で操作できます。',
+    TIMEOUT: '登録結果を確認できませんでした。通信が戻ったら同じ内容で再試行してください。',
+    CONNECTION_ERROR: '登録結果を確認できませんでした。通信を確認して同じ内容で再試行してください。',
+    STATE_CONFLICT: '機器の現在の状態では登録できません。一覧を再読み込みして確認してください。',
+    LABEL_UNAVAILABLE: 'このラベルは使用できません。一覧を再読み込みして印刷済みのラベルを確認してください。',
+    BUSY: '別の登録を処理中です。少し待ってもう一度押してください。',
+    INVALID_REQUEST: '入力内容を確認してください。日付や必須項目に誤りがないか確認できます。',
+    NOT_FOUND: '対象の機器が見つかりません。一覧を再読み込みしてください。',
+    REQUEST_CONFLICT: '前回の登録内容と一致しません。貸出履歴を再読み込みして確認してください。',
+    WRITE_FAILED: 'サーバーで登録結果を確認できませんでした。再試行しても続く場合は管理者に連絡してください。',
+    INTERNAL_ERROR: 'サーバーで処理できませんでした。再試行しても続く場合は管理者に連絡してください。',
+    SCHEMA_MISMATCH: '登録先の設定に問題があります。管理者に連絡してください。',
+  };
+  const message = messages[code] || code;
+  const status = document.getElementById('registration-error');
+  if (status) status.textContent = message;
+  showToast(message, 'error');
+}
+
+function beginRegistration() {
+  registrationSaving = true;
+  const status = document.getElementById('registration-error');
+  if (status) status.textContent = '';
+  showLoading();
+}
+
+function endRegistration() {
+  registrationSaving = false;
+  hideLoading();
+}
 
 function navigate(view, data = {}) {
   viewStack.push({ view: currentView, data: viewData });
@@ -968,6 +1005,12 @@ function render() {
   }
 
   const fn = views[currentView] || renderHome;
+  const imageForm = {loanForm: 'loan', registerForm: 'reg', editDevice: 'edit'}[currentView];
+  if (imageForm) {
+    // 画面を作り直すとき、前の機器で選んだ写真を次の機器に引き継がない。
+    pendingImages[imageForm] = imageForm === 'loan' ? null : [null, null, null];
+    clearedSlots[imageForm] = {};
+  }
   app.innerHTML = fn();
   afterRender();
   window.scrollTo(0, 0);
@@ -1303,7 +1346,13 @@ function handleManualLabel() {
 
 function handleScannedLabel(labelId) {
   stopScanner();
-  const device = db.devices.find(d => d.labelId === labelId);
+  const matches = db.devices.filter(d => String(d.labelId || '').trim().toUpperCase() === labelId);
+  if (matches.length > 1) {
+    navigate('devices', { search: labelId });
+    showToast('同じラベルの機器が複数あります。商品名を確認して選んでください', 'warn');
+    return;
+  }
+  const device = matches[0];
   
   if (scannerMode === 'loan') {
     if (!device) {
@@ -1312,8 +1361,8 @@ function handleScannedLabel(labelId) {
       }
       return;
     }
-    if (device.status === '貸出中') {
-      showToast('この商品は現在貸出中です', 'error');
+    if (device.status !== '社内') {
+      showToast('この機器は現在の状態では貸出登録できません', 'error');
       navigate('deviceDetail', { deviceId: device.id });
       return;
     }
@@ -1323,8 +1372,8 @@ function handleScannedLabel(labelId) {
       showToast('登録されていない商品です', 'error');
       return;
     }
-    if (device.status === '社内') {
-      showToast('この商品は既に社内にあります', 'error');
+    if (device.status !== '貸出中') {
+      showToast('貸出中の機器を選んでください', 'error');
       navigate('deviceDetail', { deviceId: device.id });
       return;
     }
@@ -1444,18 +1493,21 @@ function renderLoanForm() {
     </div>
     <div class="form-section">
       <div class="form-label">画像 <span style="color:var(--text-sub);font-weight:400;">(任意)</span></div>
-      <input type="file" id="f-img-loan" accept="image/*" style="display:none" onchange="handleImageSelect('loan', this)">
+      <input type="file" id="f-img-loan" accept="image/*,.heic,.heif" style="display:none" onchange="handleImageSelect('loan', this)">
       <div id="img-preview-loan" style="display:none;margin-bottom:8px;">
+        <div data-image-status role="status"></div>
         <img id="img-thumb-loan" style="max-width:100%;max-height:200px;border-radius:8px;object-fit:contain;display:block;">
         <button class="btn" style="margin-top:6px;background:var(--danger);color:#fff;font-size:13px;padding:6px 14px;" onclick="clearImage('loan')">✕ 削除</button>
       </div>
       <button class="btn" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-main);" onclick="document.getElementById('f-img-loan').click()">📷 画像を追加</button>
     </div>
+    <p id="registration-error" role="alert"></p>
     <button class="btn btn-primary" onclick="submitLoan(${htmlNumber(device.id)})">貸出登録する</button>
   </div>`;
 }
 
 async function submitLoan(deviceId) {
+  if (registrationSaving) return;
   const operator = currentUser ? currentUser.name : '';
   const salon = document.getElementById('f-salon').value.trim();
   const rep = document.getElementById('f-rep').value;
@@ -1468,19 +1520,12 @@ async function submitLoan(deviceId) {
   const salonLoanCount = db.devices.filter(d => d.status === '貸出中' && d.loanTo === salon).length;
   if (salonLoanCount > 0) {
     showToast(`このサロンには現在 ${salonLoanCount} 点貸出中です`, 'warn');
-    await new Promise(r => setTimeout(r, 1800));
   }
 
-  const device = Object.assign({}, db.devices.find(d => d.id === deviceId));
-  device.status = '貸出中';
-  device.loanTo = salon;
-  device.salesRep = rep;
-  device.loanDate = today();
-  device.returnDueDate = duedate || null;
-  device.notes = notes;
+  const device = db.devices.find(d => d.id === deviceId);
+  if (!device) { showRegistrationError(new Error('NOT_FOUND')); return; }
 
   const newLoan = {
-    id: db.nextLoanId++,
     deviceId,
     labelId: device.labelId,
     deviceName: device.name,
@@ -1494,10 +1539,8 @@ async function submitLoan(deviceId) {
     deviceInfo: getDeviceInfo(),
   };
 
-  showLoading();
+  beginRegistration();
   try {
-    const imageUrl = await uploadPendingImage('loan');
-    if (imageUrl) { device.imageUrl = imageUrl; newLoan.imageUrl = imageUrl; }
     // saveDevice + saveLoan を1回のGASコールで処理。LINE WORKS通知は応答後に後追い送信して高速化する
     const res = await saveLoanOperation_(device, newLoan);
     if (!(res && res.result && res.result.replayed)) notifyAsync(res && res.result && res.result.notifyText);
@@ -1509,10 +1552,9 @@ async function submitLoan(deviceId) {
     viewStack = [];
     navigate('deviceDetail', { deviceId });
   } catch(e) {
-    // 画像の段階で止まった場合は、まだ何も保存していないので文言を分ける
-    showToast(e && e.imageError ? e.message : '保存結果を確認できません: ' + e.message, 'error');
+    showRegistrationError(e);
   } finally {
-    hideLoading();
+    endRegistration();
   }
 }
 
@@ -1548,37 +1590,33 @@ function renderReturnForm() {
       <div class="form-label">備考</div>
       <input class="form-input" id="f-notes" placeholder="任意">
     </div>
+    <p id="registration-error" role="alert"></p>
     <button class="btn btn-danger" onclick="submitReturn(${htmlNumber(device.id)})">返却登録する</button>
   </div>`;
 }
 
 async function submitReturn(deviceId) {
+  if (registrationSaving) return;
   const operator = currentUser ? currentUser.name : '';
   const retdate = document.getElementById('f-retdate').value || today();
   const notes = document.getElementById('f-notes').value.trim();
 
-  const device = Object.assign({}, db.devices.find(d => d.id === deviceId));
-  const prevLoanTo = device.loanTo;
-  device.status = '社内';
-  device.returnDate = retdate;
-  device.loanTo = null;
-  device.returnDueDate = null;
-  device.salesRep = null;
+  const device = db.devices.find(d => d.id === deviceId);
+  if (!device) { showRegistrationError(new Error('NOT_FOUND')); return; }
 
   const returnLoan = {
-    id: db.nextLoanId++,
     deviceId,
     labelId: device.labelId,
     deviceName: device.name,
     type: '返却',
-    loanTo: prevLoanTo,
+    loanTo: device.loanTo,
     date: retdate,
     notes,
     registeredBy: operator,
     deviceInfo: getDeviceInfo(),
   };
 
-  showLoading();
+  beginRegistration();
   try {
     // saveDevice + saveLoan を1回のGASコールで処理。LINE WORKS通知は応答後に後追い送信して高速化する
     const res = await saveLoanOperation_(device, returnLoan);
@@ -1589,14 +1627,16 @@ async function submitReturn(deviceId) {
     viewData = {};
     viewStack = [];
     navigate('deviceDetail', { deviceId });
-  } catch(e) { showToast('保存結果を確認できません: ' + e.message, 'error'); } finally {
-    hideLoading();
+  } catch(e) { showRegistrationError(e); } finally {
+    endRegistration();
   }
 }
 
 // ========== REGISTER FORM ==========
 function renderRegisterForm() {
-  const availableLabels = (db.labels || []).filter(l => l.status === '印刷済');
+  const usedLabels = new Set(db.devices.map(d => String(d.labelId || '').trim().toUpperCase()));
+  const availableLabels = (db.labels || []).filter(l => l.status === '印刷済' &&
+    !l.deviceId && !usedLabels.has(String(l.labelId || '').trim().toUpperCase()));
   const preselected = viewData.labelId || ''; // スキャン画面から渡されたLabelID
 
   return `
@@ -1652,6 +1692,7 @@ function renderRegisterForm() {
       <div class="form-label">画像 <span style="color:var(--text-sub);font-weight:400;">(任意・最大3枚)</span></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">${renderImageSlots('reg', [])}</div>
     </div>
+    <p id="registration-error" role="alert"></p>
     <button class="btn btn-primary" onclick="submitRegister()">商品を登録する</button>
   </div>`;
 }
@@ -1666,132 +1707,196 @@ function renderImageSlots(type, existingUrls) {
   for (let i = 0; i < 3; i++) {
     const ex = urls[i] || null;
     html += `
-      <input type="file" id="f-img-${htmlEscape(type)}-${htmlEscape(i)}" accept="image/*" style="display:none" onchange="handleImageSelect('${htmlEscape(type)}', this, ${htmlEscape(i)})">
+      <input type="file" id="f-img-${htmlEscape(type)}-${htmlEscape(i)}" accept="image/*,.heic,.heif" style="display:none" onchange="handleImageSelect('${htmlEscape(type)}', this, ${htmlEscape(i)})">
       <div style="width:88px;height:88px;border:1.5px dashed var(--border);border-radius:10px;position:relative;overflow:hidden;background:var(--bg-card);cursor:pointer;flex-shrink:0;" onclick="document.getElementById('f-img-${htmlEscape(type)}-${htmlEscape(i)}').click()">
         <img id="img-thumb-${htmlEscape(type)}-${htmlEscape(i)}" src="${htmlEscape(safeImageUrl(ex || ''))}" style="width:100%;height:100%;object-fit:cover;border-radius:9px;${htmlEscape(ex ? '' : 'display:none;')}">
-        <div id="img-label-${htmlEscape(type)}-${htmlEscape(i)}" style="${htmlEscape(ex ? 'display:none;' : '')}position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:11px;color:var(--text-sub);gap:2px;pointer-events:none;"><span style="font-size:20px;">📷</span><span>${htmlEscape(i + 1)}枚目</span></div>
+        <div id="img-label-${htmlEscape(type)}-${htmlEscape(i)}" style="${htmlEscape(ex ? 'display:none;' : '')}position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:11px;color:var(--text-sub);gap:2px;pointer-events:none;"><span style="font-size:20px;">📷</span><span data-image-status>${htmlEscape(i + 1)}枚目</span></div>
         <button id="img-del-${htmlEscape(type)}-${htmlEscape(i)}" style="display:${htmlEscape(ex ? '' : 'none')};position:absolute;top:3px;right:3px;background:rgba(220,38,38,0.85);color:#fff;border:none;border-radius:50%;width:22px;height:22px;font-size:11px;cursor:pointer;padding:0;line-height:1;" onclick="event.stopPropagation();clearImage('${htmlEscape(type)}',${htmlEscape(i)})">✕</button>
       </div>`;
   }
   return html;
 }
 
-// 画像の制限はサーバー（GAS uploadImage）と同じ条件にする。
-// 送信してから弾かれるのではなく、選んだ時点で気づけるようにするための事前チェック。
+// GASの上限を守りつつ、スマホの大きな写真とHEICは送信前にJPEGにする。
 const UPLOAD_MAX_BYTES = 8 * 1024 * 1024;
-const UPLOAD_ALLOWED_MIME = ['image/jpeg','image/jpg','image/png','image/webp','image/gif','image/heic','image/heif'];
+const PHOTO_INPUT_MAX_BYTES = 32 * 1024 * 1024;
+const PHOTO_COMPRESS_BYTES = 1024 * 1024;
+const PHOTO_MAX_EDGE = 1600;
 const IMAGE_ERROR_TEXT = {
-  UNSUPPORTED_IMAGE_TYPE: '対応していない画像形式です（JPEG / PNG / WebP / GIF / HEIC）',
-  IMAGE_TOO_LARGE: '画像が大きすぎます（8MBまで）。別の写真を選ぶか、画像なしで登録してください',
-  INVALID_IMAGE: '画像を読み取れませんでした。別の画像でお試しください'
+  UNSUPPORTED_IMAGE_TYPE: 'JPEG・PNGなどの写真を選んでください',
+  IMAGE_TOO_LARGE: '画像が大きすぎます。別の写真を選ぶか、削除して画像なしで登録してください',
+  INVALID_IMAGE: '画像を読み込めません。別の写真を選ぶか、削除して画像なしで登録してください',
 };
+
+function imageMime(bytes) {
+  const text = String.fromCharCode(...bytes);
+  if (bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return 'image/jpeg';
+  if (text.startsWith('\x89PNG\r\n\x1a\n')) return 'image/png';
+  if (text.startsWith('GIF87a') || text.startsWith('GIF89a')) return 'image/gif';
+  if (text.startsWith('RIFF') && text.slice(8, 12) === 'WEBP') return 'image/webp';
+  if (text.slice(4, 8) === 'ftyp') {
+    const brands = [text.slice(8, 12)];
+    for (let i = 16; i + 4 <= text.length; i += 4) brands.push(text.slice(i, i + 4));
+    if (brands.some(brand => ['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs', 'mif1', 'msf1'].includes(brand))) {
+      return 'image/heic';
+    }
+  }
+  throw new Error('UNSUPPORTED_IMAGE_TYPE');
+}
+
+function readImageData(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    const timer = setTimeout(() => reader.abort(), 15000);
+    reader.onloadend = () => clearTimeout(timer);
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reader.onabort = () => reject(new Error('INVALID_IMAGE'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function prepareImage(file) {
+  if (file.size > PHOTO_INPUT_MAX_BYTES) throw new Error('IMAGE_TOO_LARGE');
+  const mime = imageMime(new Uint8Array(await file.slice(0, 64).arrayBuffer()));
+  const blob = file.slice(0, file.size, mime);
+  if (mime === 'image/gif' && file.size > UPLOAD_MAX_BYTES) throw new Error('IMAGE_TOO_LARGE');
+
+  const url = URL.createObjectURL(blob);
+  const image = new Image();
+  let canvas;
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('INVALID_IMAGE')), 15000);
+      image.onload = () => { clearTimeout(timer); resolve(); };
+      image.onerror = () => { clearTimeout(timer); reject(new Error('INVALID_IMAGE')); };
+      image.src = url;
+    });
+    const maxEdge = Math.max(image.naturalWidth, image.naturalHeight);
+    if (!maxEdge) throw new Error('INVALID_IMAGE');
+    // 小さな画像の透過とGIFのアニメーションは維持する。
+    if (mime === 'image/gif' || (mime !== 'image/heic' && file.size <= PHOTO_COMPRESS_BYTES && maxEdge <= PHOTO_MAX_EDGE)) {
+      return { dataUrl: await readImageData(blob), mimeType: mime };
+    }
+    const scale = Math.min(1, PHOTO_MAX_EDGE / maxEdge);
+    canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('INVALID_IMAGE');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+    if (!dataUrl.startsWith('data:image/jpeg;base64,')) throw new Error('INVALID_IMAGE');
+    return { dataUrl, mimeType: 'image/jpeg' };
+  } finally {
+    image.onload = image.onerror = null;
+    image.removeAttribute('src');
+    URL.revokeObjectURL(url);
+    if (canvas) canvas.width = canvas.height = 1;
+  }
+}
+
+function imageSlot(type, index) {
+  return index === undefined ? pendingImages[type] : pendingImages[type]?.[index];
+}
+
+function setImageSlot(type, index, value) {
+  if (index === undefined) {
+    pendingImages[type] = value;
+    return;
+  }
+  if (!Array.isArray(pendingImages[type])) pendingImages[type] = [null, null, null];
+  pendingImages[type][index] = value;
+}
+
+function showImageSlot(type, index, slot) {
+  const suffix = type + (index === undefined ? '' : '-' + index);
+  const thumb = document.getElementById('img-thumb-' + suffix);
+  const label = document.getElementById('img-label-' + suffix);
+  const discard = document.getElementById('img-del-' + suffix);
+  const preview = document.getElementById('img-preview-' + suffix);
+  if (thumb) {
+    if (slot?.photo) thumb.src = slot.photo.dataUrl;
+    else thumb.removeAttribute('src');
+    thumb.style.display = slot?.photo ? '' : 'none';
+  }
+  if (label) {
+    label.style.display = slot?.photo ? 'none' : '';
+    const status = label.querySelector('[data-image-status]');
+    if (status) status.textContent = slot?.error ? '失敗' : slot ? '準備中…' : (index + 1) + '枚目';
+  }
+  if (discard) discard.style.display = slot ? '' : 'none';
+  if (preview) {
+    preview.style.display = slot ? '' : 'none';
+    const status = preview.querySelector('[data-image-status]');
+    status.textContent = slot?.error ? '読み込み失敗' : slot?.photo ? '' : '準備中…';
+  }
+}
 
 function handleImageSelect(type, input, index) {
   const file = input.files[0];
-  if (!file) { console.log('[IMAGE] ファイル未選択'); return; }
-  console.log('[IMAGE] ファイル選択:', file.name, file.type, file.size, 'bytes');
-  // type が空になる端末があるため、取れたときだけ形式を判定する（実体はサーバーが確認する）
-  const mime = String(file.type || '').toLowerCase().split(';')[0].trim();
-  if (mime && UPLOAD_ALLOWED_MIME.indexOf(mime) < 0) {
-    showToast(IMAGE_ERROR_TEXT.UNSUPPORTED_IMAGE_TYPE, 'error');
-    input.value = '';
+  if (!file || registrationSaving) return;
+  input.value = '';
+  if (type === 'loan' && readPendingLoan(loanPendingKey(viewData.deviceId, '貸出'))) {
+    showRegistrationError(new Error('前回の登録結果を確認するため、同じ内容で再試行してください'));
     return;
   }
-  if (file.size > UPLOAD_MAX_BYTES) {
-    showToast(IMAGE_ERROR_TEXT.IMAGE_TOO_LARGE, 'error');
-    input.value = '';
-    return;
-  }
-  const reader = new FileReader();
-  reader.onload = function(e) {
-    const dataUrl = e.target.result;
-    const base64 = dataUrl.split(',')[1];
-    if (index !== undefined) {
-      // 複数画像モード（reg / edit）
-      if (!Array.isArray(pendingImages[type])) pendingImages[type] = [null, null, null];
-      pendingImages[type][index] = { base64, mimeType: file.type || 'image/jpeg', fileName: file.name || 'upload.jpg' };
-      if (clearedSlots[type]) delete clearedSlots[type][index];
-      const thumb  = document.getElementById('img-thumb-'  + type + '-' + index);
-      const label  = document.getElementById('img-label-'  + type + '-' + index);
-      const delBtn = document.getElementById('img-del-'    + type + '-' + index);
-      if (thumb)  { thumb.src = dataUrl; thumb.style.display = ''; }
-      if (label)  label.style.display = 'none';
-      if (delBtn) delBtn.style.display = '';
-    } else {
-      // 単一画像モード（loan）
-      pendingImages[type] = { base64, mimeType: file.type || 'image/jpeg', fileName: file.name || 'upload.jpg' };
-      console.log('[IMAGE] base64変換成功 type=' + type + ' base64length=' + base64.length);
-      const thumb   = document.getElementById('img-thumb-'   + type);
-      const preview = document.getElementById('img-preview-' + type);
-      if (thumb)   thumb.src = dataUrl;
-      if (preview) preview.style.display = '';
+  const slot = {};
+  setImageSlot(type, index, slot);
+  if (clearedSlots[type]) delete clearedSlots[type][index];
+  showImageSlot(type, index, slot);
+  slot.ready = prepareImage(file).then(photo => {
+    slot.photo = photo;
+    if (imageSlot(type, index) === slot) showImageSlot(type, index, slot);
+  }).catch(error => {
+    slot.error = new Error(IMAGE_ERROR_TEXT[error.message] || IMAGE_ERROR_TEXT.INVALID_IMAGE);
+    if (imageSlot(type, index) === slot) {
+      showImageSlot(type, index, slot);
+      showToast(slot.error.message, 'error');
     }
-  };
-  reader.onerror = function(err) { console.error('[IMAGE] FileReader エラー:', err); };
-  reader.readAsDataURL(file);
+  });
 }
 
 function clearImage(type, index) {
+  if (registrationSaving) return;
+  if (type === 'loan' && readPendingLoan(loanPendingKey(viewData.deviceId, '貸出'))) {
+    showRegistrationError(new Error('前回の登録結果を確認するため、同じ内容で再試行してください'));
+    return;
+  }
+  setImageSlot(type, index, null);
   if (index !== undefined) {
-    // 複数画像モード（reg / edit）
-    if (Array.isArray(pendingImages[type])) pendingImages[type][index] = null;
     if (!clearedSlots[type]) clearedSlots[type] = {};
     clearedSlots[type][index] = true;
-    const input  = document.getElementById('f-img-'   + type + '-' + index);
-    const thumb  = document.getElementById('img-thumb-' + type + '-' + index);
-    const label  = document.getElementById('img-label-' + type + '-' + index);
-    const delBtn = document.getElementById('img-del-'   + type + '-' + index);
-    if (input)  input.value = '';
-    if (thumb)  { thumb.src = ''; thumb.style.display = 'none'; }
-    if (label)  label.style.display = '';
-    if (delBtn) delBtn.style.display = 'none';
-  } else {
-    // 単一画像モード（loan）
-    pendingImages[type] = null;
-    const input   = document.getElementById('f-img-'     + type);
-    const preview = document.getElementById('img-preview-' + type);
-    if (input)   input.value = '';
-    if (preview) preview.style.display = 'none';
   }
+  showImageSlot(type, index, null);
 }
 
-// 単一画像アップロード（loanフォーム用）
-async function uploadPendingImage(type) {
-  const img = pendingImages[type];
-  if (!img) { console.log('[IMAGE] アップロードスキップ（画像なし） type=' + type); return null; }
-  console.log('[IMAGE] GASへPOST送信開始 action=uploadImage mimeType=' + img.mimeType + ' fileName=' + img.fileName + ' base64length=' + img.base64.length);
+async function uploadPendingImage(type, index) {
+  const slot = imageSlot(type, index);
+  if (!slot) return null;
+  await slot.ready;
+  if (slot.error) throw slot.error;
+  if (slot.url) return slot.url;
+  const { dataUrl, mimeType } = slot.photo;
   try {
-    const res = await apiPost('uploadImage', img);
-    console.log('[IMAGE] GASレスポンス:', JSON.stringify(res));
-    const url = (res && res.result && res.result.imageUrl) ? res.result.imageUrl : null;
-    console.log('[IMAGE] imageUrl:', url);
+    const res = await apiPost('uploadImage', { base64: dataUrl.split(',')[1], mimeType });
+    const url = res.result?.imageUrl;
+    if (!url || !/^https:\/\//i.test(url)) throw new Error('CONNECTION_ERROR');
+    slot.url = url;
     return url;
-  } catch(e) {
-    console.error('[IMAGE] アップロードエラー:', e.message);
-    // サーバーの定型コードは画面向けの日本語に置き換える（原因が伝わらないと放置されるため）
-    const friendly = IMAGE_ERROR_TEXT[e.message];
-    if (friendly) { const err = new Error(friendly); err.imageError = true; throw err; }
-    throw e;
+  } catch (e) {
+    if (e.message === 'SESSION_INVALID') throw e;
+    throw new Error(IMAGE_ERROR_TEXT[e.message] ||
+      '写真の送信を完了できませんでした。通信を確認して再試行するか、写真を削除して登録してください');
   }
 }
 
-// 複数画像アップロード（reg / editフォーム用）最大3枚
 async function uploadPendingImages(type) {
-  const slots = Array.isArray(pendingImages[type]) ? pendingImages[type] : [null, null, null];
-  const results = [];
-  for (let i = 0; i < 3; i++) {
-    const img = slots[i];
-    if (!img) { results.push(null); continue; }
-    try {
-      const res = await apiPost('uploadImage', img);
-      const url = (res && res.result && res.result.imageUrl) ? res.result.imageUrl : null;
-      results.push(url);
-    } catch(e) {
-      console.error('[IMAGE] アップロードエラー slot=' + i, e.message);
-      results.push(null);
-    }
-  }
-  return results;
+  const urls = [];
+  // 画像を1枚ずつ送信し、途中で失敗した場合は登録前に止める。
+  for (let i = 0; i < 3; i++) urls.push(await uploadPendingImage(type, i));
+  return urls;
 }
 
 function selectType(type) {
@@ -1824,14 +1929,16 @@ async function saveNewMakerIfNeeded(selectId, inputId) {
   if (!db.makers) db.makers = [];
   // 同名が既にあれば追加しない
   if (!db.makers.find(m => m.name === name)) {
-    const newMaker = { id: db.nextMakerId++, name, active: true };
-    db.makers.push(newMaker);
-    await apiPost('saveMaker', newMaker);
+    const response = await apiPost('saveMaker', { name, active: true });
+    const savedMaker = response.result?.maker;
+    if (!savedMaker?.id) throw new Error('CONNECTION_ERROR');
+    db.makers.push(savedMaker);
   }
   return name;
 }
 
 async function submitRegister() {
+  if (registrationSaving) return;
   const labelId = document.getElementById('f-labelid').value.trim().toUpperCase();
   const name = document.getElementById('f-name').value.trim();
   const type = document.getElementById('f-type').value;
@@ -1844,8 +1951,9 @@ async function submitRegister() {
     showToast('このLabelIDはすでに使用されています', 'error'); return;
   }
 
-  showLoading();
+  beginRegistration();
   try {
+    const imageUrls = await uploadPendingImages('reg');
     const maker = await saveNewMakerIfNeeded('f-maker', 'f-maker-new');
 
     const newDevice = {
@@ -1857,15 +1965,17 @@ async function submitRegister() {
       createdAt: today(),
     };
 
-    const imageUrls = await uploadPendingImages('reg');
     if (imageUrls[0]) newDevice.imageUrl  = imageUrls[0];
     if (imageUrls[1]) newDevice.imageUrl2 = imageUrls[1];
     if (imageUrls[2]) newDevice.imageUrl3 = imageUrls[2];
 
     // saveDevice + assignLabel を1回のGASコールで処理（通信往復を削減）
     const result = await apiPost('registerDevice', { device: newDevice, labelId });
-    const serverDevice = result?.result?.device || newDevice;
-    db.devices.push(serverDevice);
+    const serverDevice = result.result?.device;
+    if (!serverDevice?.id) throw new Error('CONNECTION_ERROR');
+    if (!db.devices.some(device => String(device.id) === String(serverDevice.id))) db.devices.push(serverDevice);
+    const label = db.labels.find(item => item.labelId === labelId);
+    if (label) Object.assign(label, { status: '割当済', deviceId: serverDevice.id });
     pendingImages['reg'] = [null, null, null];
     saveDBCache();
     showToast('商品を登録しました ✓', 'success');
@@ -1874,8 +1984,9 @@ async function submitRegister() {
     viewStack = [];
     navigate('deviceDetail', { deviceId: serverDevice.id });
   } catch(e) {
+    showRegistrationError(e);
   } finally {
-    hideLoading();
+    endRegistration();
   }
 }
 
@@ -1883,9 +1994,6 @@ async function submitRegister() {
 function renderEditDevice() {
   const device = db.devices.find(d => d.id === viewData.deviceId);
   if (!device) return '<div class="content"><p>商品が見つかりません</p></div>';
-  // 編集フォーム表示時に画像スロット状態をリセット
-  pendingImages['edit'] = [null, null, null];
-  clearedSlots['edit'] = {};
   const isMaker = device.type === 'メーカー借入';
   return `
   <div class="header">
@@ -1938,6 +2046,7 @@ function renderEditDevice() {
       <div class="form-label">画像 <span style="color:var(--text-sub);font-weight:400;">(最大3枚)</span></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">${renderImageSlots('edit', [device.imageUrl||null, device.imageUrl2||null, device.imageUrl3||null])}</div>
     </div>
+    <p id="registration-error" role="alert"></p>
     <button class="btn btn-primary" onclick="submitEditDevice(${htmlNumber(device.id)})">保存する</button>
   </div>`;
 }
@@ -1968,36 +2077,39 @@ function selectTypeEdit(type) {
 }
 
 async function submitEditDevice(deviceId) {
+  if (registrationSaving) return;
   const name = document.getElementById('f-edit-name').value.trim();
   const type = document.getElementById('f-edit-type').value;
   const makerDue = document.getElementById('f-edit-maker-due').value;
   const notes = document.getElementById('f-edit-notes').value.trim();
   if (!name) { showToast('商品名を入力してください', 'error'); return; }
-  const device = db.devices.find(d => d.id === deviceId);
-  showLoading();
+  const target = db.devices.find(d => d.id === deviceId);
+  if (!target) { showRegistrationError(new Error('NOT_FOUND')); return; }
+  const device = { ...target };
+  beginRegistration();
   try {
+    const imageUrls = await uploadPendingImages('edit');
     const maker = await saveNewMakerIfNeeded('f-edit-maker', 'f-edit-maker-new');
     device.name = name;
     device.type = type;
     device.maker = maker;
     device.makerReturnDueDate = type === 'メーカー借入' ? (makerDue || null) : null;
     device.notes = notes;
-    const imageUrls = await uploadPendingImages('edit');
     const urlKeys = ['imageUrl', 'imageUrl2', 'imageUrl3'];
     const cleared  = clearedSlots['edit'] || {};
     urlKeys.forEach((key, i) => {
       if (imageUrls[i])   device[key] = imageUrls[i];
       else if (cleared[i]) device[key] = null;
     });
-    pendingImages['edit'] = [null, null, null];
-    clearedSlots['edit']  = {};
     await apiPost('saveDevice', device);
+    Object.assign(target, device);
+    saveDBCache();
     showToast('更新しました ✓', 'success');
     goBack();
   } catch(e) {
-    showToast('エラーが発生しました', 'error');
+    showRegistrationError(e);
   } finally {
-    hideLoading();
+    endRegistration();
   }
 }
 
@@ -2701,11 +2813,12 @@ function afterRender() {
   }
 }
 
-async function initBarcodeDetector() {
+async function initBarcodeDetector(video) {
   // iOS17+ / Chrome83+ のネイティブQR検出APIを初期化
   try {
     if ('BarcodeDetector' in window) {
       const formats = await BarcodeDetector.getSupportedFormats();
+      if (!video.isConnected || !scannerActive) return;
       if (formats.includes('qr_code')) {
         barcodeDetector = new BarcodeDetector({ formats: ['qr_code'] });
         dbgLog('BarcodeDetector: ネイティブAPI使用（推奨）');
@@ -2723,51 +2836,58 @@ async function initBarcodeDetector() {
   }
 }
 
-function startScanner() {
+async function startScanner() {
   const video = document.getElementById('qr-video');
   if (!video) { dbgLog('ERROR: video要素が見つかりません'); return; }
   dbgLog(`startScanner UA=${navigator.userAgent.slice(0,50)}`);
 
   const constraints = { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } };
 
-  navigator.mediaDevices.getUserMedia(constraints)
-    .catch(err => {
-      dbgLog(`getUserMedia失敗: ${err.name} → フォールバック`);
-      return navigator.mediaDevices.getUserMedia({ video: true });
-    })
-    .then(async stream => {
-      const track = stream.getVideoTracks()[0];
-      const s = track ? track.getSettings() : {};
-      dbgLog(`カメラOK: ${s.width}x${s.height} facing=${s.facingMode||'不明'}`);
-      scannerStream = stream;
-      video.srcObject = stream;
-      video.setAttribute('playsinline', 'true');
-      video.setAttribute('muted', 'true');
-      scannerActive = true;
-      await initBarcodeDetector();
-      await video.play();
-      dbgLog(`video再生開始 size=${video.videoWidth}x${video.videoHeight}`);
-      // video準備完了を待ってスキャン開始
-      waitForVideoAndScan(video);
-    })
-    .catch(err => {
-      dbgLog(`ERROR カメラ失敗: ${err.name}: ${err.message}`);
-      const wrap = document.querySelector('.scanner-wrap');
-      if (wrap) wrap.innerHTML = `<div style="color:white;padding:40px;text-align:center;font-size:14px;">カメラを使用できません。<br>LabelIDを直接入力してください。</div>`;
-    });
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error('カメラ未対応');
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (e) {
+      if (!video.isConnected) return;
+      if (!['OverconstrainedError', 'NotFoundError'].includes(e.name)) throw e;
+      stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    }
+    // 許可ダイアログを閉じる前に手入力で進んだ場合、前の画面のカメラを止める。
+    if (!video.isConnected) {
+      stream.getTracks().forEach(track => track.stop());
+      return;
+    }
+    scannerStream = stream;
+    video.srcObject = stream;
+    scannerActive = true;
+    await initBarcodeDetector(video);
+    if (!video.isConnected || !scannerActive) return;
+    await video.play();
+    waitForVideoAndScan(video);
+  } catch (err) {
+    if (video.isConnected) showScannerFallback(video);
+  }
+}
+
+function showScannerFallback(video) {
+  const wrap = video.closest('.scanner-wrap');
+  if (!wrap) return;
+  stopScanner();
+  wrap.innerHTML = '<div style="color:white;padding:40px;text-align:center;font-size:14px;">カメラを使用できません。<br>LabelIDを直接入力してください。</div>';
 }
 
 function waitForVideoAndScan(video) {
   // videoWidth が確定するまで最大3秒待つ
   let tries = 0;
   function check() {
-    if (!scannerActive) return;
+    if (!scannerActive || !video.isConnected) return;
     if (video.videoWidth > 0 && video.readyState >= 2) {
       dbgLog(`スキャン開始 video=${video.videoWidth}x${video.videoHeight}`);
       scanTick(video);
     } else {
       tries++;
-      if (tries > 30) { dbgLog('ERROR: video準備タイムアウト(3秒)'); return; }
+      if (tries > 30) { showScannerFallback(video); return; }
       if (tries % 5 === 1) dbgLog(`video待機 readyState=${video.readyState} size=${video.videoWidth}x${video.videoHeight}`);
       setTimeout(check, 100);
     }
@@ -2776,13 +2896,14 @@ function waitForVideoAndScan(video) {
 }
 
 async function scanTick(video) {
-  if (!scannerActive) return;
+  if (!scannerActive || !video.isConnected) return;
 
   let detected = false;
   try {
     if (barcodeDetector) {
       // ── ネイティブ BarcodeDetector（iOS17+）──
       const barcodes = await barcodeDetector.detect(video);
+      if (!scannerActive || !video.isConnected) return;
       if (barcodes.length > 0) {
         dbgLog(`QR検出(BD): ${barcodes[0].rawValue}`);
         detected = true;
@@ -2856,37 +2977,73 @@ function safeImageUrl(value) {
   const text = String(value || '').trim();
   return /^(https:\/\/|data:image\/(png|jpeg|gif|webp);base64,)/i.test(text) ? text : '';
 }
+function loanPendingKey(deviceId, type) {
+  return 'lending_pending_' + currentUser.user_id + '_' + deviceId + '_' + type;
+}
+
+function readPendingLoan(key) {
+  if (pendingLoanRequests.has(key)) return pendingLoanRequests.get(key);
+  try {
+    const pending = JSON.parse(sessionStorage.getItem(key) || 'null');
+    if (pending?.requestId && pending.loan && pending.device) return pending;
+  } catch (e) {}
+  return null;
+}
+
+function clearPendingLoan(key) {
+  pendingLoanRequests.delete(key);
+  try { sessionStorage.removeItem(key); } catch (e) {}
+}
+
 async function saveLoanOperation_(device, loan) {
-  const key = 'lending_pending_' + currentUser.user_id + '_' + device.id + '_' + loan.type;
-  let pending;
-  try { pending = JSON.parse(sessionStorage.getItem(key) || 'null'); } catch (e) {}
+  const key = loanPendingKey(device.id, loan.type);
+  let pending = readPendingLoan(key);
   const intent = function(value) {
     return JSON.stringify(['deviceId','type','loanTo','salesRep','date','returnDueDate','notes'].map(k => String(value[k] || '')));
   };
   if (pending && intent(pending.loan) !== intent(loan)) throw new Error('前回の保存結果が未確認です。再読み込みして貸出履歴を確認してください。');
   if (!pending) {
+    const imageUrl = loan.type === '貸出' ? await uploadPendingImage('loan') : null;
+    const target = { id: device.id };
+    if (imageUrl) {
+      target.imageUrl = imageUrl;
+      loan.imageUrl = imageUrl;
+    }
     const rid = crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2);
-    pending = {requestId: rid, device: device, loan: loan};
-    sessionStorage.setItem(key, JSON.stringify(pending));
+    pending = {requestId: rid, device: target, loan: loan};
+    pendingLoanRequests.set(key, pending);
+    // Safariでストレージ書き込みが制限されても、画面を閉じるまでは同じIDで送れる。
+    try { sessionStorage.setItem(key, JSON.stringify(pending)); } catch (e) {}
   }
-  const response = await apiPost('saveLoanTransaction', pending);
+  let response;
+  try {
+    response = await apiPost('saveLoanTransaction', pending);
+  } catch (e) {
+    // サーバーが登録を拒否した場合は入力修正を許可し、通信断やタイムアウト時は同じIDを保持する。
+    if (['INVALID_REQUEST', 'STATE_CONFLICT', 'NOT_FOUND', 'REQUEST_CONFLICT', 'SCHEMA_MISMATCH', 'FORBIDDEN'].includes(e.message)) {
+      clearPendingLoan(key);
+    }
+    throw e;
+  }
   const result = response.result;
+  if (!result?.device?.id || result.loan?.id !== pending.requestId) throw new Error('CONNECTION_ERROR');
   // 保存成功を確認してから、画面とキャッシュを更新する。
   const index = db.devices.findIndex(d => String(d.id) === String(result.device.id));
   if (index >= 0) db.devices[index] = result.device;
   if (!db.loans.some(l => String(l.id) === String(result.loan.id))) db.loans.push(result.loan);
-  sessionStorage.removeItem(key);
+  clearPendingLoan(key);
   return response;
 }
 function recoverPendingLoans_() {
   const prefix = 'lending_pending_' + currentUser.user_id + '_';
-  for (let i = sessionStorage.length - 1; i >= 0; i--) {
-    const key = sessionStorage.key(i);
+  const keys = new Set(pendingLoanRequests.keys());
+  try {
+    for (let i = 0; i < sessionStorage.length; i++) keys.add(sessionStorage.key(i));
+  } catch (e) {}
+  for (const key of keys) {
     if (!key || !key.startsWith(prefix)) continue;
-    try {
-      const pending = JSON.parse(sessionStorage.getItem(key));
-      if (pending && db.loans.some(l => String(l.id) === pending.requestId)) sessionStorage.removeItem(key);
-    } catch (e) {}
+    const pending = readPendingLoan(key);
+    if (pending && db.loans.some(l => String(l.id) === pending.requestId)) clearPendingLoan(key);
   }
 }
 </script>

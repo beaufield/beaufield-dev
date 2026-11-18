@@ -2,7 +2,7 @@
 // ビューフィールド 貸出管理アプリ — バックエンド
 // ============================================================
 
-const VERSION  = 'v1.13.0';
+const VERSION  = 'v1.13.1';
 const SHEET_ID      = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
 const AUTH_SHEET_ID = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID');
 // SHEET_ID / AUTH_SHEET_ID / LINEWORKS_WEBHOOK はスクリプトプロパティで管理
@@ -174,16 +174,70 @@ function getSheet(name) {
   });
 }
 
-// ─── 商品登録トランザクション（saveDevice + assignLabel を1回で処理） ─
-// フロントエンドから1回のリクエストで完結させ、通信往復を削減する
+// ─── 商品登録トランザクション（機器とラベルを一緒に保存） ───────
 function registerDevice(data) {
-  const savedResult = saveDevice(data.device);
-  const savedDevice = savedResult.device;
-  if (data.labelId) {
-    assignLabel({ labelId: data.labelId, deviceId: savedDevice.id });
-    savedDevice.labelId = data.labelId; // labelIdを確実に返す
+  const input = data && data.device;
+  const labelId = String(data && data.labelId || '').trim().toUpperCase();
+  const name = String(input && input.name || '').trim();
+  if (!input || !labelId || !name || String(input.labelId || '').trim().toUpperCase() !== labelId) {
+    return { success: false, error: 'INVALID_REQUEST' };
   }
-  return { success: true, device: savedDevice };
+
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(10000); } catch (e) { return { success: false, error: 'BUSY' }; }
+  try {
+    const devSheet = ss.getSheetByName('DeviceMaster');
+    const labelSheet = ss.getSheetByName('LabelPool');
+    const devRows = devSheet.getDataRange().getValues();
+    const labelRows = labelSheet.getDataRange().getValues();
+    const devHeaders = devRows[0].map(h => String(h).trim());
+    const labelHeaders = labelRows[0].map(h => String(h).trim());
+    const fields = ['name', 'type', 'maker', 'notes', 'makerReturnDueDate', 'imageUrl', 'imageUrl2', 'imageUrl3'];
+    if (!['id', 'labelId', 'name', 'type', 'status'].every(h => devHeaders.includes(h)) ||
+        !['labelId', 'status', 'assignedAt', 'deviceId'].every(h => labelHeaders.includes(h)) ||
+        fields.some(h => input[h] && !devHeaders.includes(h))) {
+      return { success: false, error: 'SCHEMA_MISMATCH' };
+    }
+    const devIdCol = devHeaders.indexOf('id');
+    const deviceLabelCol = devHeaders.indexOf('labelId');
+    const labelIdCol = labelHeaders.indexOf('labelId');
+    const statusCol = labelHeaders.indexOf('status');
+    const assignedDeviceCol = labelHeaders.indexOf('deviceId');
+    const labelIndex = labelRows.findIndex((row, i) => i > 0 && String(row[labelIdCol]).trim().toUpperCase() === labelId);
+    const existingRow = devRows.find((row, i) => i > 0 && String(row[deviceLabelCol]).trim().toUpperCase() === labelId);
+    const label = labelRows[labelIndex];
+    if (existingRow && label && label[statusCol] === '割当済' && String(label[assignedDeviceCol]) === String(existingRow[devIdCol])) {
+      // 応答が途切れた場合、同じラベルと入力内容なら保存済みの行を返す。
+      const device = {};
+      devHeaders.forEach((h, i) => {
+        const value = existingRow[i];
+        device[h] = value instanceof Date ? Utilities.formatDate(value, 'Asia/Tokyo', 'yyyy-MM-dd') : value;
+      });
+      if (fields.every(h => String(device[h] || '') === String(input[h] || ''))) {
+        return { success: true, replayed: true, device: device };
+      }
+    }
+    if (existingRow || !label || label[statusCol] !== '印刷済' || label[assignedDeviceCol]) {
+      return { success: false, error: 'LABEL_UNAVAILABLE' };
+    }
+
+    const ids = new Set(devRows.slice(1).map(row => String(row[devIdCol])));
+    let id = Date.now();
+    while (ids.has(String(id))) id++;
+    const date = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+    const device = Object.assign({}, input, { id: id, name: name, labelId: labelId, status: '社内', createdAt: date, updatedAt: date });
+    const assignments = { status: '割当済', assignedAt: date, deviceId: id };
+    const requests = Object.keys(assignments).map(function(field) {
+      const col = labelHeaders.indexOf(field);
+      return {updateCells: {range: {sheetId: labelSheet.getSheetId(), startRowIndex: labelIndex,
+        endRowIndex: labelIndex + 1, startColumnIndex: col, endColumnIndex: col + 1},
+        rows: [{values: [lendingCell_(assignments[field])]}], fields: 'userEnteredValue'}};
+    });
+    requests.push({appendCells: {sheetId: devSheet.getSheetId(),
+      rows: [{values: devHeaders.map(h => lendingCell_(device[h]))}], fields: 'userEnteredValue'}});
+    if (!applyLendingBatch_(requests)) return {success: false, error: 'WRITE_FAILED'};
+    return { success: true, device: device };
+  } finally { lock.releaseLock(); }
 }
 
 // ─── 貸出/返却トランザクション（saveDevice + saveLoan を1回で処理） ─
@@ -258,15 +312,21 @@ function saveLoanTransaction(data, auth) {
       rows: [{values: loanHeaders.map(function(h) { return lendingCell_(loan[h]); })}], fields: 'userEnteredValue'}});
     // マスターの貸出項目と履歴を、一つのSheets API batchUpdateで原子的に確定する。
     // API・権限が未設定なら更新は行われない。配備前に隔離シートで接続条件を確認する。
-    const response = UrlFetchApp.fetch('https://sheets.googleapis.com/v4/spreadsheets/' + SHEET_ID + ':batchUpdate', {
-      method: 'post', contentType: 'application/json',
-      headers: {Authorization: 'Bearer ' + ScriptApp.getOAuthToken()},
-      payload: JSON.stringify({requests: requests}), muteHttpExceptions: true
-    });
-    if (response.getResponseCode() !== 200) return {success: false, error: 'WRITE_FAILED'};
+    if (!applyLendingBatch_(requests)) return {success: false, error: 'WRITE_FAILED'};
     const savedDevice = Object.assign({}, device, changes);
     return {success: true, device: savedDevice, loan: loan, notifyText: lendingNotice_(loan)};
   } finally { lock.releaseLock(); }
+}
+
+function applyLendingBatch_(requests) {
+  const response = UrlFetchApp.fetch('https://sheets.googleapis.com/v4/spreadsheets/' + SHEET_ID + ':batchUpdate', {
+    method: 'post', contentType: 'application/json',
+    headers: {Authorization: 'Bearer ' + ScriptApp.getOAuthToken()},
+    payload: JSON.stringify({requests: requests}), muteHttpExceptions: true
+  });
+  const status = response.getResponseCode();
+  if (status !== 200) Logger.log('貸出管理 Sheets batchUpdate HTTP ' + status);
+  return status === 200;
 }
 
 // ─── 商品マスタ保存 ──────────────────────────────────────────
