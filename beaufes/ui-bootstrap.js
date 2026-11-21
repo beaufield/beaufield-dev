@@ -2,6 +2,8 @@
 (function(){
  'use strict';
  const config=window.BF_EVENT_CANDIDATE_CONFIG||{};
+ // 日本語コメント: data-staff-readonly="true" を付けた社員の閲覧画面だけ、終了後の閲覧専用モードでも開く。
+ const staffReadonlyPage=document.currentScript?.dataset?.staffReadonly==='true';
  const endpoint=typeof config.endpoint==='string'&&config.environment==='production-candidate'&&config.releaseEnabled===true&&config.eventId==='beaufes2026'&&config.endpoint==='https://ovblkjxlbmnehgkpmyrd.supabase.co/functions/v1/beaufes-event'&&typeof config.eventId==='string'&&config.eventId.trim()&&typeof config.backendGeneration==='string'&&config.backendGeneration.trim()?config.endpoint:'';
  const target=new URL(endpoint||'./__backend_not_configured__',location.href).href;
  const nativeFetch=window.fetch.bind(window);
@@ -17,6 +19,7 @@
 let releaseLayer=null,releaseOpen=false;
 const showReleaseState=state=>{
  if(state==='ready'){releaseOpen=true;releaseLayer?.remove();banner.textContent='ビューフェス2026';return;}
+ if(state==='readonly'){releaseOpen=true;releaseLayer?.remove();banner.textContent='ビューフェス2026（終了後の閲覧専用：登録・変更はできません）';return;}
  if(!releaseLayer){
   releaseLayer=document.createElement('div');releaseLayer.setAttribute('role','status');releaseLayer.setAttribute('aria-live','polite');
   releaseLayer.style.cssText='position:fixed;inset:0;z-index:30000;background:#f4f8f8;color:#173b49;display:flex;align-items:center;justify-content:center;padding:28px;font:16px/1.9 sans-serif;text-align:center';
@@ -35,7 +38,7 @@ const showReleaseState=state=>{
  }
 };
 
- const releaseGate=endpoint?import('./production-release-gate.mjs?b=383c6f228909').then(({waitForProductionRelease})=>waitForProductionRelease({endpoint:target,fetchImpl:nativeFetch,onState:showReleaseState})):Promise.resolve(true);
+ const releaseGate=endpoint?import('./production-release-gate.mjs?b=0b7487ae3083').then(({waitForProductionRelease})=>waitForProductionRelease({endpoint:target,fetchImpl:nativeFetch,onState:showReleaseState,allowStaffReadonly:staffReadonlyPage})):Promise.resolve(true);
  const ready=releaseGate.then(open=>{if(!open)throw Error('切替完了を確認できません。もう一度開いてください。');return Promise.all([import('./client.mjs'),import('./portal-auth.mjs')]);}).then(async([{createClient},{createPortalStaffProvider}])=>{
   let portalProvider=false;
   if(!staffProvider&&config.authSource==='portal'&&endpoint&&config.portalUrl){
