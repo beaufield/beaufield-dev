@@ -10,7 +10,7 @@
 
 // スクリプトプロパティから機密値を取得（コードへの直書き禁止）
 const _PROPS        = PropertiesService.getScriptProperties();
-const VERSION       = 'v1.14.2';
+const VERSION       = 'v1.15.0';
 // ポータル画面（GitHub Pages）のURL。旧HTML向けの更新案内タイルのリンク先に使う。
 const PORTAL_URL    = 'https://beaufield.github.io/beaufield-dev/';
 const AUTH_SHEET_ID = _PROPS.getProperty('AUTH_SHEET_ID');
@@ -597,6 +597,22 @@ function changePin(data) {
     return { success: false, message: 'セッションが無効です。再ログインしてください' };
   }
 
+  // ── ロックアウト（v1.15.0〜・2026-11-06レビューS3後半）──────────────
+  // ログインと同じ失敗回数（lockout_<user_id>）を共有する。PIN変更の画面から
+  // 現在PINを総当たりしてログインのロックを回避できないようにするため。
+  const props    = PropertiesService.getScriptProperties();
+  const lockKey  = 'lockout_' + userId;
+  const lockData = _readLockData(props, lockKey);
+  const now      = Date.now();
+  if (lockData.until > now) {
+    return {
+      success: false,
+      message: 'PINの誤入力が続いたためロックしています。' + _formatWait(lockData.until - now) +
+               '後に再試行してください。急ぎの場合は管理者にPINリセットを依頼してください。'
+    };
+  }
+  // ─────────────────────────────────────────────────────────
+
   // 現在のPINと照合してから更新
   const sh            = ss.getSheetByName('users');
   const rows          = sh.getDataRange().getValues();
@@ -609,8 +625,34 @@ function changePin(data) {
         return { success: false, message: 'セッションが無効です。再ログインしてください' };
       }
       if (String(rows[i][2]).padStart(4, '0') !== currentPinStr) {
-        return { success: false, message: '現在のPINが正しくありません' };
+        // 現在PIN不一致 → ログインと同じ数え方で失敗を記録する（ロック明けでも0に戻さない）
+        _countGlobalFailure();
+        lockData.fails = lockData.fails + 1;
+        if (lockData.fails % MAX_ATTEMPTS === 0) {
+          const lockMinutes = _lockMinutesFor(lockData.fails);
+          lockData.until = now + lockMinutes * 60 * 1000;
+          props.setProperty(lockKey, JSON.stringify(lockData));
+          // 通行証が盗まれている場合に備え、ロックと同時に本人の全セッションを失効させる。
+          _deleteUserSessions(ss, userId);
+          _sendLoginAlert(
+            '🔒 ポータル: PIN変更画面での誤入力によるロック\n' +
+            '対象: ' + String(rows[i][1]) + '（' + userId + '）\n' +
+            '連続失敗: ' + lockData.fails + '回 → ' + _formatWait(lockMinutes * 60 * 1000) + 'ロック・全端末ログアウト\n' +
+            '本人の入力ミスでなければ、通行証の不正利用の可能性があります。'
+          );
+          return {
+            success: false,
+            message: 'PINの誤入力が続いたため' + _formatWait(lockMinutes * 60 * 1000) + 'ロックし、ログアウトしました。' +
+                     '急ぎの場合は管理者にPINリセットを依頼してください。',
+            reauth_required: true
+          };
+        }
+        props.setProperty(lockKey, JSON.stringify(lockData));
+        const left = MAX_ATTEMPTS - (lockData.fails % MAX_ATTEMPTS);
+        return { success: false, message: '現在のPINが正しくありません（あと' + left + '回でロック）' };
       }
+      // 照合成功 → 失敗回数をリセット（ログイン成功時と同じ扱い）
+      props.deleteProperty(lockKey);
       sh.getRange(i + 1, 3).setValue(newPinStr);
       // PIN変更後は旧PINで発行済みの全セッションを失効させる。
       _deleteUserSessions(ss, userId);
