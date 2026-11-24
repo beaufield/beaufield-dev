@@ -653,7 +653,7 @@
 
 <script>
 // ========== APP VERSION ==========
-const APP_VERSION = 'v1.15.2';
+const APP_VERSION = 'v1.15.3';
 const PORTAL_URL  = 'https://beaufield.github.io/beaufield-dev/';
 
 // ========== DATA STORE ==========
@@ -696,8 +696,24 @@ async function apiGet() {
 // 通行証は消さない。GASの通信失敗で誤ってSESSION_INVALIDになったときに、
 // 全アプリからログアウトさせないため（本当に無効ならポータル側で判定される）。
 function _handleSessionInvalid() {
+  // 入力途中の画面では案内画面に切り替えない（入力と写真を消さない）。
+  // フォーム内にエラーを出し、ポータルで入り直した後に同じ画面から再度押せるようにする。
+  if (isEditingNow_()) return;
   currentUser = null;
   render();
+}
+
+// 入力フォーム・確認ダイアログ・送信中は、画面の作り直しで入力を消さない。
+const FORM_VIEWS = new Set(['loanForm', 'returnForm', 'registerForm', 'editDevice', 'scanner']);
+function isEditingNow_() {
+  return registrationSaving || FORM_VIEWS.has(currentView) || !!document.getElementById('form-modal-overlay');
+}
+
+// 送信前にこの端末の通行証の期限を確かめる。切れていれば通信せずに案内する。
+function ensureSessionForSave_() {
+  if (_getBfSession()) return true;
+  showRegistrationError(new Error('SESSION_INVALID'));
+  return false;
 }
 
 async function apiPost(action, data) {
@@ -729,7 +745,7 @@ async function apiPost(action, data) {
     clearTimeout(timeout);
   }
 
-  // セッション無効の場合はポータルへの案内画面へ
+  // セッション無効の場合はポータルへの案内画面へ（入力中の画面ではフォーム内で案内する）
   if (json && json.error === 'SESSION_INVALID') {
     _handleSessionInvalid();
     throw new Error('SESSION_INVALID');
@@ -801,29 +817,126 @@ function saveDBCache() {
   try { localStorage.setItem(DB_CACHE_KEY, JSON.stringify(db)); } catch(e) {}
 }
 
+// シートの手入力などで型が揺れても、画面の比較・検索・並べ替えが壊れないように整える。
+function normalizeDB_(data) {
+  const src = data || {};
+  const text = v => v == null ? '' : String(v);
+  const numId = v => (typeof v === 'string' && /^\d{1,15}$/.test(v.trim())) ? Number(v.trim()) : v;
+  const devices = (Array.isArray(src.devices) ? src.devices : []).map(d => Object.assign({}, d, {
+    id: numId(d.id),
+    name: text(d.name),
+    labelId: text(d.labelId).trim(),
+    status: text(d.status).trim(),
+    type: text(d.type).trim(),
+    maker: text(d.maker),
+    loanTo: text(d.loanTo),
+    salesRep: text(d.salesRep),
+    loanDate: text(d.loanDate),
+    returnDueDate: text(d.returnDueDate).trim().replace(/\//g, '-'),
+    makerReturnDueDate: text(d.makerReturnDueDate).trim().replace(/\//g, '-'),
+  }));
+  const loans = (Array.isArray(src.loans) ? src.loans : []).map(l => Object.assign({}, l, {
+    deviceId: numId(l.deviceId),
+    type: text(l.type).trim(),
+    date: text(l.date),
+    loanTo: text(l.loanTo),
+    salesRep: text(l.salesRep),
+    returnDueDate: text(l.returnDueDate),
+  }));
+  const list = v => Array.isArray(v) ? v : [];
+  return Object.assign({}, src, {
+    devices, loans,
+    salesReps: list(src.salesReps), makers: list(src.makers), labels: list(src.labels),
+  });
+}
+
+let lastDBLoadAt = 0;      // 最後にサーバーから全データを取れた時刻
+let dbWriteSeq = 0;        // 登録・編集で画面側のデータを書き換えた回数
+let dbRefreshing = null;   // 実行中の再読み込み（重複実行しない）
+const DB_STALE_MS = 2 * 60 * 1000;
+
+function lastLoadText_() {
+  if (!lastDBLoadAt) return '未取得';
+  const d = new Date(lastDBLoadAt);
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+// 画面の作り直しでスクロール位置が先頭に戻らないようにする。
+function rerenderKeepScroll_() {
+  const y = window.scrollY;
+  render();
+  window.scrollTo(0, y);
+}
+
+// 最新データの再取得。入力中の画面は作り直さず、データだけ入れ替える。
+// opts.manual: ボタンから押したとき（結果を必ず表示する）
+function refreshDB(opts = {}) {
+  if (dbRefreshing) return dbRefreshing;
+  const seq = dbWriteSeq;
+  dbRefreshing = (async () => {
+    if (opts.manual) showLoading();
+    try {
+      const data = await apiGet();
+      // 取得中に登録が完了した場合、その前の古い一覧で上書きしない。
+      if (seq !== dbWriteSeq || registrationSaving) return false;
+      db = normalizeDB_(data);
+      lastDBLoadAt = Date.now();
+      recoverPendingLoans_();
+      saveDBCache();
+      if (!currentUser) return true;
+      if (!isEditingNow_()) rerenderKeepScroll_();
+      if (opts.manual) showToast('最新の情報に更新しました', 'success');
+      return true;
+    } catch (e) {
+      if (opts.manual && e.message !== 'SESSION_INVALID') {
+        showToast('最新の情報を取得できませんでした。通信を確認してもう一度お試しください', 'error');
+      }
+      return false;
+    } finally {
+      if (opts.manual) hideLoading();
+      dbRefreshing = null;
+    }
+  })();
+  return dbRefreshing;
+}
+
 async function loadDB() {
   // キャッシュがあれば即レンダリング（体感速度を上げる）
   let cached;
   try { cached = localStorage.getItem(DB_CACHE_KEY); } catch (e) {}
   if (cached) {
-    try { db = JSON.parse(cached); render(); } catch(e) {}
+    try { db = normalizeDB_(JSON.parse(cached)); render(); } catch(e) { cached = null; }
   }
   showLoading();
   try {
     const data = await apiGet();
-    db = data;
+    db = normalizeDB_(data);
+    lastDBLoadAt = Date.now();
     recoverPendingLoans_();
     saveDBCache();
     render();
   } catch(e) {
     // 認証切れはポータル案内画面を出しているので、通信エラーの表示は重ねない。
     if (e && e.message === 'SESSION_INVALID') return;
-    if (!cached) showToast('通信エラーが発生しました', 'error');
-    if (!cached) render();
+    // 前回の保存データで表示している場合も、古い可能性があることを必ず伝える。
+    showToast(cached
+      ? '最新の情報を取得できませんでした。表示が古い可能性があります（ホームの「更新」で再取得できます）'
+      : '通信エラーが発生しました。ホームの「更新」で再取得してください', 'error');
+    render();
   } finally {
     hideLoading();
   }
 }
+
+// iPhoneではタブやホーム画面アプリが何日も開いたままになる。
+// 画面に戻ってきたとき、一定時間たっていれば最新データを取り直す。
+function refreshIfStale_() {
+  if (!currentUser || document.visibilityState === 'hidden') return;
+  if (Date.now() - lastDBLoadAt < DB_STALE_MS) return;
+  refreshDB();
+}
+document.addEventListener('visibilitychange', refreshIfStale_);
+window.addEventListener('pageshow', e => { if (e.persisted) refreshIfStale_(); });
 
 async function saveDB() {
   try {
@@ -918,33 +1031,84 @@ let clearedSlots  = {}; // edit用: { 0:true, 1:true, 2:true } 削除済みス�
 let registrationSaving = false;
 const pendingLoanRequests = new Map();
 
+// 最新の状態と食い違って拒否されたときは、一覧を自動で取り直す。
+const REFRESH_ON_ERROR = new Set(['STATE_CONFLICT', 'NOT_FOUND', 'LABEL_UNAVAILABLE', 'REQUEST_CONFLICT']);
+
 function showRegistrationError(error) {
-  const code = error.message;
-  if (code === 'SESSION_INVALID') return;
+  const code = error && error.message;
   const messages = {
-    FORBIDDEN: '商品やラベルの登録・編集には管理権限が必要です。貸出と返却は営業権限で操作できます。',
+    SESSION_INVALID: 'ログインを確認できませんでした。入力内容はこのまま残っています。もう一度押しても同じ場合は、下の「ポータルでログイン」から入り直し、この画面に戻って再度押してください。',
+    AUTH_UNAVAILABLE: 'ログイン確認の通信が一時的に失敗しました。入力内容はこのまま残っています。少し待ってもう一度押してください。',
+    FORBIDDEN: 'この操作には管理権限が必要です（既存商品の編集・廃棄・メーカー返却、ラベル管理など）。新規商品の登録・貸出・返却は営業権限で操作できます。',
     TIMEOUT: '登録結果を確認できませんでした。通信が戻ったら同じ内容で再試行してください。',
     CONNECTION_ERROR: '登録結果を確認できませんでした。通信を確認して同じ内容で再試行してください。',
-    STATE_CONFLICT: '機器の現在の状態では登録できません。一覧を再読み込みして確認してください。',
-    LABEL_UNAVAILABLE: 'このラベルは使用できません。一覧を再読み込みして印刷済みのラベルを確認してください。',
+    STATE_CONFLICT: 'ほかの方の操作などで、機器の状態が変わっていたため登録できませんでした。最新の状態を読み込みます。',
+    LABEL_UNAVAILABLE: 'このラベルは使用済みか、まだ使えない状態です。最新のラベル一覧を読み込みます。',
     BUSY: '別の登録を処理中です。少し待ってもう一度押してください。',
     INVALID_REQUEST: '入力内容を確認してください。日付や必須項目に誤りがないか確認できます。',
-    NOT_FOUND: '対象の機器が見つかりません。一覧を再読み込みしてください。',
-    REQUEST_CONFLICT: '前回の登録内容と一致しません。貸出履歴を再読み込みして確認してください。',
+    NOT_FOUND: '対象の機器が見つかりません。最新の一覧を読み込みます。',
+    REQUEST_CONFLICT: '前回の登録内容と一致しません。最新の貸出履歴を読み込みます。入力を確認してもう一度押してください。',
     WRITE_FAILED: 'サーバーで登録結果を確認できませんでした。再試行しても続く場合は管理者に連絡してください。',
     INTERNAL_ERROR: 'サーバーで処理できませんでした。再試行しても続く場合は管理者に連絡してください。',
     SCHEMA_MISMATCH: '登録先の設定に問題があります。管理者に連絡してください。',
   };
-  const message = messages[code] || code;
+  if (/^HTTP_\d+$/.test(String(code))) {
+    messages[code] = 'サーバーが一時的に応答しませんでした（' + code + '）。入力内容はこのまま残っています。少し待ってもう一度押してください。';
+  }
+  const message = messages[code] || code || '登録できませんでした。もう一度お試しください。';
   const status = document.getElementById('registration-error');
   if (status) status.textContent = message;
+  if (code === 'SESSION_INVALID') showPortalLoginButton_();
   showToast(message, 'error');
+  if (REFRESH_ON_ERROR.has(code)) refreshAfterConflict_(code);
+}
+
+// ログイン切れでも入力を消さないため、ポータルは別タブで開く。
+// 同じブラウザでログインし直すと通行証が更新され、この画面からそのまま再送できる。
+function showPortalLoginButton_() {
+  const status = document.getElementById('registration-error');
+  if (!status || document.getElementById('portal-login-btn')) return;
+  const btn = document.createElement('button');
+  btn.id = 'portal-login-btn';
+  btn.type = 'button';
+  btn.className = 'btn btn-outline';
+  btn.style.marginTop = '8px';
+  btn.textContent = 'ポータルでログイン（別タブ）';
+  btn.onclick = () => { window.open(PORTAL_URL, '_blank', 'noopener'); };
+  status.insertAdjacentElement('afterend', btn);
+}
+
+// 状態の食い違いで拒否されたら、最新データを取り直して実際の状態を見せる。
+async function refreshAfterConflict_(code) {
+  if (dbRefreshing) await dbRefreshing;
+  const ok = await refreshDB();
+  if (!ok) return;
+  if ((currentView === 'loanForm' || currentView === 'returnForm') && code !== 'REQUEST_CONFLICT') {
+    // 貸出・返却できない状態だったので、商品詳細で現在の状態（貸出先など）を確認してもらう。
+    const deviceId = viewData.deviceId;
+    viewStack = [];
+    currentView = 'home';
+    viewData = {};
+    if (db.devices.some(d => d.id === deviceId)) navigate('deviceDetail', { deviceId });
+    else render();
+    showToast('最新の状態に更新しました。商品の現在の状態を確認してください', 'warn');
+  } else if (currentView === 'registerForm') {
+    refreshLabelOptions_();
+    showToast('ラベルの一覧を最新にしました。もう一度選んでください', 'warn');
+  } else if (document.getElementById('form-modal-overlay')) {
+    closeFormModal();
+    rerenderKeepScroll_();
+    showToast('最新の状態に更新しました。商品の現在の状態を確認してください', 'warn');
+  }
 }
 
 function beginRegistration() {
   registrationSaving = true;
+  dbWriteSeq++;
   const status = document.getElementById('registration-error');
   if (status) status.textContent = '';
+  const portalBtn = document.getElementById('portal-login-btn');
+  if (portalBtn) portalBtn.remove();
   showLoading();
 }
 
@@ -1081,6 +1245,10 @@ function renderHome() {
     </div>
   </div>
   <div class="content">
+    <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:10px;font-size:12px;color:var(--text-sub);">
+      <span>最終取得 ${htmlEscape(lastLoadText_())}</span>
+      <button class="btn" style="width:auto;padding:6px 12px;font-size:13px;background:#ffffff;border:1px solid var(--border);color:var(--text);" onclick="refreshDB({manual:true})">↻ 更新</button>
+    </div>
     <div class="stats">
       <div class="stat-card warn">
         <div class="stat-num">${htmlEscape(stats.loan)}</div>
@@ -1188,12 +1356,7 @@ function renderHome() {
 }
 
 // ========== DEVICES ==========
-function renderDevices() {
-  const filter = viewData.filter || 'all';
-  const makerFilter = viewData.makerFilter || '';
-  const search = viewData.search || '';
-  const activeDevices = db.devices.filter(d => d.status !== '廃棄' && d.status !== 'メーカー返却済');
-
+function filterDevices_(activeDevices, filter, makerFilter, search) {
   let devices = [...activeDevices];
   if (filter === 'loan') {
     devices = devices.filter(d => d.status === '貸出中');
@@ -1224,41 +1387,14 @@ function renderDevices() {
   }
   if (search) {
     const q = search.toLowerCase();
-    devices = devices.filter(d => d.name.toLowerCase().includes(q) || d.labelId.toLowerCase().includes(q) || (d.loanTo||'').toLowerCase().includes(q) || (d.salesRep||'').toLowerCase().includes(q));
+    devices = devices.filter(d => [d.name, d.labelId, d.loanTo, d.salesRep].some(v => String(v || '').toLowerCase().includes(q)));
   }
 
-  // メーカー別サブフィルター用: 有効なメーカー一覧（商品に紐づくもの）
-  const makerNames = [...new Set(activeDevices.map(d => d.maker).filter(Boolean))].sort();
+  return devices;
+}
 
-  return `
-  <div class="header">
-    <h1>商品一覧</h1>
-    <button class="header-back" onclick="navigate('registerForm', {})">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      商品登録
-    </button>
-  </div>
-  <div class="content">
-    <div class="search-box">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      <input type="search" placeholder="商品名・LabelID・貸出先" value="${htmlEscape(search)}" oninput="viewData.search=this.value;render()">
-    </div>
-    <div class="filter-tabs">
-      <button class="filter-tab ${htmlEscape(filter==='all'?'active':'')}" onclick="viewData.filter='all';viewData.makerFilter='';render()">すべて(${htmlEscape(activeDevices.length)})</button>
-      <button class="filter-tab ${htmlEscape(filter==='loan'?'active':'')}" onclick="viewData.filter='loan';viewData.makerFilter='';render()">貸出中</button>
-      <button class="filter-tab ${htmlEscape(filter==='overdue'?'active':'')}" onclick="viewData.filter='overdue';viewData.makerFilter='';render()">期限超過</button>
-      <button class="filter-tab ${htmlEscape(filter==='soon'?'active':'')}" onclick="viewData.filter='soon';viewData.makerFilter='';render()">もうすぐ期限</button>
-      <button class="filter-tab ${htmlEscape(filter==='nodate'?'active':'')}" onclick="viewData.filter='nodate';viewData.makerFilter='';render()">返却日未定</button>
-      <button class="filter-tab ${htmlEscape(filter==='maker'?'active':'')}" onclick="viewData.filter='maker';viewData.makerFilter='';render()">メーカー借入</button>
-      <button class="filter-tab ${htmlEscape(filter==='in'?'active':'')}" onclick="viewData.filter='in';viewData.makerFilter='';render()">社内</button>
-      <button class="filter-tab ${htmlEscape(filter==='byMaker'?'active':'')}" onclick="viewData.filter='byMaker';viewData.makerFilter='';render()">メーカー別</button>
-    </div>
-    ${filter === 'byMaker' ? `
-    <div class="filter-tabs" style="margin-top:4px;">
-      <button class="filter-tab ${htmlEscape(makerFilter===''?'active':'')}" onclick="viewData.makerFilter='';render()">すべて</button>
-      ${makerNames.map(m => `<button class="filter-tab ${htmlEscape(makerFilter===m?'active':'')}" onclick="viewData.makerFilter=${htmlJsArg(m)};render()">${htmlEscape(m)}</button>`).join('')}
-    </div>` : ''}
-    ${devices.length > 0 ? `
+function deviceListHtml_(devices) {
+  return devices.length > 0 ? `
     <div class="card">
       ${devices.map(d => `
       <div class="device-item" onclick="navigate('deviceDetail', {deviceId:${htmlNumber(d.id)}})">
@@ -1277,9 +1413,62 @@ function renderDevices() {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <p>該当する商品がありません</p>
       </div>
-    </div>`}
+    </div>`;
+}
+
+function renderDevices() {
+  const filter = viewData.filter || 'all';
+  const makerFilter = viewData.makerFilter || '';
+  const search = viewData.search || '';
+  const activeDevices = db.devices.filter(d => d.status !== '廃棄' && d.status !== 'メーカー返却済');
+
+  const devices = filterDevices_(activeDevices, filter, makerFilter, search);
+
+  // メーカー別サブフィルター用: 有効なメーカー一覧（商品に紐づくもの）
+  const makerNames = [...new Set(activeDevices.map(d => d.maker).filter(Boolean))].sort();
+
+  return `
+  <div class="header">
+    <h1>商品一覧</h1>
+    <button class="header-back" onclick="navigate('registerForm', {})">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      商品登録
+    </button>
+  </div>
+  <div class="content">
+    <div class="search-box">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="search" id="device-search" placeholder="商品名・LabelID・貸出先" value="${htmlEscape(search)}" oninput="onDeviceSearch(this, event)" oncompositionend="onDeviceSearch(this, event)">
+    </div>
+    <div class="filter-tabs">
+      <button class="filter-tab ${htmlEscape(filter==='all'?'active':'')}" onclick="viewData.filter='all';viewData.makerFilter='';render()">すべて(${htmlEscape(activeDevices.length)})</button>
+      <button class="filter-tab ${htmlEscape(filter==='loan'?'active':'')}" onclick="viewData.filter='loan';viewData.makerFilter='';render()">貸出中</button>
+      <button class="filter-tab ${htmlEscape(filter==='overdue'?'active':'')}" onclick="viewData.filter='overdue';viewData.makerFilter='';render()">期限超過</button>
+      <button class="filter-tab ${htmlEscape(filter==='soon'?'active':'')}" onclick="viewData.filter='soon';viewData.makerFilter='';render()">もうすぐ期限</button>
+      <button class="filter-tab ${htmlEscape(filter==='nodate'?'active':'')}" onclick="viewData.filter='nodate';viewData.makerFilter='';render()">返却日未定</button>
+      <button class="filter-tab ${htmlEscape(filter==='maker'?'active':'')}" onclick="viewData.filter='maker';viewData.makerFilter='';render()">メーカー借入</button>
+      <button class="filter-tab ${htmlEscape(filter==='in'?'active':'')}" onclick="viewData.filter='in';viewData.makerFilter='';render()">社内</button>
+      <button class="filter-tab ${htmlEscape(filter==='byMaker'?'active':'')}" onclick="viewData.filter='byMaker';viewData.makerFilter='';render()">メーカー別</button>
+    </div>
+    ${filter === 'byMaker' ? `
+    <div class="filter-tabs" style="margin-top:4px;">
+      <button class="filter-tab ${htmlEscape(makerFilter===''?'active':'')}" onclick="viewData.makerFilter='';render()">すべて</button>
+      ${makerNames.map(m => `<button class="filter-tab ${htmlEscape(makerFilter===m?'active':'')}" onclick="viewData.makerFilter=${htmlJsArg(m)};render()">${htmlEscape(m)}</button>`).join('')}
+    </div>` : ''}
+    <div id="device-list">${deviceListHtml_(devices)}</div>
   </div>
   ${renderNav()}`;
+}
+
+// 検索欄: 以前は1文字ごとに画面全体を作り直していたため、入力欄が消えてキーボードが閉じ、
+// 日本語の変換も途切れていた。v1.15.3から一覧部分だけを差し替える。
+function onDeviceSearch(input, event) {
+  viewData.search = input.value;
+  const activeDevices = db.devices.filter(d => d.status !== '廃棄' && d.status !== 'メーカー返却済');
+  const list = document.getElementById('device-list');
+  if (!list) return;
+  // 一覧部分だけ差し替える（検索欄はそのまま残るのでキーボードも閉じない）
+  list.innerHTML = deviceListHtml_(filterDevices_(activeDevices, viewData.filter || 'all', viewData.makerFilter || '', viewData.search));
 }
 
 // ========== SCANNER ==========
@@ -1325,7 +1514,7 @@ function renderScanner() {
     <p style="text-align:center;color:var(--text-sub);font-size:13px;margin-bottom:16px;">カメラをQRコードに向けてください</p>
     <div style="text-align:center;margin-bottom:8px;font-size:13px;color:var(--text-sub);">― または LabelIDを直接入力 ―</div>
     <div class="scanner-label-input">
-      <input class="form-input" id="manual-label" placeholder="例: BF-000001" style="text-transform:uppercase;">
+      <input class="form-input" id="manual-label" placeholder="例: BF-00001" style="text-transform:uppercase;">
       <button onclick="handleManualLabel()">確認</button>
     </div>
     ${!mode ? `
@@ -1394,7 +1583,7 @@ function renderDeviceDetail() {
   const device = db.devices.find(d => d.id === viewData.deviceId);
   if (!device) return '<div class="content"><p>商品が見つかりません</p></div>';
 
-  const history = db.loans.filter(l => l.deviceId === device.id).sort((a,b) => b.date.localeCompare(a.date));
+  const history = db.loans.filter(l => l.deviceId === device.id).sort((a,b) => String(b.date).localeCompare(String(a.date)));
 
   return `
   <div class="header">
@@ -1425,6 +1614,10 @@ function renderDeviceDetail() {
     </div>
     <button class="btn btn-primary" style="margin-bottom:8px;" onclick="navigate('returnForm', {deviceId:${htmlNumber(device.id)}})">返却登録する</button>
     <button class="btn" style="margin-bottom:8px;background:none;border:1px solid var(--primary);color:var(--primary);width:100%;" onclick="showExtendDueDateModal(${htmlNumber(device.id)})">📅 返却予定日を延長する</button>
+    ` : device.status !== '社内' ? `
+    <div class="card" style="padding:14px 16px;margin-bottom:12px;font-size:14px;color:var(--text-sub);line-height:1.6;">
+      この商品は「${htmlEscape(device.status || '状態未設定')}」のため、貸出登録できません。${device.status === '廃棄' || device.status === 'メーカー返却済' ? '設定の一覧から「社内」に戻せます。' : '管理者に状態の確認を依頼してください。'}
+    </div>
     ` : `
     <button class="btn btn-outline" style="margin-bottom:8px;" onclick="navigate('loanForm', {deviceId:${htmlNumber(device.id)}})">この商品を貸出登録する</button>
     ${device.type === 'メーカー借入' ? `<button class="btn" style="margin-bottom:8px;background:none;border:1px solid var(--primary);color:var(--primary);width:100%;" onclick="showMakerReturnModal(${htmlNumber(device.id)})">メーカーへ返却する</button>` : ''}
@@ -1497,7 +1690,7 @@ function renderLoanForm() {
     <div class="form-section">
       <div class="form-label">画像 <span style="color:var(--text-sub);font-weight:400;">(任意)</span></div>
       ${draft?.imageUrl ? '<p>再試行ではアップロード済みの写真を使います。</p>' : ''}
-      <input type="file" id="f-img-loan" accept="image/*,.heic,.heif" style="display:none" onchange="handleImageSelect('loan', this)">
+      <input type="file" id="f-img-loan" accept="image/*" style="display:none" onchange="handleImageSelect('loan', this)">
       <div id="img-preview-loan" style="display:none;margin-bottom:8px;">
         <div data-image-status role="status"></div>
         <img id="img-thumb-loan" style="max-width:100%;max-height:200px;border-radius:8px;object-fit:contain;display:block;">
@@ -1512,6 +1705,7 @@ function renderLoanForm() {
 
 async function submitLoan(deviceId) {
   if (registrationSaving) return;
+  if (!ensureSessionForSave_()) return;
   const operator = currentUser ? currentUser.name : '';
   const salon = document.getElementById('f-salon').value.trim();
   const rep = document.getElementById('f-rep').value;
@@ -1601,6 +1795,7 @@ function renderReturnForm() {
 
 async function submitReturn(deviceId) {
   if (registrationSaving) return;
+  if (!ensureSessionForSave_()) return;
   const operator = currentUser ? currentUser.name : '';
   const retdate = document.getElementById('f-retdate').value || today();
   const notes = document.getElementById('f-notes').value.trim();
@@ -1637,10 +1832,38 @@ async function submitReturn(deviceId) {
 }
 
 // ========== REGISTER FORM ==========
-function renderRegisterForm() {
+function labelControlHtml_(preselected) {
   const usedLabels = new Set(db.devices.map(d => String(d.labelId || '').trim().toUpperCase()));
-  const availableLabels = (db.labels || []).filter(l => l.status === '印刷済' &&
+  const availableLabels = (db.labels || []).filter(l => String(l.status || '').trim() === '印刷済' &&
     !l.deviceId && !usedLabels.has(String(l.labelId || '').trim().toUpperCase()));
+  // スキャンしたラベルが選べない理由を、その場で示す（印刷済みにし忘れ・他の機器で使用中など）。
+  let notice = '';
+  const pre = String(preselected || '').trim().toUpperCase();
+  if (pre && !availableLabels.some(l => String(l.labelId || '').trim().toUpperCase() === pre)) {
+    const label = (db.labels || []).find(l => String(l.labelId || '').trim().toUpperCase() === pre);
+    const reason = !label ? 'ラベル管理に登録されていません'
+      : usedLabels.has(pre) || label.deviceId || String(label.status || '').trim() === '割当済' ? 'すでに別の商品に使われています'
+      : String(label.status || '').trim() === '未印刷' ? '「未印刷」のままです。設定 → ラベル管理で「印刷済み」にしてから登録してください'
+      : '現在は使用できない状態です（' + String(label.status || '状態なし') + '）';
+    notice = `<div role="status" style="margin-bottom:8px;padding:10px 12px;border-radius:8px;background:#fef3c7;color:#92400e;font-size:13px;line-height:1.6;">スキャンしたラベル ${htmlEscape(pre)} は${htmlEscape(reason)}。</div>`;
+  }
+  return notice + (availableLabels.length > 0
+    ? `<select class="form-select" id="f-labelid">
+        <option value="">ラベルを選択してください</option>
+        ${availableLabels.map(l => `<option value="${htmlEscape(l.labelId)}" ${htmlEscape(l.labelId === preselected ? 'selected' : '')}>${htmlEscape(l.labelId)}</option>`).join('')}
+      </select>`
+    : `<div style="padding:12px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:14px;color:var(--text-sub);background:white;">使用可能なラベルがありません。ラベル管理から発行してください。</div><input type="hidden" id="f-labelid" value="">`);
+}
+
+// 入力中の他の項目と写真は残したまま、ラベルの選択肢だけ最新にする。
+function refreshLabelOptions_() {
+  const box = document.getElementById('labelid-control');
+  if (!box) return;
+  const current = document.getElementById('f-labelid');
+  box.innerHTML = labelControlHtml_(current ? current.value : '');
+}
+
+function renderRegisterForm() {
   const preselected = viewData.labelId || ''; // スキャン画面から渡されたLabelID
 
   return `
@@ -1652,13 +1875,7 @@ function renderRegisterForm() {
   <div class="content">
     <div class="form-section">
       <div class="form-label">LabelID <span class="required">*</span></div>
-      ${availableLabels.length > 0
-        ? `<select class="form-select" id="f-labelid">
-        <option value="">ラベルを選択してください</option>
-        ${availableLabels.map(l => `<option value="${htmlEscape(l.labelId)}" ${htmlEscape(l.labelId === preselected ? 'selected' : '')}>${htmlEscape(l.labelId)}</option>`).join('')}
-      </select>`
-        : `<div style="padding:12px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:14px;color:var(--text-sub);background:white;">使用可能なラベルがありません。ラベル管理から発行してください。</div><input type="hidden" id="f-labelid" value="">`
-      }
+      <div id="labelid-control">${labelControlHtml_(preselected)}</div>
     </div>
     <div class="form-section">
       <div class="form-label">商品名 <span class="required">*</span></div>
@@ -1711,7 +1928,7 @@ function renderImageSlots(type, existingUrls) {
   for (let i = 0; i < 3; i++) {
     const ex = urls[i] || null;
     html += `
-      <input type="file" id="f-img-${htmlEscape(type)}-${htmlEscape(i)}" accept="image/*,.heic,.heif" style="display:none" onchange="handleImageSelect('${htmlEscape(type)}', this, ${htmlEscape(i)})">
+      <input type="file" id="f-img-${htmlEscape(type)}-${htmlEscape(i)}" accept="image/*" style="display:none" onchange="handleImageSelect('${htmlEscape(type)}', this, ${htmlEscape(i)})">
       <div style="width:88px;height:88px;border:1.5px dashed var(--border);border-radius:10px;position:relative;overflow:hidden;background:var(--bg-card);cursor:pointer;flex-shrink:0;" onclick="document.getElementById('f-img-${htmlEscape(type)}-${htmlEscape(i)}').click()">
         <img id="img-thumb-${htmlEscape(type)}-${htmlEscape(i)}" src="${htmlEscape(safeImageUrl(ex || ''))}" style="width:100%;height:100%;object-fit:cover;border-radius:9px;${htmlEscape(ex ? '' : 'display:none;')}">
         <div id="img-label-${htmlEscape(type)}-${htmlEscape(i)}" style="${htmlEscape(ex ? 'display:none;' : '')}position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:11px;color:var(--text-sub);gap:2px;pointer-events:none;"><span style="font-size:20px;">📷</span><span data-image-status>${htmlEscape(i + 1)}枚目</span></div>
@@ -1943,6 +2160,7 @@ async function saveNewMakerIfNeeded(selectId, inputId) {
 
 async function submitRegister() {
   if (registrationSaving) return;
+  if (!ensureSessionForSave_()) return;
   const labelId = document.getElementById('f-labelid').value.trim().toUpperCase();
   const name = document.getElementById('f-name').value.trim();
   const type = document.getElementById('f-type').value;
@@ -2082,6 +2300,7 @@ function selectTypeEdit(type) {
 
 async function submitEditDevice(deviceId) {
   if (registrationSaving) return;
+  if (!ensureSessionForSave_()) return;
   const name = document.getElementById('f-edit-name').value.trim();
   const type = document.getElementById('f-edit-type').value;
   const makerDue = document.getElementById('f-edit-maker-due').value;
@@ -2105,8 +2324,11 @@ async function submitEditDevice(deviceId) {
       if (imageUrls[i])   device[key] = imageUrls[i];
       else if (cleared[i]) device[key] = null;
     });
-    await apiPost('saveDevice', device);
-    Object.assign(target, device);
+    // 編集は商品情報だけを送る。状態・貸出先などはサーバー側の最新値を保つ（古い画面で上書きしない）。
+    const res = await apiPost('saveDevice', Object.assign({}, device, { _op: 'edit' }));
+    const saved = res.result?.device;
+    if (!saved?.id) throw new Error('CONNECTION_ERROR');
+    Object.assign(target, normalizeDB_({ devices: [saved] }).devices[0]);
     saveDBCache();
     showToast('更新しました ✓', 'success');
     goBack();
@@ -2155,6 +2377,30 @@ function showDisposeModal(deviceId) {
   document.body.appendChild(el);
 }
 
+// 廃棄・メーカー返却・取り消しの保存。サーバーには状態の変更だけを伝え、
+// 返ってきた最新の機器情報で画面を更新する（古い画面の貸出先などで上書きしない）。
+async function saveDeviceStatus_(deviceId, op, fields, successMessage, onSuccess) {
+  if (registrationSaving) return;
+  if (!_getBfSession()) { showRegistrationError(new Error('SESSION_INVALID')); return; }
+  const target = db.devices.find(d => d.id === deviceId);
+  if (!target) { showRegistrationError(new Error('NOT_FOUND')); return; }
+  beginRegistration();
+  try {
+    const res = await apiPost('saveDevice', Object.assign({}, target, fields, { _op: op }));
+    const saved = res.result?.device;
+    if (!saved?.id) throw new Error('CONNECTION_ERROR');
+    delete saved._op;
+    Object.assign(target, normalizeDB_({ devices: [saved] }).devices[0]);
+    saveDBCache();
+    showToast(successMessage, 'success');
+    onSuccess();
+  } catch (e) {
+    showRegistrationError(e);
+  } finally {
+    endRegistration();
+  }
+}
+
 async function submitDispose(deviceId) {
   const operator = document.getElementById('modal-dispose-operator').value;
   const date = document.getElementById('modal-dispose-date').value;
@@ -2163,50 +2409,16 @@ async function submitDispose(deviceId) {
   if (!date) { showToast('廃棄日を入力してください', 'error'); return; }
   saveLastOperator(operator);
   closeFormModal();
-  const device = db.devices.find(d => d.id === deviceId);
-  if (!device) return;
-  device.status = '廃棄';
-  device.disposalDate = date;
-  device.disposeNotes = notes || null;
-  device.disposalBy = operator;
-  showLoading();
-  try {
-    await apiPost('saveDevice', device);
-    showToast('廃棄登録しました', 'success');
-    currentView = 'home';
-    viewData = {};
-    viewStack = [];
-    navigate('home', {});
-  } catch(e) {
-    showToast('エラーが発生しました', 'error');
-    device.status = '社内';
-    device.disposalDate = null;
-    device.disposeNotes = null;
-    device.disposalBy = null;
-  } finally {
-    hideLoading();
-  }
+  await saveDeviceStatus_(deviceId, 'dispose',
+    { status: '廃棄', disposalDate: date, disposeNotes: notes || null, disposalBy: operator },
+    '廃棄登録しました', () => { viewStack = []; currentView = 'home'; viewData = {}; render(); });
 }
 
 async function confirmRestore(deviceId) {
   if (!confirm('廃棄を取り消して「社内」に戻しますか？')) return;
-  const device = db.devices.find(d => d.id === deviceId);
-  if (!device) return;
-  const prevStatus = device.status;
-  device.status = '社内';
-  device.disposalDate = null;
-  device.disposeNotes = null;
-  showLoading();
-  try {
-    await apiPost('saveDevice', device);
-    showToast('廃棄を取り消しました', 'success');
-    render();
-  } catch(e) {
-    showToast('エラーが発生しました', 'error');
-    device.status = prevStatus;
-  } finally {
-    hideLoading();
-  }
+  await saveDeviceStatus_(deviceId, 'restore',
+    { status: '社内', disposalDate: null, disposeNotes: null },
+    '廃棄を取り消しました', () => render());
 }
 
 function showMakerReturnModal(deviceId) {
@@ -2249,50 +2461,16 @@ async function submitMakerReturn(deviceId) {
   if (!date) { showToast('返却日を入力してください', 'error'); return; }
   saveLastOperator(operator);
   closeFormModal();
-  const device = db.devices.find(d => d.id === deviceId);
-  if (!device) return;
-  device.status = 'メーカー返却済';
-  device.makerReturnDate = date;
-  device.makerReturnNotes = notes || null;
-  device.makerReturnBy = operator;
-  showLoading();
-  try {
-    await apiPost('saveDevice', device);
-    showToast('メーカー返却済みとして登録しました', 'success');
-    currentView = 'home';
-    viewData = {};
-    viewStack = [];
-    navigate('home', {});
-  } catch(e) {
-    showToast('エラーが発生しました', 'error');
-    device.status = '社内';
-    device.makerReturnDate = null;
-    device.makerReturnNotes = null;
-    device.makerReturnBy = null;
-  } finally {
-    hideLoading();
-  }
+  await saveDeviceStatus_(deviceId, 'makerReturn',
+    { status: 'メーカー返却済', makerReturnDate: date, makerReturnNotes: notes || null, makerReturnBy: operator },
+    'メーカー返却済みとして登録しました', () => { viewStack = []; currentView = 'home'; viewData = {}; render(); });
 }
 
 async function confirmRestoreMaker(deviceId) {
   if (!confirm('メーカー返却を取り消して「社内」に戻しますか？')) return;
-  const device = db.devices.find(d => d.id === deviceId);
-  if (!device) return;
-  const prevStatus = device.status;
-  device.status = '社内';
-  device.makerReturnDate = null;
-  device.makerReturnNotes = null;
-  showLoading();
-  try {
-    await apiPost('saveDevice', device);
-    showToast('メーカー返却を取り消しました', 'success');
-    render();
-  } catch(e) {
-    showToast('エラーが発生しました', 'error');
-    device.status = prevStatus;
-  } finally {
-    hideLoading();
-  }
+  await saveDeviceStatus_(deviceId, 'restore',
+    { status: '社内', makerReturnDate: null, makerReturnNotes: null },
+    'メーカー返却を取り消しました', () => render());
 }
 
 
@@ -2324,8 +2502,11 @@ async function submitExtendDueDate(deviceId) {
   const newDueDate = document.getElementById('modal-extend-duedate').value;
   if (!newDueDate) { showToast('新しい返却予定日を入力してください', 'error'); return; }
 
+  if (registrationSaving) return;
+  if (!_getBfSession()) { showRegistrationError(new Error('SESSION_INVALID')); return; }
   const device = db.devices.find(d => d.id === deviceId);
-  showLoading();
+  if (!device) { closeFormModal(); showRegistrationError(new Error('NOT_FOUND')); return; }
+  beginRegistration();
   try {
     const oldDueDate = device.returnDueDate || '';
     const res = await apiPost('extendDueDate', {
@@ -2356,13 +2537,14 @@ async function submitExtendDueDate(deviceId) {
       registeredBy: currentUser ? currentUser.name : ''
     };
     db.loans.push(loanEntry);
+    saveDBCache();
     closeFormModal();
     showToast('返却予定日を延長しました');
     render();
   } catch(e) {
-    showToast('保存に失敗しました: ' + e.message, 'error');
+    showRegistrationError(e);
   } finally {
-    hideLoading();
+    endRegistration();
   }
 }
 
@@ -2376,7 +2558,7 @@ function renderMakerReturnedDevices() {
   </div>
   <div class="content">
     ${list.length === 0 ? '<p style="color:var(--text-sub);text-align:center;margin-top:32px;">メーカー返却済み商品はありません</p>' : list.map(d => {
-      const history = db.loans.filter(l => l.deviceId === d.id).sort((a,b) => b.date.localeCompare(a.date));
+      const history = db.loans.filter(l => l.deviceId === d.id).sort((a,b) => String(b.date).localeCompare(String(a.date)));
       return `
       <div class="card" style="margin-bottom:12px;">
         <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:8px;">
@@ -2412,7 +2594,7 @@ function renderDisposedDevices() {
   </div>
   <div class="content">
     ${disposed.length === 0 ? '<p style="color:var(--text-sub);text-align:center;margin-top:32px;">廃棄済み商品はありません</p>' : disposed.map(d => {
-      const history = db.loans.filter(l => l.deviceId === d.id).sort((a,b) => b.date.localeCompare(a.date));
+      const history = db.loans.filter(l => l.deviceId === d.id).sort((a,b) => String(b.date).localeCompare(String(a.date)));
       return `
       <div class="card" style="margin-bottom:12px;">
         <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:8px;">
