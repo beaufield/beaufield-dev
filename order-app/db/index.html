@@ -1583,7 +1583,7 @@ button:not(:disabled):active,.btn:not(:disabled):active,.nav-item:active,.tab:ac
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.98.0-db';
+const APP_VERSION    = 'v1.99.0-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -8104,7 +8104,7 @@ function renderPropItem(p, code, delayedByCode, orderedByCode) {
     </div>
     ${stockNeg ? `<div class="prop-pending-warn">⚠️ 在庫マイナス（${p.stock}）：欠品・バックオーダー中の可能性</div>` : ''}
     <div class="prop-item-stats">
-      <span>在庫 <b style="${stockNeg ? 'color:var(--danger)' : ''}">${p.stock}</b> ${onOrder}→ 推奨 <b>${p.recommended ?? '—'}</b></span>
+      <span>在庫 <b style="${stockNeg ? 'color:var(--danger)' : ''}">${p.stock}</b> ${onOrder}→ ${propRopLabel(p)}推奨 <b>${p.recommended ?? '—'}</b></span>
       <span>発注数 <input type="number" class="prop-qty" value="${qty}" min="0" step="${step}">${caseRule?`（1${adjustmentRule.unitLabel||'ケース'}=${step}個）`:''}</span>
       <span class="prop-qty-chips">${chips}</span>
       <button type="button" class="prop-lot-btn" ${orderAction('openLotModal', p.code, p.name)}>最低発注数 ${p.lot} ✏️</button>
@@ -8157,7 +8157,7 @@ function renderUrgentItemCard(p, delayedByCode) {
       </div>
     </div>
     <div class="prop-item-stats">
-      <span>在庫 <b style="${stock < 0 ? 'color:var(--danger)' : ''}">${p.stock}</b> → 推奨 <b>${p.recommended}</b></span>
+      <span>在庫 <b style="${stock < 0 ? 'color:var(--danger)' : ''}">${p.stock}</b> → ${propRopLabel(p)}推奨 <b>${p.recommended}</b></span>
       <span>直近実需要 <b>${recentDemand}</b>個/月</span>
     </div>
     ${note ? `<div class="prop-note">${escHtml(note)}</div>` : ''}
@@ -9133,6 +9133,17 @@ function mgToggleSkip(groupId, skip) {
   reRenderProposalsKeepScroll();
   showToast(skip ? `${name}は今回の発注に含めません` : `${name}の見送りを解除しました`, 'success');
 }
+
+/* === PROP REORDER POINT (test:prop-rop) === */
+// 発注点の表示（v1.99.0-db・分析器v1.30.0）。分析器は「在庫＋未入荷が発注点を下回ったら、推奨まで
+// 発注単位の倍数で積む」を提案する。発注点が推奨と同じ・古い分析で項目がないときは従来どおり推奨だけを出す
+function propRopLabel(p) {
+  const rop = Number(p && p.reorderPoint), rec = Number(p && p.recommended);
+  if (!p || p.reorderPoint === undefined || p.reorderPoint === null || p.reorderPoint === '' ||
+      !Number.isFinite(rop) || !Number.isFinite(rec) || rop >= rec) return '';
+  return `発注点 <b>${rop}</b> / `;
+}
+/* === END PROP REORDER POINT === */
 
 // 手当済在庫（現在庫＋発注済み未計上）が推奨在庫を下回っているか
 function mgIsShort(p) {
