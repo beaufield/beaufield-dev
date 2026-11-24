@@ -802,6 +802,15 @@
     /* 分析より前に発注済み＝推奨発注数に既に反映されている、と伝える行（v1.70.0） */
     .prop-pending-info   { font-size: 11px; color: #1e7e34; font-weight: 600; margin-top: 4px; line-height: 1.5; }
     .ai-order-card h3 { margin: 0 0 6px; font-size: 17px; }
+    .ai-order-summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; -webkit-tap-highlight-color: transparent; }
+    .ai-order-summary::-webkit-details-marker { display: none; }
+    .ai-order-summary::before { content: '▶'; font-size: 11px; color: var(--text-light); transition: transform .15s; }
+    .ai-order-card[open] > .ai-order-summary::before { transform: rotate(90deg); }
+    .ai-order-summary h3 { display: inline; margin: 0; }
+    .ai-order-card[open] > .ai-order-summary { margin-bottom: 6px; }
+    .prop-major-toggle { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
+    .prop-major-toggle input { width: 18px; height: 18px; margin: 0; flex: none; }
+    .prop-major-count { font-size: 12px; color: var(--text-light); }
     .ai-order-card label { display: block; margin-top: 10px; font-size: 12px; font-weight: 700; }
     .ai-order-card input, .ai-order-card select, .ai-order-card textarea {
       width: 100%; box-sizing: border-box; min-height: 38px; padding: 8px;
@@ -1220,8 +1229,9 @@ button:not(:disabled):active,.btn:not(:disabled):active,.nav-item:active,.tab:ac
 <div class="screen" id="screen-proposal">
   <div id="prop-kpi"></div>
   <div id="prop-urgent"></div>
-  <div class="card ai-order-card" id="ai-order-card" style="display:none;padding:14px">
-    <h3>今回の条件から発注候補を作る</h3>
+  <!-- v1.98.0-db: 普段は使わないので折りたたみ（既定は閉じる）。中の入力・計算の仕組みは変えていない -->
+  <details class="card ai-order-card" id="ai-order-card" style="display:none;padding:14px">
+    <summary class="ai-order-summary"><h3>今回の条件から発注候補を作る</h3></summary>
     <div class="ai-order-hint">AI相談は実データを使って希望を理解し、候補を表示します（処理担当PCのAI接続を起動して、スマホ・PCから利用）。下の手入力でも計算できます。候補の表示では発注は保存されません。</div>
     <label for="ai-order-supplier">発注先</label>
     <select id="ai-order-supplier"><option value="">発注先を選択</option></select>
@@ -1261,7 +1271,7 @@ button:not(:disabled):active,.btn:not(:disabled):active,.nav-item:active,.tab:ac
       <button type="button" class="btn btn-primary" onclick="aiOrderBuildDraft()">候補を計算</button>
     </div>
     <div id="ai-order-result" class="ai-order-result" style="display:none"></div>
-  </div>
+  </details>
   <div class="card" style="padding:12px 14px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <span id="prop-analyzed-at" style="font-size:12px;color:var(--text-light)">—</span>
@@ -1284,6 +1294,11 @@ button:not(:disabled):active,.btn:not(:disabled):active,.nav-item:active,.tab:ac
     <div style="display:flex;gap:6px;margin-top:6px">
       <button class="btn btn-outline btn-sm" id="prop-ordered-toggle" onclick="toggleHideOrdered()" style="flex:1">✅ 発注済みを隠す</button>
     </div>
+    <!-- v1.98.0-db: 5社は既定で一覧に出さない。チェックで含める（画面を開き直すと外す状態に戻る） -->
+    <label class="prop-major-toggle">
+      <input type="checkbox" id="prop-show-major" onchange="toggleShowMajorSuppliers(this.checked)">
+      <span>武田・滝川・リビック・シンビシン・BJCも表示 <span id="prop-major-count" class="prop-major-count"></span></span>
+    </label>
   </div>
   <div id="prop-supply-monitor" role="status" style="font-size:13px;line-height:1.5;margin:10px 0"></div>
   <div id="prop-list">
@@ -1568,7 +1583,7 @@ button:not(:disabled):active,.btn:not(:disabled):active,.nav-item:active,.tab:ac
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.97.2-db';
+const APP_VERSION    = 'v1.98.0-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -7823,6 +7838,27 @@ function toggleHideOrdered() {
   updateProposalBadge();
 }
 
+/* === PROP MAJOR SUPPLIERS (test:prop-major) === */
+// 既定で提案一覧・要対応・タブ件数に含めない仕入先（v1.98.0-db・本人指定 2026-11-24）。
+// 63=株式会社 武田 / 3=滝川(株) 本口座 / 21=(株)リビック / 84=株式会社 シンビシン / 70=株式会社 ＢＪＣ
+// 「…も表示」にチェックすると含める。メーカー選択でこの5社のどれかを選んだときは、チェックがなくても表示する。
+// 状態は画面を開いている間だけ保持し、開き直すと既定（含めない）に戻る。
+const PROP_DEFAULT_HIDDEN_SUPPLIERS = ['63', '3', '21', '84', '70'];
+let propShowMajorSuppliers = false;
+function propHiddenByMajorFilter(supplierCode, selectedSupplier) {
+  if (propShowMajorSuppliers) return false;
+  const code = String(supplierCode == null ? '' : supplierCode);
+  if (selectedSupplier && String(selectedSupplier) === code) return false;
+  return PROP_DEFAULT_HIDDEN_SUPPLIERS.includes(code);
+}
+function toggleShowMajorSuppliers(checked) {
+  propShowMajorSuppliers = !!checked;
+  renderProposalUrgent();
+  renderProposalList();
+  updateProposalBadge();
+}
+/* === END PROP MAJOR SUPPLIERS === */
+
 // 発注先マスターの発注方法に「Web」が含まれるか（このアプリからは出力しない仕入先）
 function isWebSupplier(supplierCode) {
   const sup = masters.suppliers.find(s => s.code === supplierCode);
@@ -8155,6 +8191,7 @@ function renderProposalUrgent() {
   const items = [];
   (proposalsData.proposals || []).forEach(p => {
     if (p.groupId) return;
+    if (propHiddenByMajorFilter(p.supplierCode, '')) return; // 5社は「…も表示」のときだけ（v1.98.0-db）
     const stock = parseFloat(p.stock) || 0;
     const onOrder = parseFloat(p.onOrder) || 0;
     const recommended = parseFloat(p.recommended) || 0;
@@ -8284,7 +8321,8 @@ function updateProposalBadge() {
   // タブのバッジは「発注すべき件数」なので参考表示・発注済み（隠している時）は数えない。
   // 「発注済み」＝分析より後の発注だけ（分析前の発注は提案数に反映済みなので数える。v1.70.0）
   const orderedByCode = propHideOrdered ? buildOrderedByCode({ unreflectedOnly: true }) : {};
-  const n = proposalsData.proposals.filter(p => !p.refOnly && !orderedByCode[p.code]).length;
+  const n = proposalsData.proposals.filter(p => !p.refOnly && !orderedByCode[p.code] &&
+    !propHiddenByMajorFilter(p.supplierCode, '')).length;
   badge.style.display = n > 0 ? '' : 'none';
   badge.textContent = n > 99 ? '99+' : String(n);
 }
@@ -8393,6 +8431,16 @@ function renderProposalList() {
   let props = proposalsData.proposals.filter(p => !filter || p.supplierCode === filter);
   if (propWebFilter === 'onlyWeb')    props = props.filter(p => isWebSupplier(p.supplierCode));
   if (propWebFilter === 'excludeWeb') props = props.filter(p => !isWebSupplier(p.supplierCode));
+  // 5社の除外（v1.98.0-db）。隠した件数は参考表示を除いた提案の数で出す
+  const majorHidden = props.filter(p => propHiddenByMajorFilter(p.supplierCode, filter));
+  props = props.filter(p => !propHiddenByMajorFilter(p.supplierCode, filter));
+  const majorChk = document.getElementById('prop-show-major');
+  if (majorChk) majorChk.checked = propShowMajorSuppliers;
+  const majorCount = document.getElementById('prop-major-count');
+  if (majorCount) {
+    const n = majorHidden.filter(p => !p.refOnly).length;
+    majorCount.textContent = propShowMajorSuppliers ? '' : (n > 0 ? `（${n}件を非表示中）` : '');
+  }
 
   // 発注済み（仕入未計上）の除外（v1.62.0）。仕入先ごとの非表示件数を先に数えてから絞り込む
   // （絞り込んだ後だと「隠した件数」が分からなくなるため）
