@@ -2,7 +2,7 @@
 // ビューフィールド 貸出管理アプリ — バックエンド
 // ============================================================
 
-const VERSION  = 'v1.13.1';
+const VERSION  = 'v1.14.0';
 const SHEET_ID      = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
 const AUTH_SHEET_ID = PropertiesService.getScriptProperties().getProperty('AUTH_SHEET_ID');
 // SHEET_ID / AUTH_SHEET_ID / LINEWORKS_WEBHOOK はスクリプトプロパティで管理
@@ -70,6 +70,8 @@ function validateSession(token) {
     }
   } catch(e) {
     Logger.log('validateSession error: ' + e);
+    // Google側の一時障害を「ログイン切れ」と区別して返す（画面は入力を残して再試行を案内する）。
+    return { valid: false, error: 'AUTH_UNAVAILABLE' };
   }
 
   // Google側の一時障害を「無効なセッション」として負キャッシュしない。
@@ -93,18 +95,22 @@ function doPost(e) {
     // ログイン入口はポータルに統一し、貸出管理APIは全操作でセッションと明示ロールを必須にする。
     const auth = validateSession(token);
     if (!auth.valid) {
-      return _respond({ status: 'error', error: 'SESSION_INVALID' });
+      return _respond({ status: 'error', error: auth.error === 'AUTH_UNAVAILABLE' ? 'AUTH_UNAVAILABLE' : 'SESSION_INVALID' });
     }
       // uploadImage は貸出登録（営業が使う）からも呼ばれるため管理者限定にしない。
       // 代わりに uploadImage 側で MIME・サイズ・実体を検証する。
+      // v1.14.0: 新しい商品の追加（registerDevice）は営業にも許可する。既存行は変更せず、
+      // 印刷済みで未使用のラベルにだけ紐付ける。既存商品の編集・廃棄・ラベル発行は管理者のまま。
       const adminActions = [
-        'saveDevice', 'registerDevice', 'saveSalesRep', 'deleteSalesRep',
+        'saveDevice', 'saveSalesRep', 'deleteSalesRep',
         'saveMaker', 'deleteMaker', 'issueLabel',
         'updatePrintStatus', 'assignLabel'
       ];
       const role = String(auth.role || '').toLowerCase();
       const canAdmin = auth.is_admin === true || ['admin', 'manager'].includes(role);
-      if (adminActions.includes(action) && !canAdmin) {
+      // 営業が新規商品登録の途中で新しいメーカーを追加する場合だけ、メーカーの「新規追加」を許可する。
+      const salesAddsMaker = action === 'saveMaker' && data && !data.id;
+      if (adminActions.includes(action) && !canAdmin && !salesAddsMaker) {
         return _respond({ status: 'error', error: 'FORBIDDEN' });
       }
 
@@ -123,7 +129,7 @@ function doPost(e) {
     else if (action === 'saveSalesRep')        result = saveSalesRep(data);
     else if (action === 'deleteSalesRep')      result = deleteSalesRep(data.id);
     else if (action === 'uploadImage')         result = uploadImage(data);
-    else if (action === 'saveMaker')           result = saveMaker(data);
+    else if (action === 'saveMaker')           result = canAdmin ? saveMaker(data) : addMakerIfMissing_(data);
     else if (action === 'deleteMaker')         result = deleteMaker(data.id);
     else if (action === 'issueLabel')          result = issueLabel(data);
     else if (action === 'updatePrintStatus')   result = updatePrintStatus(data);
@@ -285,7 +291,7 @@ function saveLoanTransaction(data, auth) {
     if (!['貸出','返却'].includes(type) || !lendingDate_(loan.date)) return {success: false, error: 'INVALID_REQUEST'};
     const changes = {updatedAt: Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd')};
     if (type === '貸出') {
-      if (device.status !== '社内') return {success: false, error: 'STATE_CONFLICT'};
+      if (String(device.status || '').trim() !== '社内') return {success: false, error: 'STATE_CONFLICT'};
       if (!String(loan.loanTo || '').trim() || !String(loan.salesRep || '').trim() ||
           (loan.returnDueDate && !lendingDate_(loan.returnDueDate))) return {success: false, error: 'INVALID_REQUEST'};
       changes.status = '貸出中'; changes.loanTo = String(loan.loanTo).trim(); changes.salesRep = String(loan.salesRep).trim();
@@ -296,7 +302,7 @@ function saveLoanTransaction(data, auth) {
         changes.imageUrl = String(data.device.imageUrl);
       }
     } else {
-      if (device.status !== '貸出中' || String(loan.loanTo || '') !== String(device.loanTo || '')) return {success: false, error: 'STATE_CONFLICT'};
+      if (String(device.status || '').trim() !== '貸出中' || String(loan.loanTo || '') !== String(device.loanTo || '')) return {success: false, error: 'STATE_CONFLICT'};
       changes.status = '社内'; changes.returnDate = loan.date;
       changes.loanTo = ''; changes.returnDueDate = ''; changes.salesRep = '';
     }
@@ -330,29 +336,96 @@ function applyLendingBatch_(requests) {
 }
 
 // ─── 商品マスタ保存 ──────────────────────────────────────────
-function saveDevice(device) {
+// v1.14.0: 既存行は「シートの最新値」を土台に、操作ごとに許可した項目だけを書き換える。
+// 画面に古いデータが残っていても、貸出中の状態・貸出先・営業担当・日付を巻き戻さない。
+//   _op = 'edit'        … 商品名・区分・メーカー・備考・メーカー返却期限・画像だけ
+//   _op = 'dispose'     … 社内 → 廃棄（廃棄日・備考・操作者）
+//   _op = 'makerReturn' … 社内 → メーカー返却済（返却日・備考・操作者）
+//   _op = 'restore'     … 廃棄／メーカー返却済 → 社内
+//   _op なし（旧画面）   … 貸出関連の項目は保持し、状態は上の遷移だけ許可
+const DEVICE_EDIT_FIELDS_ = ['name', 'type', 'maker', 'notes', 'makerReturnDueDate', 'imageUrl', 'imageUrl2', 'imageUrl3'];
+const DEVICE_KEEP_FIELDS_ = ['id', 'labelId', 'status', 'loanTo', 'loanDate', 'returnDueDate', 'returnDate', 'salesRep', 'createdAt', 'updatedAt'];
+const DEVICE_OP_FIELDS_ = {
+  dispose: ['disposalDate', 'disposeNotes', 'disposalBy'],
+  makerReturn: ['makerReturnDate', 'makerReturnNotes', 'makerReturnBy'],
+  restore: ['disposalDate', 'disposeNotes', 'makerReturnDate', 'makerReturnNotes']
+};
+const DEVICE_STATUS_MOVES_ = {
+  dispose: { from: ['社内'], to: '廃棄' },
+  makerReturn: { from: ['社内'], to: 'メーカー返却済' },
+  restore: { from: ['廃棄', 'メーカー返却済'], to: '社内' }
+};
+
+function saveDevice(input) {
+  if (!input || typeof input !== 'object') return { success: false, error: 'INVALID_REQUEST' };
+  const op = String(input._op || '');
+  if (op && op !== 'edit' && !DEVICE_STATUS_MOVES_[op]) return { success: false, error: 'INVALID_REQUEST' };
   const lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  try { lock.waitLock(10000); } catch (e) { return { success: false, error: 'BUSY' }; }
   try {
   const sheet = ss.getSheetByName('DeviceMaster');
   const data = sheet.getDataRange().getValues();
-  const headers = data[0];
+  const headers = data[0].map(h => String(h).trim());
+  const idCol = headers.indexOf('id');
+  const statusCol = headers.indexOf('status');
+  if (idCol < 0 || statusCol < 0) return { success: false, error: 'SCHEMA_MISMATCH' };
+  const today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
 
-  if (!device.id) {
-    device.id = Date.now();
-    device.createdAt = new Date().toISOString().split('T')[0];
+  const existingRow = input.id ? data.findIndex((row, i) => i > 0 && String(row[idCol]) === String(input.id)) : -1;
+  if (existingRow < 1) {
+    // 画面からの新規追加は registerDevice（ラベル割当と同時保存）を使う。
+    if (input.id || op) return { success: false, error: 'NOT_FOUND' };
+    const device = Object.assign({}, input, { id: Date.now(), createdAt: today, updatedAt: today });
+    delete device._op;
+    sheet.appendRow(headers.map(h => device[h] !== undefined && device[h] !== null ? device[h] : ''));
+    return { success: true, device: device };
   }
-  device.updatedAt = new Date().toISOString().split('T')[0];
 
-  const existingRow = data.findIndex((row, i) => i > 0 && row[0] == device.id);
-  if (existingRow > 0) {
-    const rowData = headers.map(h => device[h] !== undefined ? device[h] : '');
-    sheet.getRange(existingRow + 1, 1, 1, headers.length).setValues([rowData]);
+  const row = data[existingRow].slice();
+  const currentStatus = String(row[statusCol] || '').trim();
+  const set = function(field, value) {
+    const col = headers.indexOf(field);
+    if (col >= 0) row[col] = value === undefined || value === null ? '' : value;
+  };
+  const has = function(field) { return Object.prototype.hasOwnProperty.call(input, field); };
+
+  if (op === 'edit') {
+    DEVICE_EDIT_FIELDS_.forEach(function(f) { if (has(f)) set(f, input[f]); });
+  } else if (op) {
+    const move = DEVICE_STATUS_MOVES_[op];
+    if (move.from.indexOf(currentStatus) < 0) return { success: false, error: 'STATE_CONFLICT' };
+    set('status', move.to);
+    DEVICE_OP_FIELDS_[op].forEach(function(f) { if (has(f)) set(f, input[f]); });
   } else {
-    const rowData = headers.map(h => device[h] !== undefined ? device[h] : '');
-    sheet.appendRow(rowData);
+    // 旧画面（_opなし）: 貸出に関わる項目は保持し、状態は許可した遷移だけ受け付ける。
+    const requested = String(input.status || '').trim();
+    if (requested && requested !== currentStatus) {
+      const ok = Object.keys(DEVICE_STATUS_MOVES_).some(function(k) {
+        return DEVICE_STATUS_MOVES_[k].to === requested && DEVICE_STATUS_MOVES_[k].from.indexOf(currentStatus) >= 0;
+      });
+      if (!ok) return { success: false, error: 'STATE_CONFLICT' };
+      set('status', requested);
+    }
+    headers.forEach(function(h) {
+      if (DEVICE_KEEP_FIELDS_.indexOf(h) >= 0 || !has(h)) return;
+      set(h, input[h]);
+    });
   }
-  return { success: true, device };
+  set('updatedAt', today);
+  // 変わったセルだけ書く（触らない列の日付・文字の型を書き直しで変えない）。
+  const original = data[existingRow];
+  row.forEach(function(value, i) {
+    const before = original[i] instanceof Date ? original[i].getTime() : original[i];
+    const after = value instanceof Date ? value.getTime() : value;
+    if (before !== after) sheet.getRange(existingRow + 1, i + 1).setValue(value);
+  });
+
+  const device = {};
+  headers.forEach(function(h, i) {
+    const v = row[i];
+    device[h] = v instanceof Date ? Utilities.formatDate(v, 'Asia/Tokyo', 'yyyy-MM-dd') : v;
+  });
+  return { success: true, device: device };
 
   } finally { lock.releaseLock(); }
 }
@@ -513,6 +586,30 @@ function saveMaker(maker) {
   return { success: true, maker };
 }
 
+// 営業が新規商品登録の途中で使うメーカー追加。新規追加だけを受け付け、同名があれば既存を返す。
+function addMakerIfMissing_(data) {
+  const name = String(data && data.name || '').trim();
+  if (!name || name.length > 100) return { success: false, error: 'INVALID_REQUEST' };
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(10000); } catch (e) { return { success: false, error: 'BUSY' }; }
+  try {
+    const sheet = ss.getSheetByName('MakerMaster');
+    const rows = sheet.getDataRange().getValues();
+    const headers = rows[0].map(h => String(h).trim());
+    const nameCol = headers.indexOf('name');
+    if (nameCol < 0) return { success: false, error: 'SCHEMA_MISMATCH' };
+    const found = rows.findIndex((row, i) => i > 0 && String(row[nameCol]).trim() === name);
+    if (found > 0) {
+      const existing = {};
+      headers.forEach((h, i) => { existing[h] = rows[found][i]; });
+      return { success: true, maker: existing };
+    }
+    const maker = { id: Date.now(), name: name, active: true };
+    sheet.appendRow(headers.map(h => maker[h] !== undefined ? maker[h] : ''));
+    return { success: true, maker: maker };
+  } finally { lock.releaseLock(); }
+}
+
 // ─── メーカー削除 ────────────────────────────────────────────
 function deleteMaker(id) {
   const sheet = ss.getSheetByName('MakerMaster');
@@ -632,10 +729,11 @@ function assignLabel(data) {
 // DeviceMasterのreturnDueDateを更新し、LoanLogに延長記録を残す
 // LINE WORKS通知はnotifyTextとして返し、フロントから後追い送信する
 function extendDueDate(data) {
+  if (!data || !lendingDate_(data.newDueDate)) return { success: false, error: 'INVALID_REQUEST' };
   const lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  try { lock.waitLock(10000); } catch (e) { return { success: false, error: 'BUSY' }; }
   try {
-  const today = new Date().toISOString().split('T')[0];
+  const today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
 
   // DeviceMasterのreturnDueDateを直接更新
   const devSheet  = ss.getSheetByName('DeviceMaster');
@@ -645,13 +743,15 @@ function extendDueDate(data) {
   const dueDateCol   = devHeaders.indexOf('returnDueDate');
   const updatedAtCol = devHeaders.indexOf('updatedAt');
 
-  for (let i = 1; i < devData.length; i++) {
-    if (String(devData[i][devIdCol]) === String(data.deviceId)) {
-      devSheet.getRange(i + 1, dueDateCol + 1).setValue(data.newDueDate);
-      if (updatedAtCol >= 0) devSheet.getRange(i + 1, updatedAtCol + 1).setValue(today);
-      break;
-    }
+  const statusCol    = devHeaders.indexOf('status');
+  const devIndex = devData.findIndex((row, i) => i > 0 && String(row[devIdCol]) === String(data.deviceId));
+  // 見つからない機器・貸出中でない機器には延長記録を残さない（古い画面からの操作を防ぐ）。
+  if (devIndex < 1) return { success: false, error: 'NOT_FOUND' };
+  if (statusCol >= 0 && String(devData[devIndex][statusCol] || '').trim() !== '貸出中') {
+    return { success: false, error: 'STATE_CONFLICT' };
   }
+  devSheet.getRange(devIndex + 1, dueDateCol + 1).setValue(data.newDueDate);
+  if (updatedAtCol >= 0) devSheet.getRange(devIndex + 1, updatedAtCol + 1).setValue(today);
 
   // LoanLogに延長記録を追加（saveLoanを使うと通知が不要に走るためシート直書き）
   const loanSheet  = ss.getSheetByName('LoanLog');
