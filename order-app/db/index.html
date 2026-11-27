@@ -51,10 +51,12 @@
     .header-sub { font-size: 12px; color: #8E8E93; margin-top: 2px; }
 
     .bottom-nav {
+      /* v1.99.1-db: 中央寄せは transform をやめ left/right/margin で行う（iPhoneでの固定表示のずれ対策） */
       position: fixed;
       bottom: 0;
-      left: 50%;
-      transform: translateX(-50%);
+      left: 0;
+      right: 0;
+      margin: 0 auto;
       width: 100%;
       max-width: 480px;
       background: var(--header-bg);
@@ -1583,7 +1585,7 @@ button:not(:disabled):active,.btn:not(:disabled):active,.nav-item:active,.tab:ac
 /* ===================================================
    定数・設定
 =================================================== */
-const APP_VERSION    = 'v1.99.0-db';
+const APP_VERSION    = 'v1.99.1-db';
 const GAS_URL        = 'https://script.google.com/macros/s/AKfycbzv1_ddcpfQrWN8tsKVYN31TwfCCjU55jXLG3l0KY7uur_oBXML-2JPWk4Rfjwfg5ztPQ/exec';
 const PORTAL_URL     = 'https://beaufield.github.io/beaufield-dev/';
 const LS_MASTER          = 'bf_pm_v2'; // v2: makerCode(相手商品CD)追加
@@ -12771,5 +12773,49 @@ async function confirmOrderSupplyBeforeSave() {
 if(typeof module!=='undefined')module.exports={orderSupplyRows};
 </script>
 <!-- ORDER_SUPPLY_REVIEW_END -->
+<!-- VIEWPORT_REPAIR_START (v1.99.1-db) -->
+<script>
+// iPhoneでキーボードを閉じたあと、下部メニュー（画面下に固定）と上の見出しが
+// キーボードの高さ分ずれたまま残り、メニューが画面の真ん中に浮くことがある（WebKitの不具合。
+// 見えている範囲の基準位置 visualViewport.offsetTop が0に戻らない）。
+// 入力中でないのにずれていたら、今見えている位置へスクロールし直して基準位置を戻す。
+// 入力中（キーボード表示中）と拡大表示中は正しいずれなので触らない。
+(function () {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const NON_TEXT = /^(button|checkbox|radio|submit|reset|range|file|color|image|hidden)$/i;
+  // キーボードが出る入力欄にフォーカスがあるか
+  function typing() {
+    const el = document.activeElement;
+    if (!el || el === document.body) return false;
+    if (el.isContentEditable) return true;
+    if (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return true;
+    return el.tagName === 'INPUT' && !NON_TEXT.test(el.type || '');
+  }
+  let timer = 0;
+  let tries = 0; // 直らない端末で無限に繰り返さないよう、1回のずれにつき3回まで
+  function repair() {
+    timer = 0;
+    if (typing() || vv.scale > 1.01) return;
+    if (vv.offsetTop < 1) { tries = 0; return; }
+    if (tries >= 3) return;
+    tries++;
+    // 今見えている左上の位置（ずれていても利用者が見ている位置を保つ）
+    const x = Math.round(vv.pageLeft || 0);
+    const y = Math.round(typeof vv.pageTop === 'number' ? vv.pageTop : window.scrollY);
+    window.scrollTo(x, y > 0 ? y - 1 : y + 1);
+    window.scrollTo(x, y);
+    schedule(); // 直ったかをもう一度確かめる（直っていれば tries を0に戻して終わる）
+  }
+  function schedule() { if (!timer) timer = setTimeout(repair, 150); }
+  vv.addEventListener('resize', schedule);
+  vv.addEventListener('scroll', schedule);
+  window.addEventListener('scroll', schedule, { passive: true });
+  document.addEventListener('focusout', () => setTimeout(schedule, 250));
+  window.addEventListener('pageshow', schedule);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') schedule(); });
+})();
+</script>
+<!-- VIEWPORT_REPAIR_END -->
 </body>
 </html>
